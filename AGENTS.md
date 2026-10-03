@@ -94,7 +94,7 @@ This repo is public and licensed AGPL-3.0. It stays one repo: no open-core split
 - Viewer counts only count real playback sessions.
 - Faction influence is balanced by faction size; only verified accounts earn it.
 - Money and balances live in Postgres ledgers with double-entry style records. Never store a balance only as a mutable number.
-- The UI theme follows the signed-in user's faction (Myria ember, Aetheron violet, Glint gold on navy; neutral steel when signed out). Ornament is done in CSS/SVG, never glows or large decorative images. Pages must stay light for low-end PCs and slow connections.
+- The UI follows `docs/DESIGN.md`: the theme follows the signed-in user's faction (Myria ember, Aetheron violet, Glint gold on navy; neutral steel when signed out), with framed panels, beveled buttons and Cinzel/Barlow type. Read it before building or changing any page. Ornament is done in CSS/SVG, never glows or large decorative images. Pages must stay light for low-end PCs and slow connections.
 - Never compare S.V.E.R to other platforms in user-facing copy.
 
 ## Legacy code
