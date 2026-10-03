@@ -7,6 +7,7 @@ This module lets viewers support streamers with money and loyalty, and gets stre
 ## Scope
 
 - Monetization eligibility and payout setup
+- Creator tiers (Scout, Trailblazer, Pioneer, Pathfinder)
 - Subscriptions (three tiers, gift subs, subscriber badges, emotes and chat mode)
 - Purchased Valor and cheers
 - Engagement Valor (per-channel loyalty points) and channel rewards
@@ -27,9 +28,32 @@ Any account that is verified, has authenticator 2FA, and has finished Stripe Con
 - Refunds and chargebacks post reversing entries. A chargeback on a Valor purchase can push the buyer's Purchased Valor balance negative, which locks spending until settled.
 - Amounts are integer cents in USD; Valor earnings accrue in tenths of a cent and round down only at payout. **Open:** other currencies.
 
+## Creator tiers
+
+Carried over from legacy and decided by Joe on October 3, 2026. Every streamer starts at Scout.
+
+| Over the last 90 days | Scout | Trailblazer | Pioneer | Pathfinder |
+| --- | --- | --- | --- | --- |
+| Streams | 0 | 8 | 30 | 120 |
+| Stream hours | 0 | 15 | 80 | 300 |
+| Average viewers | 0 | 5 | 20 | 60 |
+| Followers | 0 | 150 | 800 | 2,500 |
+| Subscribers | 0 | 0 | 8 | 40 |
+| Unique viewers | 0 | 0 | 300 | 3,000 |
+| Days active | 0 | 10 | 40 | 120 |
+| **Subscription split to the streamer** | 75% | 80% | 85% | 90% |
+| **VOD retention (Module 7)** | 24 hours | 48 hours | 72 hours | 7 days |
+
+- A streamer moves up when they meet every requirement for the next tier. Checked weekly, Monday 00:01 Eastern. Tiers never go down.
+- Each tier has a badge shown on the channel and in chat.
+- Viewer numbers (average and unique viewers) count real playback sessions only. Until viewbot detection ships (Phase 2), moving up to Pioneer or Pathfinder waits for a staff check.
+- Valor cheers pay 0.8¢ per Valor at every tier.
+- Legacy tier benefits not carried over: the discovery boost (MAGNet never ranks by size), and referrals, affiliate, partnerships and priority support (deferred).
+- Ad revenue tiers wait for ads (Phase 4).
+
 ## Subscriptions
 
-- Tiers: $4.99, $9.99 and $24.99 a month. The streamer keeps 90% of the full price; S.V.E.R pays the card fees out of its 10%.
+- Tiers: $4.99, $9.99 and $24.99 a month. The streamer keeps 75% to 90% of the full price depending on their creator tier (below); S.V.E.R pays the card fees out of its share. Gift subs use the same split.
 - Benefits:
   - Subscriber badge showing months subscribed: 1, 3, 6, 9, 12, then each further year.
   - Subscriber emotes: 5 slots at tier 1, 5 more at tier 2, 5 more at tier 3, on top of the channel's 10 open emotes from Module 3.
@@ -71,7 +95,10 @@ Any account that is verified, has authenticator 2FA, and has finished Stripe Con
 
 - A live owner invites 1 to 3 other live owners. When an invitee accepts, their stream joins the squad.
 - The squad page shows the streams side by side (stacked on phones). Viewers choose which stream they hear and whose chat they use; the others play muted.
-- Each stream keeps its own viewer count, chat, moderation, subs and cheers. No revenue sharing in this module.
+- The host picks one of two modes when creating the squad:
+  - **Separate:** each stream keeps its own chat, viewers, subs and cheers.
+  - **Merged:** one shared chat for the whole squad. Money spent through the squad page while it runs (cheers, gift subs and the first month of new subs) is pooled and split equally among the members live at that moment; each member's share is then paid at their own tier split. Later renewals of a sub go to the channel the viewer picked.
+- Each stream keeps its own viewer count and its own moderators. In merged mode, every member's moderators can moderate the shared chat, and a ban in any member's channel blocks that user from the shared chat.
 - Anyone can leave at any time; the squad ends when its host leaves or goes offline. Blocks and bans between members prevent invites.
 - No video mixing or re-encoding: each stream is delivered exactly as in Module 3.
 
