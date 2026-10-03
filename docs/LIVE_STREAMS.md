@@ -16,7 +16,9 @@ This document expands Module 3 of [PLATFORM_PLAN.md](PLATFORM_PLAN.md), the secu
 - Owners appoint channel moderators. Owners/moderators delete messages, time out users for 1 minute through 14 days, and ban/unban. Slow mode is off or 3–120 seconds; link blocking exempts owners/moderators; banned words automatically reject matching messages.
 - Launch includes stream and chat reports/moderation. Reuse Module 2's staff permissions, report feedback, strikes and appeals. Its level-three strike opens a separate account-ban review; it never automatically bans an account.
 
-Deferred by the platform plan: SRT ingest, custom emotes, alerts/overlays, CrowdSync, external-platform chat, viewbot detection and chat replay. VODs/clips are Module 6. Faction influence and Engagement Valor belong to Module 4. Discovery rotation and MAGNet belong to their own modules; this module supplies live state and categories without adding ranking rules.
+Added October 3, 2026 by Joe: chat mentions, replies, a pinned message, badges and custom emotes; go-live alerts; raids; and hosting. They are specified in "Social features" below.
+
+Deferred by the platform plan: SRT ingest, animated emotes, alerts/overlays, CrowdSync, external-platform chat, viewbot detection and chat replay. VODs/clips are Module 7. Faction influence belongs to Module 4. Subscriptions, Valor (Purchased and Engagement), co-streams and payouts are Module 6, Support ([SUPPORT.md](SUPPORT.md)). Discovery rotation and MAGNet belong to their own modules; this module supplies live state and categories without adding ranking rules.
 
 ## Investigation evidence
 
@@ -263,6 +265,58 @@ New tables: stream settings/credentials, categories, broadcasts, playback leases
 
 On account erasure, remove credentials, leases, moderator memberships and ordinary chat bodies; preserve only the explicitly retained moderation evidence through the existing retention policy, with actor references anonymized as necessary. Stream revocation precedes destructive erasure. Legacy broadcast/chat/settings import is not implicit in the account migration; inventory and define a guarded rehearsal if it is requested. Never activate old credentials or old chat moderation grants through an unreviewed import.
 
+## Social features (approved by Joe, October 3, 2026)
+
+These were added to Module 3 after the core spec. They reuse the chat, moderation, block and playback-lease rules above. Numbers marked **Proposed** are defaults Joe can change; everything else is decided.
+
+### Chat additions
+
+- **Mentions:** `@username` in a message is matched against real accounts on the server and highlighted for the person named. No notification outside chat.
+- **Replies:** a message can reply to one visible message in the same channel. The reply shows a one-line quote (first 80 characters) of the original; if the original is deleted the quote reads "Message deleted" and never sends the deleted body.
+- **Pinned message:** the owner or a moderator pins one message (an existing visible message or new text up to 500 characters). It stays until unpinned or replaced, survives reconnects, and is cleared if the pinned message is deleted. Pinning is audited like other moderator actions.
+- **Badges:** Broadcaster, Moderator and Staff, decided on the server per message. Subscriber and Founder badges arrive with Support and the founders program. The sender's faction crest is separate (Module 4).
+
+### Custom emotes
+
+- Any channel owner can upload up to **10** emotes usable by anyone in that channel's chat. Subscriber-only emote slots come with Support.
+- Static PNG or WebP, square, at least 112 px, at most 1 MB upload. Animated files use the first frame (same rule as Profiles images). Served at 28, 56 and 112 px from the media bucket.
+- Code: 3 to 20 ASCII letters and digits, case-sensitive, unique within the channel. A message token that exactly matches a code of the current channel renders as that emote; everything else stays text. No cross-channel use in this module.
+- Emotes publish immediately. They can be reported (new report target EMOTE); staff can remove one, and removal is audited and can lead to a strike under the Profiles rules. Deleting an emote removes it from future rendering only.
+- Banned-word and link rules apply to codes.
+
+### Go-live alerts
+
+- Triggered when a broadcast starts. A reconnect inside the 60-second window is the same broadcast and sends nothing. **Proposed:** at most one alert per channel every 6 hours.
+- Three delivery methods, each switchable in settings: in-site notifications (the top-bar bell and a notifications list), browser push (standard Web Push with server-held VAPID keys, no outside service), and email through Resend. Email is opt-in; the others default on.
+- Per-channel opt-out: a bell next to the Follow button turns alerts off for that channel without unfollowing. Unfollowing removes alerts too.
+- Never sent to: the owner, users the owner blocked or banned, unverified or restricted accounts, or deleted accounts. Fan-out runs as Postgres-backed jobs, retried safely without duplicates.
+- Email has a one-click unsubscribe and respects the account's notification settings. Push subscriptions that fail permanently are removed.
+- **Proposed:** in-site notifications are kept 30 days.
+
+### Raids
+
+- A live owner starts a raid from Creator Studio or with `/raid username` in their own chat. The target must be live, not restricted, and accepting raids.
+- The target can turn off incoming raids or block raids from specific channels. A target that blocked or banned the raider (or its owner) can't be raided by it.
+- Viewers on the raider's stream see a 10-second countdown with Cancel, then their player moves to the target. Signed-in viewers banned from the target stay put.
+- The target's chat gets a system line "name is raiding with n", where n counts playback leases that actually started on the target within 60 seconds and came from the raid. The count is never taken from the raider's viewer count.
+- **Proposed:** one raid per broadcast every 10 minutes; a raid can be cancelled by the raider during the countdown.
+- Faction influence for raids into ally or enemy channels is added by Module 4, with weights in the private tuning config.
+- Raids are audited (raider, target, time, arrivals).
+
+### Hosting
+
+- An offline channel can host one live channel. Its channel page shows the hosted stream with a "Hosting name" bar and a link to the target.
+- Auto-host: a priority list of up to **10** channels chosen by the owner. When the owner is offline, the first live, eligible channel on the list is hosted.
+- Hosting stops when the host goes live or the target goes offline; auto-host then moves to the next live channel on the list. When a raider ends their broadcast after a raid, their channel hosts the raid target.
+- Targets can opt out of being hosted; the same block and ban rules as raids apply.
+- Hosted viewers are counted for the target because they are real playback sessions on the target's broadcast; the host shows no count of its own.
+
+### Storage and API outline
+
+New tables: chat replies and pins (columns on chat messages plus a channel pin row), channel emotes, notification preferences (global and per channel), notifications, push subscriptions, raids, host settings and host state. New report target EMOTE. Endpoints live under `/api/channels/{username}/chat` (pin, unpin), `/api/me/emotes`, `/api/me/notifications`, `/api/me/push`, `/api/me/raids`, `/api/me/hosting`, and a per-follow alert toggle under `/api/channels/{username}/follow`.
+
+Automated coverage adds: mention matching and XSS, reply-to-deleted, pin permissions and reconnect, emote validation and render rules, alert throttling and opt-outs, push failure cleanup, raid eligibility, blocks and arrival counting, and host start/stop transitions.
+
 ## Delivery phases and checks
 
 1. **Media proof and concrete deployment design.** Use an isolated SRS instance/vhost with synthetic media and separate ports/output. Validate public-ID/secret separation, callback authentication, one-publisher enforcement, audio/video compatibility, CDN protocol/cache behavior, and fallback. No restart, hook switch or load test against the active sver-plays runtime. Save only aggregate measurements and sanitized configs in the repository.
@@ -295,4 +349,4 @@ Required automated coverage:
 
 ## Done when
 
-A verified creator with MFA broadcasts from OBS; an anonymous viewer watches through tested direct and CDN paths at the accepted latency targets; a reconnect within 60 seconds retains the broadcast; real playback drives counts; verified users chat; channel moderators can delete, timeout and ban; slow mode/link/word rules work; staff can handle stream/chat reports with the approved standing/appeal behavior; and Studio shows measured OBS warnings. Existing accounts, legacy data and sver-plays remain intact. Completing documentation or passing mocked media tests alone does not close this module.
+A verified creator with MFA broadcasts from OBS; an anonymous viewer watches through tested direct and CDN paths at the accepted latency targets; a reconnect within 60 seconds retains the broadcast; real playback drives counts; verified users chat; channel moderators can delete, timeout and ban; slow mode/link/word rules work; staff can handle stream/chat reports with the approved standing/appeal behavior; and Studio shows measured OBS warnings. Mentions, replies, pins, badges and custom emotes work; followers get go-live alerts from the channels they choose, with per-channel opt-out; a raid moves viewers after a countdown and reports an accurate arrival count; manual hosting and auto-host start and stop correctly. Existing accounts, legacy data and sver-plays remain intact. Completing documentation or passing mocked media tests alone does not close this module.
