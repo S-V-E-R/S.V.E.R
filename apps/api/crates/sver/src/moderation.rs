@@ -391,10 +391,10 @@ pub async fn save_settings(
     let channel = channel(&app, &name).await?;
     let (user, role) = actor(&app, &jar, &channel).await?;
     let reason = reason(&input.reason)?;
-    if !(0..=3600).contains(&input.slow_mode_seconds) {
+    if !(input.slow_mode_seconds == 0 || (3..=120).contains(&input.slow_mode_seconds)) {
         return Err(Fail::field(
             "slow_mode_seconds",
-            "Slow mode is 0–3600 seconds.",
+            "Slow mode is off, or 3–120 seconds.",
         ));
     }
     let mut words: Vec<String> = input

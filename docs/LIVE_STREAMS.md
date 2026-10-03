@@ -131,7 +131,7 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 
 ## Channel moderation (phase 4b) — October 3
 
-- Migration `0008`: `channel_moderators`, `channel_restrictions` (timeout with an end, ban until lifted; a new timeout replaces the old end and never clears a ban), `chat_settings` (slow mode 0–3600 s, link blocking, up to 200 banned phrases of 1–64 characters) and `channel_moderation_log`.
+- Migration `0008`: `channel_moderators`, `channel_restrictions` (timeout with an end, ban until lifted; a new timeout replaces the old end and never clears a ban), `chat_settings` (slow mode off or 3–120 s, link blocking, up to 200 banned phrases of 1–64 characters) and `channel_moderation_log`.
 - `moderation.rs` implements the approved matrix. Roles are rechecked on every request: owner; appointed moderators who are still verified and eligible; staff with the admin role and MFA. Appointing needs the owner with a sign-in in the last five minutes; removal is the owner (same step-up) or staff. Nobody restricts the owner, themselves, a current moderator or staff (the owner removes a moderator first). Moderators cannot delete the owner's, other moderators' or staff messages.
 - Actions require a 1–500 character reason and commit with their audit row. Deletes are idempotent tombstones broadcast as `{"type":"delete"}` and logged once. Timeouts are 60 s to 14 days and return a retry time on send.
 - Sending applies, in order: ban/timeout, banned phrases (case-folded, whitespace-normalized literal match, no exemption), links (plain-text URL/domain detection; owner, moderators and staff exempt), slow mode (same exemptions, with retry time).

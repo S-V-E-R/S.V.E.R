@@ -20,7 +20,7 @@ CREATE TABLE channel_restrictions (
 );
 CREATE TABLE chat_settings (
     channel_id text PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    slow_mode_seconds integer NOT NULL DEFAULT 0 CHECK (slow_mode_seconds BETWEEN 0 AND 3600),
+    slow_mode_seconds integer NOT NULL DEFAULT 0 CHECK (slow_mode_seconds = 0 OR slow_mode_seconds BETWEEN 3 AND 120),
     block_links boolean NOT NULL DEFAULT false,
     banned_words text[] NOT NULL DEFAULT '{}' CHECK (cardinality(banned_words) <= 200)
 );

@@ -69,7 +69,7 @@ export default function ChatStudio() {
   return <><h1>Chat</h1>
     <Section title="Rules" intro="Slow mode and the link rule don't apply to you or your moderators. Banned words apply to everyone.">
       <form onSubmit={saveRules} className="stack">
-        <label className="field"><span>Slow mode (seconds between messages, 0 for off)</span><input name="slow" type="number" min={0} max={3600} defaultValue={s.slow_mode_seconds} /></label>
+        <label className="field"><span>Slow mode (0 for off, or 3–120 seconds between messages)</span><input name="slow" type="number" min={0} max={120} defaultValue={s.slow_mode_seconds} /></label>
         <label className="row"><input name="links" type="checkbox" defaultChecked={s.block_links} /> Block links</label>
         <label className="field"><span>Banned words or phrases (one per line, up to 200)</span><textarea value={words} onChange={e => setWords(e.target.value)} rows={5} /></label>
         <button type="submit" className="small">Save rules</button>

@@ -313,17 +313,33 @@ pub async fn exercise(e: &Env) {
     e.sql("DELETE FROM broadcasts WHERE id='mod-b'").await;
 
     // Chat rules: banned phrases (no exemption), links (moderators exempt), slow mode.
+    // Slow mode is off (0) or 3-120 seconds; nothing in between and nothing above 120 is valid.
+    for seconds in [1, 2, 121, 3601] {
+        assert_eq!(
+            call(
+                e,
+                "PUT",
+                &format!("{BASE}/chat/settings"),
+                Some(&moderator),
+                json!({"slow_mode_seconds":seconds,"block_links":false,"banned_words":[],"reason":"x"})
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST,
+            "{seconds}"
+        );
+    }
     assert_eq!(
         call(
             e,
             "PUT",
             &format!("{BASE}/chat/settings"),
             Some(&moderator),
-            json!({"slow_mode_seconds":3601,"block_links":false,"banned_words":[],"reason":"x"})
+            json!({"slow_mode_seconds":3,"block_links":false,"banned_words":[],"reason":"x"})
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        StatusCode::OK
     );
     let too_many: Vec<String> = (0..201).map(|i| format!("word{i}")).collect();
     assert_eq!(
