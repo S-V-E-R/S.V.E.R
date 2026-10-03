@@ -17,7 +17,7 @@ Not in this module: Ad Valor and ad revenue sharing (Phase 4, with ads), Progres
 
 ## Who can earn
 
-Any account that is verified, has authenticator 2FA, is 18 or older by its date of birth, and has finished Stripe Connect onboarding including the tax form. There is no follower count or hours threshold. A restricted or banned account stops earning new revenue while restricted; balances already earned stay owed to it under the Terms.
+Any account that is verified, has authenticator 2FA, and has finished Stripe Connect onboarding including the tax form. There is no follower count or hours threshold. Accounts aged 13 to 17 (by date of birth) can earn only through an Express account owned by a parent or legal guardian, as Stripe requires: the guardian completes onboarding, accepts the Connected Account Agreement, and receives the payouts. A restricted or banned account stops earning new revenue while restricted; balances already earned stay owed to it under the Terms.
 
 ## Payments and the ledger
 
@@ -25,11 +25,11 @@ Any account that is verified, has authenticator 2FA, is 18 or older by its date 
 - Every money movement is a double-entry ledger row in Postgres (AGENTS.md). Balances are derived from the ledger, never stored only as a mutable number.
 - Stripe webhooks are signature-checked, stored, and processed idempotently by event ID; a replayed or out-of-order event never double-credits.
 - Refunds and chargebacks post reversing entries. A chargeback on a Valor purchase can push the buyer's Purchased Valor balance negative, which locks spending until settled.
-- Amounts are integer cents in USD. **Open:** other currencies.
+- Amounts are integer cents in USD; Valor earnings accrue in tenths of a cent and round down only at payout. **Open:** other currencies.
 
 ## Subscriptions
 
-- Tiers: $4.99, $9.99 and $24.99 a month. The streamer keeps 90%. **Open:** whether card fees come out before the 90/10 split or from S.V.E.R's 10%.
+- Tiers: $4.99, $9.99 and $24.99 a month. The streamer keeps 90% of the full price; S.V.E.R pays the card fees out of its 10%.
 - Benefits:
   - Subscriber badge showing months subscribed: 1, 3, 6, 9, 12, then each further year.
   - Subscriber emotes: 5 slots at tier 1, 5 more at tier 2, 5 more at tier 3, on top of the channel's 10 open emotes from Module 3.
@@ -38,11 +38,21 @@ Any account that is verified, has authenticator 2FA, is 18 or older by its date 
 - Gift subs: one month to a named viewer, or 5, 10 or 20 one-month gifts to random signed-in chatters in that channel who allow gifts (a setting, default on). A gifted month never auto-renews.
 - Paid by card (auto-renews monthly) or by Purchased Valor (one month at a time).
 - Cancel anytime; benefits run to the end of the paid month. Upgrading tiers takes effect immediately with Stripe's proration.
-- **Open:** minimum age to subscribe or buy Valor (proposed 18+, matching the age to earn).
+- Buyers aged 13 to 17: before their first purchase a parent or guardian confirms, at checkout, that they are the cardholder and consent to the purchase. Purchases by an account under 18 are capped at $50 a month (**Proposed** amount). A parent can report an unauthorized purchase through support for a refund, which reverses the Valor or subscription.
 
 ## Purchased Valor
 
-- Bought by card in packs. S.V.E.R's margin is in the pack price; the streamer receives 100% of the value of Valor spent on them. **Open:** pack prices, for example 100 Valor for $1.25 paying the streamer $1.00.
+- Bought by card in packs, priced at 99¢ per 100 Valor with discounts on larger packs. The smallest pack is 500, because Stripe's fixed 30¢ fee makes smaller packs lose money. Starting price list (**Proposed** for the larger packs):
+
+  | Pack | Price | Per 100 |
+  | --- | --- | --- |
+  | 500 | $4.99 | 99.8¢ |
+  | 1,500 | $14.49 | 96.6¢ |
+  | 5,000 | $46.99 | 94.0¢ |
+  | 10,000 | $89.99 | 90.0¢ |
+  | 25,000 | $219.99 | 88.0¢ |
+
+- The streamer earns **0.8¢ per Valor** spent on them (cheers and Valor-paid subscriptions). S.V.E.R pays the card fees and keeps the rest; every pack in the list stays above cost.
 - Spent as **cheers** in chat (minimum 10 Valor; the message is highlighted and shows the amount) and on subscriptions.
 - No expiry. Not transferable between accounts. Viewers can't cash it out. Purchases are non-refundable except where the law or the refund policy says otherwise.
 - Cheers obey chat rules: a cheer message that breaks banned-word or link rules is rejected before any Valor moves. A cheer to a channel that banned or blocked the viewer is refused.
@@ -65,8 +75,8 @@ Any account that is verified, has authenticator 2FA, is 18 or older by its date 
 
 ## Payouts
 
-- Monthly, once a streamer's available balance reaches the minimum. **Open:** the minimum (proposed $25).
-- A hold period covers chargebacks before revenue becomes available. **Open:** hold length (proposed 30 days).
+- Monthly, with no minimum: every available balance is paid out. S.V.E.R pays Stripe's payout fees (currently $2 per paid account per month plus 0.25% + 25¢ per payout).
+- A hold period covers chargebacks before revenue becomes available. **Proposed:** 30 days.
 - Tax reporting through Stripe. Payout setup lives in Creator Studio.
 
 ## Before launch
