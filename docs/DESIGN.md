@@ -49,7 +49,20 @@ Load fonts with `next/font/google` so they're self-hosted and subset. No `@impor
 
 ## Components
 
-**Framed panel.** 1 px `--line` border, background `linear-gradient(180deg, var(--tint), rgba(0,0,0,.25)), var(--surface)`, and 2 px `--accent` L-shaped brackets on all four corners (12 to 18 px long; done with pseudo-elements or small absolutely positioned spans). Used for the player card, daily orders, the front-line banner, the featured carousel and the Beacons shelf. Square corners everywhere; no border-radius on panels or buttons.
+**Framed panel.** 1 px `--line` border, background `linear-gradient(180deg, var(--tint), rgba(0,0,0,.25)), var(--surface)`, and 2 px `--accent` L-shaped brackets on all four corners (12 to 18 px long). Used for the player card, daily orders, the front-line banner, the featured carousel and the Beacons shelf. Square corners everywhere; no border-radius on panels or buttons. One way to draw all four brackets with a single pseudo-element:
+
+```css
+.frame { position: relative; }
+.frame::before {
+  content: ""; position: absolute; inset: -1px; pointer-events: none;
+  --b: linear-gradient(var(--accent), var(--accent));
+  background:
+    var(--b) top left / 16px 2px no-repeat,    var(--b) top left / 2px 16px no-repeat,
+    var(--b) top right / 16px 2px no-repeat,   var(--b) top right / 2px 16px no-repeat,
+    var(--b) bottom left / 16px 2px no-repeat, var(--b) bottom left / 2px 16px no-repeat,
+    var(--b) bottom right / 16px 2px no-repeat, var(--b) bottom right / 2px 16px no-repeat;
+}
+```
 
 **Section heading.** Cinzel 800, `--accent-light`, followed by a small `--accent` diamond (8 px square rotated 45°), a short `--ink-dim` description, and a 1 px `--line` rule filling the rest of the row, with a "View all" link at the end in Barlow Condensed.
 
@@ -89,7 +102,7 @@ Every page uses the same shell (top bar, sidebar, main column) unless noted. Uti
 
 **Landing (home, signed out).** The homepage above, with the signed-out variations: theme `neutral`, sidebar shows "Picked for you", and the front-line banner shows the season standing (a three-part bar), the three crests and an "Enlist" button. Clicking a crest goes to sign-up with that faction preselected. No separate marketing page: the first thing a visitor sees is live streams.
 
-**Sign up, log in, verify, reset, 2FA, OAuth sign-up.** One centered framed panel, 440 px wide, Cinzel title, no sidebar. Sign-up ends with the faction pick ("Choose your side"): three crest cards side by side, each with the faction name, epithet and one-line creed. Picking one immediately switches the page to that faction's theme so the user sees their colors before confirming. The one-free-switch-in-7-days rule is stated under the cards.
+**Sign up, log in, verify, reset, 2FA, OAuth sign-up.** One centered framed panel, 440 px wide, Cinzel title, no sidebar; the top bar shows only the logo and a "Log in" or "Enlist" link. Sign-up is three steps shown as hex-numbered markers (Account, Choose your side, Confirm email). Step 1: provider buttons (Google, Twitch, Discord) as outline buttons, then email, username (with the "sver.tv/username" preview), password (10+ characters), date of birth (13+, never shown) and the Turnstile check. Step 2, "Choose your side", widens to about 1000 px: three crest cards side by side, each with the faction name, epithet, creed and home turf. Picking one immediately switches the page to that faction's theme so the user sees their colors before confirming; the button reads "Enlist in Myria". The one-free-switch-in-7-days rule is stated under the cards. Step 3: crest, "Welcome to Myria", and the confirm-email message (browse and watch now; chat and going live unlock after confirming). Log in errors appear as a framed notice with a `--live` left bar and the remaining attempts.
 
 **Channel page (`/username`).**
 - Header: a wide banner (16:5) inside a framed panel; avatar (96 px) overlapping its bottom-left edge with the owner's crest beside it; display name in Cinzel, `@username` beneath, faction tag, mood/status line, social links, and Follow (primary) on the right with the follower count.
@@ -112,6 +125,12 @@ Every page uses the same shell (top bar, sidebar, main column) unless noted. Uti
 **War map.** Genres as a hex map, clustered by holding faction, each hex edged in the holder's color with the lead percentage; contested hexes get a white edge and a CONTESTED tag. Beside it: standings per faction and a short numbered list of how ground is taken.
 
 **Beacons feed.** One 9:16 video at a time, centered on desktop and full screen on phones, with a right-side rail: creator crest and name, like, view count, and Live now when the creator is streaming. Swipe or arrow keys move between Beacons.
+
+**Info pages (About, Factions, Roadmap, Help).** No sidebar. Top bar with the logo, a short nav (Home, Browse, Factions, Roadmap, About; the current page underlined in `--accent`), Log in and Enlist. Content in a centered column (920 to 1240 px), opening with a small label, a Cinzel headline (50 to 54 px) and a one-paragraph lead, then sections with the standard section heading. End with a framed call-to-action panel. Factions shows each faction in its own colors in a three-column grid (crest 150 px, name, epithet, creed, values, who it's for, home turf, lore, Join button). Roadmap shows the modules on a vertical track with diamond nodes and a status chip (Done filled, In progress outlined bright, Started outlined, Planned dim), then later phases as cards.
+
+**Legal pages (Terms, Privacy, Guidelines, DMCA, Take It Down).** Same top bar, tabs across the top to switch policy. Each policy: title, "Last updated · Effective" dates, a framed "The short version" box with 3 to 5 plain bullets and a note that the full text is what applies, then a sticky "On this page" list on the left and numbered sections on the right. The Take It Down tab is a request page instead: plain-language explanation, a framed "What happens next" list (confirmation, removal of the content and identical copies within 48 hours, follow-up), and a framed request form that works without an account.
+
+**Footer (every page).** Logo, "For streamers who play, build, and make.", links to About, Factions, Roadmap, Help, Terms, Privacy, Guidelines, DMCA, **Take It Down requests** (required to be clearly visible from the homepage) and Contact, and "© SVER LLC".
 
 **Errors and empty states.** Short and plain ("This channel doesn't exist." / "Nothing live right now."), inside a framed panel, with one useful next step. When nothing is live, show recently live channels and the war map, never a blank grid.
 
