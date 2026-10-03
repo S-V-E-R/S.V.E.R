@@ -366,7 +366,8 @@ fn strike_json(row: &Value, staff: bool) -> Value {
 }
 const STRIKE_SQL: &str = "jsonb_build_object('id',s.id,'reason',s.reason,'severity',s.severity,'content',s.content_snapshot,'penalty',s.penalty,'penalty_starts_at',s.penalty_starts_at,'penalty_until',s.penalty_until,'penalty_lifted_at',s.penalty_lifted_at,'level',s.level,'message_to_user',s.message_to_user,'issued_at',s.issued_at,'expires_at',s.expires_at,'status',CASE WHEN s.status='OVERTURNED' THEN 'overturned' WHEN s.expires_at<=now() THEN 'expired' ELSE 'active' END,'acknowledged',s.acknowledged_at IS NOT NULL,'appeal_closes_at',s.issued_at+interval '14 days','can_appeal',s.status='ACTIVE' AND a.id IS NULL AND s.issued_at+interval '14 days'>now(),'appeal',CASE WHEN a.id IS NULL THEN NULL ELSE jsonb_build_object('status',a.status,'created_at',a.created_at,'body',a.body,'message_to_user',CASE WHEN a.status<>'PENDING' THEN a.message_to_user END,'signed',CASE WHEN a.status<>'PENDING' THEN 'S.V.E.R moderators' END) END,'staff_note',s.staff_note,'issued_by',(SELECT username FROM users WHERE id=s.issued_by),'report_ids',s.report_ids,'removed_refs',s.removed_refs,'interim_restriction_id',s.interim_restriction_id,'ban_review_open',s.ban_review_open)";
 async fn strikes(db: &mut PgConnection, user_id: &str, staff: bool) -> Res<Vec<Value>> {
-    let rows: Vec<Value> = sqlx::query_scalar(&format!("SELECT {STRIKE_SQL} FROM strikes s LEFT JOIN appeals a ON a.strike_id=s.id WHERE s.user_id=$1 ORDER BY s.issued_at DESC"))
+    // Only fixed SQL fragments or allowlisted table/column literals are interpolated; values are bound.
+    let rows: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {STRIKE_SQL} FROM strikes s LEFT JOIN appeals a ON a.strike_id=s.id WHERE s.user_id=$1 ORDER BY s.issued_at DESC")))
         .bind(user_id)
         .fetch_all(&mut *db)
         .await?;
@@ -673,13 +674,15 @@ async fn reset_field(
                 "banner_key"
             };
             let old: Option<String> =
-                sqlx::query_scalar(&format!("SELECT {column} FROM profiles WHERE user_id=$1"))
+                // Only fixed SQL fragments or allowlisted table/column literals are interpolated; values are bound.
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {column} FROM profiles WHERE user_id=$1")))
                     .bind(user_id)
                     .fetch_one(&mut *db)
                     .await?;
-            sqlx::query(&format!(
+            // Only fixed SQL fragments or allowlisted table/column literals are interpolated; values are bound.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE profiles SET {column}=NULL,updated_at=now() WHERE user_id=$1"
-            ))
+            )))
             .bind(user_id)
             .execute(&mut *db)
             .await?;
@@ -696,9 +699,10 @@ async fn reset_field(
                 "status" => "status_text",
                 _ => "mood_emoji",
             };
-            sqlx::query(&format!(
+            // Only fixed SQL fragments or allowlisted table/column literals are interpolated; values are bound.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE profiles SET {column}='',updated_at=now() WHERE user_id=$1"
-            ))
+            )))
             .bind(user_id)
             .execute(&mut *db)
             .await?;
@@ -759,9 +763,10 @@ async fn reset_field(
                     media::queue_delete(db, logo.as_deref(), None).await?;
                 }
             }
-            sqlx::query(&format!(
+            // Only fixed SQL fragments or allowlisted table/column literals are interpolated; values are bound.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM {table} WHERE user_id=$1 AND ($2::text IS NULL OR id=$2)"
-            ))
+            )))
             .bind(user_id)
             .bind(item)
             .execute(&mut *db)
@@ -825,9 +830,10 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
             ));
         }
     };
-    let previous: Option<String> = sqlx::query_scalar(&format!(
+    // Only fixed SQL fragments or allowlisted table/column literals are interpolated; values are bound.
+    let previous: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT status FROM {table} WHERE id=$1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(&mut *db)
     .await?;
@@ -838,9 +844,10 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
             "setup_photo" => "",
             _ => ",moderated_at=now()",
         };
-        sqlx::query(&format!(
+        // Only fixed SQL fragments or allowlisted table/column literals are interpolated; values are bound.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {table} SET status='REMOVED'{stamp} WHERE id=$1"
-        ))
+        )))
         .bind(id)
         .execute(&mut *db)
         .await?;
@@ -1325,7 +1332,8 @@ pub async fn admin_appeals(
     let _staff = staff(&app, &jar).await?;
     let cursor = parse_cursor(&q.cursor)?;
     let mut db = app.db.acquire().await?;
-    let rows: Vec<(String, DateTime<Utc>, String, Value)> = sqlx::query_as(&format!("SELECT a.id,a.created_at,s.user_id,jsonb_build_object('id',a.id,'body',a.body,'created_at',a.created_at,'username',u.username,'strike',{STRIKE_SQL},'reports',(SELECT coalesce(jsonb_agg(jsonb_build_object('reason',r.reason,'note',r.note)),'[]') FROM reports r WHERE r.id=ANY(s.report_ids))) FROM appeals a JOIN strikes s ON s.id=a.strike_id JOIN users u ON u.id=a.user_id WHERE a.status='PENDING' AND ($1::timestamptz IS NULL OR (a.created_at,a.id)>($1,$2)) ORDER BY a.created_at,a.id LIMIT 21"))
+    // Only fixed SQL fragments or allowlisted table/column literals are interpolated; values are bound.
+    let rows: Vec<(String, DateTime<Utc>, String, Value)> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT a.id,a.created_at,s.user_id,jsonb_build_object('id',a.id,'body',a.body,'created_at',a.created_at,'username',u.username,'strike',{STRIKE_SQL},'reports',(SELECT coalesce(jsonb_agg(jsonb_build_object('reason',r.reason,'note',r.note)),'[]') FROM reports r WHERE r.id=ANY(s.report_ids))) FROM appeals a JOIN strikes s ON s.id=a.strike_id JOIN users u ON u.id=a.user_id WHERE a.status='PENDING' AND ($1::timestamptz IS NULL OR (a.created_at,a.id)>($1,$2)) ORDER BY a.created_at,a.id LIMIT 21")))
         .bind(cursor.as_ref().map(|c| c.0))
         .bind(cursor.as_ref().map(|c| c.1.clone()).unwrap_or_default())
         .fetch_all(&mut *db)
@@ -1400,9 +1408,10 @@ pub async fn decide(
                 "setup_photo" => "setup_photos",
                 _ => continue,
             };
-            sqlx::query(&format!(
+            // Only fixed SQL fragments or allowlisted table/column literals are interpolated; values are bound.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET status=$2 WHERE id=$1 AND status='REMOVED'"
-            ))
+            )))
             .bind(item_id)
             .bind(previous)
             .execute(&mut *tx)

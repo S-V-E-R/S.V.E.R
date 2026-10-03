@@ -82,14 +82,16 @@ pub async fn tick(app: &App) -> Result<()> {
         eprintln!("profile_event=erasure outcome=ok");
     }
     let open = "NOT EXISTS(SELECT 1 FROM reports r WHERE r.status='OPEN' AND r.target_id=x.id)";
-    sqlx::query(&format!(
+    // open is a fixed SQL predicate; no user input enters this statement.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM wall_replies x WHERE deleted_at<=now()-interval '30 days' AND {open}"
-    ))
+    )))
     .execute(&app.db)
     .await?;
-    sqlx::query(&format!(
+    // open is a fixed SQL predicate; no user input enters this statement.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM wall_posts x WHERE deleted_at<=now()-interval '30 days' AND {open}"
-    ))
+    )))
     .execute(&app.db)
     .await?;
     sqlx::query("DELETE FROM schedule_events WHERE end_at<=now()-interval '30 days'")

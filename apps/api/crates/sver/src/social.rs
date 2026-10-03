@@ -156,14 +156,15 @@ async fn follow_list(
     } else {
         ("following_id", "follower_id")
     };
-    let rows: Vec<(Value, DateTime<Utc>, String)> = sqlx::query_as(&format!(
+    // Only literal column choices and chip SQL are interpolated; request values are bound.
+    let rows: Vec<(Value, DateTime<Utc>, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {chip}, f.created_at, c.id FROM follows f JOIN channel_users c ON c.id=f.{join_col} \
          WHERE f.{filter_col}=$1 AND c.eligible \
          AND ($2::text IS NULL OR NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$2 AND b.blocked_id=c.id) OR (b.blocker_id=c.id AND b.blocked_id=$2))) \
          AND ($3::timestamptz IS NULL OR (f.created_at,c.id) < ($3,$4)) \
          ORDER BY f.created_at DESC, c.id DESC LIMIT $5",
         chip = chip_sql("c")
-    ))
+    )))
     .bind(&owner.id)
     .bind(viewer.as_ref().map(|v| v.id.clone()))
     .bind(after.as_ref().map(|a| a.0))
@@ -212,11 +213,12 @@ pub async fn my_following(
     let user = signed_in(&app, &jar).await?;
     let after = parse_cursor(&q.cursor)?;
     let mut db = app.db.acquire().await?;
-    let rows: Vec<(Value, DateTime<Utc>, String)> = sqlx::query_as(&format!(
+    // Only literal column choices and chip SQL are interpolated; request values are bound.
+    let rows: Vec<(Value, DateTime<Utc>, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {chip}, f.created_at, c.id FROM follows f JOIN channel_users c ON c.id=f.following_id WHERE f.follower_id=$1 AND c.eligible \
          AND ($2::timestamptz IS NULL OR (f.created_at,c.id) < ($2,$3)) ORDER BY f.created_at DESC, c.id DESC LIMIT $4",
         chip = chip_sql("c")
-    ))
+    )))
     .bind(&user.id)
     .bind(after.as_ref().map(|a| a.0))
     .bind(after.as_ref().map(|a| a.1.clone()).unwrap_or_default())
@@ -243,11 +245,12 @@ pub async fn war_council_read(
     viewer_id: Option<&str>,
     is_owner: bool,
 ) -> Res<Value> {
-    let rows: Vec<(i32, Value, bool, bool)> = sqlx::query_as(&format!(
+    // Only literal column choices and chip SQL are interpolated; request values are bound.
+    let rows: Vec<(i32, Value, bool, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT w.position, {chip}, c.eligible, ($2::text IS NOT NULL AND EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$2 AND b.blocked_id=c.id) OR (b.blocker_id=c.id AND b.blocked_id=$2))) \
          FROM war_council w JOIN channel_users c ON c.id=w.member_id WHERE w.user_id=$1 ORDER BY w.position",
         chip = chip_sql("c")
-    ))
+    )))
     .bind(owner_id)
     .bind(viewer_id)
     .fetch_all(&mut *db)
@@ -268,10 +271,11 @@ pub async fn war_council_read(
 pub async fn my_war_council(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = signed_in(&app, &jar).await?;
     let mut db = app.db.acquire().await?;
-    let mut rows: Vec<Value> = sqlx::query_scalar(&format!(
+    // Only literal column choices and chip SQL are interpolated; request values are bound.
+    let mut rows: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT jsonb_build_object('position',w.position,'user',{chip},'available',c.eligible) FROM war_council w JOIN channel_users c ON c.id=w.member_id WHERE w.user_id=$1 ORDER BY w.position",
         chip = chip_sql("c")
-    ))
+    )))
     .bind(&user.id)
     .fetch_all(&mut *db)
     .await?;
@@ -304,12 +308,13 @@ pub async fn war_council_search(
             .replace('_', "\\_")
     );
     let mut db = app.db.acquire().await?;
-    let mut rows: Vec<Value> = sqlx::query_scalar(&format!(
+    // Only literal column choices and chip SQL are interpolated; request values are bound.
+    let mut rows: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {chip} FROM channel_users c WHERE c.eligible AND c.id<>$1 \
          AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=c.id) OR (b.blocker_id=c.id AND b.blocked_id=$1)) \
          AND (lower(c.username) LIKE $2 OR lower(c.display_name) LIKE $2) ORDER BY (lower(c.username)=lower($3)) DESC, lower(c.username) LIMIT 10",
         chip = chip_sql("c")
-    ))
+    )))
     .bind(&user.id)
     .bind(&pattern)
     .bind(q)

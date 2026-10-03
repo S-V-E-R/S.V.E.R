@@ -386,7 +386,8 @@ async fn main() -> Result<(), String> {
         return Ok(());
     }
     let schema = format!("login_import_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+    // The schema identifier is a fixed prefix plus a locally generated simple UUID.
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&admin)
         .await
         .map_err(|_| "Could not create rehearsal schema")?;
@@ -397,7 +398,9 @@ async fn main() -> Result<(), String> {
             .after_connect(move |connection, _| {
                 let statement = search_path.clone();
                 Box::pin(async move {
-                    sqlx::query(&statement).execute(connection).await?;
+                    sqlx::query(sqlx::AssertSqlSafe(statement))
+                        .execute(connection)
+                        .await?;
                     Ok(())
                 })
             })
@@ -420,7 +423,8 @@ async fn main() -> Result<(), String> {
     }
     .await;
     // Only the generated identifier above is interpolated; no account data enters SQL text.
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    // The schema identifier is a fixed prefix plus a locally generated simple UUID.
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)
         .await
         .map_err(|_| "Rehearsal cleanup failed")?;
@@ -634,7 +638,8 @@ async fn profiles(
     std::fs::create_dir_all(&media_store).map_err(|_| "Could not create rehearsal media store")?;
     config.media.storage = sver::media::Storage::Filesystem(media_store.clone());
     let schema = format!("profile_import_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+    // The schema identifier is a fixed prefix plus a locally generated simple UUID.
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&admin)
         .await
         .map_err(|_| "Could not create rehearsal schema")?;
@@ -645,7 +650,9 @@ async fn profiles(
             .after_connect(move |connection, _| {
                 let statement = search_path.clone();
                 Box::pin(async move {
-                    sqlx::query(&statement).execute(connection).await?;
+                    sqlx::query(sqlx::AssertSqlSafe(statement))
+                        .execute(connection)
+                        .await?;
                     Ok(())
                 })
             })
@@ -684,7 +691,8 @@ async fn profiles(
     }
     .await;
     // Only the generated identifier above is interpolated; no imported data enters SQL text.
-    let dropped = sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    // The schema identifier is a fixed prefix plus a locally generated simple UUID.
+    let dropped = sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)
         .await;
     let removed = std::fs::remove_dir_all(&media_store);
@@ -724,7 +732,8 @@ mod tests {
         assert!(matches!(url.host_str(), Some("localhost" | "127.0.0.1")));
         let admin = PgPoolOptions::new().connect(&database).await.unwrap();
         let schema = format!("login_import_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        // The schema identifier is a fixed prefix plus a locally generated simple UUID.
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .execute(&admin)
             .await
             .unwrap();
@@ -733,7 +742,9 @@ mod tests {
             .after_connect(move |connection, _| {
                 let sql = search_path.clone();
                 Box::pin(async move {
-                    sqlx::query(&sql).execute(connection).await?;
+                    sqlx::query(sqlx::AssertSqlSafe(sql))
+                        .execute(connection)
+                        .await?;
                     Ok(())
                 })
             })
@@ -772,7 +783,8 @@ mod tests {
             Ok::<(), String>(())
         }.await;
         db.close().await;
-        sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        // The schema identifier is a fixed prefix plus a locally generated simple UUID.
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
             .execute(&admin)
             .await
             .unwrap();

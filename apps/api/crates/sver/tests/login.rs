@@ -41,7 +41,10 @@ async fn deliver_mail(
     }
 }
 async fn breach(Path(prefix): Path<String>) -> String {
-    let hash = format!("{:X}", Sha1::digest(b"password123456"));
+    let hash = Sha1::digest(b"password123456")
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<String>();
     if prefix == hash[..5] {
         format!("{}:99\r\n", &hash[5..])
     } else {
@@ -270,7 +273,7 @@ async fn login_lifecycle_and_security_boundaries() {
         .await
         .unwrap();
     let schema = format!("login_test_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&admin)
         .await
         .unwrap();
@@ -280,7 +283,9 @@ async fn login_lifecycle_and_security_boundaries() {
         .after_connect(move |connection, _| {
             let statement = search_path.clone();
             Box::pin(async move {
-                sqlx::query(&statement).execute(connection).await?;
+                sqlx::query(sqlx::AssertSqlSafe(statement))
+                    .execute(connection)
+                    .await?;
                 Ok(())
             })
         })
@@ -336,7 +341,7 @@ async fn login_lifecycle_and_security_boundaries() {
     .await;
     db.close().await;
     // Identifier consists solely of our fixed prefix and a generated UUID; never user input.
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)
         .await
         .unwrap();

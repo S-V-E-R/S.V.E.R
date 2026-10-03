@@ -449,7 +449,8 @@ pub async fn exercise(e: &Env) {
     );
 
     for table in ["chat_settings", "chat_messages", "channel_moderation_log"] {
-        e.sql(&format!("DELETE FROM {table}")).await;
+        e.sql(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
+            .await;
     }
     e.sql("DELETE FROM users WHERE id LIKE 'mod-%'").await;
 }

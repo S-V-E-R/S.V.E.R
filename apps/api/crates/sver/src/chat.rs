@@ -111,10 +111,11 @@ async fn hidden(app: &App, viewer: Option<&str>) -> Res<HashSet<String>> {
     Ok(ids.into_iter().collect())
 }
 async fn history(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Vec<Value>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    // select() contains only fixed SQL and a literal chip alias; message values are bound.
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{} WHERE m.channel_id=$1 AND m.deleted_at IS NULL ORDER BY m.seq DESC LIMIT $2",
         select()
-    ))
+    )))
     .bind(channel)
     .bind(HISTORY)
     .fetch_all(&app.db)
@@ -152,7 +153,8 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
         return Err(Fail::field("body", "Messages can only contain text."));
     }
     let existing: Option<Row> =
-        sqlx::query_as(&format!("{} WHERE m.id=$1 AND m.author_id=$2", select()))
+        // select() contains only fixed SQL and a literal chip alias; message values are bound.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND m.author_id=$2", select())))
             .bind(&input.id)
             .bind(&user.id)
             .fetch_optional(&app.db)
@@ -183,7 +185,8 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
-    let row: Row = sqlx::query_as(&format!("{} WHERE m.id=$1", select()))
+    // select() contains only fixed SQL and a literal chip alias; message values are bound.
+    let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1", select())))
         .bind(&input.id)
         .fetch_one(&app.db)
         .await?;

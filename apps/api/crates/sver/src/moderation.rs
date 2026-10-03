@@ -211,9 +211,11 @@ pub async fn view(
     .fetch_optional(&app.db)
     .await?;
     let (slow, links, words) = settings.unwrap_or((0, false, vec![]));
-    let mut moderators: Vec<Value> = sqlx::query_scalar(&format!("SELECT {} FROM channel_moderators m JOIN channel_users c ON c.id=m.user_id WHERE m.channel_id=$1 ORDER BY m.appointed_at", profiles::chip_sql("c")))
+    // Only chip_sql with a literal alias is interpolated; channel values are bound.
+    let mut moderators: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {} FROM channel_moderators m JOIN channel_users c ON c.id=m.user_id WHERE m.channel_id=$1 ORDER BY m.appointed_at", profiles::chip_sql("c"))))
         .bind(&channel).fetch_all(&app.db).await?;
-    let mut restrictions: Vec<Value> = sqlx::query_scalar(&format!("SELECT jsonb_build_object('user',{},'kind',r.kind,'until',r.until) FROM channel_restrictions r JOIN channel_users c ON c.id=r.user_id WHERE r.channel_id=$1 AND (r.kind='ban' OR r.until>now()) ORDER BY r.created_at DESC", profiles::chip_sql("c")))
+    // Only chip_sql with a literal alias is interpolated; channel values are bound.
+    let mut restrictions: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT jsonb_build_object('user',{},'kind',r.kind,'until',r.until) FROM channel_restrictions r JOIN channel_users c ON c.id=r.user_id WHERE r.channel_id=$1 AND (r.kind='ban' OR r.until>now()) ORDER BY r.created_at DESC", profiles::chip_sql("c"))))
         .bind(&channel).fetch_all(&app.db).await?;
     moderators
         .iter_mut()

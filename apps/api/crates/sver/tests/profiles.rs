@@ -1,5 +1,7 @@
 //! Module 2 acceptance checks against real Postgres, the filesystem media adapter and a
 //! controlled oEmbed fake (docs/PROFILES.md, "Acceptance"). Synthetic data only.
+//! AssertSqlSafe is limited to generated schema names and synthetic fixture IDs, media hashes
+//! and integer counters below. Test helpers still require SqlSafeStr at each call site.
 use axum::{
     Router,
     body::Body,
@@ -149,10 +151,10 @@ impl Env {
             .await
             .unwrap()
     }
-    async fn sql(&self, query: &str) {
+    async fn sql(&self, query: impl sqlx::SqlSafeStr) {
         sqlx::query(query).execute(&self.app.db).await.unwrap();
     }
-    async fn count(&self, query: &str) -> i64 {
+    async fn count(&self, query: impl sqlx::SqlSafeStr) -> i64 {
         sqlx::query_scalar(query)
             .fetch_one(&self.app.db)
             .await
@@ -222,7 +224,7 @@ async fn profiles_acceptance() {
         .await
         .unwrap();
     let schema = format!("profiles_test_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&admin)
         .await
         .unwrap();
@@ -232,7 +234,9 @@ async fn profiles_acceptance() {
         .after_connect(move |connection, _| {
             let statement = search_path.clone();
             Box::pin(async move {
-                sqlx::query(&statement).execute(connection).await?;
+                sqlx::query(sqlx::AssertSqlSafe(statement))
+                    .execute(connection)
+                    .await?;
                 Ok(())
             })
         })
@@ -299,7 +303,7 @@ async fn profiles_acceptance() {
     .await;
     db.close().await;
     // Identifier consists solely of our fixed prefix and a generated UUID; never user input.
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)
         .await
         .unwrap();
@@ -669,7 +673,7 @@ async fn identity_and_channel(env: &Env, media_dir: &std::path::Path) {
         .upload("/api/me/avatar", &[], Some(&png(300, 300)))
         .await;
     assert_eq!(s, StatusCode::OK);
-    let queued = env.count(&format!("SELECT count(*) FROM media_objects WHERE key LIKE '{avatar_key}/%' AND delete_after IS NOT NULL")).await;
+    let queued = env.count(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM media_objects WHERE key LIKE '{avatar_key}/%' AND delete_after IS NOT NULL"))).await;
     assert_eq!(
         queued, 3,
         "Replaced avatar variants are queued for deletion"
@@ -832,6 +836,18 @@ async fn follows_council_and_blocks(env: &Env) {
             .as_array()
             .unwrap()
             .is_empty()
+    );
+
+    // SQL-looking search text stays a bound value in the dynamically assembled chip query.
+    assert_eq!(
+        alice
+            .ok(
+                "GET",
+                "/api/me/war-council/search?q=%27%20OR%20true--",
+                Value::Null
+            )
+            .await["results"],
+        json!([])
     );
 
     // Blocking: silent, removes follows and War Council both ways, prevents new interactions.
@@ -1265,7 +1281,7 @@ async fn wall(env: &Env) {
             Value::Null,
         )
         .await;
-    assert_eq!(env.count(&format!("SELECT count(*) FROM user_blocks WHERE blocker_id='{owner_id}' AND blocked_id='{newbie_id}'")).await, 1);
+    assert_eq!(env.count(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM user_blocks WHERE blocker_id='{owner_id}' AND blocked_id='{newbie_id}'"))).await, 1);
     assert_eq!(
         newbie
             .status(
@@ -1994,7 +2010,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         )
         .await;
     assert_eq!(
-        env.count(&format!("SELECT count(*) FROM media_objects WHERE key LIKE '{gone_key}/%' AND delete_after IS NOT NULL")).await,
+        env.count(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM media_objects WHERE key LIKE '{gone_key}/%' AND delete_after IS NOT NULL"))).await,
         2
     );
     assert_eq!(
@@ -2009,17 +2025,17 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         "only the owner deletes"
     );
     // Restricted owners can't upload or edit.
-    env.sql(&format!(
+    env.sql(sqlx::AssertSqlSafe(format!(
         "UPDATE profiles SET restricted_until=now()+interval '1 hour' WHERE user_id='{owner_id}'"
-    ))
+    )))
     .await;
     let (s, _) = owner
         .upload("/api/me/setup/photos", &[], Some(&png(804, 600)))
         .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
-    env.sql(&format!(
+    env.sql(sqlx::AssertSqlSafe(format!(
         "UPDATE profiles SET restricted_until=NULL WHERE user_id='{owner_id}'"
-    ))
+    )))
     .await;
     // Report, remove with a strike, then an overturned appeal restores the photo.
     let reported = photo_ids[1].clone();
@@ -2119,15 +2135,15 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         (Some(""), 0, 0)
     );
     assert_eq!(
-        env.count(&format!(
+        env.count(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM setup_photos WHERE user_id='{owner_id}'"
-        ))
+        )))
         .await,
         0
     );
 
     // P5 and P6: handles on identities, suggestions, the Discord users link and the opt-in card.
-    env.sql(&format!("INSERT INTO identities(provider,subject,user_id,handle) VALUES('twitch','tw-parity','{owner_id}','parityhost_tv'),('discord','123456789012345678','{owner_id}','parity.host'),('google','g-parity','{owner_id}',NULL)")).await; // gitleaks:allow -- synthetic Discord user ID for this test.
+    env.sql(sqlx::AssertSqlSafe(format!("INSERT INTO identities(provider,subject,user_id,handle) VALUES('twitch','tw-parity','{owner_id}','parityhost_tv'),('discord','123456789012345678','{owner_id}','parity.host'),('google','g-parity','{owner_id}',NULL)"))).await; // gitleaks:allow -- synthetic Discord user ID for this test.
     let s = owner
         .ok("GET", "/api/me/link-suggestions", Value::Null)
         .await;
@@ -2194,9 +2210,9 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
     );
     fan.ok("DELETE", "/api/blocks/ParityHost", Value::Null)
         .await;
-    env.sql(&format!(
+    env.sql(sqlx::AssertSqlSafe(format!(
         "DELETE FROM identities WHERE user_id='{owner_id}' AND provider='twitch'"
-    ))
+    )))
     .await;
     assert_eq!(
         env.anon
@@ -2352,35 +2368,35 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
     assert_eq!(seen, ["schedule", "war_council"]);
     assert_eq!(feed(&env.anon).await["items"].as_array().unwrap().len(), 4);
     // A restricted subject is hidden; an unknown kind is skipped; internal actors record nothing.
-    env.sql(&format!(
+    env.sql(sqlx::AssertSqlSafe(format!(
         "UPDATE profiles SET restricted_until=now()+interval '1 hour' WHERE user_id='{target_id}'"
-    ))
+    )))
     .await;
     assert_eq!(feed(&env.anon).await["items"].as_array().unwrap().len(), 2);
-    env.sql(&format!(
+    env.sql(sqlx::AssertSqlSafe(format!(
         "UPDATE profiles SET restricted_until=NULL WHERE user_id='{target_id}'"
-    ))
+    )))
     .await;
     env.sql("INSERT INTO activity_events(id,actor_id,kind) SELECT 'future-kind',id,'stream_started' FROM users WHERE username='FeedActor'").await;
     assert!(!feed(&env.anon).await.to_string().contains("stream_started"));
     let (internal_id, internal) = env.user("FeedInternal", true).await;
-    env.sql(&format!(
+    env.sql(sqlx::AssertSqlSafe(format!(
         "INSERT INTO profiles(user_id,display_name,internal) VALUES('{internal_id}','FeedInternal',true) ON CONFLICT (user_id) DO UPDATE SET internal=true"
-    ))
+    )))
     .await;
     internal
         .ok("PUT", "/api/follows/FeedTarget", Value::Null)
         .await;
     assert_eq!(
-        env.count(&format!(
+        env.count(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM activity_events WHERE actor_id='{internal_id}'"
-        ))
+        )))
         .await,
         0
     );
     // Pagination: 20 per page with a cursor.
     for i in 0..22 {
-        env.sql(&format!("INSERT INTO activity_events(id,actor_id,kind,data,created_at) SELECT 'bulk-{i:02}',id,'schedule','{{}}',now()-interval '1 day'-make_interval(mins=>{i}) FROM users WHERE username='FeedActor'")).await;
+        env.sql(sqlx::AssertSqlSafe(format!("INSERT INTO activity_events(id,actor_id,kind,data,created_at) SELECT 'bulk-{i:02}',id,'schedule','{{}}',now()-interval '1 day'-make_interval(mins=>{i}) FROM users WHERE username='FeedActor'"))).await;
     }
     let page = feed(&env.anon).await;
     assert_eq!(page["items"].as_array().unwrap().len(), 20);
@@ -2413,13 +2429,13 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         tx.commit().await.unwrap();
     }
     assert_eq!(
-        env.count(&format!("SELECT count(*) FROM activity_events WHERE subject_id='{target_id}' OR actor_id='{target_id}'")).await,
+        env.count(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM activity_events WHERE subject_id='{target_id}' OR actor_id='{target_id}'"))).await,
         0
     );
     assert_eq!(
-        env.count(&format!(
+        env.count(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM setup_photos WHERE user_id='{other_id}'"
-        ))
+        )))
         .await,
         0
     );
@@ -2529,16 +2545,16 @@ async fn renames(env: &Env) {
         "OldHandle"
     );
     assert_eq!(
-        env.count(&format!(
+        env.count(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM username_holds WHERE user_id='{id}'"
-        ))
+        )))
         .await,
         0
     );
     assert_eq!(
-        env.count(&format!(
+        env.count(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM username_history WHERE user_id='{id}' AND reason='revert'"
-        ))
+        )))
         .await,
         1
     );
@@ -3110,8 +3126,10 @@ async fn erasure(env: &Env) {
     sver::profile_jobs::erase(&mut tx, &gone_id).await.unwrap();
     tx.commit().await.unwrap();
     assert_eq!(
-        env.count(&format!("SELECT count(*) FROM users WHERE id='{gone_id}'"))
-            .await,
+        env.count(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM users WHERE id='{gone_id}'"
+        )))
+        .await,
         0
     );
     let channel = env
@@ -3313,7 +3331,7 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
     ];
     let before = preserved_digest(env).await;
     let untouched = || async {
-        env.count(&format!("SELECT (SELECT count(*) FROM profiles WHERE user_id LIKE 'lp-%-{tag}') + (SELECT count(*) FROM follows WHERE follower_id LIKE 'lp-%-{tag}') + (SELECT count(*) FROM wall_posts WHERE id LIKE 'lp-%') + (SELECT count(*) FROM import_runs)")).await
+        env.count(sqlx::AssertSqlSafe(format!("SELECT (SELECT count(*) FROM profiles WHERE user_id LIKE 'lp-%-{tag}') + (SELECT count(*) FROM follows WHERE follower_id LIKE 'lp-%-{tag}') + (SELECT count(*) FROM wall_posts WHERE id LIKE 'lp-%') + (SELECT count(*) FROM import_runs)"))).await
     };
     let commit = profile_import::Options {
         commit: true,
@@ -3324,23 +3342,23 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
     // Rehearsal-only accounts would otherwise be the only legacy rows; the existing schema's
     // users stay untouched throughout.
     // 1. A seeded conflict rolls back.
-    env.sql(&format!(
+    env.sql(sqlx::AssertSqlSafe(format!(
         "INSERT INTO follows(follower_id,following_id) VALUES('{}','{}')",
         ids["fan"], ids["owner"]
-    ))
+    )))
     .await;
     let err = profile_import::run(app, &export, &media, &commit, &mut uploaded)
         .await
         .err()
         .unwrap();
     assert!(err.contains("already exist"), "{err}");
-    env.sql(&format!(
+    env.sql(sqlx::AssertSqlSafe(format!(
         "DELETE FROM follows WHERE follower_id='{}'",
         ids["fan"]
-    ))
+    )))
     .await;
     // 2. More than 3 internal accounts stops the import.
-    env.sql(&format!("UPDATE legacy_account_data SET account=account||'{{\"isSystemAccount\":true}}' WHERE user_id IN ('{}','{}','{}')", ids["fan"], ids["spot"], ids["bare"])).await;
+    env.sql(sqlx::AssertSqlSafe(format!("UPDATE legacy_account_data SET account=account||'{{\"isSystemAccount\":true}}' WHERE user_id IN ('{}','{}','{}')", ids["fan"], ids["spot"], ids["bare"]))).await;
     let err = profile_import::run(app, &export, &media, &commit, &mut uploaded)
         .await
         .err()
@@ -3350,7 +3368,7 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
         err.contains("adds 3 internal accounts") && err.contains("(4 internal in total)"),
         "{err}"
     );
-    env.sql(&format!("UPDATE legacy_account_data SET account=account||'{{\"isSystemAccount\":false}}' WHERE user_id IN ('{}','{}')", ids["fan"], ids["spot"])).await;
+    env.sql(sqlx::AssertSqlSafe(format!("UPDATE legacy_account_data SET account=account||'{{\"isSystemAccount\":false}}' WHERE user_id IN ('{}','{}')", ids["fan"], ids["spot"]))).await;
     let saved = std::mem::take(&mut uploaded);
     let err = profile_import::run(app, &export, &media, &commit, &mut uploaded)
         .await
@@ -3361,7 +3379,7 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
         "Even one flagged account stops the import: {err}"
     );
     uploaded = saved;
-    env.sql(&format!("UPDATE legacy_account_data SET account=account||'{{\"isSystemAccount\":true}}' WHERE user_id IN ('{}','{}','{}')", ids["fan"], ids["spot"], ids["bare"])).await;
+    env.sql(sqlx::AssertSqlSafe(format!("UPDATE legacy_account_data SET account=account||'{{\"isSystemAccount\":true}}' WHERE user_id IN ('{}','{}','{}')", ids["fan"], ids["spot"], ids["bare"]))).await;
     // The rehearsal-only preview continues past the stop and reports it.
     let preview = profile_import::Options {
         commit: false,
@@ -3411,7 +3429,7 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
             .await
             .unwrap();
     }
-    env.sql(&format!("UPDATE legacy_account_data SET account=account||'{{\"isSystemAccount\":false}}' WHERE user_id IN ('{}','{}','{}')", ids["fan"], ids["spot"], ids["bare"])).await;
+    env.sql(sqlx::AssertSqlSafe(format!("UPDATE legacy_account_data SET account=account||'{{\"isSystemAccount\":false}}' WHERE user_id IN ('{}','{}','{}')", ids["fan"], ids["spot"], ids["bare"]))).await;
     let before = {
         let _ = before;
         preserved_digest(env).await
@@ -3591,7 +3609,7 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
             .await
             .unwrap();
     assert_eq!(counts, (1, 1));
-    let followed_at: i64 = env.count(&format!("SELECT (extract(epoch FROM created_at)*1000)::bigint FROM follows WHERE follower_id='{}'", ids["owner"])).await;
+    let followed_at: i64 = env.count(sqlx::AssertSqlSafe(format!("SELECT (extract(epoch FROM created_at)*1000)::bigint FROM follows WHERE follower_id='{}'", ids["owner"]))).await;
     assert_eq!(
         followed_at, 1735732800123,
         "Follows keep their legacy creation time"
@@ -3601,10 +3619,10 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
         .await;
     assert_eq!(long_body, 700, "Bodies are kept verbatim");
     assert_eq!(
-        env.count(&format!(
+        env.count(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM wall_likes WHERE post_id='lp-p2' AND user_id='{}'",
             ids["fan"]
-        ))
+        )))
         .await,
         1
     );
@@ -3618,10 +3636,10 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
     let stored = std::fs::read_dir(media_dir).unwrap().count();
     assert!(stored > 0);
     assert_eq!(
-        env.count(&format!(
+        env.count(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM profiles WHERE user_id IN ('{}','{}') AND avatar_key IS NULL",
             ids["fan"], ids["spot"]
-        ))
+        )))
         .await,
         2,
         "Failed media keeps the default image"

@@ -20,7 +20,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::Utc;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use image::{DynamicImage, GenericImageView, ImageReader, imageops::FilterType};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -766,16 +766,18 @@ async fn upload(app: App, jar: CookieJar, multipart: Multipart, kind: Kind) -> R
         let mut tx = app.db.begin().await?;
         ensure_unrestricted(&mut tx, &user.id).await?;
         ensure_profile(&mut tx, &user.id).await?;
-        let old: Option<String> = sqlx::query_scalar(&format!(
+        // column is selected from the two literal media columns above; values are bound.
+        let old: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT {column} FROM profiles WHERE user_id=$1 FOR UPDATE"
-        ))
+        )))
         .bind(&user.id)
         .fetch_one(&mut *tx)
         .await?;
         record(&mut tx, &user.id, kind, &processed).await?;
-        sqlx::query(&format!(
+        // column is selected from the two literal media columns above; values are bound.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE profiles SET {column}=$2,updated_at=now() WHERE user_id=$1"
-        ))
+        )))
         .bind(&user.id)
         .bind(&processed.stored)
         .execute(&mut *tx)
@@ -811,15 +813,17 @@ async fn remove(app: App, jar: CookieJar, kind: Kind) -> Res<Json<Value>> {
     let mut tx = app.db.begin().await?;
     ensure_unrestricted(&mut tx, &user.id).await?;
     ensure_profile(&mut tx, &user.id).await?;
-    let old: Option<String> = sqlx::query_scalar(&format!(
+    // column is selected from the two literal media columns above; values are bound.
+    let old: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {column} FROM profiles WHERE user_id=$1 FOR UPDATE"
-    ))
+    )))
     .bind(&user.id)
     .fetch_one(&mut *tx)
     .await?;
-    sqlx::query(&format!(
+    // column is selected from the two literal media columns above; values are bound.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE profiles SET {column}=NULL,updated_at=now() WHERE user_id=$1"
-    ))
+    )))
     .bind(&user.id)
     .execute(&mut *tx)
     .await?;
@@ -910,6 +914,22 @@ pub async fn cleanup(app: &App) -> Res<usize> {
 #[cfg(test)]
 mod storage_tests {
     use super::*;
+
+    #[test]
+    fn signing_hmac_matches_rfc_4231() {
+        // Published vectors cover both normal and hashed (over-block-size) keys.
+        assert_eq!(
+            hex(&hmac(&[0x0b; 20], "Hi There")),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+        assert_eq!(
+            hex(&hmac(
+                &[0xaa; 131],
+                "Test Using Larger Than Block-Size Key - Hash Key First"
+            )),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+    }
 
     fn alpha_at(webp: &[u8], x: u32, y: u32) -> u8 {
         let image = image::load_from_memory_with_format(webp, image::ImageFormat::WebP).unwrap();

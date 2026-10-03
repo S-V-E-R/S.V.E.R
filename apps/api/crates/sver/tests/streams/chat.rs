@@ -15,7 +15,9 @@ use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 use tower::ServiceExt;
 
 pub async fn person(e: &Env, id: &str, name: &str, verified: bool) -> String {
-    e.sql(&format!("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES('{id}','{id}@example.test','{name}',{verified},'1990-01-01')")).await;
+    sqlx::query("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES($1,$2,$3,$4,'1990-01-01')")
+        .bind(id).bind(format!("{id}@example.test")).bind(name).bind(verified)
+        .execute(&e.app.db).await.unwrap();
     let token = sec::token();
     sqlx::query("INSERT INTO sessions(id,user_id,token_hash,auth_version,mfa_verified,user_agent) SELECT $1,id,$2,auth_version,false,'synthetic' FROM users WHERE id=$3")
         .bind(format!("{id}-session")).bind(sec::digest(&token)).bind(id).execute(&e.app.db).await.unwrap();

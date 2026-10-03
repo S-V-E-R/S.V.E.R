@@ -1507,12 +1507,13 @@ pub async fn channel_fan_art(
         return Err(Fail::missing());
     }
     let after = parse_cursor(&q.cursor)?;
-    let rows: Vec<(String, String, String, Option<String>, String, String, DateTime<Utc>, Value, String)> = sqlx::query_as(&format!(
+    // Only chip_sql with a literal alias is interpolated; request values are bound.
+    let rows: Vec<(String, String, String, Option<String>, String, String, DateTime<Utc>, Value, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT f.id,f.image_key,f.artist_name,f.artist_link,f.caption,f.status,f.submitted_at,{chip},f.submitter_id FROM fan_art f JOIN channel_users c ON c.id=f.submitter_id \
          WHERE f.channel_id=$1 AND c.deleted_at IS NULL AND (f.status='APPROVED' OR (f.status IN ('PENDING','REJECTED') AND f.submitter_id=$2)) \
          AND ($3::timestamptz IS NULL OR (f.submitted_at,f.id)<($3,$4)) ORDER BY f.submitted_at DESC,f.id DESC LIMIT 21",
         chip = chip_sql("c")
-    ))
+    )))
     .bind(&channel.id)
     .bind(&viewer_id)
     .bind(after.as_ref().map(|a| a.0))
@@ -1570,10 +1571,11 @@ pub async fn my_fan_art(State(app): State<App>, jar: CookieJar) -> Res<Json<Valu
     .bind(&user.id)
     .fetch_one(&mut *db)
     .await?;
-    let rows: Vec<(String, String, String, Option<String>, String, DateTime<Utc>, Value)> = sqlx::query_as(&format!(
+    // Only chip_sql with a literal alias is interpolated; request values are bound.
+    let rows: Vec<(String, String, String, Option<String>, String, DateTime<Utc>, Value)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT f.id,f.image_key,f.artist_name,f.artist_link,f.caption,f.submitted_at,{chip} FROM fan_art f JOIN channel_users c ON c.id=f.submitter_id WHERE f.channel_id=$1 AND f.status='PENDING' ORDER BY f.submitted_at,f.id LIMIT 20",
         chip = chip_sql("c")
-    ))
+    )))
     .bind(&user.id)
     .fetch_all(&mut *db)
     .await?;

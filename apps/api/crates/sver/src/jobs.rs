@@ -48,9 +48,12 @@ pub async fn tick(app: &App) -> Result<()> {
         "playback_leases",
         "chat_messages",
     ] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE expires_at<=now()"))
-            .execute(&app.db)
-            .await?;
+        // The table comes from the fixed maintenance list above.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE expires_at<=now()"
+        )))
+        .execute(&app.db)
+        .await?;
     }
     if app.config.resend_key.is_empty() {
         return Ok(());
