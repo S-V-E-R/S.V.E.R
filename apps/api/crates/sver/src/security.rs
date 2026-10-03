@@ -170,7 +170,7 @@ pub async fn verify_password(app: &App, password: String, stored: String) -> Res
 }
 pub async fn new_password(app: &App, password: String) -> Result<String> {
     if !(10..=128).contains(&password.chars().count()) || password.len() > 512 {
-        return Err(Error::bad("Use a password with 10â€“128 characters."));
+        return Err(Error::bad("Use a password with 10–128 characters."));
     }
     let hash = sha1::Sha1::digest(password.as_bytes())
         .iter()
