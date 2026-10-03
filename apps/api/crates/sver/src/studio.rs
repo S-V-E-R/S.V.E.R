@@ -337,6 +337,15 @@ pub async fn save_song(
         .execute(&mut *tx)
         .await?;
     media::queue_delete(&mut tx, old.as_deref(), thumb.as_deref()).await?;
+    crate::activity::record(
+        &mut tx,
+        &user.id,
+        "song",
+        None,
+        None,
+        json!({"title": title, "artist": artist}),
+    )
+    .await?;
     tx.commit().await?;
     Ok(Json(
         json!({"saved": true, "revision": revision, "song": {"provider": song.provider, "media_id": found.media_id, "url": song.url, "title": title, "artist": artist, "volume": volume, "thumbnail": thumb.map(|k| media_url(&app, &k))}}),
@@ -355,6 +364,7 @@ pub async fn delete_song(State(app): State<App>, jar: CookieJar) -> Res<Json<Val
             .await?;
     sqlx::query("UPDATE profiles SET song_provider=NULL,song_media_id=NULL,song_url=NULL,song_title=NULL,song_artist=NULL,song_thumb_key=NULL,song_notice=NULL,song_updated_at=now() WHERE user_id=$1").bind(&user.id).execute(&mut *tx).await?;
     media::queue_delete(&mut tx, old.as_deref(), None).await?;
+    crate::activity::forget(&mut tx, &user.id, "song").await?;
     tx.commit().await?;
     Ok(Json(json!({"saved": true})))
 }
@@ -676,6 +686,17 @@ pub async fn save_schedule(
         .execute(&mut *tx)
         .await?;
     }
+    if !blocks.is_empty() || !events.is_empty() {
+        crate::activity::record(
+            &mut tx,
+            &user.id,
+            "schedule",
+            None,
+            None,
+            json!({"blocks": blocks.len(), "events": events.len()}),
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(Json(json!({"saved": true, "revision": revision})))
 }
@@ -907,7 +928,41 @@ pub struct SetupInput {
 #[derive(Deserialize)]
 pub struct SetupList {
     items: Vec<SetupInput>,
+    /// Omitted means unchanged (decision P4).
+    title: Option<String>,
+    description: Option<String>,
     revision: Option<i64>,
+}
+pub const MAX_SETUP_PHOTOS: i64 = 3;
+fn setup_photo_urls(app: &App, prefix: &str) -> Value {
+    json!({"400": media_url(app, &format!("{prefix}/400.webp")), "1600": media_url(app, &format!("{prefix}/1600.webp"))})
+}
+/// Setup photos in owner order. `all` includes REMOVED photos (the owner's Studio view).
+async fn setup_photos_json(
+    app: &App,
+    db: &mut PgConnection,
+    user_id: &str,
+    all: bool,
+) -> Res<Vec<Value>> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as("SELECT id,image_key,alt,status FROM setup_photos WHERE user_id=$1 AND ($2 OR status='VISIBLE') ORDER BY position,created_at")
+        .bind(user_id)
+        .bind(all)
+        .fetch_all(&mut *db)
+        .await?;
+    Ok(rows
+        .iter()
+        .map(
+            |r| json!({"id": r.0, "image": setup_photo_urls(app, &r.1), "alt": r.2, "status": r.3}),
+        )
+        .collect())
+}
+async fn setup_text(db: &mut PgConnection, user_id: &str) -> Res<(String, String)> {
+    Ok(sqlx::query_as(
+        "SELECT coalesce((SELECT setup_title FROM profiles WHERE user_id=$1),''),coalesce((SELECT setup_description FROM profiles WHERE user_id=$1),'')",
+    )
+    .bind(user_id)
+    .fetch_one(&mut *db)
+    .await?)
 }
 async fn setup_json(db: &mut PgConnection, user_id: &str) -> Res<Vec<Value>> {
     Ok(sqlx::query_scalar("SELECT jsonb_build_object('category',category,'name',name,'note',note,'link',link) FROM setup_items WHERE user_id=$1 ORDER BY position").bind(user_id).fetch_all(&mut *db).await?)
@@ -916,9 +971,16 @@ async fn setup_json(db: &mut PgConnection, user_id: &str) -> Res<Vec<Value>> {
 pub async fn my_setup(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = signed_in(&app, &jar).await?;
     let mut db = app.db.acquire().await?;
-    Ok(Json(
-        json!({"items": setup_json(&mut db, &user.id).await?, "categories": SETUP_CATEGORIES, "revision": section_revision(&mut db, &user.id, "setup").await?}),
-    ))
+    let (title, description) = setup_text(&mut db, &user.id).await?;
+    Ok(Json(json!({
+        "items": setup_json(&mut db, &user.id).await?,
+        "title": title,
+        "description": description,
+        "photos": setup_photos_json(&app, &mut db, &user.id, true).await?,
+        "max_photos": MAX_SETUP_PHOTOS,
+        "categories": SETUP_CATEGORIES,
+        "revision": section_revision(&mut db, &user.id, "setup").await?,
+    })))
 }
 /// PUT /api/me/setup: up to 20 items in owner order.
 pub async fn save_setup(
@@ -945,10 +1007,26 @@ pub async fn save_setup(
             .transpose()?;
         rows.push((item.category.clone(), name, note, link));
     }
+    let title = input
+        .title
+        .as_deref()
+        .map(|t| text::plain(t, "title", 0, 80, 0, true))
+        .transpose()?;
+    let description = input
+        .description
+        .as_deref()
+        .map(|t| text::plain(t, "description", 0, 500, 6, true))
+        .transpose()?;
     let mut tx = app.db.begin().await?;
     ensure_unrestricted(&mut tx, &user.id).await?;
     ensure_profile(&mut tx, &user.id).await?;
     let revision = bump_section(&mut tx, &user.id, "setup", input.revision).await?;
+    sqlx::query("UPDATE profiles SET setup_title=coalesce($2,setup_title),setup_description=coalesce($3,setup_description),updated_at=now() WHERE user_id=$1")
+        .bind(&user.id)
+        .bind(&title)
+        .bind(&description)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM setup_items WHERE user_id=$1")
         .bind(&user.id)
         .execute(&mut *tx)
@@ -958,6 +1036,167 @@ pub async fn save_setup(
     }
     tx.commit().await?;
     Ok(Json(json!({"saved": true, "revision": revision})))
+}
+
+/// Queues a setup photo's media for deletion unless another setup photo still uses the same
+/// content-addressed key.
+pub async fn release_setup_photo(db: &mut PgConnection, key: &str) -> Res<()> {
+    let shared: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM setup_photos WHERE image_key=$1)")
+            .bind(key)
+            .fetch_one(&mut *db)
+            .await?;
+    if !shared {
+        media::queue_delete(db, Some(key), None).await?;
+    }
+    Ok(())
+}
+/// POST /api/me/setup/photos (multipart `file`, optional `alt`).
+pub async fn upload_setup_photo(
+    State(app): State<App>,
+    jar: CookieJar,
+    multipart: Multipart,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    {
+        let mut db = app.db.acquire().await?;
+        ensure_unrestricted(&mut db, &user.id).await?;
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM setup_photos WHERE user_id=$1")
+            .bind(&user.id)
+            .fetch_one(&mut *db)
+            .await?;
+        if count >= MAX_SETUP_PHOTOS {
+            return Err(Fail::conflict("You can add up to 3 setup photos."));
+        }
+    }
+    if !app.config.media.storage.available() {
+        return Err(Fail::unavailable("Image uploads aren't available yet."));
+    }
+    let (bytes, _, fields) = media::read_upload(multipart, Kind::SetupPhoto).await?;
+    let alt = text::plain(
+        fields.get("alt").and_then(Value::as_str).unwrap_or(""),
+        "alt",
+        0,
+        120,
+        0,
+        true,
+    )?;
+    rate(&app, format!("image-upload:{}", user.id), 20, 3600).await?;
+    let processed = media::process_async(bytes, Kind::SetupPhoto, None).await?;
+    media::store(&app, &processed).await?;
+    let mut tx = app.db.begin().await?;
+    ensure_profile(&mut tx, &user.id).await?;
+    // Lock the profile so concurrent uploads can't pass the limit together.
+    sqlx::query("SELECT 1 FROM profiles WHERE user_id=$1 FOR UPDATE")
+        .bind(&user.id)
+        .execute(&mut *tx)
+        .await?;
+    let (count, duplicate): (i64, bool) = sqlx::query_as(
+        "SELECT count(*),coalesce(bool_or(image_key=$2),false) FROM setup_photos WHERE user_id=$1",
+    )
+    .bind(&user.id)
+    .bind(&processed.stored)
+    .fetch_one(&mut *tx)
+    .await?;
+    if duplicate {
+        return Err(Fail::conflict("You already added that photo."));
+    }
+    if count >= MAX_SETUP_PHOTOS {
+        return Err(Fail::conflict("You can add up to 3 setup photos."));
+    }
+    media::record(&mut tx, &user.id, Kind::SetupPhoto, &processed).await?;
+    let id = new_id();
+    sqlx::query(
+        "INSERT INTO setup_photos(id,user_id,position,image_key,alt) VALUES($1,$2,$3,$4,$5)",
+    )
+    .bind(&id)
+    .bind(&user.id)
+    .bind(count as i32)
+    .bind(&processed.stored)
+    .bind(&alt)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Json(
+        json!({"id": id, "image": setup_photo_urls(&app, &processed.stored), "alt": alt, "status": "VISIBLE"}),
+    ))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhotoOrderItem {
+    id: String,
+    #[serde(default)]
+    alt: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhotoOrder {
+    photos: Vec<PhotoOrderItem>,
+}
+/// PUT /api/me/setup/photos: order and alt text; must list exactly the owner's photos.
+pub async fn save_setup_photos(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<PhotoOrder>,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut alts = Vec::new();
+    for p in &input.photos {
+        alts.push(text::plain(&p.alt, "alt", 0, 120, 0, true)?);
+    }
+    let mut tx = app.db.begin().await?;
+    ensure_unrestricted(&mut tx, &user.id).await?;
+    ensure_profile(&mut tx, &user.id).await?;
+    let mut current: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM setup_photos WHERE user_id=$1 FOR UPDATE")
+            .bind(&user.id)
+            .fetch_all(&mut *tx)
+            .await?;
+    let mut given: Vec<String> = input.photos.iter().map(|p| p.id.clone()).collect();
+    current.sort();
+    given.sort();
+    if current != given {
+        return Err(Fail::field(
+            "photos",
+            "The photo list changed. Reload and try again.",
+        ));
+    }
+    for (i, (p, alt)) in input.photos.iter().zip(&alts).enumerate() {
+        sqlx::query("UPDATE setup_photos SET position=$3,alt=$4 WHERE id=$1 AND user_id=$2")
+            .bind(&p.id)
+            .bind(&user.id)
+            .bind(i as i32)
+            .bind(alt)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(Json(json!({"saved": true})))
+}
+/// DELETE /api/me/setup/photos/{id}
+pub async fn delete_setup_photo(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut tx = app.db.begin().await?;
+    let key: Option<String> = sqlx::query_scalar(
+        "DELETE FROM setup_photos WHERE id=$1 AND user_id=$2 RETURNING image_key",
+    )
+    .bind(&id)
+    .bind(&user.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let key = key.ok_or_else(Fail::missing)?;
+    release_setup_photo(&mut tx, &key).await?;
+    // Keep positions dense (0..n) in the current order.
+    sqlx::query("UPDATE setup_photos p SET position=o.n FROM (SELECT id,(row_number() OVER (ORDER BY position,created_at))-1 AS n FROM setup_photos WHERE user_id=$1) o WHERE p.id=o.id")
+        .bind(&user.id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"saved": true})))
 }
 
 // ---------------------------------------------------------------- Custom page blocks
@@ -1082,17 +1321,28 @@ pub async fn save_blocks(
 }
 
 /// GET /api/channels/{username}/about: bio, enabled blocks, active sponsors and setup.
-pub async fn channel_about(State(app): State<App>, Path(name): Path<String>) -> Res<Json<Value>> {
+pub async fn channel_about(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+) -> Res<Json<Value>> {
+    let viewer = viewer(&app, &jar).await?;
     let mut db = app.db.acquire().await?;
     let owner = eligible_by_name(&mut db, &name)
         .await?
         .ok_or_else(Fail::channel_missing)?;
+    let (title, description) = setup_text(&mut db, &owner.id).await?;
+    let is_owner = viewer.as_ref().is_some_and(|v| v.id == owner.id);
     Ok(Json(json!({
         "owner": {"username": owner.username, "display_name": owner.display_name},
         "bio": owner.bio,
         "blocks": blocks_json(&mut db, &owner.id, true).await?,
         "sponsors": sponsors_json(&app, &mut db, &owner.id, true).await?,
         "setup": setup_json(&mut db, &owner.id).await?,
+        "setup_title": title,
+        "setup_description": description,
+        "setup_photos": setup_photos_json(&app, &mut db, &owner.id, false).await?,
+        "viewer": {"signed_in": viewer.is_some(), "is_owner": is_owner, "can_report": viewer.is_some() && !is_owner},
     })))
 }
 
@@ -1388,4 +1638,162 @@ pub async fn review_fan_art(
         .await?;
     tx.commit().await?;
     Ok(Json(json!({"status": next})))
+}
+
+// ---------------------------------------------------------------- Page header copy (P9)
+
+pub const DEFAULT_PAGE_LABEL: &str = "Creator Page";
+pub const DEFAULT_WELCOME: &str = "Welcome to my page";
+type HeaderRow = (String, String, String, String, String, bool);
+async fn header_row(db: &mut PgConnection, user_id: &str) -> Res<HeaderRow> {
+    Ok(sqlx::query_as("SELECT page_label,welcome_line,intro_title,intro_body,page_vibe,header_copy_enabled FROM profiles WHERE user_id=$1")
+        .bind(user_id)
+        .fetch_optional(&mut *db)
+        .await?
+        .unwrap_or_else(|| (String::new(), String::new(), String::new(), String::new(), String::new(), true)))
+}
+/// The header copy as rendered on the channel: defaults resolved, label and welcome null when
+/// the owner turned them off, intro fields empty when there is no intro body.
+pub async fn channel_header(db: &mut PgConnection, user_id: &str) -> Res<Value> {
+    let (label, welcome, intro_title, intro_body, vibe, enabled) = header_row(db, user_id).await?;
+    let or = |v: String, d: &str| if v.is_empty() { d.to_string() } else { v };
+    Ok(json!({
+        "label": enabled.then(|| or(label, DEFAULT_PAGE_LABEL)),
+        "welcome": enabled.then(|| or(welcome, DEFAULT_WELCOME)),
+        "intro_title": if intro_body.is_empty() { String::new() } else { intro_title },
+        "intro_body": intro_body,
+        "vibe": vibe,
+    }))
+}
+/// GET /api/me/header
+pub async fn my_header(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut db = app.db.acquire().await?;
+    let (label, welcome, intro_title, intro_body, vibe, enabled) =
+        header_row(&mut db, &user.id).await?;
+    Ok(Json(json!({
+        "page_label": label,
+        "welcome_line": welcome,
+        "intro_title": intro_title,
+        "intro_body": intro_body,
+        "page_vibe": vibe,
+        "enabled": enabled,
+        "defaults": {"page_label": DEFAULT_PAGE_LABEL, "welcome_line": DEFAULT_WELCOME},
+        "revision": section_revision(&mut db, &user.id, "header").await?,
+    })))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeaderInput {
+    #[serde(default)]
+    page_label: String,
+    #[serde(default)]
+    welcome_line: String,
+    #[serde(default)]
+    intro_title: String,
+    #[serde(default)]
+    intro_body: String,
+    #[serde(default)]
+    page_vibe: String,
+    #[serde(default = "yes")]
+    enabled: bool,
+    revision: Option<i64>,
+}
+/// PUT /api/me/header
+pub async fn save_header(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<HeaderInput>,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let label = text::plain(&input.page_label, "page_label", 0, 24, 0, true)?;
+    let welcome = text::plain(&input.welcome_line, "welcome_line", 0, 80, 0, true)?;
+    let intro_title = text::plain(&input.intro_title, "intro_title", 0, 60, 0, true)?;
+    let intro_body = text::plain(&input.intro_body, "intro_body", 0, 500, 6, true)?;
+    let vibe = text::plain(&input.page_vibe, "page_vibe", 0, 24, 0, true)?;
+    let mut tx = app.db.begin().await?;
+    ensure_unrestricted(&mut tx, &user.id).await?;
+    ensure_profile(&mut tx, &user.id).await?;
+    let revision = bump_section(&mut tx, &user.id, "header", input.revision).await?;
+    sqlx::query("UPDATE profiles SET page_label=$2,welcome_line=$3,intro_title=$4,intro_body=$5,page_vibe=$6,header_copy_enabled=$7,updated_at=now() WHERE user_id=$1")
+        .bind(&user.id)
+        .bind(&label)
+        .bind(&welcome)
+        .bind(&intro_title)
+        .bind(&intro_body)
+        .bind(&vibe)
+        .bind(input.enabled)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"saved": true, "revision": revision})))
+}
+
+// ---------------------------------------------------------------- Page readiness (P3)
+
+/// GET /api/me/readiness: the owner's 7 page steps, computed on the server.
+pub async fn my_readiness(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut db = app.db.acquire().await?;
+    let (avatar, banner, bio, links, song, council, schedule, dismissed): (bool, bool, bool, bool, bool, bool, bool, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT coalesce(p.avatar_key IS NOT NULL,false),coalesce(p.banner_key IS NOT NULL,false),coalesce(p.bio<>'',false),\
+         EXISTS(SELECT 1 FROM social_links WHERE user_id=$1),coalesce(p.song_provider IS NOT NULL,false),\
+         EXISTS(SELECT 1 FROM war_council WHERE user_id=$1),\
+         EXISTS(SELECT 1 FROM schedule_blocks WHERE user_id=$1) OR EXISTS(SELECT 1 FROM schedule_events WHERE user_id=$1 AND end_at>now()),\
+         p.readiness_dismissed_at FROM (SELECT $1::text AS id) u LEFT JOIN profiles p ON p.user_id=u.id",
+    )
+    .bind(&user.id)
+    .fetch_one(&mut *db)
+    .await?;
+    let steps = [
+        ("avatar", "Upload an avatar", avatar, "/settings/profile"),
+        ("banner", "Upload a banner", banner, "/settings/profile"),
+        ("bio", "Write a bio", bio, "/settings/profile"),
+        ("links", "Add a social link", links, "/settings/profile"),
+        ("song", "Set a profile song", song, "/studio/channel/song"),
+        (
+            "council",
+            "Pick your War Council",
+            council,
+            "/studio/channel/war-council",
+        ),
+        (
+            "schedule",
+            "Add your schedule",
+            schedule,
+            "/studio/channel/schedule",
+        ),
+    ];
+    let done = steps.iter().filter(|s| s.2).count();
+    Ok(Json(json!({
+        "steps": steps.iter().map(|(key, label, done, href)| json!({"key": key, "label": label, "done": done, "href": href})).collect::<Vec<_>>(),
+        "done": done,
+        "total": steps.len(),
+        "complete": done == steps.len(),
+        "dismissed": dismissed.is_some(),
+    })))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadinessInput {
+    dismissed: bool,
+}
+/// PUT /api/me/readiness: dismiss or restore the Studio reminder.
+pub async fn save_readiness(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<ReadinessInput>,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut tx = app.db.begin().await?;
+    ensure_profile(&mut tx, &user.id).await?;
+    sqlx::query(
+        "UPDATE profiles SET readiness_dismissed_at=CASE WHEN $2 THEN now() END WHERE user_id=$1",
+    )
+    .bind(&user.id)
+    .bind(input.dismissed)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"saved": true, "dismissed": input.dismissed})))
 }

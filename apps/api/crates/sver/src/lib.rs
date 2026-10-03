@@ -10,6 +10,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{sync::Arc, time::Duration};
+pub mod activity;
 pub mod auth;
 pub mod chat;
 pub mod jobs;
@@ -22,6 +23,7 @@ pub mod profile_jobs;
 pub mod profiles;
 pub mod rename;
 pub mod reserved;
+pub mod roadmap;
 pub mod safety;
 pub mod security;
 pub mod social;
@@ -249,9 +251,17 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
     {
         return Error::denied("Invalid request origin.").into_response();
     }
+    // Stored media keys are content-addressed (a hash of the kind, crop and source bytes), so a
+    // served object never changes: only successful /api/media responses may be cached.
+    let media = req.uri().path().starts_with("/api/media/");
     let mut response = next.run(req).await;
+    let cache = if media && response.status() == StatusCode::OK {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store"
+    };
     for (key, value) in [
-        ("cache-control", "no-store"),
+        ("cache-control", cache),
         ("referrer-policy", "no-referrer"),
         ("x-content-type-options", "nosniff"),
         ("x-frame-options", "DENY"),
@@ -267,6 +277,7 @@ pub fn router(app: App) -> Router {
             get(|| async { Json(json!({"status":"ok"})) }),
         )
         .route("/api/auth/config", get(auth::public_config))
+        .route("/api/roadmap", get(roadmap::read))
         .route(
             "/api/auth/username-availability",
             get(auth::username_availability),
@@ -338,6 +349,10 @@ fn profile_routes() -> Router<App> {
             get(st::channel_schedule),
         )
         .route("/api/channels/{username}/about", get(st::channel_about))
+        .route(
+            "/api/channels/{username}/activity",
+            get(crate::activity::channel_activity),
+        )
         .route(
             "/api/channels/{username}/fan-art",
             get(st::channel_fan_art)
@@ -413,6 +428,20 @@ fn profile_routes() -> Router<App> {
             "/api/me/setup",
             get(st::my_setup).put(st::save_setup).layer(lists),
         )
+        .route(
+            "/api/me/setup/photos",
+            post(st::upload_setup_photo)
+                .put(st::save_setup_photos)
+                .layer(upload),
+        )
+        .route("/api/me/setup/photos/{id}", delete(st::delete_setup_photo))
+        .route("/api/me/header", get(st::my_header).put(st::save_header))
+        .route(
+            "/api/me/readiness",
+            get(st::my_readiness).put(st::save_readiness),
+        )
+        .route("/api/me/link-suggestions", get(p::link_suggestions))
+        .route("/api/me/card-settings", put(p::card_settings))
         // `GET /me/blocks` is the user-block list, so the custom page blocks read from
         // `/me/page-blocks`; `PUT /me/blocks` saves page blocks as the spec lists.
         .route(

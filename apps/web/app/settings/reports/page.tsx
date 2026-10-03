@@ -6,7 +6,7 @@ import { reasons } from "../../../lib/types";
 
 type Row = { id: string; target_type: string; username: string | null; reason: string; note: string; created_at: string; status: "under_review" | "action_taken" | "closed"; notice: string | null; unread: boolean };
 type Page = { reports: Row[]; next_cursor: string | null; email_updates: boolean; email_available: boolean };
-const kinds: Record<string, string> = { profile: "Channel", wall_post: "Wall post", wall_reply: "Wall reply", fan_art: "Fan art" };
+const kinds: Record<string, string> = { profile: "Channel", wall_post: "Wall post", wall_reply: "Wall reply", fan_art: "Fan art", setup_photo: "Setup photo" };
 const statuses = { under_review: "Under review", action_taken: "Action taken", closed: "Closed" };
 
 export default function Reports() {

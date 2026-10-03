@@ -77,6 +77,15 @@ pub async fn follow(
         .execute(&mut *tx)
         .await?;
         refresh_counts(&mut tx, &[&user.id, &target.id]).await?;
+        crate::activity::record(
+            &mut tx,
+            &user.id,
+            "follow",
+            Some(&target.id),
+            None,
+            json!({}),
+        )
+        .await?;
     }
     let (followers, _) = follower_counts(&mut tx, &target.id).await?;
     tx.commit().await?;
@@ -372,6 +381,17 @@ pub async fn save_war_council(
             .execute(&mut *tx)
             .await?;
     }
+    if !ids.is_empty() {
+        crate::activity::record(
+            &mut tx,
+            &user.id,
+            "war_council",
+            None,
+            None,
+            json!({"count": ids.len()}),
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(Json(json!({"saved": true, "revision": revision})))
 }
@@ -494,6 +514,20 @@ pub async fn my_blocks(State(app): State<App>, jar: CookieJar) -> Res<Json<Value
     Ok(Json(json!({"items": rows})))
 }
 
+/// Linked Twitch and Discord handles, only when the owner opted in (decision P6).
+pub async fn also_known_as(db: &mut PgConnection, user_id: &str) -> Res<Vec<Value>> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT i.provider,i.handle FROM identities i JOIN profiles p ON p.user_id=i.user_id WHERE i.user_id=$1 AND p.show_linked_accounts AND i.handle IS NOT NULL AND i.provider IN ('twitch','discord') ORDER BY i.provider DESC")
+        .bind(user_id)
+        .fetch_all(&mut *db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(provider, handle)| {
+            let url = (provider == "twitch").then(|| format!("https://twitch.tv/{handle}"));
+            json!({"platform": provider, "handle": handle, "url": url})
+        })
+        .collect())
+}
 /// GET /api/users/{username}/card
 pub async fn card(
     State(app): State<App>,
@@ -517,8 +551,15 @@ pub async fn card(
     let me = channel_user_by_id(&mut db, &user.id)
         .await?
         .ok_or_else(Fail::missing)?;
+    let also_known_as = match &viewer {
+        Some(v) if v.id != user.id && blocked_between(&mut db, &v.id, &user.id).await? => {
+            Vec::new()
+        }
+        _ => also_known_as(&mut db, &user.id).await?,
+    };
     Ok(Json(json!({
         "username": me.username,
+        "also_known_as": also_known_as,
         "display_name": me.display_name,
         "avatar": avatar_json(&app, me.avatar_key.as_deref()),
         "bio": me.bio.chars().take(160).collect::<String>(),

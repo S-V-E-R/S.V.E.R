@@ -4,9 +4,8 @@ import { FormEvent, useState } from "react";
 import { send } from "../lib/client-api";
 import type { Post, Reply, WallViewer } from "../lib/types";
 import { ReportButton } from "./Report";
+import { Ago, Linkified } from "./Text";
 import { UserChip } from "./UserChip";
-
-const when = (iso: string) => new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
 
 function Composer({ path, limit, placeholder, onSaved }: { path: string; limit: number; placeholder: string; onSaved: (status: string, label: string | null) => void }) {
   const [body, setBody] = useState("");
@@ -36,8 +35,8 @@ function ReplyItem({ reply, onChange }: { reply: Reply; onChange: () => void }) 
   }
   return <li className="reply">
     <UserChip user={reply.author} size={24} />
-    {reply.body === null ? <p className="muted">{reply.status === "REMOVED" ? "Removed by S.V.E.R moderators." : "This reply is unavailable."}</p> : <p className="wall-body">{reply.body}</p>}
-    <div className="meta"><time dateTime={reply.created_at}>{when(reply.created_at)}</time>{reply.status_label && <span className="badge">{reply.status_label}</span>}{reply.can_delete && <button type="button" className="link-button" onClick={remove}>Delete</button>}{reply.can_report && <ReportButton target={{ target_type: "wall_reply", target_id: reply.id }} />}</div>
+    {reply.body === null ? <p className="muted">{reply.status === "REMOVED" ? "Removed by S.V.E.R moderators." : "This reply is unavailable."}</p> : <p className="wall-body"><Linkified text={reply.body} /></p>}
+    <div className="meta"><Ago iso={reply.created_at} />{reply.status_label && <span className="badge">{reply.status_label}</span>}{reply.can_delete && <button type="button" className="link-button" onClick={remove}>Delete</button>}{reply.can_report && <ReportButton target={{ target_type: "wall_reply", target_id: reply.id }} />}</div>
   </li>;
 }
 
@@ -75,8 +74,8 @@ export function WallPost({ post, viewer }: { post: Post; viewer: WallViewer }) {
   }
   const hidden = post.body === null;
   return <article className="wall-post panel">
-    <header className="row">{post.pinned_position && <span className="badge">Pinned</span>}<UserChip user={post.author} /><time className="muted" dateTime={post.created_at}>{when(post.created_at)}</time></header>
-    {hidden ? <p className="muted">{post.status === "REMOVED" ? "Removed by S.V.E.R moderators." : "This post is unavailable."}</p> : <p className="wall-body">{post.body}</p>}
+    <header className="row">{post.pinned_position && <span className="badge">Pinned</span>}<UserChip user={post.author} /><Ago className="muted" iso={post.created_at} /></header>
+    {hidden ? <p className="muted">{post.status === "REMOVED" ? "Removed by S.V.E.R moderators." : "This post is unavailable."}</p> : <p className="wall-body"><Linkified text={post.body ?? ""} /></p>}
     {post.status_label && <span className="badge">{post.status_label}</span>}
     <div className="meta">
       <button type="button" className="link-button" aria-pressed={liked} disabled={!viewer.can_react || post.status !== "APPROVED"} onClick={like}>{liked ? "♥ Liked" : "♡ Like"} · {likes}</button>

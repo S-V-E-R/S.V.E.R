@@ -446,13 +446,14 @@ async fn main() -> Result<(), String> {
 }
 
 fn outside_workspace(path: &str, what: &'static str) -> Result<PathBuf, String> {
-    let workspace = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../.."))
-        .canonicalize()
-        .map_err(|_| "Workspace unavailable")?;
     let path = PathBuf::from(path)
         .canonicalize()
         .map_err(|_| format!("{what} unavailable"))?;
-    if path.starts_with(workspace) {
+    // A release image has no source workspace; nothing can be inside one that doesn't exist.
+    if let Ok(workspace) =
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../..")).canonicalize()
+        && path.starts_with(workspace)
+    {
         return Err(format!("{what} must remain outside the workspace"));
     }
     Ok(path)
@@ -469,22 +470,36 @@ fn private_report(outcome: &profile_import::Outcome) -> Value {
     json!({"counts": outcome.counts, "dropped": outcome.dropped})
 }
 
-/// `sver-import-check profiles EXPORT_JSON MEDIA_DIR ACCOUNTS_JSON` (rehearsal) or
-/// `sver-import-check profiles EXPORT_JSON MEDIA_DIR --check-live|--apply-live`.
+/// `sver-import-check profiles EXPORT_JSON MEDIA_DIR ACCOUNTS_JSON [FLAGS]` (rehearsal) or
+/// `sver-import-check profiles EXPORT_JSON MEDIA_DIR --check-live|--apply-live [FLAGS]`.
+/// Flags: `--named-internal-only` (any mode), `--preview-extra-internal` (rehearsal only).
 async fn profiles(
     mut config: Config,
     database: &str,
     url: &url::Url,
     args: &[String],
 ) -> Result<(), String> {
-    let usage = "Usage: sver-import-check profiles EXPORT_JSON MEDIA_DIR (ACCOUNTS_JSON [--preview-extra-internal] | --check-live | --apply-live)";
-    let preview = args.len() == 4 && args[3] == "--preview-extra-internal";
-    if args.len() != 3 && !preview {
+    let usage = "Usage: sver-import-check profiles EXPORT_JSON MEDIA_DIR (ACCOUNTS_JSON [--preview-extra-internal] | --check-live | --apply-live) [--named-internal-only]";
+    if args.len() < 3 {
         return Err(usage.into());
     }
     let mode = args[2].as_str();
     let live = matches!(mode, "--check-live" | "--apply-live");
     if mode.starts_with("--") && !live {
+        return Err(usage.into());
+    }
+    let flags = &args[3..];
+    let preview = flags.iter().any(|f| f == "--preview-extra-internal");
+    let named_internal_only = flags.iter().any(|f| f == "--named-internal-only");
+    let mut seen = std::collections::HashSet::new();
+    if flags.iter().any(|f| {
+        !seen.insert(f.as_str())
+            || !matches!(
+                f.as_str(),
+                "--preview-extra-internal" | "--named-internal-only"
+            )
+    }) || (preview && (live || named_internal_only))
+    {
         return Err(usage.into());
     }
     let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1"));
@@ -532,7 +547,7 @@ async fn profiles(
             );
         }
         if !config.media.storage.available() {
-            return Err("The media bucket is not configured; refusing the live import".into());
+            return Err("Media storage (bucket or production filesystem) is not configured; refusing the live import".into());
         }
         let apply = mode == "--apply-live";
         let report_path = export_path.with_extension(if apply {
@@ -548,6 +563,7 @@ async fn profiles(
         let mut uploaded = Vec::new();
         let options = profile_import::Options {
             commit: apply,
+            named_internal_only,
             ..Default::default()
         };
         let result =
@@ -577,6 +593,11 @@ async fn profiles(
         report_file
             .sync_all()
             .map_err(|_| "Import finished but the private report sync failed")?;
+        if named_internal_only {
+            println!(
+                "Operator decision applied: only admin, support and SVER are internal; system-flagged accounts imported as public."
+            );
+        }
         print_counts(
             if apply {
                 "Live profile import COMMITTED:"
@@ -644,6 +665,7 @@ async fn profiles(
             let options = profile_import::Options {
                 commit: true,
                 preview_extra_internal: preview,
+                named_internal_only,
                 ..Default::default()
             };
             let outcome =

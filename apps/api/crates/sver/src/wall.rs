@@ -419,6 +419,17 @@ pub async fn create_post(
     .bind(status)
     .execute(&mut *tx)
     .await?;
+    if status == "APPROVED" {
+        crate::activity::record(
+            &mut tx,
+            &user.id,
+            "wall_post",
+            Some(&owner.id),
+            Some(&id),
+            json!({}),
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(Json(
         json!({"id": id, "status": status, "status_label": status_label(status)}),
@@ -635,6 +646,17 @@ pub async fn review(
             .bind(next)
             .execute(&mut *tx)
             .await?;
+            if kind == "posts" && next == "APPROVED" {
+                crate::activity::record(
+                    &mut tx,
+                    &author,
+                    "wall_post",
+                    Some(&owner),
+                    Some(&id),
+                    json!({}),
+                )
+                .await?;
+            }
         }
         "block-author" => {
             if author == user.id {

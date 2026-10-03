@@ -132,6 +132,8 @@ Every page uses the same shell (top bar, sidebar, main column) unless noted. Uti
 
 **Footer (every page).** Logo, "For streamers who play, build, and make.", links to About, Factions, Roadmap, Help, Terms, Privacy, Guidelines, DMCA, **Take It Down requests** (required to be clearly visible from the homepage) and Contact, and "© SVER LLC".
 
+While pages are being restored, navigation includes only working destinations. The information-page top bar offers Home, Factions, Roadmap, About and Help; Contact stays in the footer. Add Browse when it exists. Contact uses the information-page layout. Before Module 4, faction cards link to an explanation of the planned joining rules; signup does not select or reserve a faction. The information page uses 150 px crests as specified above, while marks elsewhere keep their smaller sizes. Faction cards use their own theme tokens without changing the surrounding site theme, and stack in one column below 960 px. Roadmap status is always written in text as well as distinguished by styling. This does not close the outstanding Take It Down request page and removal-process requirement. Legal contents lists become a normal list above the text below 960 px; keep the short summary and full policy available at every screen size.
+
 **Errors and empty states.** Short and plain ("This channel doesn't exist." / "Nothing live right now."), inside a framed panel, with one useful next step. When nothing is live, show recently live channels and the war map, never a blank grid.
 
 **Phones (below 960 px).** The sidebar becomes a drawer opened from a menu button in the top bar; grids drop to one or two columns; the watch page stacks player, streamer bar, then chat.

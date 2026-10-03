@@ -30,6 +30,33 @@ try {
   assert.equal(guest.status, 200);
   assert.match(navigation(await guest.text()), /href="\/login"/);
   assert.match(navigation(await (await get("/login", "sver_dev=invalid")).text()), /href="\/signup"/);
+  // Public site pages never require a session or go through channel tab redirects.
+  const sitePages = [["/about", "About S.V.E.R"], ["/factions", "Meet the factions"], ["/roadmap", "The road ahead"], ["/help", "Help &amp; FAQ"], ["/terms", "Terms of Service"], ["/privacy", "Privacy Policy"], ["/guidelines", "Community Guidelines"], ["/dmca", "Copyright &amp; DMCA"], ["/contact", "Contact S.V.E.R"]];
+  for (const [path, title] of sitePages) {
+    for (const cookie of ["", "sver_dev=invalid", `sver_dev=${token}`]) {
+      const response = await get(`${path}?tab=wall`, cookie);
+      assert.equal(response.status, 200, `${path} must be public and bypass channel routing`);
+      const html = await response.text();
+      assert.ok(html.includes(`<h1>${title}</h1>`), `${path} must render its own content`);
+      assert.match(html, /data-theme="neutral"/, "The current server-rendered theme is neutral");
+      assert.doesNotMatch(html, /<aside class="sidebar"/, `${path} must omit the application sidebar`);
+      if (["/terms", "/privacy", "/guidelines", "/dmca"].includes(path)) {
+        assert.match(html, /The short version/);
+        assert.match(html, /aria-label="On this page"/);
+        for (const [, anchor] of html.matchAll(/href="#(section-\d+)"/g)) assert.ok(html.includes(`id="${anchor}"`), `Policy anchor ${anchor} must exist`);
+      } else assert.match(html, /class="site-cta frame"/, "Information pages end with a framed next step");
+      assert.ok(html.includes(`href="https://sver.tv${path}"`), `${path} must have a canonical URL`);
+      const activeLinks = html.match(/<a\b[^>]*aria-current="page"[^>]*>/g) || [];
+      assert.ok(activeLinks.some(link => link.includes(`href="${path}"`)), `${path} must mark its navigation link`);
+      const footer = html.match(/<footer\b[\s\S]*?<\/footer>/)?.[0] || "";
+      for (const [href] of sitePages) assert.ok(footer.includes(`href="${href}"`), `Footer must link to ${href}`);
+    }
+  }
+  for (const path of ["/signup", "/oauth-signup"]) {
+    const html = await (await get(path)).text();
+    assert.match(html, /By creating an account, you agree/);
+    for (const href of ["/terms", "/privacy", "/guidelines"]) assert.ok(html.includes(`href="${href}"`));
+  }
   // Explicit auth routes (formerly the [screen] catch-all) and the channel placeholder.
   for (const path of ["/signup", "/oauth-signup", "/forgot", "/reset", "/verify", "/mfa"]) assert.equal((await get(path)).status, 200, `${path} must render signed out`);
   const guestAccount = await get("/account");
@@ -62,6 +89,12 @@ try {
   await expectRedirect(`/watch/${username}`, 302, `/${username}/live`);
   await expectRedirect(`/${username}?tab=wall`, 308, `/${username}/wall`);
   await expectRedirect(`/${username}?tab=showcase`, 308, `/${username}`);
+  // Every tab renders for a brand-new channel; the Schedule tab always exists and shows an empty state.
+  for (const tab of ["wall", "schedule", "followers", "following"]) assert.equal((await get(`/${username}/${tab}`)).status, 200, `/${username}/${tab} renders for guests`);
+  const schedulePage = await (await get(`/${username}/schedule`)).text();
+  assert.match(schedulePage, /No streams scheduled this week\./, "An empty schedule shows its empty state");
+  assert.match(schedulePage, new RegExp(`<nav class="channel-tabs"[^>]*>[\\s\\S]*?href="/${username}/schedule"`), "The Schedule tab is always in the tab bar");
+  assert.match(html, new RegExp(`href="/${username}/schedule"`), "The channel page links the Schedule tab");
   const liveView = await get(`/${username}/live`);
   assert.equal(liveView.status, 200, "The live view renders");
   assert.match(await liveView.text(), /is offline/, "An offline channel says so on the live view");
@@ -103,7 +136,7 @@ try {
   const revoked = await get("/account", cookie);
   assert.equal(revoked.status, 307);
   assert.equal(revoked.headers.get("location"), "/login");
-  console.log("Navigation acceptance passed: guest, invalid cookie, explicit auth routes, channel 404 parity, channel page and metadata, casing/alias/tab/hold redirects, settings/studio/admin access, signed-in header/sidebar, redirects, no cross-user cache, revoked session.");
+  console.log("Navigation acceptance passed: guest, invalid cookie, explicit auth routes, channel 404 parity, channel page and metadata, casing/alias/tab/hold redirects, tab pages and the empty Schedule tab, settings/studio/admin access, signed-in header/sidebar, redirects, no cross-user cache, revoked session.");
 } finally {
   sql(`DELETE FROM username_holds WHERE handle_canonical='${oldName}'; DELETE FROM users WHERE id='${id}' AND username='${username}';`);
   assert.equal(sql(`SELECT count(*) FROM users WHERE id='${id}';`), "0");

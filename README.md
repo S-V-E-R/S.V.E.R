@@ -2,7 +2,7 @@
 
 Live streaming for people who play, build, and make. Three factions, one seasonal war over every category.
 
-Read `AGENTS.md` before working in this repo. Build status is in [docs/ROADMAP.md](docs/ROADMAP.md): Login is finished and staged at https://sver.tv/login; Profiles is implemented locally; Live streams has started. Module specifications: [Login](docs/LOGIN.md), [Profiles](docs/PROFILES.md), [Live streams](docs/LIVE_STREAMS.md) and its [legacy carryover review](docs/LIVE_STREAMS_LEGACY.md). The platform plan, operations notes and the work log are kept private; docs that mention `PLATFORM_PLAN.md`, `OPERATIONS.md` or `ChangeLog.md` refer to those.
+Read `AGENTS.md` before working in this repo. Build status is in [docs/ROADMAP.md](docs/ROADMAP.md): Login is finished and staged at https://sver.tv/login; Profiles is deployed to staging with the legacy profile import done, and closes after staging browser QA; Live streams has started. Module specifications: [Login](docs/LOGIN.md), [Profiles](docs/PROFILES.md), [Live streams](docs/LIVE_STREAMS.md) and its [legacy carryover review](docs/LIVE_STREAMS_LEGACY.md). The platform plan, operations notes and the work log are kept private; docs that mention `PLATFORM_PLAN.md`, `OPERATIONS.md` or `ChangeLog.md` refer to those.
 
 ## Layout
 

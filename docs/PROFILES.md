@@ -47,6 +47,7 @@ Not done in this module: email or push notifications of any kind, live state, fa
 - Channel routes:
   - `/{username}` is the channel page (Home).
   - `/{username}/wall`, `/{username}/schedule`, `/{username}/about`, `/{username}/fan-art` (only when the owner has fan art enabled), `/{username}/followers` and `/{username}/following`.
+  - `/{username}/rewards` is a reserved stub page with no tab (P8).
   - `/{username}/live` redirects with 302 to `/{username}` until Module 3 defines it.
   - Any other sub-path returns 404.
 - Lookup is case-insensitive. A request whose casing differs from the stored username gets a 308 to the canonical casing, keeping the sub-path and query string.
@@ -229,7 +230,7 @@ All profile text is NFC-normalized and trimmed. Control characters, bidi overrid
 - **About:** custom blocks in the owner's order, sponsors, streaming setup.
 - **Fan Art:** only when enabled.
 - Followers and Following are list pages, not tabs.
-- Empty sections are hidden from visitors. The owner sees each one with an add prompt.
+- Empty sections are hidden from visitors, except the Schedule tab, which always exists and shows an empty state ("No streams scheduled this week."). The owner sees each one with an add prompt.
 - Each tab is server-rendered with its own URL. Tab content is paginated, never loaded all at once.
 
 ## Follows
@@ -842,6 +843,7 @@ This import is one-time and insert-only. It applies the same guardrails as the L
 | Beacons tab | None | Module 7 |
 | Wall SUBSCRIBERS option, Subscribe and Tip buttons | Hidden | Phase 2 |
 | Badges, achievements, featured stats, card frames | Not rendered; the only stats are follower and following counts and the join date | Phase 3 |
+| Channel rewards (`/{username}/rewards`, decision P8) | Reserved sub-path showing "Rewards are coming"; no tab | Module 4 / Phase 2 (economy) |
 | Notifications (wall posts, follows, approvals) | None; Studio shows pending counts. Report outcomes and strikes use `/settings/reports`, `/settings/standing` and the generic emails defined in Safety | Notification work (unscheduled) |
 
 ## Acceptance
@@ -880,7 +882,7 @@ Run against real Postgres, plus a local S3-compatible test bucket or the filesys
 5. **Channel page**
    - Signed-out visitors see the page with counts and links.
    - The owner sees edit controls; other viewers see Follow, Block and Report.
-   - Empty sections are hidden from visitors.
+   - Empty sections are hidden from visitors; the Schedule tab always shows, with an empty state.
    - No authenticated HTML reaches an anonymous follow-up request.
    - The metadata tags are present.
 6. **Follows**
@@ -955,6 +957,27 @@ Run against real Postgres, plus a local S3-compatible test bucket or the filesys
 
 Before closing: the live import is completed and verified under the user's authorization. Browser QA of the channel page, settings (including My reports and Account standing), Studio, wall and the admin Reports and Appeals queues is done on staging. The user confirms their own imported channel at `sver.tv/{username}` shows the right display name, avatar, banner, bio, links, War Council and wall.
 
+Status, October 3, 2026: on Joe's instruction, the legacy profile import ran on staging from the newest nightly legacy backup and was verified with aggregate counts only:
+- 42 profiles: 39 legacy profiles plus 3 defaults for accounts without one
+- 57 of 57 follows
+- 6 of 6 War Council picks
+- 17 of 18 links: one owner had 6, and the 5 oldest were kept
+- 2 of 2 wall posts; no replies or reactions exist
+- 3 avatars and 2 banners re-hosted
+
+An independent comparison, plus a post-import backup restored in isolation, matched. Two operator decisions applied to this import:
+- Only admin, support and SVER are internal. The 2 accounts with the legacy system flag were imported as public accounts and can be hidden later. This supersedes the stop in decision 3 for this import.
+- Images are stored on the server's filesystem until the `media.sver.tv` bucket exists.
+
+One imported banner's centered 3:1 crop was below 1200x400, so the import upscaled that crop to the minimum instead of dropping it. Uploads still refuse small images.
+
+Status, October 3, 2026, 3:15 PM ET: the 9 parity additions (P1–P9) are deployed to staging as API and web `m2p2-20261003` (migration `0009`). Their automated acceptance tests pass locally, and a signed-out headless-Chrome pass on staging shows the Share button, header copy and rewards stub with no client errors.
+
+Profiles stays open until:
+- Cloudflare's "SVER Uploads" skip rule covers `/api/me/setup/photos` (setup photo uploads through Cloudflare get 403 until then; the exact change is in `docs/OPERATIONS.md`)
+- a signed-in staging browser pass covers settings, Studio (including P3, P4 and P9), the wall and the admin Reports and Appeals queues
+- Joe confirms his own channel
+
 ## Done when
 
 - Any visitor can open any eligible channel at `sver.tv/{username}`. Internal, deleted and restricted accounts have no page, and every top-level route is a reserved name checked by a failing test.
@@ -969,6 +992,7 @@ Before closing: the live import is completed and verified under the user's autho
 - Users can see their strikes and appeal each one once within 14 days, and a different staff member (where one exists) can uphold or overturn it, with an overturned strike's penalty lifted and every step audited.
 - Legacy follows, War Council picks, social links and wall posts, plus the 3 avatars and 2 banners, are imported and verified with aggregate-only output.
 - Later-module features show their defined stubs.
+- The 9 parity additions P1–P9 (Joe's decisions of October 3, 2026, 2:34 PM ET) pass their acceptance tests on staging.
 
 ## Decisions approved October 3, 2026
 
@@ -1038,6 +1062,219 @@ The user approved items 1-19 as drafted, together with fixes 20-23.
 21. **No stacking:** a strike for the same incident counts its restriction time from the start of the interim restriction.
 22. **Strike 3:** an indefinite restriction plus a staff ban review once Module 3 bans exist. There is no intermediate step.
 23. **Strike-2 appeals:** the spec and the appeal page say plainly that a strike-2 appeal is usually decided after the 72 hours end, so overturning it mainly removes the strike from the count.
+
+## Parity additions: Joe's decisions, October 3, 2026 (2:34 PM ET)
+
+The parity audit (`docs/PROFILES_PARITY.md`) found 9 legacy features that Module 2 neither had nor deferred. Joe decided to build all 9 before closing Profiles. These are his decisions. Each one lists the rules, the edge cases and the acceptance tests. Migration `0009_profile_parity.sql` carries the schema for all of them.
+
+### P1. Share / copy link on channels
+
+Rules:
+- Every channel header has a **Share** button next to Follow or Edit, for every viewer (signed out, signed in, owner).
+- The shared URL is always the canonical channel URL `{origin}/{username}` (current casing, no sub-path, no query). It isn't the URL of the tab being viewed.
+- On a touch device (`pointer: coarse`) with `navigator.share`, the button opens the native share sheet with the title "{display name} (@{username}) on S.V.E.R" and the URL.
+- Everywhere else it copies the URL to the clipboard and shows "Link copied" for 2 seconds.
+- No server call, no tracking, no share counts.
+
+Edge cases:
+- If the user cancels the native sheet (`AbortError`), nothing is shown.
+- If the clipboard is refused or missing (permissions, insecure context), the button shows a read-only text field holding the URL, already selected, with "Copy this link".
+- After a rename, the button uses the new name, because the page is served under the canonical name.
+
+Acceptance:
+- The button renders for signed-out viewers, viewers and the owner.
+- Clicking it on desktop puts exactly `https://sver.tv/{username}` on the clipboard (stage origin), even from `/wall`.
+- With `navigator.share` on a coarse pointer, the share sheet receives that URL.
+- When the clipboard rejects, the selected fallback field appears.
+
+### P2. Mood emoji presets
+
+Rules:
+- Under the Mood field in `/settings/profile` there is a row of 12 preset buttons: 🎮 🔥 😎 🎧 ⚔️ 🛡️ 🏆 💀 😴 🍕 🎉 ❤️, plus **Clear**.
+- A preset fills the field; nothing is saved until **Save profile**. The preset that matches the field is marked pressed (`aria-pressed`).
+- Typing any other single emoji still works. The server rule is unchanged: exactly one emoji, or empty.
+
+Edge cases:
+- Presets with a variation selector (⚔️ 🛡️ ❤️) are one emoji and must pass the server rule.
+- Clear empties the field; saving then removes the mood.
+
+Acceptance:
+- A unit test checks that every preset passes `text::mood`.
+- In the browser, picking a preset and saving shows that emoji on the channel header; Clear plus Save removes it.
+
+### P3. Page readiness checklist
+
+Rules:
+- Owner only, in Creator Studio. `/studio/channel` (previously a redirect to Song) becomes **Channel overview** with the full checklist.
+- The Studio channel navigation gains **Overview** (`/studio/channel`) and **Page header** (`/studio/channel/header`, P9).
+- While the checklist is incomplete and not dismissed, every `/studio/channel/*` section page (not the overview itself, which shows the full list) shows a one-line banner: "Page readiness: {done} of 7 done", a link "Finish your page" and **Dismiss**.
+- `GET /api/me/readiness` computes the 7 steps on the server. Each step has a key, label, done flag and fix link:
+  1. avatar: an avatar is uploaded
+  2. banner: a banner is uploaded
+  3. bio: the bio isn't empty
+  4. links: at least one social link
+  5. song: a profile song is set
+  6. council: at least one War Council member
+  7. schedule: at least one weekly block or upcoming event
+- `PUT /api/me/readiness {"dismissed": true|false}` stores or clears `profiles.readiness_dismissed_at`.
+
+Edge cases:
+- Dismissed: the banner hides on every device. The overview still shows the checklist, with "Show the reminder again".
+- All 7 done: the banner hides by itself, and the overview says "Your page is ready."
+- A step that becomes undone again (avatar removed) shows as not done. It doesn't undo a dismissal.
+- No endpoint exposes anyone else's readiness, and nothing appears on the public channel.
+
+Acceptance:
+- The API reports each step done as it's completed and counts done/total.
+- Dismiss persists across sessions and restore works.
+- Requests are signed-in only (401 signed out).
+- The banner shows on Studio channel pages, disappears after Dismiss and never renders on the channel page.
+
+### P4. Setup photos, title and description
+
+Rules:
+- Streaming setup gains a title (0–80 characters, one line) and a description (0–500 characters, up to 6 line breaks, plain text). Both are word-filtered and saved with `PUT /api/me/setup` (optional `title` and `description`; omitted means unchanged) under the existing "setup" revision.
+- Up to **3 photos**:
+  - `POST /api/me/setup/photos` (multipart `file`, optional `alt` 0–120 characters, filtered)
+  - JPG, PNG or WebP, up to 5 MB, at least 64 px and at most 4096 px on each side
+  - stored as 400 px and 1600 px WebP that fit inside those sizes (no crop, metadata stripped, first frame only) under the new media kind `setup_photo` (`setup/{hash}/`)
+  - the image upload rate limit shared with the other images (20 per hour)
+- `PUT /api/me/setup/photos {"photos":[{"id","alt"}]}` sets the order and alt text, and must list exactly the owner's current photos. `DELETE /api/me/setup/photos/{id}` deletes one photo and queues its media for deletion, unless another row still uses the same content-addressed key.
+- Photo uploads, reorders and deletes don't bump the "setup" revision, so they never make an open gear or text edit stale.
+- Photos are the owner's own content (like the avatar). They need no approval and show at once on About, in the Streaming setup section: title, description, a photo row (400 px; the 1600 px image opens in a new tab), then the gear grouped by category. Photos, title or description alone make the About tab visible.
+- **Moderation, as fan art:**
+  - report target `setup_photo`, with the Report button on each photo
+  - staff "Remove content" sets the photo REMOVED, which hides it from visitors; the owner sees "Removed by moderators" in Studio and can delete it
+  - an overturned appeal restores it
+  - the existing "setup" field reset also clears the title, description and photos
+  - snapshots hold the image key and alt text; channel-field report snapshots now also include `setup_text` (title and description) and `header` (P9)
+- **Upload route:** Nginx gives `/api/me/setup/photos` the 11 MB upload body like the other image paths. Cloudflare's "SVER Uploads" skip rule must add this path (exact change in `docs/OPERATIONS.md`). No existing covered pattern fits cleanly.
+
+Edge cases:
+- A 4th photo is refused with 409 "You can add up to 3 setup photos." The count is checked under a lock on the owner's profile row, so parallel uploads can't exceed 3.
+- The same image uploaded twice is refused with 409 "You already added that photo."
+- A REMOVED photo still counts toward the 3 until the owner deletes it, so an appeal can always restore it.
+- Restricted users can't upload or edit setup (403). Non-images, oversized files and tiny images are refused with the image error messages.
+- Erasure deletes the rows (cascade) and queues the media.
+- Photos are public like the rest of About. A block limits interaction, not viewing, so blocked viewers can still see them (as with every other channel section).
+
+Acceptance:
+- An upload creates the 400 and 1600 WebP files and shows on About.
+- A 4th upload gets 409; a reorder with a wrong set gets 400; delete queues media.
+- Title and description are length- and filter-checked.
+- Restricted gets 403.
+- A report → Remove content hides the photo from About; an overturn restores it; the setup reset clears everything.
+- `nginx -t` passes with the new path in the upload location.
+
+### P5. Social link suggestions from linked Twitch and Discord accounts
+
+Rules:
+- Login stores the provider's public handle on the identity (`identities.handle`):
+  - Twitch: `login`, lowercase `[a-z0-9_]{3,25}`
+  - Discord: `username`, `[a-z0-9_.]{2,32}`
+  - Google: none
+- The handle is set on sign-up, linking and every sign-in with that provider. A value that fails the pattern is stored as no handle.
+- `GET /api/me/link-suggestions` returns, for linked providers:
+  - Twitch: `https://twitch.tv/{login}`, when a handle is known
+  - Discord: `https://discord.com/users/{discord user id}` (the identity's provider subject; always available for a linked Discord account)
+  - A platform the user already has a link for is left out.
+- The Discord link rule also accepts `https://discord.com/users/{17–20 digits}`.
+- `/settings/profile` → Social links shows "From your linked accounts" with an **Add** button for each suggestion. It adds a row to the form; nothing is saved until **Save links**. Suggestions never apply themselves.
+
+Edge cases:
+- Identities linked before this release have no Twitch handle until the next Twitch sign-in. The UI says "Sign in with Twitch once to suggest your channel link."
+- No suggestion is shown when 5 links already exist (the Add button is disabled with "You already have 5 links").
+- Unlinking a provider removes its suggestion.
+
+Acceptance:
+- Suggestions come only from linked providers, never for an existing platform, and never saved without the user.
+- The Discord users URL is accepted by the validator.
+- The handle is updated on sign-in.
+
+### P6. "Also known as" on the user card (opt-in)
+
+Rules:
+- `/settings/profile` has a checkbox "Show my linked Twitch and Discord accounts on my user card", stored as `profiles.show_linked_accounts`, **off by default**. Saved with `PUT /api/me/card-settings {"show_linked_accounts": bool}`.
+- The migration sets it off for everyone. The legacy import and every other path never set it; only the account owner can turn it on.
+- When on, `GET /api/users/{u}/card` includes `also_known_as` (Twitch first, then Discord): Twitch `{platform, handle, url: "https://twitch.tv/{login}"}` and Discord `{platform, handle, url: null}` (text only), for linked identities with a known handle. Otherwise it's an empty list.
+- The card shows "Also known as" with the Twitch link (`nofollow noopener noreferrer`) and the Discord name as text.
+
+Edge cases:
+- Off, or on with no handles: nothing is shown.
+- Unlinking a provider removes it from the card at once.
+- Not shown when the viewer and the user block each other (either direction).
+- Not shown on the channel page, only on the card.
+
+Acceptance:
+- Off by default for new accounts and imported accounts (the import test checks it).
+- On shows only providers with handles; off hides them; unlink removes them; a blocked pair sees none.
+
+### P7. Activity feed (Module 2 scope)
+
+Rules:
+- Table `activity_events (id, actor_id, kind, subject_id, ref_id, data, created_at)`. Users are foreign keys with cascade. `kind` is text checked against a registry in code (`activity.rs`). Module 5 adds kinds by adding entries there, with no schema change. Unknown kinds are skipped when read.
+- Module 2 kinds, recorded when the action succeeds:
+  - `follow`: A follows B. One row per pair; a refollow moves it to now.
+  - `wall_post`: a post by A on B's wall becomes visible (posted without approval, or approved). Subject B, ref the post. A post on your own wall has subject = actor.
+  - `war_council`: A saves a War Council with at least one member.
+  - `song`: A saves a profile song (data: title, artist).
+  - `schedule`: A saves a schedule with at least one block or event.
+- `war_council`, `song` and `schedule` coalesce: a save within 60 minutes of A's previous event of that kind updates it instead of adding a row.
+- Removing the song deletes A's song events; resets of the song, schedule or War Council by staff delete those events too.
+- `GET /api/channels/{u}/activity?cursor=` lists the channel owner's events, newest first, 20 per page. Each item has kind, time, subject chip and data. Same visibility as the channel: 404 when the channel isn't eligible (unknown, internal, deleted, held or restricted). Blocks don't hide the channel; they filter events as below.
+- Read filters (applied at read time, so later changes take effect at once):
+  - the subject is eligible (not internal, deleted, held or restricted)
+  - no block between the viewer and the subject, or between the actor and the subject
+  - follow events only while the follow exists
+  - wall_post events only while the post is APPROVED and not deleted
+- The Home tab ends with "Recent activity", after the wall preview and Up next: the latest 5 with **Show more**. Visitors see nothing when it's empty; the owner sees "Your recent activity appears here."
+- Retention: the profile job purges events older than 90 days. No backfill and no legacy import.
+
+Edge cases:
+- Internal accounts can follow, but their events aren't recorded.
+- A restricted user can still follow (and that follow is recorded), but their own channel and feed are hidden while restricted. Actions a restriction blocks (posting, Studio edits) record nothing. A restricted subject hides the event in other feeds.
+- Erasure deletes every event where the user is actor or subject (cascade).
+- Everything shown is already public (follower lists, wall, War Council, song, schedule); there are no notifications.
+
+Acceptance:
+- Each kind is recorded; coalescing works within 60 minutes.
+- Unfollow hides the follow event. A deleted, pending or removed post hides its event.
+- A blocked or restricted subject is hidden; an internal actor records nothing.
+- Erasure removes events; pagination works; an unknown kind is skipped.
+
+### P8. `/{username}/rewards` (stub)
+
+Rules:
+- A reserved channel sub-path that renders the channel frame with a "Rewards are coming" panel: "Channel rewards arrive with the Valor economy." It has no tab in the tab bar until the economy exists (Module 4 / Phase 2).
+- It's a stub, listed in "Later-module stubs". Visibility and 404 rules are the channel's.
+
+Acceptance:
+- `/{u}/rewards` is 200 with the placeholder for a visible channel and 404 for unknown or ineligible names.
+- The tab bar has no Rewards tab.
+
+### P9. Decorative header copy
+
+Rules:
+- The owner edits it in Studio → **Page header** (`/studio/channel/header`), saved with `GET`/`PUT /api/me/header` under the section revision "header":
+  - Page label pill: 0–24 characters, one line. Default "Creator Page".
+  - Welcome line: 0–80 characters, one line. Default "Welcome to my page".
+  - Intro card: a title (0–60, one line) and a body (0–500, up to 6 line breaks, plain text). Shown only when the body isn't empty; with no title, the heading is "About this page".
+  - Page vibe: 0–24 characters, one line, shown as "Vibe: {text}" in the counts row. No default.
+  - "Show the label and welcome line" toggle, default on.
+- Empty label or welcome means "use the default". All text is plain, word-filtered, with no links or markup.
+- The channel API returns `header: {label, welcome, intro_title, intro_body, vibe}` with the defaults resolved. `label` and `welcome` are null when the toggle is off.
+- Design: the label is a bordered small-caps pill (no fill, gradient or glow), the welcome line is muted text under the handle, and the intro card is a standard panel at the top of Home.
+- **Safety:** reportable as the channel field `header`. The staff field reset `header` restores the defaults and turns the toggle on.
+
+Edge cases:
+- Imported and new channels show the defaults.
+- Whitespace-only input counts as empty.
+- A stale save gets 409 like the other sections.
+
+Acceptance:
+- Defaults render for a new channel; edits persist and render.
+- Clearing restores the defaults; toggle off hides the label and welcome line; the intro is hidden when its body is empty.
+- Limits and the filter are enforced; the reset field restores the defaults.
 
 ## Deferred to later modules
 - Account-wide ban mechanics, which level 3 escalates to, and username resets for impersonation: the Module 3 moderation pass.

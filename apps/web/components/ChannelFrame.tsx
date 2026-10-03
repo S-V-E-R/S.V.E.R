@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { joined, platformNames, type Channel } from "../lib/types";
+import { joined, linkHost, platformNames, type Channel } from "../lib/types";
+import { PlatformIcon } from "./PlatformIcon";
 import { Avatar } from "./Avatar";
 import { ChannelActions } from "./ChannelActions";
 import { ChannelTabs } from "./ChannelTabs";
@@ -22,15 +23,17 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
     <section className="identity panel">
       <Avatar sizes={c.avatar} name={c.display_name} size={112} />
       <div className="identity-text">
+        {data.header?.label && <span className="page-label">{data.header.label}</span>}
         <h1>{c.display_name}</h1>
         <p className="handle">@{c.username}</p>
+        {data.header?.welcome && <p className="welcome-line">{data.header.welcome}</p>}
         {(c.mood_emoji || c.status_text) && <p className="status-line">{c.mood_emoji && <span aria-label="Mood">{c.mood_emoji}</span>} {c.status_text}</p>}
         <span className="faction-slot" aria-hidden="true" />
         {c.bio && <p className="bio">{c.bio}</p>}
-        {c.links.length > 0 && <ul className="links">{c.links.map(l => <li key={l.url}><a href={l.url} rel="nofollow noopener noreferrer ugc" target="_blank">{platformNames[l.platform] || l.platform}</a></li>)}</ul>}
-        <p className="counts"><Link href={`/${c.username}/followers`}><strong>{c.follower_count.toLocaleString()}</strong> followers</Link><Link href={`/${c.username}/following`}><strong>{c.following_count.toLocaleString()}</strong> following</Link><span className="muted">Joined {joined(c.joined_at)}</span></p>
+        {c.links.length > 0 && <ul className="links">{c.links.map(l => <li key={l.url}><a href={l.url} rel="nofollow noopener noreferrer ugc" target="_blank"><PlatformIcon platform={l.platform} /><span>{platformNames[l.platform] || l.platform}</span>{linkHost(l.url) && <small className="link-host">{linkHost(l.url)}</small>}</a></li>)}</ul>}
+        <p className="counts"><Link href={`/${c.username}/followers`}><strong>{c.follower_count.toLocaleString()}</strong> followers</Link><Link href={`/${c.username}/following`}><strong>{c.following_count.toLocaleString()}</strong> following</Link><span className="muted">Joined {joined(c.joined_at)}</span>{data.header?.vibe && <span className="muted page-vibe">Vibe: <strong>{data.header.vibe}</strong></span>}</p>
       </div>
-      <ChannelActions username={c.username} viewer={data.viewer} path={path} />
+      <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={path} />
     </section>
     {c.song && <SongPlayer song={c.song} />}
     {c.song_notice && data.viewer.is_owner && <p className="panel notice">Spotify links aren&apos;t supported. <Link href="/studio/channel/song">Add a YouTube or SoundCloud track</Link>.</p>}

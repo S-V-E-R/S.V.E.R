@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 // Channel routing (docs/PROFILES.md, "URLs and routing"): legacy aliases, ?tab= mapping,
 // canonical casing (308) and rename-hold redirects (302, no-store). Static routes are excluded
 // by the matcher; reserved names guarantee no user shadows them.
-const STATIC = new Set(["api", "_next", "login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "account", "settings", "studio", "admin", "following", "favicon.ico", "robots.txt"]);
+const STATIC = new Set(["api", "_next", "login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "account", "settings", "studio", "admin", "following", "about", "factions", "roadmap", "help", "terms", "privacy", "guidelines", "dmca", "contact", "favicon.ico", "robots.txt"]);
 const TABS: Record<string, string> = { wall: "/wall", schedule: "/schedule", about: "/about" };
 const NAME = /^[A-Za-z0-9_]{1,40}$/;
 const api = () => process.env.API_INTERNAL_ORIGIN || "http://127.0.0.1:8080";

@@ -46,8 +46,15 @@ pub const FIELDS: &[&str] = &[
     "sponsors",
     "setup",
     "blocks",
+    "header",
 ];
-const TARGETS: &[&str] = &["profile", "wall_post", "wall_reply", "fan_art"];
+const TARGETS: &[&str] = &[
+    "profile",
+    "wall_post",
+    "wall_reply",
+    "fan_art",
+    "setup_photo",
+];
 pub const STANDING_MAIL: &str =
     "There's an update to your account standing. See sver.tv/settings/standing.";
 pub const REPORT_MAIL: &str =
@@ -144,7 +151,7 @@ pub async fn profile_snapshot(
     user_id: &str,
     field: Option<&str>,
 ) -> Res<Value> {
-    let base: Value = sqlx::query_scalar("SELECT jsonb_build_object('username',c.username,'display_name',c.display_name,'bio',c.bio,'status',c.status_text,'mood',c.mood_emoji,'avatar',c.avatar_key,'banner',c.banner_key,'song',(SELECT CASE WHEN p.song_url IS NULL THEN NULL ELSE jsonb_build_object('url',p.song_url,'title',p.song_title,'artist',p.song_artist,'thumbnail',p.song_thumb_key) END FROM profiles p WHERE p.user_id=c.id),'links',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'platform',platform,'url',url) ORDER BY position),'[]') FROM social_links WHERE user_id=c.id),'war_council',(SELECT coalesce(jsonb_agg(u.username ORDER BY w.position),'[]') FROM war_council w JOIN users u ON u.id=w.member_id WHERE w.user_id=c.id),'sponsors',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'name',name,'description',description,'link',link,'discount_code',discount_code,'logo',logo_key) ORDER BY position),'[]') FROM sponsors WHERE user_id=c.id),'setup',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'category',category,'name',name,'note',note,'link',link) ORDER BY position),'[]') FROM setup_items WHERE user_id=c.id),'blocks',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'type',type,'config',config) ORDER BY position),'[]') FROM profile_blocks WHERE user_id=c.id)) FROM channel_users c WHERE c.id=$1")
+    let base: Value = sqlx::query_scalar("SELECT jsonb_build_object('username',c.username,'display_name',c.display_name,'bio',c.bio,'status',c.status_text,'mood',c.mood_emoji,'avatar',c.avatar_key,'banner',c.banner_key,'song',(SELECT CASE WHEN p.song_url IS NULL THEN NULL ELSE jsonb_build_object('url',p.song_url,'title',p.song_title,'artist',p.song_artist,'thumbnail',p.song_thumb_key) END FROM profiles p WHERE p.user_id=c.id),'links',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'platform',platform,'url',url) ORDER BY position),'[]') FROM social_links WHERE user_id=c.id),'war_council',(SELECT coalesce(jsonb_agg(u.username ORDER BY w.position),'[]') FROM war_council w JOIN users u ON u.id=w.member_id WHERE w.user_id=c.id),'sponsors',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'name',name,'description',description,'link',link,'discount_code',discount_code,'logo',logo_key) ORDER BY position),'[]') FROM sponsors WHERE user_id=c.id),'setup',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'category',category,'name',name,'note',note,'link',link) ORDER BY position),'[]') FROM setup_items WHERE user_id=c.id),'blocks',(SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'type',type,'config',config) ORDER BY position),'[]') FROM profile_blocks WHERE user_id=c.id),'setup_text',(SELECT jsonb_build_object('title',p.setup_title,'description',p.setup_description) FROM profiles p WHERE p.user_id=c.id),'header',(SELECT jsonb_build_object('page_label',p.page_label,'welcome_line',p.welcome_line,'intro_title',p.intro_title,'intro_body',p.intro_body,'page_vibe',p.page_vibe) FROM profiles p WHERE p.user_id=c.id)) FROM channel_users c WHERE c.id=$1")
         .bind(user_id)
         .fetch_optional(&mut *db)
         .await?
@@ -172,6 +179,7 @@ async fn target(db: &mut PgConnection, kind: &str, id: &str, field: Option<&str>
         "wall_post" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',p.body) FROM wall_posts p JOIN channel_users c ON c.id=p.author_id JOIN channel_users o ON o.id=p.wall_owner_id WHERE p.id=$1 AND p.status='APPROVED' AND p.deleted_at IS NULL AND o.eligible AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
         "wall_reply" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',r.body) FROM wall_replies r JOIN wall_posts p ON p.id=r.post_id JOIN channel_users c ON c.id=r.author_id JOIN channel_users o ON o.id=p.wall_owner_id WHERE r.id=$1 AND r.status='APPROVED' AND r.deleted_at IS NULL AND p.status='APPROVED' AND p.deleted_at IS NULL AND o.eligible AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
         "fan_art" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('image',f.image_key,'artist_name',f.artist_name,'artist_link',f.artist_link,'caption',f.caption) FROM fan_art f JOIN channel_users c ON c.id=f.submitter_id JOIN channel_users o ON o.id=f.channel_id WHERE f.id=$1 AND f.status='APPROVED' AND o.eligible AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
+        "setup_photo" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('image',p.image_key||'/400.webp','alt',p.alt) FROM setup_photos p JOIN channel_users c ON c.id=p.user_id WHERE p.id=$1 AND p.status='VISIBLE' AND c.eligible").bind(id).fetch_optional(&mut *db).await?,
         _ => return Err(Fail::field("target_type", "Choose what you're reporting.")),
     };
     let (owner_id, owner_name, snapshot) = row.ok_or_else(Fail::missing)?;
@@ -698,6 +706,7 @@ async fn reset_field(
                     .await?;
             sqlx::query("UPDATE profiles SET song_provider=NULL,song_media_id=NULL,song_url=NULL,song_title=NULL,song_artist=NULL,song_thumb_key=NULL,song_notice=NULL,song_updated_at=now() WHERE user_id=$1").bind(user_id).execute(&mut *db).await?;
             media::queue_delete(db, old.as_deref(), None).await?;
+            crate::activity::forget(db, user_id, "song").await?;
             "song"
         }
         "war_council" => {
@@ -705,7 +714,15 @@ async fn reset_field(
                 .bind(user_id)
                 .execute(&mut *db)
                 .await?;
+            crate::activity::forget(db, user_id, "war_council").await?;
             "war_council"
+        }
+        "header" => {
+            sqlx::query("UPDATE profiles SET page_label='',welcome_line='',intro_title='',intro_body='',page_vibe='',header_copy_enabled=true,updated_at=now() WHERE user_id=$1")
+                .bind(user_id)
+                .execute(&mut *db)
+                .await?;
+            "header"
         }
         "links" | "sponsors" | "setup" | "blocks" => {
             let table = match field {
@@ -714,6 +731,22 @@ async fn reset_field(
                 "setup" => "setup_items",
                 _ => "profile_blocks",
             };
+            if field == "setup" && item.is_none() {
+                // The whole setup section: title, description and photos too (decision P4).
+                sqlx::query("UPDATE profiles SET setup_title='',setup_description='',updated_at=now() WHERE user_id=$1")
+                    .bind(user_id)
+                    .execute(&mut *db)
+                    .await?;
+                let photos: Vec<String> = sqlx::query_scalar(
+                    "DELETE FROM setup_photos WHERE user_id=$1 RETURNING image_key",
+                )
+                .bind(user_id)
+                .fetch_all(&mut *db)
+                .await?;
+                for key in photos {
+                    crate::studio::release_setup_photo(db, &key).await?;
+                }
+            }
             if field == "sponsors" {
                 let logos: Vec<Option<String>> = sqlx::query_scalar("SELECT logo_key FROM sponsors WHERE user_id=$1 AND ($2::text IS NULL OR id=$2)").bind(user_id).bind(item).fetch_all(&mut *db).await?;
                 for logo in logos {
@@ -746,9 +779,10 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
         "wall_post" => "wall_posts",
         "wall_reply" => "wall_replies",
         "fan_art" => "fan_art",
+        "setup_photo" => "setup_photos",
         _ => {
             return Err(Fail::bad(
-                "Only wall posts, replies and fan art can be removed.",
+                "Only wall posts, replies, fan art and setup photos can be removed.",
             ));
         }
     };
@@ -760,13 +794,13 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
     .await?;
     let previous = previous.ok_or_else(Fail::missing)?;
     if previous != "REMOVED" {
-        let stamp = if kind == "fan_art" {
-            "reviewed_at"
-        } else {
-            "moderated_at"
+        let stamp = match kind {
+            "fan_art" => ",reviewed_at=now()",
+            "setup_photo" => "",
+            _ => ",moderated_at=now()",
         };
         sqlx::query(&format!(
-            "UPDATE {table} SET status='REMOVED',{stamp}=now() WHERE id=$1"
+            "UPDATE {table} SET status='REMOVED'{stamp} WHERE id=$1"
         ))
         .bind(id)
         .execute(&mut *db)
@@ -800,6 +834,12 @@ async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
                 .fetch_optional(&mut *db)
                 .await?
         }
+        "setup_photo" => {
+            sqlx::query_scalar("SELECT user_id FROM setup_photos WHERE id=$1")
+                .bind(id)
+                .fetch_optional(&mut *db)
+                .await?
+        }
         _ => None,
     };
     match owner {
@@ -828,6 +868,7 @@ async fn current_content(
         },
         "wall_post" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM wall_posts WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "wall_reply" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM wall_replies WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
+        "setup_photo" => sqlx::query_scalar("SELECT jsonb_build_object('image',image_key||'/400.webp','alt',alt,'status',status) FROM setup_photos WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         _ => sqlx::query_scalar("SELECT jsonb_build_object('image',image_key,'artist_name',artist_name,'caption',caption,'status',status) FROM fan_art WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
     })
 }
@@ -1278,7 +1319,7 @@ pub async fn decide(
             .bind(&strike_id)
             .execute(&mut *tx)
             .await?;
-        // Restore removed wall posts, replies and fan art that still exist; reset fields stay cleared.
+        // Restore removed wall posts, replies, fan art and setup photos that still exist; reset fields stay cleared.
         for item in removed.as_array().into_iter().flatten() {
             let (Some(kind), Some(item_id), Some(previous)) = (
                 item["type"].as_str(),
@@ -1291,6 +1332,7 @@ pub async fn decide(
                 "wall_post" => "wall_posts",
                 "wall_reply" => "wall_replies",
                 "fan_art" => "fan_art",
+                "setup_photo" => "setup_photos",
                 _ => continue,
             };
             sqlx::query(&format!(

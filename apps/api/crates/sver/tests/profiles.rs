@@ -283,10 +283,12 @@ async fn profiles_acceptance() {
         let media_dir = media_dir.clone();
         async move {
             identity_and_channel(&env, &media_dir).await;
+            bucket_redirects(&env).await;
             follows_council_and_blocks(&env).await;
             song(&env).await;
             wall(&env).await;
             studio_sections(&env, &media_dir).await;
+            parity_additions(&env, &media_dir).await;
             renames(&env).await;
             safety(&env).await;
             erasure(&env).await;
@@ -309,6 +311,50 @@ async fn profiles_acceptance() {
     );
 }
 
+/// With bucket storage, URLs issued under the interim filesystem store redirect to the bucket.
+async fn bucket_redirects(env: &Env) {
+    let mut config = (*env.app.config).clone();
+    config.media = media::MediaConfig {
+        storage: media::Storage::S3(media::S3 {
+            endpoint: "https://bucket.invalid".into(),
+            bucket: "sver".into(),
+            region: "auto".into(),
+            access_key: "unused".into(),
+            secret_key: "unused".into(),
+            prefix: "v2/".into(),
+        }),
+        public_base: "https://media.example/v2".into(),
+    };
+    let app = App::new(env.app.db.clone(), config).await.unwrap();
+    let client = Client {
+        app: sver::router(app),
+        ..env.anon.clone()
+    };
+    let (status, _, headers) = client
+        .send(
+            client
+                .builder("GET", "/api/media/avatars/0123abcd/64.webp")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        headers["location"],
+        "https://media.example/v2/avatars/0123abcd/64.webp"
+    );
+    assert_eq!(headers["cache-control"], "no-store");
+    for bad in [
+        "/api/media/avatars/..%2F..%2Fx.webp",
+        "/api/media/avatars/a/64.png",
+    ] {
+        let (status, _, _) = client
+            .send(client.builder("GET", bad).body(Body::empty()).unwrap())
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{bad}");
+    }
+}
+
 async fn identity_and_channel(env: &Env, media_dir: &std::path::Path) {
     let (alice_id, alice) = env.user("Alice_Plays", true).await;
     let (_, bob) = env.user("BobStreams", true).await;
@@ -326,11 +372,25 @@ async fn identity_and_channel(env: &Env, media_dir: &std::path::Path) {
     assert_eq!(channel["channel"]["display_name"], "Alice_Plays");
     assert_eq!(channel["viewer"]["signed_in"], false);
     assert!(channel["channel"].get("email").is_none());
+    // The Schedule tab always exists: an empty schedule is a 200 with no items, not a 404.
+    assert_eq!(channel["tabs"]["schedule"], true);
+    let schedule = env
+        .anon
+        .ok("GET", "/api/channels/Alice_Plays/schedule", Value::Null)
+        .await;
+    assert_eq!(schedule["items"].as_array().map(Vec::len), Some(0));
+    assert_eq!(schedule["owner"]["username"], "Alice_Plays");
     let missing = env
         .anon
         .call("GET", "/api/channels/nobody_here", Value::Null)
         .await;
     assert_eq!(missing.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        env.anon
+            .status("GET", "/api/channels/nobody_here/schedule", Value::Null)
+            .await,
+        StatusCode::NOT_FOUND
+    );
     env.user("support", true).await;
     let (deleted_id, _) = env.user("GoneUser", true).await;
     sqlx::query("UPDATE users SET deleted_at=now() WHERE id=$1")
@@ -559,6 +619,38 @@ async fn identity_and_channel(env: &Env, media_dir: &std::path::Path) {
         assert!(!bytes.windows(4).any(|w| w == b"EXIF" || w == b"Exif"));
         let decoded = image::load_from_memory(&bytes).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (size, size));
+    }
+    // Only successful media responses are cacheable (keys are content-addressed); every other
+    // API response, including a missing media key, stays no-store.
+    let header = |path: String| async move {
+        let req = env.anon.builder("GET", &path).body(Body::empty()).unwrap();
+        let (status, _, headers) = env.anon.send(req).await;
+        let get = |k: &str| {
+            headers
+                .get(k)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string()
+        };
+        (
+            status,
+            get("cache-control"),
+            get("content-type"),
+            get("x-content-type-options"),
+        )
+    };
+    let (status, cache, kind, sniff) = header(format!("/api/media/{avatar_key}/64.webp")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache, "public, max-age=31536000, immutable");
+    assert_eq!((kind.as_str(), sniff.as_str()), ("image/webp", "nosniff"));
+    for path in [
+        "/api/media/avatars/00000000000000000000000000000000/64.webp".to_string(),
+        "/api/media/avatars/../secret.webp".to_string(),
+        "/api/channels/Alice_Plays".to_string(),
+        "/api/health".to_string(),
+    ] {
+        let (_, cache, _, _) = header(path.clone()).await;
+        assert_eq!(cache, "no-store", "{path}");
     }
     let (s, v) = alice
         .upload("/api/me/banner", &[], Some(&png(1600, 600)))
@@ -1612,6 +1704,736 @@ async fn studio_sections(env: &Env, media_dir: &std::path::Path) {
         "Passed: schedule rules and occurrences, sponsors with logos, setup, typed page blocks, stale-edit conflicts and the fan art flow."
     );
 }
+/// Parity additions P1-P9 (docs/PROFILES.md, "Parity additions"). P1 and P8 are web-only and
+/// covered by the browser parity check.
+async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
+    env.reset_limits().await;
+    let (owner_id, owner) = env.user("ParityHost", true).await;
+    let (fan_id, fan) = env.user("ParityFan", true).await;
+    let (_, other) = env.user("ParityOther", true).await;
+
+    // P2: every mood preset passes the server's one-emoji rule and saves.
+    let me = owner.ok("GET", "/api/me/profile", Value::Null).await;
+    let presets = me["mood_presets"].as_array().unwrap();
+    assert_eq!(presets.len(), 12);
+    for p in presets {
+        assert!(sver::text::valid_mood(p.as_str().unwrap()), "{p}");
+    }
+    assert_eq!(me["show_linked_accounts"], false);
+    owner
+        .ok(
+            "PATCH",
+            "/api/me/profile",
+            json!({"mood_emoji": "⚔️", "revision": me["revisions"]["profile"]}),
+        )
+        .await;
+    assert_eq!(
+        env.anon
+            .ok("GET", "/api/channels/ParityHost", Value::Null)
+            .await["channel"]["mood_emoji"],
+        "⚔️"
+    );
+
+    // P9: header copy defaults, edits, toggle, limits, stale revision and clearing.
+    let header = env
+        .anon
+        .ok("GET", "/api/channels/ParityHost", Value::Null)
+        .await["header"]
+        .clone();
+    assert_eq!(
+        header,
+        json!({"label": "Creator Page", "welcome": "Welcome to my page", "intro_title": "", "intro_body": "", "vibe": ""})
+    );
+    let mine = owner.ok("GET", "/api/me/header", Value::Null).await;
+    let rev = mine["revision"].as_i64().unwrap();
+    let saved = owner.ok("PUT", "/api/me/header", json!({"page_label": "Strategy Hub", "welcome_line": "Pull up a chair", "intro_title": "Hi there", "intro_body": "Line one\nLine two", "page_vibe": "Chill nights", "enabled": true, "revision": rev})).await;
+    assert_eq!(
+        owner
+            .status(
+                "PUT",
+                "/api/me/header",
+                json!({"page_label": "x", "revision": rev})
+            )
+            .await,
+        StatusCode::CONFLICT
+    );
+    let rev = saved["revision"].as_i64().unwrap();
+    assert_eq!(
+        owner
+            .status(
+                "PUT",
+                "/api/me/header",
+                json!({"page_label": "x".repeat(25), "revision": rev})
+            )
+            .await,
+        StatusCode::BAD_REQUEST
+    );
+    let header = env
+        .anon
+        .ok("GET", "/api/channels/ParityHost", Value::Null)
+        .await["header"]
+        .clone();
+    assert_eq!(
+        header,
+        json!({"label": "Strategy Hub", "welcome": "Pull up a chair", "intro_title": "Hi there", "intro_body": "Line one\nLine two", "vibe": "Chill nights"})
+    );
+    let saved = owner
+        .ok(
+            "PUT",
+            "/api/me/header",
+            json!({"intro_title": "Orphan title", "enabled": false, "revision": rev}),
+        )
+        .await;
+    let header = env
+        .anon
+        .ok("GET", "/api/channels/ParityHost", Value::Null)
+        .await["header"]
+        .clone();
+    assert_eq!(
+        header,
+        json!({"label": null, "welcome": null, "intro_title": "", "intro_body": "", "vibe": ""}),
+        "toggle off hides label and welcome; no intro without a body"
+    );
+    owner
+        .ok(
+            "PUT",
+            "/api/me/header",
+            json!({"page_label": "  ", "intro_body": "Kept", "revision": saved["revision"]}),
+        )
+        .await;
+    let header = env
+        .anon
+        .ok("GET", "/api/channels/ParityHost", Value::Null)
+        .await["header"]
+        .clone();
+    assert_eq!(header["label"], "Creator Page", "blank means the default");
+    assert_eq!(header["intro_body"], "Kept");
+
+    // P3: readiness steps, dismiss and restore, owner only.
+    assert_eq!(
+        env.anon
+            .status("GET", "/api/me/readiness", Value::Null)
+            .await,
+        StatusCode::UNAUTHORIZED
+    );
+    let ready = owner.ok("GET", "/api/me/readiness", Value::Null).await;
+    assert_eq!(
+        (ready["total"].as_i64(), ready["done"].as_i64()),
+        (Some(7), Some(0))
+    );
+    assert_eq!(ready["dismissed"], false);
+    let keys: Vec<&str> = ready["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "avatar", "banner", "bio", "links", "song", "council", "schedule"
+        ]
+    );
+    let me = owner.ok("GET", "/api/me/profile", Value::Null).await;
+    owner
+        .ok(
+            "PATCH",
+            "/api/me/profile",
+            json!({"bio": "Parity bio", "revision": me["revisions"]["profile"]}),
+        )
+        .await;
+    owner
+        .ok(
+            "PUT",
+            "/api/me/schedule",
+            json!({"timezone": "America/New_York", "blocks": [{"weekday": 2, "start": "19:00", "end": "21:00", "label": "Raid night"}]}),
+        )
+        .await;
+    let ready = owner.ok("GET", "/api/me/readiness", Value::Null).await;
+    assert_eq!(ready["done"], 2);
+    assert!(
+        ready["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["done"] == (s["key"] == "bio" || s["key"] == "schedule"))
+    );
+    owner
+        .ok("PUT", "/api/me/readiness", json!({"dismissed": true}))
+        .await;
+    let again = env.session(&owner_id, false).await;
+    assert_eq!(
+        again.ok("GET", "/api/me/readiness", Value::Null).await["dismissed"],
+        true,
+        "dismissal persists across sessions"
+    );
+    owner
+        .ok("PUT", "/api/me/readiness", json!({"dismissed": false}))
+        .await;
+    assert_eq!(
+        owner.ok("GET", "/api/me/readiness", Value::Null).await["dismissed"],
+        false
+    );
+
+    // P4: setup title and description, photos, limits, order, delete, moderation.
+    let setup = owner.ok("GET", "/api/me/setup", Value::Null).await;
+    assert_eq!(setup["max_photos"], 3);
+    assert_eq!(
+        owner
+            .status(
+                "PUT",
+                "/api/me/setup",
+                json!({"items": [], "title": "x".repeat(81), "revision": setup["revision"]})
+            )
+            .await,
+        StatusCode::BAD_REQUEST
+    );
+    owner
+        .ok(
+            "PUT",
+            "/api/me/setup",
+            json!({"items": [{"category": "MICROPHONE", "name": "Desk mic"}], "title": "My desk", "description": "Two monitors\nOne mic", "revision": setup["revision"]}),
+        )
+        .await;
+    let mut photo_ids = Vec::new();
+    for (i, w) in [800u32, 801, 802].iter().enumerate() {
+        let (s, v) = owner
+            .upload(
+                "/api/me/setup/photos",
+                &[("alt", &format!("Angle {i}"))],
+                Some(&png(*w, 600)),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        let url = v["image"]["400"].as_str().unwrap();
+        let key = url.split("/api/media/").nth(1).unwrap();
+        assert!(key.starts_with("setup/"), "{key}");
+        assert!(media_dir.join(key).exists());
+        assert!(
+            media_dir
+                .join(key.replace("400.webp", "1600.webp"))
+                .exists()
+        );
+        photo_ids.push(v["id"].as_str().unwrap().to_string());
+        if i == 0 {
+            let (s, v) = owner
+                .upload("/api/me/setup/photos", &[], Some(&png(800, 600)))
+                .await;
+            assert_eq!(
+                (s, v["error"].as_str()),
+                (StatusCode::CONFLICT, Some("You already added that photo."))
+            );
+            let (s, _) = owner
+                .upload("/api/me/setup/photos", &[], Some(&png(32, 32)))
+                .await;
+            assert_eq!(s, StatusCode::BAD_REQUEST);
+            let (s, _) = owner
+                .upload("/api/me/setup/photos", &[], Some(b"not an image"))
+                .await;
+            assert_eq!(s, StatusCode::BAD_REQUEST);
+        }
+    }
+    let (s, v) = owner
+        .upload("/api/me/setup/photos", &[], Some(&png(803, 600)))
+        .await;
+    assert_eq!(
+        (s, v["error"].as_str()),
+        (
+            StatusCode::CONFLICT,
+            Some("You can add up to 3 setup photos.")
+        )
+    );
+    let about = env
+        .anon
+        .ok("GET", "/api/channels/ParityHost/about", Value::Null)
+        .await;
+    assert_eq!(about["setup_title"], "My desk");
+    assert_eq!(about["setup_description"], "Two monitors\nOne mic");
+    assert_eq!(about["setup_photos"].as_array().unwrap().len(), 3);
+    assert_eq!(about["setup_photos"][0]["alt"], "Angle 0");
+    assert_eq!(about["viewer"]["can_report"], false);
+    assert_eq!(
+        fan.ok("GET", "/api/channels/ParityHost/about", Value::Null)
+            .await["viewer"]["can_report"],
+        true
+    );
+    assert_eq!(
+        owner
+            .status(
+                "PUT",
+                "/api/me/setup/photos",
+                json!({"photos": [{"id": photo_ids[0]}]})
+            )
+            .await,
+        StatusCode::BAD_REQUEST
+    );
+    let reversed: Vec<Value> = photo_ids
+        .iter()
+        .rev()
+        .map(|id| json!({"id": id, "alt": format!("Alt {id}")}))
+        .collect();
+    owner
+        .ok("PUT", "/api/me/setup/photos", json!({"photos": reversed}))
+        .await;
+    let about = env
+        .anon
+        .ok("GET", "/api/channels/ParityHost/about", Value::Null)
+        .await;
+    assert_eq!(about["setup_photos"][0]["id"], photo_ids[2].as_str());
+    // Deleting a photo queues its media; the slot frees up.
+    let gone_key: String = sqlx::query_scalar("SELECT image_key FROM setup_photos WHERE id=$1")
+        .bind(&photo_ids[2])
+        .fetch_one(&env.app.db)
+        .await
+        .unwrap();
+    owner
+        .ok(
+            "DELETE",
+            &format!("/api/me/setup/photos/{}", photo_ids[2]),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(
+        env.count(&format!("SELECT count(*) FROM media_objects WHERE key LIKE '{gone_key}/%' AND delete_after IS NOT NULL")).await,
+        2
+    );
+    assert_eq!(
+        other
+            .status(
+                "DELETE",
+                &format!("/api/me/setup/photos/{}", photo_ids[1]),
+                Value::Null
+            )
+            .await,
+        StatusCode::NOT_FOUND,
+        "only the owner deletes"
+    );
+    // Restricted owners can't upload or edit.
+    env.sql(&format!(
+        "UPDATE profiles SET restricted_until=now()+interval '1 hour' WHERE user_id='{owner_id}'"
+    ))
+    .await;
+    let (s, _) = owner
+        .upload("/api/me/setup/photos", &[], Some(&png(804, 600)))
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    env.sql(&format!(
+        "UPDATE profiles SET restricted_until=NULL WHERE user_id='{owner_id}'"
+    ))
+    .await;
+    // Report, remove with a strike, then an overturned appeal restores the photo.
+    let reported = photo_ids[1].clone();
+    fan.ok(
+        "POST",
+        "/api/reports",
+        json!({"target_type": "setup_photo", "target_id": reported, "reason": "spam"}),
+    )
+    .await;
+    let (_, _, mod_a) = staff(env, "ParityModA").await;
+    let (_, _, mod_b) = staff(env, "ParityModB").await;
+    let queue = mod_a.ok("GET", "/api/admin/reports", Value::Null).await;
+    assert!(
+        queue["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g["target_type"] == "setup_photo" && g["target_id"] == reported.as_str())
+    );
+    let result = mod_a.ok("POST", &format!("/api/admin/reports/setup_photo/{reported}/actions"), json!({"action": "remove_content", "note": "Synthetic removal", "strike": {"reason": "spam", "severity": "STANDARD"}})).await;
+    let strike = result["strike_id"].as_str().unwrap().to_string();
+    let about = env
+        .anon
+        .ok("GET", "/api/channels/ParityHost/about", Value::Null)
+        .await;
+    assert_eq!(about["setup_photos"].as_array().unwrap().len(), 1);
+    let studio = owner.ok("GET", "/api/me/setup", Value::Null).await;
+    assert!(
+        studio["photos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == reported.as_str() && p["status"] == "REMOVED")
+    );
+    owner
+        .ok(
+            "POST",
+            &format!("/api/me/strikes/{strike}/appeal"),
+            json!({"body": "That was my desk."}),
+        )
+        .await;
+    let appeals = mod_b.ok("GET", "/api/admin/appeals", Value::Null).await;
+    let appeal = appeals["appeals"][0]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{appeals}"))
+        .to_string();
+    mod_b
+        .ok(
+            "POST",
+            &format!("/api/admin/appeals/{appeal}/decision"),
+            json!({"outcome": "overturned", "staff_note": "Fine"}),
+        )
+        .await;
+    assert_eq!(
+        env.anon
+            .ok("GET", "/api/channels/ParityHost/about", Value::Null)
+            .await["setup_photos"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2,
+        "overturn restores the photo"
+    );
+    // Header text is a reportable channel field with a reset.
+    fan.ok("POST", "/api/reports", json!({"target_type": "profile", "target_id": "ParityHost", "field": "header", "reason": "spam"})).await;
+    mod_a
+        .ok(
+            "POST",
+            &format!("/api/admin/reports/profile/{owner_id}/actions"),
+            json!({"action": "reset_field", "field": "header", "note": "Synthetic reset"}),
+        )
+        .await;
+    assert_eq!(
+        env.anon
+            .ok("GET", "/api/channels/ParityHost", Value::Null)
+            .await["header"]["intro_body"],
+        ""
+    );
+    // The setup field reset clears items, title, description and photos.
+    mod_a
+        .ok(
+            "POST",
+            &format!("/api/admin/reports/profile/{owner_id}/actions"),
+            json!({"action": "reset_field", "field": "setup", "note": "Synthetic reset"}),
+        )
+        .await;
+    let about = env
+        .anon
+        .ok("GET", "/api/channels/ParityHost/about", Value::Null)
+        .await;
+    assert_eq!(
+        (
+            about["setup_title"].as_str(),
+            about["setup"].as_array().unwrap().len(),
+            about["setup_photos"].as_array().unwrap().len()
+        ),
+        (Some(""), 0, 0)
+    );
+    assert_eq!(
+        env.count(&format!(
+            "SELECT count(*) FROM setup_photos WHERE user_id='{owner_id}'"
+        ))
+        .await,
+        0
+    );
+
+    // P5 and P6: handles on identities, suggestions, the Discord users link and the opt-in card.
+    env.sql(&format!("INSERT INTO identities(provider,subject,user_id,handle) VALUES('twitch','tw-parity','{owner_id}','parityhost_tv'),('discord','123456789012345678','{owner_id}','parity.host'),('google','g-parity','{owner_id}',NULL)")).await; // gitleaks:allow -- synthetic Discord user ID for this test.
+    let s = owner
+        .ok("GET", "/api/me/link-suggestions", Value::Null)
+        .await;
+    assert_eq!(
+        s["suggestions"],
+        json!([{"platform": "twitch", "url": "https://twitch.tv/parityhost_tv", "label": "parityhost_tv"}, {"platform": "discord", "url": "https://discord.com/users/123456789012345678", "label": "parity.host"}])
+    );
+    assert_eq!(
+        owner.ok("GET", "/api/me/profile", Value::Null).await["links"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "suggestions never save themselves"
+    );
+    let me = owner.ok("GET", "/api/me/profile", Value::Null).await;
+    let links =
+        json!([{"platform": "discord", "url": "https://discord.com/users/123456789012345678"}]);
+    owner
+        .ok(
+            "PUT",
+            "/api/me/links",
+            json!({"links": links, "revision": me["revisions"]["links"]}),
+        )
+        .await;
+    let s = owner
+        .ok("GET", "/api/me/link-suggestions", Value::Null)
+        .await;
+    assert_eq!(
+        s["suggestions"].as_array().unwrap().len(),
+        1,
+        "an existing platform is not suggested"
+    );
+    assert!(sver::text::social_link("discord", "https://discord.com/users/12345").is_err());
+    assert_eq!(
+        sver::text::provider_handle("twitch", "Parity_Host"),
+        Some("parity_host".into())
+    );
+    assert_eq!(sver::text::provider_handle("twitch", "bad name"), None);
+    let card = fan
+        .ok("GET", "/api/users/ParityHost/card", Value::Null)
+        .await;
+    assert_eq!(card["also_known_as"], json!([]), "off by default");
+    owner
+        .ok(
+            "PUT",
+            "/api/me/card-settings",
+            json!({"show_linked_accounts": true}),
+        )
+        .await;
+    let card = fan
+        .ok("GET", "/api/users/ParityHost/card", Value::Null)
+        .await;
+    assert_eq!(
+        card["also_known_as"],
+        json!([{"platform": "twitch", "handle": "parityhost_tv", "url": "https://twitch.tv/parityhost_tv"}, {"platform": "discord", "handle": "parity.host", "url": null}])
+    );
+    fan.ok("PUT", "/api/blocks/ParityHost", Value::Null).await;
+    assert_eq!(
+        fan.ok("GET", "/api/users/ParityHost/card", Value::Null)
+            .await["also_known_as"],
+        json!([]),
+        "hidden across a block"
+    );
+    fan.ok("DELETE", "/api/blocks/ParityHost", Value::Null)
+        .await;
+    env.sql(&format!(
+        "DELETE FROM identities WHERE user_id='{owner_id}' AND provider='twitch'"
+    ))
+    .await;
+    assert_eq!(
+        env.anon
+            .ok("GET", "/api/users/ParityHost/card", Value::Null)
+            .await["also_known_as"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "unlinking removes it"
+    );
+    owner
+        .ok(
+            "PUT",
+            "/api/me/card-settings",
+            json!({"show_linked_accounts": false}),
+        )
+        .await;
+    assert_eq!(
+        env.anon
+            .ok("GET", "/api/users/ParityHost/card", Value::Null)
+            .await["also_known_as"],
+        json!([])
+    );
+
+    // P7: activity feed recording, coalescing and read-time filters.
+    let (_, actor) = env.user("FeedActor", true).await;
+    let (target_id, target) = env.user("FeedTarget", true).await;
+    let (_, _) = env.user("FeedOther", true).await;
+    let feed = |c: &Client| {
+        let c = c.clone();
+        async move {
+            c.ok("GET", "/api/channels/FeedActor/activity", Value::Null)
+                .await
+        }
+    };
+    assert_eq!(feed(&env.anon).await["items"], json!([]));
+    actor
+        .ok("PUT", "/api/follows/FeedTarget", Value::Null)
+        .await;
+    let items = feed(&env.anon).await["items"].clone();
+    assert_eq!(items[0]["kind"], "follow");
+    assert_eq!(items[0]["subject"]["username"], "FeedTarget");
+    actor
+        .ok("DELETE", "/api/follows/FeedTarget", Value::Null)
+        .await;
+    assert_eq!(
+        feed(&env.anon).await["items"],
+        json!([]),
+        "unfollow hides it"
+    );
+    actor
+        .ok("PUT", "/api/follows/FeedTarget", Value::Null)
+        .await;
+    assert_eq!(
+        env.count("SELECT count(*) FROM activity_events e JOIN users u ON u.id=e.actor_id WHERE u.username='FeedActor' AND kind='follow'").await,
+        1,
+        "one row per pair"
+    );
+    let post = actor
+        .ok(
+            "POST",
+            "/api/channels/FeedTarget/wall",
+            json!({"body": "Hello from the feed"}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for members in [json!(["FeedTarget"]), json!(["FeedTarget", "FeedOther"])] {
+        actor
+            .ok("PUT", "/api/me/war-council", json!({"members": members}))
+            .await;
+    }
+    actor
+        .ok(
+            "PUT",
+            "/api/me/schedule",
+            json!({"timezone": "America/New_York", "blocks": [{"weekday": 3, "start": "20:00", "end": "22:00"}]}),
+        )
+        .await;
+    actor
+        .ok(
+            "PUT",
+            "/api/me/song",
+            json!({"url": "https://youtu.be/feedsong123"}),
+        )
+        .await;
+    let items = feed(&env.anon).await["items"].clone();
+    let kinds: Vec<&str> = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["song", "schedule", "war_council", "wall_post", "follow"]
+    );
+    assert_eq!(items[2]["data"]["count"], 2, "council saves coalesce");
+    assert_eq!(items[0]["data"]["title"], "Synthetic Track");
+    // Removing the song removes its event; a deleted wall post hides its event.
+    actor.ok("DELETE", "/api/me/song", Value::Null).await;
+    actor
+        .ok("DELETE", &format!("/api/wall/posts/{post}"), Value::Null)
+        .await;
+    let kinds: Vec<String> = feed(&env.anon).await["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["kind"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(kinds, ["schedule", "war_council", "follow"]);
+    // A pending post records nothing until approved.
+    let me_t = target.ok("GET", "/api/me/wall", Value::Null).await;
+    target
+        .ok(
+            "PUT",
+            "/api/me/wall/settings",
+            json!({"who_can_post": "ANYONE", "require_approval": true, "hold_links": false, "hold_new_accounts": false, "revision": me_t["revision"]}),
+        )
+        .await;
+    let pending = actor
+        .ok(
+            "POST",
+            "/api/channels/FeedTarget/wall",
+            json!({"body": "Needs approval"}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(feed(&env.anon).await["items"].as_array().unwrap().len(), 3);
+    target
+        .ok(
+            "POST",
+            &format!("/api/wall/posts/{pending}/approve"),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(feed(&env.anon).await["items"][0]["kind"], "wall_post");
+    // A block between the viewer and the subject hides subject events for that viewer only.
+    let (_, watcher) = env.user("FeedWatcher", true).await;
+    watcher
+        .ok("PUT", "/api/blocks/FeedTarget", Value::Null)
+        .await;
+    let seen: Vec<String> = feed(&watcher).await["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["kind"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(seen, ["schedule", "war_council"]);
+    assert_eq!(feed(&env.anon).await["items"].as_array().unwrap().len(), 4);
+    // A restricted subject is hidden; an unknown kind is skipped; internal actors record nothing.
+    env.sql(&format!(
+        "UPDATE profiles SET restricted_until=now()+interval '1 hour' WHERE user_id='{target_id}'"
+    ))
+    .await;
+    assert_eq!(feed(&env.anon).await["items"].as_array().unwrap().len(), 2);
+    env.sql(&format!(
+        "UPDATE profiles SET restricted_until=NULL WHERE user_id='{target_id}'"
+    ))
+    .await;
+    env.sql("INSERT INTO activity_events(id,actor_id,kind) SELECT 'future-kind',id,'stream_started' FROM users WHERE username='FeedActor'").await;
+    assert!(!feed(&env.anon).await.to_string().contains("stream_started"));
+    let (internal_id, internal) = env.user("FeedInternal", true).await;
+    env.sql(&format!(
+        "INSERT INTO profiles(user_id,display_name,internal) VALUES('{internal_id}','FeedInternal',true) ON CONFLICT (user_id) DO UPDATE SET internal=true"
+    ))
+    .await;
+    internal
+        .ok("PUT", "/api/follows/FeedTarget", Value::Null)
+        .await;
+    assert_eq!(
+        env.count(&format!(
+            "SELECT count(*) FROM activity_events WHERE actor_id='{internal_id}'"
+        ))
+        .await,
+        0
+    );
+    // Pagination: 20 per page with a cursor.
+    for i in 0..22 {
+        env.sql(&format!("INSERT INTO activity_events(id,actor_id,kind,data,created_at) SELECT 'bulk-{i:02}',id,'schedule','{{}}',now()-interval '1 day'-make_interval(mins=>{i}) FROM users WHERE username='FeedActor'")).await;
+    }
+    let page = feed(&env.anon).await;
+    assert_eq!(page["items"].as_array().unwrap().len(), 20);
+    let cursor = page["next_cursor"].as_str().unwrap();
+    let next = env
+        .anon
+        .ok(
+            "GET",
+            &format!("/api/channels/FeedActor/activity?cursor={cursor}"),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(next["items"].as_array().unwrap().len(), 6);
+    assert!(next["next_cursor"].is_null());
+    assert_eq!(
+        env.anon
+            .status("GET", "/api/channels/NoSuchFeed/activity", Value::Null)
+            .await,
+        StatusCode::NOT_FOUND
+    );
+    // Erasure deletes events as actor or subject, and the user's setup photos with queued media.
+    let (s, v) = other
+        .upload("/api/me/setup/photos", &[], Some(&png(805, 600)))
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let other_id = env.id_of("ParityOther").await;
+    for id in [&target_id, &other_id] {
+        let mut tx = env.app.db.begin().await.unwrap();
+        sver::profile_jobs::erase(&mut tx, id).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    assert_eq!(
+        env.count(&format!("SELECT count(*) FROM activity_events WHERE subject_id='{target_id}' OR actor_id='{target_id}'")).await,
+        0
+    );
+    assert_eq!(
+        env.count(&format!(
+            "SELECT count(*) FROM setup_photos WHERE user_id='{other_id}'"
+        ))
+        .await,
+        0
+    );
+    assert_eq!(
+        env.count("SELECT count(*) FROM media_objects WHERE kind='setup_photo' AND key LIKE 'setup/%' AND delete_after IS NULL AND owner_id IS NULL").await,
+        0,
+        "erased setup photos are queued for deletion"
+    );
+    let _ = fan_id;
+    eprintln!(
+        "Passed: parity additions (mood presets, header copy, readiness, setup photos with moderation, link suggestions, opt-in card, activity feed)."
+    );
+}
+
 async fn renames(env: &Env) {
     let (id, renamer) = env.user("OldHandle", true).await;
     let (other_id, other) = env.user("Bystander", true).await;
@@ -2418,7 +3240,7 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
         (
             "fan",
             Some(
-                json!({"id": format!("lp-prof-fan-{tag}"), "displayName": "", "moodEmoji": "\u{1F525}", "status": "on air", "profileSongUrl": "https://soundcloud.com/legacy-artist/legacy-track", "avatarUrl": "https://legacy.example/f.png"}),
+                json!({"id": format!("lp-prof-fan-{tag}"), "displayName": "", "moodEmoji": "\u{1F525}", "status": "on air", "profileSongUrl": "https://soundcloud.com/legacy-artist/legacy-track", "avatarUrl": "https://legacy.example/f.png", "bannerUrl": "https://legacy.example/fb.png"}),
             ),
         ),
         (
@@ -2479,6 +3301,14 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
             "avatar",
             "https://legacy.example/stale.png",
             png(400, 400),
+        ),
+        // Portrait banner: its centered 3:1 crop (1079x360) is below 1200x400, so the import
+        // upscales that crop to the minimum instead of dropping it.
+        file(
+            "fan",
+            "banner",
+            "https://legacy.example/fb.png",
+            png(1079, 1440),
         ),
     ];
     let before = preserved_digest(env).await;
@@ -2555,6 +3385,32 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
             .await
             .unwrap();
     }
+    // The operator decision keeps only the named accounts internal; flagged ones import as public.
+    let named_only = profile_import::Options {
+        commit: false,
+        named_internal_only: true,
+        ..Default::default()
+    };
+    let mut named_uploads = Vec::new();
+    let named = profile_import::run(app, &export, &media, &named_only, &mut named_uploads)
+        .await
+        .unwrap();
+    assert_eq!(named.counts["accounts.internal"], 1);
+    assert_eq!(named.counts["accounts.internal_added_by_system_flag"], 0);
+    assert_eq!(named.counts["accounts.system_flag_imported_as_public"], 3);
+    assert!(
+        !named
+            .counts
+            .contains_key("accounts.internal_stop_bypassed_for_rehearsal_preview")
+    );
+    for key in &named_uploads {
+        app.config
+            .media
+            .storage
+            .delete(&app.http, key)
+            .await
+            .unwrap();
+    }
     env.sql(&format!("UPDATE legacy_account_data SET account=account||'{{\"isSystemAccount\":false}}' WHERE user_id IN ('{}','{}','{}')", ids["fan"], ids["spot"], ids["bare"])).await;
     let before = {
         let _ = before;
@@ -2574,7 +3430,7 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
     assert_eq!(untouched().await, 0, "A failed import left rows behind");
     assert_eq!(
         uploaded.len(),
-        5,
+        6,
         "Avatar and banner variants were uploaded before verification"
     );
     // 4. Check mode (no commit) verifies and rolls back.
@@ -2639,12 +3495,14 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
         ("wall_reactions.valor_as_like", 1),
         ("wall_reactions.dropped.duplicate", 1),
         ("wall_reactions.dropped.unknown_user", 1),
-        ("media.read", 4),
+        ("media.read", 5),
         ("media.processed_avatar", 1),
-        ("media.processed_banner", 1),
+        ("media.processed_banner", 2),
+        ("media.banner_upscaled_to_minimum", 1),
         ("media.dropped.decode_failed", 1),
         ("media.dropped.not_current_image", 1),
-        ("media.objects_verified", 5),
+        ("media.dropped.too_small_after_crop", 0),
+        ("media.objects_verified", 6),
     ];
     for (key, n) in expected {
         assert_eq!(c(key), n, "count {key}");
@@ -2675,6 +3533,16 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
             .await
             .unwrap();
     assert_eq!(fan, ("Account Fan".to_string(), "\u{1F525}".to_string()));
+    let fan_banner: Option<String> =
+        sqlx::query_scalar("SELECT banner_key FROM profiles WHERE user_id=$1")
+            .bind(&ids["fan"])
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(
+        fan_banner.as_deref().is_some_and(|k| k.ends_with("@750")),
+        "The upscaled banner keeps only the variant its 1200px source supports: {fan_banner:?}"
+    );
     let sys_internal: bool = sqlx::query_scalar("SELECT internal FROM channel_users WHERE id=$1")
         .bind(&ids["sys"])
         .fetch_one(&app.db)
@@ -2819,6 +3687,12 @@ async fn legacy_import(env: &Env, media_dir: &std::path::Path) {
     std::fs::write(snap.join("media-manifest.json"), manifest(&"0".repeat(64))).unwrap();
     assert!(profile_import::load_media(&snap).is_err());
     std::fs::remove_dir_all(&snap).unwrap();
+    assert_eq!(
+        env.count("SELECT count(*) FROM profiles WHERE show_linked_accounts")
+            .await,
+        0,
+        "imported and existing accounts never opt in to Also known as"
+    );
     let _ = id_list;
     eprintln!(
         "Passed: legacy profile import mapping, drop counts, pins, media, conflict/mismatch rollback, check mode, second-run refusal, preserved digests and the song job."
@@ -2888,6 +3762,25 @@ async fn legacy_import_cli() {
         .output()
         .unwrap();
     assert!(!out.status.success() && out.stdout.is_empty());
+    // Unknown, repeated or conflicting flags are refused before anything runs.
+    for extra in [
+        vec!["--bogus"],
+        vec!["--named-internal-only", "--named-internal-only"],
+        vec!["--preview-extra-internal", "--named-internal-only"],
+    ] {
+        let mut flagged = args.clone();
+        flagged.extend(extra.iter().map(|f| f.to_string()));
+        let out = run(flagged, &database);
+        assert!(
+            !out.status.success() && String::from_utf8_lossy(&out.stderr).contains("Usage"),
+            "{extra:?}"
+        );
+    }
+    let mut live_preview = args.clone();
+    live_preview[3] = "--check-live".into();
+    live_preview.push("--preview-extra-internal".into());
+    let out = run(live_preview, &database);
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("Usage"));
     // Sources inside the workspace are refused.
     let mut inside = args.clone();
     inside[1] = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml").to_string();

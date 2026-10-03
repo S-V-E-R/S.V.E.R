@@ -354,6 +354,11 @@ async fn complete(
     let payload: Payload = serde_json::from_str(&sec::unseal(app, "oauth", &state.payload)?)
         .map_err(|_| Error::internal())?;
     let identity = exchange(app, p, &code, &payload.verifier).await?;
+    // Public handle kept for link suggestions and the opt-in user card (docs/PROFILES.md, P5/P6).
+    let handle = identity
+        .username
+        .as_deref()
+        .and_then(|u| crate::text::provider_handle(name, u));
     if state.intent == "link" || state.intent == "reauth" {
         let (mut tx, user, session) = auth::session(app, &jar, state.intent == "reauth").await?;
         if state.session_id.as_deref() != Some(&session.id) {
@@ -361,14 +366,17 @@ async fn complete(
         }
         if state.intent == "link" {
             auth::recent(&session)?;
-            sqlx::query("INSERT INTO identities(provider,subject,user_id) VALUES($1,$2,$3)")
-                .bind(name)
-                .bind(identity.subject)
-                .bind(user.id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO identities(provider,subject,user_id,handle) VALUES($1,$2,$3,$4)",
+            )
+            .bind(name)
+            .bind(identity.subject)
+            .bind(user.id)
+            .bind(&handle)
+            .execute(&mut *tx)
+            .await?;
         } else {
-            let linked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identities WHERE provider=$1 AND subject=$2 AND user_id=$3)").bind(name).bind(identity.subject).bind(user.id).fetch_one(&mut *tx).await?;
+            let linked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identities WHERE provider=$1 AND subject=$2 AND user_id=$3)").bind(name).bind(&identity.subject).bind(&user.id).fetch_one(&mut *tx).await?;
             if !linked {
                 return Err(Error::denied(
                     "Reauthenticate with a provider already linked to this account.",
@@ -376,6 +384,12 @@ async fn complete(
             }
             sqlx::query("UPDATE sessions SET authenticated_at=now() WHERE id=$1")
                 .bind(session.id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE identities SET handle=$3 WHERE provider=$1 AND subject=$2")
+                .bind(name)
+                .bind(&identity.subject)
+                .bind(&handle)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -402,6 +416,12 @@ async fn complete(
         if !still_linked {
             return Err(Error::auth());
         }
+        sqlx::query("UPDATE identities SET handle=$3 WHERE provider=$1 AND subject=$2")
+            .bind(name)
+            .bind(&identity.subject)
+            .bind(&handle)
+            .execute(&mut *tx)
+            .await?;
         user
     } else {
         let email = identity.email.ok_or_else(|| {
@@ -450,6 +470,7 @@ async fn complete(
             email,
             verified: identity.verified,
             username,
+            handle,
         };
         let token = sec::token();
         if let Some(previous) = jar.get(&auth::aux_name(app, "signup")) {
@@ -514,6 +535,9 @@ struct PendingIdentity {
     email: String,
     verified: bool,
     username: String,
+    /// Provider handle; absent in signups started before this field existed.
+    #[serde(default)]
+    handle: Option<String>,
 }
 #[derive(sqlx::FromRow)]
 struct PendingSignup {
@@ -575,10 +599,11 @@ pub async fn finish_signup(
         identity.verified,
     )
     .await?;
-    sqlx::query("INSERT INTO identities(provider,subject,user_id) VALUES($1,$2,$3)")
+    sqlx::query("INSERT INTO identities(provider,subject,user_id,handle) VALUES($1,$2,$3,$4)")
         .bind(&pending.provider)
         .bind(identity.subject)
         .bind(&user.id)
+        .bind(&identity.handle)
         .execute(&mut *tx)
         .await?;
     if !user.email_verified {

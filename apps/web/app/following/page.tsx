@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { People, type PeoplePage } from "../../components/People";
+import { FollowingList } from "../../components/FollowingList";
+import type { PeoplePage } from "../../components/People";
 import { apiGet } from "../../lib/server-api";
 import { currentAccount } from "../session";
 import "../../styles/profiles.css";
@@ -12,6 +13,6 @@ export default async function Following({ searchParams }: { searchParams: Promis
   const page = (await apiGet<PeoplePage>(`/api/me/following${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`)).data;
   return <div className="settings-page single"><div className="settings-body">
     <h1>Following</h1>
-    <section className="panel section">{cursor && <Link href="/following">Back to start</Link>}<People page={page} base="/following" /></section>
+    <section className="panel section">{cursor && <Link href="/following">Back to start</Link>}<FollowingList page={page} /></section>
   </div></div>;
 }
