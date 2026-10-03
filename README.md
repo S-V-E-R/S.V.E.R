@@ -40,6 +40,8 @@ The same checks run on every push (`.github/workflows/ci.yml`), plus a scan for 
 
 Browser-level checks: `node scripts/check-navigation.mjs` (against a built frontend on port 13001 and the local API), `node scripts/check-signup.cjs <path-to-jsdom>` and `node scripts/check-stream-studio.cjs <path-to-jsdom>` for component checks with mocked network traffic, and `scripts/check-media.cjs` for the isolated real-media proof.
 
+The opt-in Rust/SRS ingest test also checks real callbacks, media decoding, reconnect, rotation and Stop against an isolated database and disposable media server. See [prerequisites and run command](docs/LIVE_STREAMS.md#integrated-rustsrs-ingest-proof--october-3); it is separate from normal CI and does not establish OBS/browser/CDN acceptance.
+
 The single reserved-username list is `apps/api/crates/sver/src/reserved.rs`; `tests/reserved_routes.rs` fails if any `apps/web/app` or `apps/web/public` top-level entry or `apps/web/next.config.ts` redirect source is not reserved.
 
 ## Provider and production setup

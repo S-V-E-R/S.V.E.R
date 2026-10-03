@@ -1,6 +1,6 @@
 # Module 3: Live streams and chat
 
-Started October 3, 2026 at the user's direction. **Status: stream backend and Creator Studio implemented locally, alongside the isolated media protocol proof. Player/accounting, chat/moderation, integrated real ingest and live media acceptance remain open.** Module 1 is closed by user acceptance. Module 2 continues independently; starting this module does not declare Profiles complete.
+Started October 3, 2026 at the user's direction. **Status: stream backend and Creator Studio implemented locally; integrated Rust/Postgres/SRS ingest now passes with real synthetic media. Player/accounting, chat/moderation, OBS/browser/CDN and live media acceptance remain open.** Module 1 is closed by user acceptance. Module 2 continues independently; starting this module does not declare Profiles complete.
 
 This document expands Module 3 of [PLATFORM_PLAN.md](PLATFORM_PLAN.md), the security contract in [LOGIN.md](LOGIN.md), and the approved profile/moderation rules in [PROFILES.md](PROFILES.md). Existing plan requirements are identified below. Details marked **Proposed** are implementation defaults for review, not recorded user decisions. Engineering measurements remain open even if the product defaults are accepted.
 
@@ -48,6 +48,20 @@ Short local runs measured WebRTC around **0.12 seconds p95** and plain HLS aroun
 The local SRS image is **7.0.157**, while the inspected live server runs **7.0.136**. Loopback-only ICE candidates are explicitly enabled in the test receiver; this does not prove public UDP/NAT connectivity. OBS UI compatibility, HLS audio decode, browser playback/fallback, Bunny token/cache/query behavior, real bitrate/region coverage, sustained latency and load capacity remain untested. No current publisher, legacy source/configuration, account, production service or database was changed by the proof.
 
 Bunny's official documentation confirms directory-scoped HMAC-SHA256 tokens, inherited path-based authentication for relative media URLs, and `token_ignore_params=true` for queries added by a player. This establishes a documented mechanism, not the live pull-zone configuration. Actual `_HLS_msn`/`_HLS_part` forwarding, unbuffered blocking responses, cache policy, expiry renewal and origin isolation still need a separate staged check. [Bunny advanced token authentication](https://bunny.net/docs/cdn/security/token-authentication/advanced).
+
+### Integrated Rust/SRS ingest proof — October 3
+
+[`apps/api/crates/sver/tests/streams/real_media.rs`](../apps/api/crates/sver/tests/streams/real_media.rs) connects the actual Rust router and isolated Postgres schema to a disposable SRS 7.0.157 instance through an authenticated hook proxy. Creator requests exercise the router in process; SRS callbacks arrive over HTTP. FFmpeg sends synthetic H.264/AAC. The [receipt](stream-ingest-local.json) records real publish rejection, LIVE health, competing-publisher rejection, HLS audio/video decoding, reconnect retaining the broadcast ID/start time, rotation disconnecting and rejecting the old key, and Stop confirming disconnection and refusing auto-reconnect.
+
+This test exposed a real control-path bug: SRS returns 302 for the slashless stream collection URL. The shared HTTP client intentionally refuses redirects, so polling had failed and valid publishers timed out. Inventory now requests `/api/v1/streams/` directly, and the controlled adapter reproduces the redirect. SRS can briefly retain its exclusive publishing token after the old publisher disappears from inventory; the real encoder test retries within the existing 60-second grace, as OBS does, rather than assuming immediate release.
+
+Run explicitly with the local development environment loaded, from `apps/api`:
+
+```powershell
+cargo test --test streams real_media::real_srs_ingest -- --ignored --nocapture
+```
+
+Prerequisites: local Docker Desktop with `host.docker.internal` reaching host loopback, FFmpeg on PATH, and the already-installed SRS digest in the test plus `nginx:1.28-alpine`. It refuses remote Docker contexts and non-local databases, uses random loopback TCP ports, synthetic accounts and temporary configuration outside the workspace, and cleans its labeled containers/network, files and schema. It is ignored in the ordinary suite/CI because those media prerequisites are separate. No production endpoint, provider or mail service is used. This proof measures no latency and does not qualify OBS UI, WebRTC through the rebuilt player, browsers, CDN delivery, capacity or the live SRS version. The earlier independent WebRTC/LL-HLS protocol receipt remains separate.
 
 ## Module 2 integration
 

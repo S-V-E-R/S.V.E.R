@@ -18,6 +18,9 @@ use std::{
 use sver::{App, Config, security as sec, streams};
 use tower::ServiceExt;
 
+#[path = "streams/real_media.rs"]
+mod real_media;
+
 #[derive(Default)]
 struct Media {
     service: String,
@@ -173,8 +176,7 @@ impl Env {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn streaming_lifecycle_and_security() {
+async fn isolated_database() -> (sqlx::PgPool, sqlx::PgPool, String) {
     let database_url =
         std::env::var("DATABASE_URL").expect("Use the isolated local development database");
     let parsed = url::Url::parse(&database_url).unwrap();
@@ -209,13 +211,37 @@ async fn streaming_lifecycle_and_security() {
         .run(&db)
         .await
         .unwrap();
+    (admin, db, schema)
+}
+
+async fn synthetic_owner(app: App, fake: Fake) -> Env {
+    let cookie = sec::token();
+    sqlx::query("INSERT INTO users(id,email,username,email_verified,mfa_enabled,mfa_secret,date_of_birth) VALUES('stream-owner','stream@example.test','Streamer',true,true,$1,'1990-01-01')")
+        .bind(sec::seal(&app,"totp:stream-owner","JBSWY3DPEHPK3PXP").unwrap()).execute(&app.db).await.unwrap();
+    sqlx::query("INSERT INTO sessions(id,user_id,token_hash,auth_version,mfa_verified,user_agent) SELECT 'stream-session',id,$1,auth_version,true,'synthetic' FROM users WHERE id='stream-owner'")
+        .bind(sec::digest(&cookie)).execute(&app.db).await.unwrap();
+    Env {
+        app,
+        fake,
+        cookie,
+        proof: AtomicUsize::new(0),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn streaming_lifecycle_and_security() {
+    let (admin, db, schema) = isolated_database().await;
     let fake = Arc::new(Mutex::new(Media {
         service: "boot-one".into(),
         ..Default::default()
     }));
     let media = Router::new()
         .route("/api/v1/versions", get(versions))
-        .route("/api/v1/streams", get(inventory))
+        .route(
+            "/api/v1/streams",
+            get(|| async { axum::response::Redirect::to("/api/v1/streams/") }),
+        )
+        .route("/api/v1/streams/", get(inventory))
         .route("/api/v1/clients/{client}", delete(kick))
         .route(
             "/range/{prefix}",
@@ -237,17 +263,7 @@ async fn streaming_lifecycle_and_security() {
         app: "rebuild".into(),
     });
     let app = App::new(db.clone(), config).await.unwrap();
-    let cookie = sec::token();
-    sqlx::query("INSERT INTO users(id,email,username,email_verified,mfa_enabled,mfa_secret,date_of_birth) VALUES('stream-owner','stream@example.test','Streamer',true,true,$1,'1990-01-01')")
-        .bind(sec::seal(&app,"totp:stream-owner","JBSWY3DPEHPK3PXP").unwrap()).execute(&db).await.unwrap();
-    sqlx::query("INSERT INTO sessions(id,user_id,token_hash,auth_version,mfa_verified,user_agent) SELECT 'stream-session',id,$1,auth_version,true,'synthetic' FROM users WHERE id='stream-owner'")
-        .bind(sec::digest(&cookie)).execute(&db).await.unwrap();
-    let env = Env {
-        app,
-        fake,
-        cookie,
-        proof: AtomicUsize::new(0),
-    };
+    let env = synthetic_owner(app, fake).await;
     // A spawned task catches assertion panics so the disposable schema is still cleaned.
     let result = tokio::spawn(async move { exercise(&env).await }).await;
     upstream.abort();

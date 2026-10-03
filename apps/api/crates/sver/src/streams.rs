@@ -566,7 +566,9 @@ struct StopJob {
     attempts: i32,
 }
 async fn inventory(app: &App) -> Result<Value> {
-    let value = srs_get(app, "/api/v1/streams?start=0&count=1000").await?;
+    // SRS redirects the slashless collection URL. Keep redirects disabled on
+    // the shared HTTP client and address the canonical control endpoint.
+    let value = srs_get(app, "/api/v1/streams/?start=0&count=1000").await?;
     // ponytail: one small SRS host; fail on a truncated inventory rather than
     // treating unlisted publishers as disconnected. Page this before 1000 streams.
     if !value["streams"]
