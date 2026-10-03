@@ -6,7 +6,7 @@ Expanded October 3, 2026 by Joe. Not started. MAGNet is how S.V.E.R moves viewer
 2. **MAGNet Hype:** channels a viewer can sit on while MAGNet moves them to whichever stream is having a moment, and gives every stream its turn. It reinvents an idea from an earlier platform's auto-switching channel, with fairness built in.
 3. **Spotlights:** short featured slots for first streams, returning creators and staff picks.
 
-It follows the closure rule: specify, build, then test against "Done when". Numbers marked **Proposed** are defaults Joe can change; weights and thresholds for scoring live in the private tuning config, with safe example values in the repo.
+It follows the closure rule: specify, build, then test against "Done when". All numbers here were accepted by Joe as defaults on October 3, 2026 and can be tuned later; weights and thresholds for scoring live in the private tuning config, with safe example values in the repo.
 
 ## Rules that apply everywhere
 
@@ -53,7 +53,7 @@ The engine ticks every 10 seconds per channel. Each switch is one of two kinds, 
 - **Moment switch:** goes to the eligible stream with the strongest moment right now, if it clearly beats the current stream.
 - **Fair-turn switch:** goes to the eligible stream that has waited longest since it was last featured (never-featured streams first), regardless of moment score.
 
-Timing (**Proposed**):
+Timing:
 - A featured stream holds for at least **45 seconds**.
 - At most **8 minutes** on one stream; then the next switch happens even without a moment.
 - At least **2 minutes** between moment switches.
@@ -70,7 +70,7 @@ Room signals only at launch, each compared with that stream's own recent baselin
 - **Chat burst:** distinct verified chatters per minute well above the stream's normal. Repeated messages, emote-only spam and brand-new accounts count for less.
 - **Follow burst:** new follows per minute above the stream's normal.
 - **Raid arriving:** a raid (Module 3) landing on the stream.
-- **Streamer flag:** a "Flag this moment" button in Creator Studio and `/flag` in chat. It counts only together with another elevated signal, with a cooldown (**Proposed:** once every 10 minutes).
+- **Streamer flag:** a "Flag this moment" button in Creator Studio and `/flag` in chat. It counts only together with another elevated signal, with a cooldown (once every 10 minutes).
 
 Not used: viewer count, follower totals, money, faction (Hype channels are faction-neutral; the homepage keeps its home-turf weighting).
 
@@ -98,7 +98,7 @@ Each Hype channel has its **own chat**, separate from every streamer's channel c
   - gets no playback session on that broadcast, so they aren't counted as its viewer.
   
   When MAGNet switches, video and chat come back automatically. A timeout works the same way until it expires. If the viewer has blocked the streamer, they get the same holding card. One banned viewer never stops a stream from being featured. As everywhere, signed-out viewing can't be blocked.
-- **Flood protection for small channels:** Hype senders get an extra slow mode in the merged channel (**Proposed:** one message every 3 seconds per person) on top of the channel's own rules. The streamer can turn off chat merging for their channel and stay in MAGNet; Hype viewers then chat only in Hype chat.
+- **Flood protection for small channels:** Hype senders get an extra slow mode in the merged channel (one message every 3 seconds per person) on top of the channel's own rules. The streamer can turn off chat merging for their channel and stay in MAGNet; Hype viewers then chat only in Hype chat.
 - **Hype chat itself** is moderated by staff and follows the platform chat rules (500 characters, latest 100 on join, 7-day expiry, reports).
 - **No feedback loop:** messages from the Hype side never count toward the featured stream's chat-burst signal, so being featured can't keep a stream featured.
 
