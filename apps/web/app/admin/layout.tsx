@@ -1,0 +1,15 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { apiGet } from "../../lib/server-api";
+import "../../styles/profiles.css";
+
+// Admin pages render only for staff with MFA; everyone else gets the site 404 (the API decides).
+export const metadata = { title: "Admin | S.V.E.R", robots: { index: false, follow: false } };
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  const { status } = await apiGet("/api/admin/appeals");
+  if (status !== 200) notFound();
+  return <div className="settings-page">
+    <nav className="settings-nav" aria-label="Admin"><span className="eyebrow">MODERATION</span><Link href="/admin/reports">Reports</Link><Link href="/admin/appeals">Appeals</Link></nav>
+    <div className="settings-body">{children}</div>
+  </div>;
+}

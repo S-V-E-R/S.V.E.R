@@ -1,0 +1,22 @@
+export type Sizes = Record<string, string> | null;
+export type Chip = { username: string | null; display_name: string; avatar: Sizes; linked: boolean; deleted: boolean };
+export type Link = { platform: string; url: string };
+export type Song = { provider: "youtube" | "soundcloud"; media_id: string; title: string | null; artist: string | null; thumbnail: string | null; volume: number } | null;
+export type Viewer = { signed_in: boolean; is_owner: boolean; following: boolean; blocked: boolean; interaction_blocked: boolean };
+export type Reply = { id: string; author: Chip; body: string | null; status: string; status_label: string | null; created_at: string; can_delete: boolean; can_report: boolean };
+export type Post = Reply & { pinned_position: number | null; like_count: number; liked: boolean; reply_count: number; replies: Reply[]; more_replies: boolean; can_pin: boolean };
+export type WallViewer = { can_post: boolean; reason: string | null; is_owner: boolean; can_react?: boolean };
+export type Occurrence = { start_at: string; end_at: string; label: string; kind: "weekly" | "event"; live: boolean };
+export type Channel = {
+  channel: { username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: null };
+  tabs: { wall: boolean; schedule: boolean; about: boolean; fan_art: boolean };
+  fan_art_enabled: boolean;
+  war_council: { members: { position: number; user: Chip; crown: boolean }[]; unavailable_count: number };
+  wall_preview: { pinned: Post[]; latest: Post[]; viewer: WallViewer };
+  schedule_next: { timezone: string | null; items: Occurrence[] };
+  viewer: Viewer;
+  redirect_to?: string;
+};
+export const platformNames: Record<string, string> = { twitch: "Twitch", youtube: "YouTube", kick: "Kick", tiktok: "TikTok", instagram: "Instagram", x: "X", bluesky: "Bluesky", discord: "Discord", facebook: "Facebook", patreon: "Patreon", kofi: "Ko-fi", fourthwall: "Fourthwall", website: "Website" };
+export const reasons: [string, string][] = [["spam", "Spam"], ["harassment", "Harassment or bullying"], ["hate", "Hate speech"], ["sexual", "Sexual content"], ["violence", "Violence or threats"], ["impersonation", "Impersonation"], ["private_information", "Private information"], ["copyright", "Copyright"], ["other", "Something else"]];
+export const joined = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });

@@ -1,0 +1,20 @@
+[Unit]
+Description=SVER rebuild PostgreSQL nightly backup (sver-rebuild-stage; the NAS pulls it offsite)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Environment=COMPOSE_PROJECT=sver-rebuild-stage
+Environment=POSTGRES_SERVICE=postgres
+Environment=DB_BACKUP_DIR=/opt/sver/backups/postgres/rebuild
+Environment=DB_BACKUP_RETENTION_DAYS=7
+ExecStart=/opt/sver-rebuild/bin/backup-postgres.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

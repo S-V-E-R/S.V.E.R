@@ -1,0 +1,37 @@
+name: sver-rebuild-stage
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sver_stage
+      POSTGRES_DB: sver_stage
+      POSTGRES_PASSWORD: ${SVER_DB_PASSWORD:?Use the external staging environment}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - stage_login_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sver_stage -d sver_stage"]
+      interval: 3s
+      retries: 20
+  api:
+    build:
+      context: .
+      dockerfile: infra/api.Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    env_file: ${SVER_STAGE_ENV:?Set the absolute external environment path}
+    depends_on:
+      postgres:
+        condition: service_healthy
+  web:
+    build:
+      context: .
+      dockerfile: infra/web.Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - api
+volumes:
+  stage_login_data:

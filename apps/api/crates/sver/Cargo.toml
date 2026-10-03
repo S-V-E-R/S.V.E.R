@@ -1,0 +1,52 @@
+[package]
+name = "sver"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+default-run = "sver"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "sver"
+path = "src/main.rs"
+
+[[bin]]
+name = "sver-admin"
+path = "src/admin_cli.rs"
+
+[[bin]]
+name = "sver-import-check"
+path = "src/import_check.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "chrono", "json", "migrate", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+argon2 = "0.5"
+bcrypt = "0.17"
+aes-gcm = "0.10"
+base64 = "0.22"
+rand = "0.8"
+sha2 = "0.10"
+sha1 = "0.10"
+totp-rs = { version = "5.7", features = ["otpauth"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+url = "2"
+email_address = "0.2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+chrono-tz = "0.10"
+hmac = "0.12"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

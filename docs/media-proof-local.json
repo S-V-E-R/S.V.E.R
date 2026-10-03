@@ -1,0 +1,71 @@
+{
+  "checked_at": "2026-10-03T06:45:55.035Z",
+  "scope": "local real media with controlled authorization fixture",
+  "srs_image": "ossrs/srs@sha256:2e96f38660211b8e8dd324bee0d3ade90f1e44ab815813a1684eb78ab2ad17d6",
+  "passed": true,
+  "latency_acceptance": false,
+  "environment": {
+    "platform": "win32",
+    "node": "v24.11.1",
+    "ffmpeg": "ffmpeg version 8.1-essentials_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+    "aiortc": "1.14.0"
+  },
+  "input": {
+    "width": 320,
+    "height": 180,
+    "fps": 10,
+    "video": "H.264 baseline",
+    "video_kbps": 400,
+    "keyframe_seconds": 1,
+    "b_frames": 0,
+    "audio": "AAC 48 kHz",
+    "audio_kbps": 64
+  },
+  "measurement": "40 video frames per path; local capture-to-decode; no render, network-region or sustained-load acceptance",
+  "srs_version": "7.0.157",
+  "missing_wrong_duplicate_credentials_rejected": true,
+  "callback_boot_identity": true,
+  "public_playback_has_no_publish_secret": true,
+  "hls": {
+    "decoded_video_frames": 40,
+    "capture_to_decode_p50_ms": 2810,
+    "capture_to_decode_p95_ms": 3260
+  },
+  "single_publisher_preserved": true,
+  "webrtc": {
+    "decoded_video_frames": 40,
+    "decoded_audio_frames": 40,
+    "capture_to_decode_p50_ms": 110,
+    "capture_to_decode_p95_ms": 120
+  },
+  "llhls_reference": {
+    "image": "sha256:6f58c6dc101a6a62fb01ae81ba731f45f9d3fbfd5110942e078466959ec81361",
+    "partial_segment_retrieved": true,
+    "blocking_reload_ms": 183,
+    "malformed_reload_rejected": true,
+    "full_segment_decode": {
+      "decoded_video_frames": 40,
+      "capture_to_decode_p50_ms": 6750,
+      "capture_to_decode_p95_ms": 7860
+    },
+    "partial_segment_decode": {
+      "decoded_video_frames": 40,
+      "capture_to_decode_p50_ms": 4100,
+      "capture_to_decode_p95_ms": 4760
+    },
+    "old_publisher_route_removed": true
+  },
+  "reconnect_changes_media_client": true,
+  "kick_and_revocation_rejected_republish": true,
+  "rotated_key_rejected": true,
+  "hook_outage_fails_closed": true,
+  "not_established": [
+    "production auth integration",
+    "60-second persisted broadcast lifecycle",
+    "OBS UI",
+    "browser render latency",
+    "Bunny CDN",
+    "rebuild LL-HLS implementation",
+    "capacity threshold"
+  ]
+}

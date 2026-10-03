@@ -1,0 +1,12 @@
+.git
+.codegraph
+apps/api/target
+tmp
+apps/web/node_modules
+apps/web/.next
+apps/web/*.tsbuildinfo
+*.env
+.env*
+*.dump
+*.tar.gz
+*.log

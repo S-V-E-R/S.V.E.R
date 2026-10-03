@@ -1,0 +1,20 @@
+name: Feature idea
+description: Suggest something new for S.V.E.R
+labels: ["idea"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Who is it for, and what can't they do today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: S.V.E.R is built one module at a time (see docs/ROADMAP.md), so ideas for later modules may wait until their turn.

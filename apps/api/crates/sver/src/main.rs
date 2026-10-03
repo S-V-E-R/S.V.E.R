@@ -1,0 +1,89 @@
+#[tokio::main]
+async fn main() -> Result<(), String> {
+    let config = sver::Config::from_env()?;
+    let db = sver::connect(&std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is required")?)
+        .await?;
+    let app = sver::App::new(db, config)
+        .await
+        .map_err(|_| "Could not initialize Login")?;
+    if std::env::args().nth(1).as_deref() == Some("preview-mail") {
+        if app.config.production {
+            return Err("Mail preview is only available in local development".into());
+        }
+        let directory = std::path::PathBuf::from(
+            std::env::var("USERPROFILE")
+                .or_else(|_| std::env::var("HOME"))
+                .map_err(|_| "User directory unavailable")?,
+        )
+        .join("SVER-dev");
+        std::fs::create_dir_all(&directory)
+            .map_err(|_| "Could not create the external mail preview directory")?;
+        if directory
+            .canonicalize()
+            .map_err(|_| "Invalid preview directory")?
+            .starts_with(
+                std::env::current_dir()
+                    .and_then(|path| path.canonicalize())
+                    .map_err(|_| "Current directory unavailable")?,
+            )
+        {
+            return Err("Mail preview must stay outside the workspace".into());
+        }
+        let rows: Vec<String> = sqlx::query_scalar("SELECT payload FROM mail_jobs WHERE expires_at>now() ORDER BY created_at DESC LIMIT 20").fetch_all(&app.db).await.map_err(|_| "Could not read local mail")?;
+        let mut messages = Vec::new();
+        for row in rows {
+            let value: serde_json::Value = serde_json::from_str(
+                &sver::security::unseal(&app, "mail", &row)
+                    .map_err(|_| "Could not decrypt local mail")?,
+            )
+            .map_err(|_| "Invalid local mail")?;
+            messages.push(format!(
+                "To: {}\n{}",
+                value["to"][0].as_str().unwrap_or(""),
+                value["text"].as_str().unwrap_or("")
+            ));
+        }
+        let path = directory.join("mail-preview.txt");
+        std::fs::write(&path, messages.join("\n\n---\n\n"))
+            .map_err(|_| "Could not write local mail preview")?;
+        println!(
+            "Local mail preview saved outside the workspace: {}",
+            path.display()
+        );
+        return Ok(());
+    }
+    let jobs = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::jobs::tick(&jobs).await.is_err() {
+                eprintln!("Login maintenance will retry.");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        }
+    });
+    let media_jobs = app.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if sver::streams::tick(&media_jobs).await.is_err() {
+                eprintln!("Stream maintenance will retry.");
+            }
+        }
+    });
+    let bind = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8080".into());
+    let listener = tokio::net::TcpListener::bind(&bind)
+        .await
+        .map_err(|_| "Could not bind Login listener")?;
+    println!("SVER Login listening on {bind}");
+    axum::serve(
+        listener,
+        sver::router(app).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await
+    .map_err(|_| "Login server stopped unexpectedly".to_string())
+}

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability
+    about: Please report security issues privately, never in a public issue.
+  - name: Chat with the community
+    url: https://discord.gg/sver
+    about: Questions and discussion on the S.V.E.R Discord.

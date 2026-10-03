@@ -1,0 +1,62 @@
+# Module 3 legacy carryover
+
+Read-only triage, October 3, 2026. This is a source map and implementation guide, not a claim that legacy features have been ported or accepted in the rebuild. Active backend reference: `C:\streaming\SVER`; active frontend: `C:\streaming\Website`. The parent CodeGraph index was busy for 45 seconds; bounded direct reads were used instead. No legacy source, database or service was changed.
+
+## Carryover decisions
+
+| Feature | Treatment | Evidence and changes |
+| --- | --- | --- |
+| Stream-key validation/revocation | PORT behavior | `packages/streaming/src/streamKey.service.ts` validates a digest, revocation and ownership, and kicks on rotation. Reuse the behavior with the rebuild's transaction/security helpers; account/MFA/standing eligibility must be checked too. |
+| Publishing versus playback identity | REWRITE | `src/modules/streaming/srs-webhook.controller.ts` authenticates the SRS stream name as the key; `providers/srs.provider.ts#getPlaybackUrl` uses that identifier in the public HLS path. The rebuild separates a public media ID from a private publishing secret. This is a source-level design finding, not an exploit performed against the running service. |
+| Stream-key persistence | REWRITE | Prisma `StreamKey` has a hash and prefix; other legacy stream state also carries stream identifiers. The new proposed repeat-reveal flow needs encrypted secret storage plus digest lookup, with no public-key coupling. Do not trust a single source comment as an inventory of every place a credential appears. |
+| SRS hook authentication | PORT concept | The active controller requires `x-srs-secret` with constant-time comparison in production. Header-based validation supersedes stale comments showing a query secret. Preserve the old hook proxy and add isolated rebuild routing. |
+| Callback ordering/reconnect | PORT with changed duration | `srs-ingest-reconnect-grace.ts` persists a deadline/marker, rejects retired-client replays, uses a lifecycle lock and recovers deadlines after restart. Its constant is **10 seconds**; the accepted rebuild contract is **60 seconds**. |
+| Live state | PORT core transitions | `stream-state.service.ts` references in callback tests and `StreamSession` schema separate STARTING/LIVE/ENDED and record media health. Rebuild needs one authoritative broadcast state, not parallel frontend flags. Detailed state-service implementation should be reread during backend work. |
+| WebRTC/CDN fallback | PORT behavior | Active Website `usePlayerWebrtcFallback.ts` waits for the failed-transport state to update before selecting a new path, avoiding stale callback state. Its tests cover fallback, unchanged healthy state and total failure. Use those cases without copying the entire multi-provider player. |
+| LL-HLS selection | VERIFY before reuse | `srs.provider.ts#getLlHlsUrl` is conditional on `SRS_LLHLS_URL` and binds a media ID to a publisher ID. That variable is unset in the inspected legacy backend. Standard HLS is configured; separate low-latency infrastructure is not established by this query. |
+| LL-HLS packager | TESTED reference, not yet ported | `workers/llhls` uses pinned `multimux` with a narrow `hls-runtime` patch retaining resident parts in closed segments. It reads completed SRS HLS segments, produces 500-ms CMAF parts and scopes routes to each publisher. The existing local image passed part decoding, reload validation and reconnect-route checks in the rebuild's isolated harness. Its measured delay still needs improvement/qualification; no worker/vendor source was copied into the rebuild. |
+| Capacity helper | REWRITE measurement | `packages/playback/src/playback-scale-policy.ts` calculates percentiles/recommendations. A synthetic report or its hard-coded 100-viewer evidence cutoff is not a measured safe threshold for the actual OVH host. Record per-transport/multi-broadcast measurements. |
+| Chat validation/history | PORT limits, simplify | `chat.validators.ts` bounds message bodies at 500 and history at 100. Existing reply/edit/archive/external-source fields exceed launch scope. Use server-assigned order and a gap-safe initial subscription. |
+| Chat rate limiting | PORT principle | `chat.rate-limiter.ts` permits two messages/second using Redis or process-local fallback. The rebuild must share account limits across sockets and fail safely; no independent permissive fallback when enforcement storage is unavailable. |
+| Owner/moderator/admin permission | PORT hierarchy, REWRITE enforcement | `chat-moderation.service.ts#getModerationPermission` distinguishes owner, assigned mod and global admin. Its 60-second cache requires explicit invalidation. Rebuild uses Module 2 roles and immediate database-backed permission changes. |
+| Timeout/ban/unban | PORT core behavior | Legacy services store channel/user pairs, expiry, reasons and audit/fanout. The legacy named timeout durations shown in the service stop at 24 hours; the rebuild plan permits 1 minute–14 days. Channel bans are separate from platform standing. |
+| Moderation broadcast order | PORT regression case | `tests/chat/chat_moderation_service_fanout.test.ts` checks broadcast after successful writes and no broadcast after failed writes. Rebuild commits state and audit atomically before emitting events. |
+| Chat models | REWRITE reduced schema | `prisma/schema/chat-realtime-1.prisma`: `ChatChannel`, `ChatTimeout`, `ChatBan`, `ChatModerator`, `ChatMessage`, `ChatModSettings`. Separate ban permanence from scope; the old `isPermanent` comment conflates a channel record with platform-wide authority. |
+| Viewer accounting | PORT intent, simplify | `packages/viewer-count/src/viewer-count.service.ts` documents multiple sources, authenticated deduplication and stale beacons. The rebuild counts one lease per playing viewer/broadcast and does not add chat sockets to media counts. Legacy trust weighting/viewbot machinery stays deferred. |
+| Reports/strikes/appeals | REUSE Module 2 | Extend its approved tables/routes to stream/chat targets and account-ban review instead of porting another independent legacy dashboard. |
+| Stream categories | REUSE vocabulary after bounded review | Located the categories service/routes and category policy. Full catalog/schema compatibility and initial seed are implementation follow-ups; no category data was exported or imported during triage. |
+| Recording, clips and replay | DEFER | Preserve existing recordings and retention processes. Rebuild live streaming does not implicitly activate VOD recording/import or chat replay. |
+| Extra legacy systems | ARCHIVE for this module | SRT, WHIP broadcasting, LiveKit orchestration, managed-video providers, multistream/external chat, bots/alerts/CrowdSync, reward/progression hooks and viewbot scoring are outside this module's accepted v1 scope. |
+
+## Source and test references inspected
+
+Paths in this list are relative to the active backend unless prefixed with `Website`:
+
+- `packages/streaming/src/stream-publish-auth.ts`: legacy request credential formats; do not blindly preserve query/header options in public rebuild APIs.
+- `packages/streaming/src/streamKey.crypto.ts` and selected methods of `streamKey.service.ts`: randomness/digest format, metadata, validation, rotation and publisher kick.
+- `src/modules/streaming/srs-webhook.controller.ts`: header authentication and publish entry; full handler/eligibility review continues during implementation.
+- `packages/streaming/src/srs-ingest-reconnect-grace.ts`: full deadline/reconnect implementation.
+- `packages/streaming/src/providers/srs.provider.ts`: input identifiers, playback URLs and conditional separate LL-HLS URL.
+- `prisma/schema/streaming.prisma`: `StreamSession` and `StreamKey` models; additional streaming/viewer models located for later focused reads.
+- `prisma/schema/chat-realtime-1.prisma`: channel, timeout, ban, moderator and message models.
+- `packages/chat/src/chat.validators.ts`, selected permission/timeout portions of `chat-moderation.service.ts`, route contract and rate-limit constants.
+- `packages/viewer-count/src/viewer-count.service.ts`: source/deduplication design and timing constants; full accounting flow remains an implementation review.
+- `tests/streams/srs_callback_ordering.test.ts`: stale unpublish, reconnect within grace, old/current session separation, failed publish retry and blocked play retry cases. Read setup and representative test bodies; do not claim the suite was rerun.
+- `tests/chat/chat_moderation_service_fanout.test.ts`: write/fanout ordering and failed-write behavior.
+- `tests/chat/chat_moderation_routes.test.ts`: route registration/authentication examples. Many additional legacy moderation/appeal tests were located, not executed or exhaustively reviewed.
+- `Website/src/hooks/usePlayerWebrtcFallback.ts` and its test: fallback behavior and player failure cases.
+- Rebuild `apps/api/crates/sver/src/auth.rs`: `sensitive`, `authorize_streaming`, `invalidate`, MFA disable and deletion integration points, inspected through CodeGraph.
+- `workers/llhls/README.md`, `Cargo.toml` and focused `src/main.rs` sections: local binding, inventory, route reconciliation, one-second HLS input, two-second output segment target and 500-ms parts. The crate declares AGPL-3.0-or-later; preserve licensing if later porting source. No dependency/vendor import occurred.
+- `scripts/qualification/llhls-media.cjs`, `deploy/hetzner/sver-llhls.service` and `nginx-llhls.snippet.conf`: isolated qualification approach, private admin listener and restricted media proxy. The legacy script was read but not executed because it writes legacy artifacts and owns fixed resource names. The rebuild harness owns uniquely labeled disposable resources instead.
+
+## Runtime baseline and remaining evidence
+
+Read-only SSH checked service state, the SRS version API, selected non-secret media directives, an aggregate active-stream count, and presence-only legacy environment flags. It did not print credentials, stream IDs, account records, complete environment contents, full callback URLs or live logs. SRS and both sver-plays services were active. No publish, load test, restart, configuration edit, migration or network/CDN provisioning occurred.
+
+The separate local media protocol proof now exists: [receipt](media-proof-local.json), [scope and limitations](LIVE_STREAMS.md#local-media-protocol-proof--october-3). It uses synthetic input and controlled authorization, with an optional unchanged legacy-worker comparison. The local Rust backend now has separate Postgres/controlled-SRS acceptance coverage for eligibility/revocation and persisted reconnect ordering. Integrated Rust/SRS publishing, OBS UI compatibility, browser/device support, actual CDN behavior, target latency and global/per-stream capacity remain open. Product choices and the full acceptance matrix remain in [LIVE_STREAMS.md](LIVE_STREAMS.md).
+
+## Backend/Studio carryover implemented locally — October 3
+
+Revisited the legacy stream-key service/crypto, stream-state service, callback controller, reconnect helper, streaming schema, category schema/seeds/policy and callback/rotation tests before implementing the rebuild. Ported digest verification, lifecycle serialization, single-publisher ownership, retired-client replay protection and durable disconnect/reconnect intent into the existing Rust/Postgres application. The rebuild uses the accepted 60-second grace, replaces the legacy public-key coupling with a random public ID plus private parameter, binds callbacks to the SRS process identity, and reuses Login and Profiles' public eligibility/security interfaces. A retired publish callback is rejected; duplicate current callbacks remain idempotent. No legacy code, schema or runtime was changed and no legacy tests were executed.
+
+Repeat reveal with encrypted storage and revocation on Stop/reset/MFA disable/lost eligibility are now user-approved. The small category seed retains legacy game/creative vocabulary without faction dependencies; it is an initial catalog, not a legacy data import. No streaming keys, broadcasts or chat records were imported. Studio ports the relevant controls into the new shared layout. Player/accounting and chat/moderation carryover remain subsequent work.

@@ -1,0 +1,20 @@
+/.codegraph/
+/tmp/
+/apps/api/target/
+/apps/web/node_modules/
+/apps/web/.next/
+/apps/web/*.tsbuildinfo
+*.env
+.env*
+!*.env.example
+*.log
+*.dump
+*.sql.gz
+*.tar.gz
+playwright-report/
+test-results/
+
+# Private: platform plan, operations notes and work log stay off the public repo.
+/ChangeLog.md
+/docs/OPERATIONS.md
+/docs/PLATFORM_PLAN.md

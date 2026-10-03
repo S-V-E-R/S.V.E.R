@@ -1,0 +1,18 @@
+name: sver-rebuild
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: sver_rebuild
+      POSTGRES_PASSWORD: ${SVER_DB_PASSWORD:?Set the isolated development database password}
+      POSTGRES_DB: sver_rebuild
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - login_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sver_rebuild -d sver_rebuild"]
+      interval: 3s
+      retries: 20
+volumes:
+  login_data:
