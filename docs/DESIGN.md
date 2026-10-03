@@ -1,0 +1,152 @@
+# Design system
+
+This is the source of truth for how S.V.E.R looks. Build every page against it. If a page needs something this file doesn't cover, follow its spirit and add the rule here in the same change.
+
+Approved by Joe on October 2, 2026 (reference mockup: "S.V.E.R Homepage Concept", version 4). This file is self-contained; you don't need the mockup to build from it.
+
+## The idea in one paragraph
+
+S.V.E.R looks like a game client, not a generic streaming site. The layout is the familiar streaming structure (top bar, left sidebar, rows of content) so nobody has to learn it, but the chrome has personality: framed panels with corner brackets, beveled metal buttons, Cinzel headings, and progression on screen. **The whole site takes the color of the signed-in user's faction.** Signed out, it's neutral steel. Ornament is done in CSS and inline SVG only: no glows, no gradient washes, no large decorative images. Pages must stay light on low-end PCs and slow connections.
+
+## Themes
+
+The server sets `data-theme` on `<html>` from the signed-in user's faction: `myria`, `aetheron`, `glint`, or `neutral` when signed out or when the user has no faction yet. It is server-rendered, so there's no flash of the wrong theme. Components use only the tokens below, never raw faction colors, except where they show *another* user's faction (a streamer's crest, an Ally or Enemy turf tag), which uses the fixed faction colors.
+
+| Token | neutral | myria | aetheron | glint | Used for |
+| --- | --- | --- | --- | --- | --- |
+| `--accent` | `#C9CED6` | `#FF9A1F` | `#A68BFF` | `#E9C35A` | Corner brackets, active nav bar, focus ring, progress fill, links |
+| `--accent-light` | `#ECEEF2` | `#FFC56E` | `#D3C6FF` | `#F8E6A8` | Logo, headings, bevel highlight, outline-button text |
+| `--accent-dark` | `#5A606C` | `#8A4A06` | `#4B2A9A` | `#7E5F14` | Bevel shadow, progress start |
+| `--accent-deep` | `#12151C` | `#2A1604` | `#1C1038` | `#0A1A3C` | Top-of-page tint behind the content |
+| `--line` | accent at 32% opacity | | | | Panel borders, rules |
+| `--tint` | accent at 7% opacity | | | | Panel fill tint |
+
+Shared tokens, the same in every theme:
+
+| Token | Value | Used for |
+| --- | --- | --- |
+| `--bg` | `#07080B` | Page background |
+| `--surface` | `rgba(8, 9, 13, 0.85)` | Panel base |
+| `--ink` | `#F2F0EA` | Body text |
+| `--ink-muted` | `#A3A6AE` | Secondary text |
+| `--ink-dim` | `#8E929B` | Labels, timestamps |
+| `--live` | `#E5262E` | LIVE tag only |
+| `--myria`, `--aetheron`, `--glint` | `#FF9A1F`, `#A68BFF`, `#E9C35A` | Other users' faction marks |
+
+Page background: `radial-gradient(90% 60% at 50% 0%, var(--accent-deep), var(--bg) 70%) var(--bg)`. This is the one gradient allowed besides button bevels and progress bars.
+
+Faction crests live in `apps/web/public/factions/{myria,aetheron,glint}.webp` (256 px). Use them at 18 to 56 px as identity marks. Never redraw them, add glows, or use them as large background art on content pages.
+
+## Type
+
+Load fonts with `next/font/google` so they're self-hosted and subset. No `@import` of Google Fonts in CSS, and no Inter, Roboto or Arial as the body face.
+
+| Role | Font | Weight | Size |
+| --- | --- | --- | --- |
+| Logo, section headings, buttons | Cinzel | 700 to 800 | Logo 28 to 30 px; section headings 22 to 24 px; buttons 15 to 16 px with 0.1em tracking |
+| Labels, tags, counts | Barlow Condensed | 600 to 700 | 11 to 16 px, uppercase, 0.1 to 0.2em tracking |
+| Body and UI text | Barlow | 400 to 600 | 15 px base, 1.45 to 1.5 line height |
+
+## Components
+
+**Framed panel.** 1 px `--line` border, background `linear-gradient(180deg, var(--tint), rgba(0,0,0,.25)), var(--surface)`, and 2 px `--accent` L-shaped brackets on all four corners (12 to 18 px long). Used for the player card, daily orders, the front-line banner, the featured carousel and the Beacons shelf. Square corners everywhere; no border-radius on panels or buttons. One way to draw all four brackets with a single pseudo-element:
+
+```css
+.frame { position: relative; }
+.frame::before {
+  content: ""; position: absolute; inset: -1px; pointer-events: none;
+  --b: linear-gradient(var(--accent), var(--accent));
+  background:
+    var(--b) top left / 16px 2px no-repeat,    var(--b) top left / 2px 16px no-repeat,
+    var(--b) top right / 16px 2px no-repeat,   var(--b) top right / 2px 16px no-repeat,
+    var(--b) bottom left / 16px 2px no-repeat, var(--b) bottom left / 2px 16px no-repeat,
+    var(--b) bottom right / 16px 2px no-repeat, var(--b) bottom right / 2px 16px no-repeat;
+}
+```
+
+**Section heading.** Cinzel 800, `--accent-light`, followed by a small `--accent` diamond (8 px square rotated 45°), a short `--ink-dim` description, and a 1 px `--line` rule filling the rest of the row, with a "View all" link at the end in Barlow Condensed.
+
+**Primary button (beveled).** Background `linear-gradient(180deg, var(--accent-light) 0%, var(--accent) 45%, var(--accent-dark) 100%)`, 1 px `--accent-light` border, `box-shadow: inset 0 1px 0 rgba(255,255,255,.4), inset 0 -2px 0 rgba(0,0,0,.35)`, text `#0A0A0C` in Cinzel. Minimum 44 px tall.
+
+**Outline button.** Transparent dark fill (`rgba(0,0,0,.35)`), 1 px `--accent` border, `--accent-light` Cinzel text. Pressed or selected state fills with `--accent`.
+
+**Tags** (Barlow Condensed 700, uppercase, tight padding, no radius):
+- `LIVE`: `--live` background, white text.
+- `ALLY`: `--accent` background, dark text. Shown on streams from the viewer's own faction.
+- `ENEMY TURF`: dark background, text in the color of the faction that holds the category.
+- Viewer count, duration: dark translucent background, `--ink` text.
+
+**Stream card.** 16:9 thumbnail with a 1 px border (`--accent` when it's an ally stream, otherwise `rgba(242,240,234,.08)`), tags in the corners, then the streamer's crest (32 px), a two-line title, streamer name and a category chip.
+
+**Progress bar.** Dark track, fill `linear-gradient(90deg, var(--accent-dark), var(--accent))`, no glow.
+
+**Icons.** Inline SVG strokes (`currentColor`), about 18 px. No emoji and no Unicode symbol glyphs (◈ ✦ ⌁) as icons.
+
+## Layout
+
+**Top bar:** Cinzel S.V.E.R logo in `--accent-light` → flexible space → search field (channels, categories, Beacons) → flexible space. Signed in: Valor balances (Phase 2), notifications button with a count badge, and the player chip (crest, username, "Lv 14 · Veteran"). Signed out: Log in, and an "Enlist" primary button.
+
+**Left sidebar (about 268 px; hidden below 960 px):**
+1. Player card (signed in): crest with a hex level badge, username, faction title, XP bar. Levels and XP arrive with Progression in Phase 2; until then the card shows the crest, name and faction.
+2. Navigation: Home, Browse, Beacons, War map, and the user's faction hub. The active item gets a 3 px `--accent` left bar and a `--tint` background.
+3. Daily orders panel (Phase 2).
+4. "Following · live" when signed in, "Picked for you" when signed out, marked with the MAGNet mark: three 4×10 px bars in the three faction colors (M.A.G. = Myria, Aetheron, Glint).
+
+**Home, in order:** the front-line banner (faction standing and a call to action written for the viewer's faction; "Pick a side" when signed out) → MAGNet rotation carousel → Live now → Beacons shelf (9:16 cards) → Just went live → Territories (categories, each with the holding faction's crest) → Latest clips → footer.
+
+Factions are a hint on most pages: crests, Ally and Enemy turf tags, territory status and the front-line banner. The faction hub and war map are where they take center stage.
+
+## Pages
+
+Every page uses the same shell (top bar, sidebar, main column) unless noted. Utility pages (auth, settings, account, admin) are calmer: corner brackets only on the outer panel, no banners or tags.
+
+**Landing (home, signed out).** The homepage above, with the signed-out variations: theme `neutral`, sidebar shows "Picked for you", and the front-line banner shows the season standing (a three-part bar), the three crests and an "Enlist" button. Clicking a crest goes to sign-up with that faction preselected. No separate marketing page: the first thing a visitor sees is live streams.
+
+**Sign up, log in, verify, reset, 2FA, OAuth sign-up.** One centered framed panel, 440 px wide, Cinzel title, no sidebar; the top bar shows only the logo and a "Log in" or "Enlist" link. Sign-up is three steps shown as hex-numbered markers (Account, Choose your side, Confirm email). Step 1: provider buttons (Google, Twitch, Discord) as outline buttons, then email, username (with the "sver.tv/username" preview), password (10+ characters), date of birth (13+, never shown) and the Turnstile check. Step 2, "Choose your side", widens to about 1000 px: three crest cards side by side, each with the faction name, epithet, creed and home turf. Picking one immediately switches the page to that faction's theme so the user sees their colors before confirming; the button reads "Enlist in Myria". The one-free-switch-in-7-days rule is stated under the cards. Step 3: crest, "Welcome to Myria", and the confirm-email message (browse and watch now; chat and going live unlock after confirming). Log in errors appear as a framed notice with a `--live` left bar and the remaining attempts.
+
+**Channel page (`/username`).**
+- Header: a wide banner (16:5) inside a framed panel; avatar (96 px) overlapping its bottom-left edge with the owner's crest beside it; display name in Cinzel, `@username` beneath, faction tag, mood/status line, social links, and Follow (primary) on the right with the follower count.
+- If live, the player sits above the tabs with a LIVE tag; offline, the banner carries "Offline" and the next scheduled stream.
+- Tabs in Barlow Condensed: Home, Wall, Schedule, About, Fan art (when enabled), Followers, Following. Active tab: `--accent` underline.
+- Home tab: War Council (Top 8) as a 4×2 grid of small player cards (avatar, crest, name, live dot), the profile song as a compact one-line player, sponsors as a logo row, then the owner's custom blocks in framed panels.
+- Wall: posts in framed panels, newest first, pinned posts on top with a pin mark; replies indented one level.
+- **Colors (open question for Joe):** the site chrome uses the viewer's theme; the channel's banner frame, tabs and accents could use the *owner's* faction so each channel carries its own identity. Recommended: owner's faction inside the channel area, viewer's everywhere else.
+
+**Watch page.** Player first and largest (16:9), chat to its right at 340 px (below the player on narrow screens). Under the player: streamer bar (crest, name, title, category chip, faction tag, Follow), then "Up next" from MAGNet. Chat messages show the sender's crest (14 px) and name in their faction color; moderator actions in a small hover menu. When the stream ends, a framed overlay offers the next stream with a 10-second countdown and Cancel.
+
+**Browse.** Genre tabs across the top (grouped by holding faction, each with its crest), then category tiles at 3:4 with the holder's crest in the corner and the live count. A category page lists its live streams in fair rotation, with a faction filter.
+
+**Following.** Live channels first as stream cards, then offline channels as a compact list (crest, name, last live).
+
+**Settings, account, Creator Studio.** Two columns: a section list on the left in a framed panel, forms on the right. Inputs: dark fill, 1 px `--line` border, `--accent` border on focus, labels in Barlow Condensed above the field. Destructive actions (delete account, regenerate stream key) use an outline button in `--live` and a confirm step. Studio shows the stream key behind 2FA, the recommended OBS settings, and warnings (bitrate too high, B-frames on) as framed notices with a `--live` left bar.
+
+**Faction hub (`/factions/{faction}`).** The one place a crest is shown large (up to 160 px). Header with crest, name, epithet and creed in that faction's theme regardless of the viewer's; season standing; contribution leaderboard as player cards (rank, crest, name, influence); live streams from the faction; territories it holds.
+
+**War map.** Genres as a hex map, clustered by holding faction, each hex edged in the holder's color with the lead percentage; contested hexes get a white edge and a CONTESTED tag. Beside it: standings per faction and a short numbered list of how ground is taken.
+
+**Beacons feed.** One 9:16 video at a time, centered on desktop and full screen on phones, with a right-side rail: creator crest and name, like, view count, and Live now when the creator is streaming. Swipe or arrow keys move between Beacons.
+
+**Info pages (About, Factions, Roadmap, Help).** No sidebar. Top bar with the logo, a short nav (Home, Browse, Factions, Roadmap, About; the current page underlined in `--accent`), Log in and Enlist. Content in a centered column (920 to 1240 px), opening with a small label, a Cinzel headline (50 to 54 px) and a one-paragraph lead, then sections with the standard section heading. End with a framed call-to-action panel. Factions shows each faction in its own colors in a three-column grid (crest 150 px, name, epithet, creed, values, who it's for, home turf, lore, Join button). Roadmap shows the modules on a vertical track with diamond nodes and a status chip (Done filled, In progress outlined bright, Started outlined, Planned dim), then later phases as cards.
+
+**Legal pages (Terms, Privacy, Guidelines, DMCA, Take It Down).** Same top bar, tabs across the top to switch policy. Each policy: title, "Last updated · Effective" dates, a framed "The short version" box with 3 to 5 plain bullets and a note that the full text is what applies, then a sticky "On this page" list on the left and numbered sections on the right. The Take It Down tab is a request page instead: plain-language explanation, a framed "What happens next" list (confirmation, removal of the content and identical copies within 48 hours, follow-up), and a framed request form that works without an account.
+
+**Footer (every page).** Logo, "For streamers who play, build, and make.", links to About, Factions, Roadmap, Help, Terms, Privacy, Guidelines, DMCA, **Take It Down requests** (required to be clearly visible from the homepage) and Contact, and "© SVER LLC".
+
+**Errors and empty states.** Short and plain ("This channel doesn't exist." / "Nothing live right now."), inside a framed panel, with one useful next step. When nothing is live, show recently live channels and the war map, never a blank grid.
+
+**Phones (below 960 px).** The sidebar becomes a drawer opened from a menu button in the top bar; grids drop to one or two columns; the watch page stacks player, streamer bar, then chat.
+
+## Copy
+
+- Short, direct, specific. Say what something does ("Every live stream gets a turn here, whether it has 3 viewers or 3,000"), not slogans.
+- No filler taglines or mood lines in the chrome ("A new chapter begins", "Stream • Connect • Belong").
+- Never compare S.V.E.R to other platforms.
+- Game vocabulary where it fits the war (Enlist, territory, orders, ally), plain words everywhere else.
+
+## Not allowed
+
+- Glows, neon edges, blurred light behind elements, glassmorphism.
+- Gradient washes on panels or cards (besides the page tint, bevels and progress bars above).
+- Rounded "soft" cards and pill buttons.
+- Large decorative images or AI-generated art in the interface.
+- Default framework palettes (Tailwind orange, stock blue).
