@@ -41,7 +41,8 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 | Subscribers | 0 | 0 | 8 | 40 |
 | Unique viewers | 0 | 0 | 300 | 3,000 |
 | Days active | 0 | 10 | 40 | 120 |
-| **Subscription split to the streamer** | 75% | 80% | 85% | 90% |
+| **Subscription split to the streamer** | 65% | 70% | 75% | 80% |
+| **Ad split: streamer / S.V.E.R / viewers (Phase 4)** | 65 / 30 / 5 | 70 / 25 / 5 | 75 / 20 / 5 | 80 / 15 / 5 |
 | **VOD retention (Module 7)** | 24 hours | 48 hours | 72 hours | 7 days |
 
 - A streamer moves up when they meet every requirement for the next tier. Checked weekly, Monday 00:01 Eastern. Tiers never go down.
@@ -49,11 +50,11 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - Viewer numbers (average and unique viewers) count real playback sessions only. Until viewbot detection ships (Phase 2), moving up to Pioneer or Pathfinder waits for a staff check.
 - Valor cheers pay 0.8¢ per Valor at every tier.
 - Legacy tier benefits not carried over: the discovery boost (MAGNet never ranks by size), and referrals, affiliate, partnerships and priority support (deferred).
-- Ad revenue tiers wait for ads (Phase 4).
+- The ad split is recorded here so the tiers stay in one place; it applies once ads exist (Phase 4). Viewers' 5% becomes Ad Valor.
 
 ## Subscriptions
 
-- Tiers: $4.99, $9.99 and $24.99 a month. The streamer keeps 75% to 90% of the full price depending on their creator tier (below); S.V.E.R pays the card fees out of its share. Gift subs use the same split.
+- Tiers: $4.99, $9.99 and $24.99 a month. The streamer keeps 65% to 80% of the full price depending on their creator tier (below); S.V.E.R pays the card fees out of its share. Gift subs use the same split.
 - Benefits:
   - Subscriber badge showing months subscribed: 1, 3, 6, 9, 12, then each further year.
   - Subscriber emotes: 5 slots at tier 1, 5 more at tier 2, 5 more at tier 3, on top of the channel's 10 open emotes from Module 3.
