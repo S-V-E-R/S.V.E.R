@@ -42,19 +42,19 @@ Any account that is verified, has authenticator 2FA, and has finished Stripe Con
 
 ## Purchased Valor
 
-- Bought by card in packs, priced at 99¢ per 100 Valor with discounts on larger packs. The smallest pack is 500, because Stripe's fixed 30¢ fee makes smaller packs lose money. Starting price list:
+- Bought by card in packs, with bonus Valor on bigger packs:
 
-  | Pack | Price | Per 100 |
+  | Price | Valor | Per 100 |
   | --- | --- | --- |
-  | 500 | $4.99 | 99.8¢ |
-  | 1,000 | $9.79 | 97.9¢ |
-  | 2,500 | $23.99 | 96.0¢ |
-  | 5,000 | $46.99 | 94.0¢ |
-  | 10,000 | $89.99 | 90.0¢ |
+  | $0.99 | 100 | 99¢ |
+  | $1.99 | 200 | 99.5¢ |
+  | $4.99 | 525 | 95.0¢ |
+  | $9.99 | 1,075 | 92.9¢ |
+  | $19.99 | 2,200 | 90.9¢ |
+  | $49.99 | 5,600 | 89.3¢ |
+  | $99.99 | 11,500 | 86.9¢ |
 
-- No pack costs more than $100.
-
-- The streamer earns **0.8¢ per Valor** spent on them (cheers and Valor-paid subscriptions). S.V.E.R pays the card fees and keeps the rest; every pack in the list stays above cost.
+- The streamer earns **0.8¢ per Valor** spent on them (cheers and Valor-paid subscriptions). S.V.E.R pays the card fees and keeps the rest. Every pack covers its costs except the $0.99 pack, where Stripe's 30¢ fee means S.V.E.R loses about 14¢ when all 100 Valor are spent; Joe accepted that as the entry price.
 - Spent as **cheers** in chat (minimum 10 Valor; the message is highlighted and shows the amount) and on subscriptions.
 - No expiry. Not transferable between accounts. Viewers can't cash it out. Purchases are non-refundable except where the law or the refund policy says otherwise.
 - Cheers obey chat rules: a cheer message that breaks banned-word or link rules is rejected before any Valor moves. A cheer to a channel that banned or blocked the viewer is refused.
