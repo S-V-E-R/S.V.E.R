@@ -121,6 +121,14 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 - Studio polls health about every five seconds. Derive bitrate and codec data from SRS and use a bounded media probe for keyframe/B-frame measurements if SRS lacks them. Display "Not measured" when data is missing. Never turn a missing measurement into a green pass.
 - Report input disconnect, unsupported codec, excessive bitrate, bad keyframe interval and B-frames separately. These warnings are explanatory; load protection may reject an unsupported ingest, but must not silently transcode video.
 
+## Player and viewer accounting (phase 3) — October 3
+
+- `GET /api/channels/{username}/live` is public: `{"live":false}` unless the broadcast is LIVE or RECONNECTING (STARTING is never public). It returns title, category, start time, viewer count, `is_owner` and playback URLs built from the optional `STREAM_WHEP_URL` and `STREAM_HLS_URL`. No publish secret appears in it. Preferred transport is WebRTC when offered; there is no automatic scale switching until both paths pass the media test.
+- `POST /api/channels/{username}/live/beat` is the playback lease. The player sends it every ten seconds only while media time advances. Signed-in viewers are keyed by account, guests by a digest of a random first-party browser ID (16–64 characters), never by IP. The owner never counts. A lease counts for 30 seconds after its last beat and is swept by the existing expiry job (`playback_leases`, migration `0006`). Rate limits: 240 beats per IP and 12 per viewer per minute.
+- `LivePlayer` replaces the offline banner in the channel player slot and fills `/{username}/live`; `/watch/{name}` now redirects to the live view. It tries WebRTC (WHEP) with an eight-second startup timeout, then HLS (native, or hls.js where Media Source is needed), shows loading/reconnecting/blocked-autoplay/failed states with Retry, retries a dropped transport after three seconds, and uses native controls for keyboard, fullscreen, volume and captions. One video element is reused, so mute/volume survive a transport switch.
+- Channel-ban playback denial for signed-in users (decision 1) needs the channel-ban table and lands with phase 4.
+- Covered by `tests/streams/playback.rs`: unknown channel, offline/STARTING/LIVE/RECONNECTING/ENDED visibility, URL shape, no secret, guest dedupe and renewal, invalid browser IDs, wrong broadcast, owner exclusion, expiry. Not yet verified in a real browser against SRS (WebRTC/HLS start, fallback timing, autoplay) or with CDN delivery; Following/user-card live badges are not added yet.
+
 ## Local backend and Studio implementation — October 3
 
 `apps/api/crates/sver/src/streams.rs` and migration `0005_streams.sql` implement settings, the seeded category catalog, encrypted credentials, broadcasts, retired-publisher records and durable disconnect jobs. Account locks serialize publishing, key changes, expiry and revocation. Each callback binds the public ID and credential generation to SRS's server ID, process/boot service ID and client ID. The exact direct peer and `x-srs-secret` authenticate only the two hook routes; forwarded browser IP headers cannot satisfy that check. Publishing also checks the current private SRS version response, failing closed on an unavailable or different boot.
@@ -187,7 +195,7 @@ Correlate WebRTC leases with actual SRS sessions where possible. CDN playback he
 A moderator cannot sanction the owner, themselves, another appointed moderator or platform staff. The owner can remove a moderator before sanctioning them. Staff-role changes remain operator-CLI only under Module 2; channel roles never grant `/admin` access. Appointed moderators must have verified accounts in good standing; removal/restriction takes effect on the next action, not after a long permission cache expires.
 
 - Timeout duration is an integer 60–1,209,600 seconds. A new timeout replaces the old end time and does not clear a ban. Expiry is checked against database time without waiting for a cleanup timer.
-- Bans last until lifted. **Proposed and asked of the user:** channel bans prevent chat, while public viewing remains available. If signed-in playback denial is selected, it requires media authorization enforcement and still cannot prevent logged-out public viewing. No choice has yet been recorded.
+- Bans last until lifted. **Decided:** channel bans prevent chat and signed-in playback; this requires playback-access enforcement and still cannot prevent logged-out public viewing.
 - Actions require a reason of 1–500 characters. Writes and audit records commit together; broadcasts happen after commit. Retrying the same action is idempotent. Delete replaces visible content with a tombstone and does not send the deleted body to new joins.
 - Slow mode exempts the owner, channel moderators and acting platform staff. The general abuse/send cap still applies. Display an accurate retry countdown.
 - Link blocking examines normalized plain text for URLs/domains, including mixed case and common `www.`/scheme-less forms. Do not treat it as a complete obfuscation detector. Never fetch a link. Owners/moderators are exempt as required by the plan.
@@ -251,12 +259,12 @@ Required automated coverage:
 - Owner/moderator/staff permission matrix, peer protection, immediate demotion, timeout expiry, ban/unban, block filtering, reports, bans and appeals without privilege escalation.
 - Regression checks for closed Login and Module 2 Profiles; new top-level routes remain covered by the reserved-name test.
 
-## Product defaults awaiting review
+## Product decisions (approved by Joe, October 3, 2026)
 
-1. Channel bans stop chat only; signed-in playback denial is an alternative, with public logged-out viewing still possible. The question was asked during startup; record the reply here before implementing it.
-2. Offline public chat stays available; unreported message bodies expire after seven days. Public history remains latest 100.
-3. Proposed moderation permissions, account-ban restricted-session/appeal behavior and impersonation username resets above.
-4. A small seeded category catalog, proposed OBS limits and the playback-count rules above. Capacity thresholds and the final bitrate cap are measured engineering outcomes, not values to guess at review.
+1. **Channel bans stop chat and signed-in watching.** A banned signed-in user cannot chat in the channel and is refused playback access while signed in; logged-out public viewing remains possible and is not claimed to be blocked.
+2. Approved as proposed: offline public chat stays available; unreported message bodies expire after seven days; public history is the latest 100.
+3. Approved as proposed: the moderation permission table, account bans with restricted sessions and one appeal within 14 days, and staff username resets for impersonation.
+4. Approved as proposed: the small seeded category catalog, the OBS guidance and the playback-lease viewer-count rules. Capacity thresholds and the final bitrate cap remain measured engineering outcomes.
 
 ## Done when
 

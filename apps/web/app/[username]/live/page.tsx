@@ -1,7 +1,22 @@
-import { redirect } from "next/navigation";
-import type { ChannelParams } from "../../../lib/channel";
+import Link from "next/link";
+import { LivePlayer } from "../../../components/LivePlayer";
+import { channelMetadata, loadChannel, type ChannelParams } from "../../../lib/channel";
+import "../../../styles/profiles.css";
 
-// Module 3 defines the live view; until then the proxy sends a 302 to the channel (this is the fallback).
+export async function generateMetadata({ params }: { params: ChannelParams }) {
+  return channelMetadata((await params).username, "Live");
+}
+
+/** Focused watch layout: the player first, the channel one link away. Chat joins here in Module 3 phase 4. */
 export default async function Live({ params }: { params: ChannelParams }) {
-  redirect(`/${(await params).username}`);
+  const c = (await loadChannel((await params).username)).channel;
+  return <div className="channel">
+    <LivePlayer username={c.username} focused>
+      <section className="panel" aria-label="Stream">
+        <h1>{c.display_name} is offline</h1>
+        <p><Link href={`/${c.username}`}>Go to the channel</Link></p>
+      </section>
+    </LivePlayer>
+    <p><Link href={`/${c.username}`}>{c.display_name}</Link> <span className="muted">@{c.username}</span></p>
+  </div>;
 }

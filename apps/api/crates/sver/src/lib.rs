@@ -14,6 +14,7 @@ pub mod auth;
 pub mod jobs;
 pub mod media;
 pub mod oauth;
+pub mod playback;
 pub mod profile_import;
 pub mod profile_jobs;
 pub mod profiles;
@@ -46,6 +47,7 @@ pub struct Config {
     pub soundcloud_oembed_url: String,
     pub thumbnail_hosts: Vec<String>,
     pub streaming: Option<streams::Config>,
+    pub playback: playback::Config,
 }
 impl Config {
     pub fn from_env() -> std::result::Result<Self, String> {
@@ -106,6 +108,7 @@ impl Config {
             trusted_proxy,
             media,
             streaming: streams::Config::from_env()?,
+            playback: playback::Config::from_env(production)?,
             youtube_oembed_url: "https://www.youtube.com/oembed".into(),
             soundcloud_oembed_url: "https://soundcloud.com/oembed".into(),
             thumbnail_hosts: vec!["ytimg.com".into(), "sndcdn.com".into()],
@@ -304,6 +307,7 @@ pub fn router(app: App) -> Router {
         )
         .merge(profile_routes())
         .merge(streams::routes())
+        .merge(playback::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

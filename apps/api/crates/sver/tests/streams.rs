@@ -18,6 +18,8 @@ use std::{
 use sver::{App, Config, security as sec, streams};
 use tower::ServiceExt;
 
+#[path = "streams/playback.rs"]
+mod playback;
 #[path = "streams/real_media.rs"]
 mod real_media;
 
@@ -262,6 +264,10 @@ async fn streaming_lifecycle_and_security() {
         vhost: "__defaultVhost__".into(),
         app: "rebuild".into(),
     });
+    config.playback = sver::playback::Config {
+        hls_url: Some("https://media.example/rebuild".into()),
+        whep_url: Some("https://media.example/rtc/v1/whep".into()),
+    };
     let app = App::new(db.clone(), config).await.unwrap();
     let env = synthetic_owner(app, fake).await;
     // A spawned task catches assertion panics so the disposable schema is still cleaned.
@@ -276,6 +282,7 @@ async fn streaming_lifecycle_and_security() {
     result.unwrap();
 }
 async fn exercise(e: &Env) {
+    playback::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")

@@ -45,6 +45,7 @@ pub async fn tick(app: &App) -> Result<()> {
         "sessions",
         "rate_limits",
         "mail_jobs",
+        "playback_leases",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE expires_at<=now()"))
             .execute(&app.db)

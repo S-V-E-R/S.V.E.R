@@ -21,10 +21,10 @@ export async function proxy(request: NextRequest) {
   const segments = request.nextUrl.pathname.split("/").filter(Boolean);
   if (segments.length === 0 || STATIC.has(segments[0])) return NextResponse.next();
   const [first, ...rest] = segments;
-  // Aliases: /s/{name}, /u/{name} and /@{name} are permanent; /watch/{name} is temporary until Module 3.
+  // Aliases: /s/{name}, /u/{name} and /@{name} are permanent; /watch/{name} goes to the live view.
   if ((first === "s" || first === "u") && rest.length > 0) return to(request, `/${rest.join("/")}`, 308);
   if (first.startsWith("@") && first.length > 1) return to(request, `/${[first.slice(1), ...rest].join("/")}`, 308);
-  if (first === "watch" && rest.length > 0) return to(request, `/${rest[0]}`, 302);
+  if (first === "watch" && rest.length > 0) return to(request, `/${rest[0]}/live`, 302);
   if (!NAME.test(first)) return NextResponse.next();
   const tab = request.nextUrl.searchParams.get("tab");
   if (tab !== null && rest.length === 0) {
@@ -43,7 +43,6 @@ export async function proxy(request: NextRequest) {
   const sub = rest.length ? `/${rest.join("/")}` : "";
   if (resolved?.redirect_to) return to(request, `/${resolved.redirect_to}${sub}`, 302);
   if (resolved?.username && resolved.username !== first) return to(request, `/${resolved.username}${sub}`, 308);
-  if (resolved?.username && rest.length === 1 && rest[0] === "live") return to(request, `/${resolved.username}`, 302, "");
   return NextResponse.next();
 }
 

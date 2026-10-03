@@ -59,10 +59,12 @@ try {
   await expectRedirect(`/s/${username}/about`, 308, `/${username}/about`);
   await expectRedirect(`/u/${username}`, 308, `/${username}`);
   await expectRedirect(`/@${username}`, 308, `/${username}`);
-  await expectRedirect(`/watch/${username}`, 302, `/${username}`);
+  await expectRedirect(`/watch/${username}`, 302, `/${username}/live`);
   await expectRedirect(`/${username}?tab=wall`, 308, `/${username}/wall`);
   await expectRedirect(`/${username}?tab=showcase`, 308, `/${username}`);
-  await expectRedirect(`/${username}/live`, 302, `/${username}`);
+  const liveView = await get(`/${username}/live`);
+  assert.equal(liveView.status, 200, "The live view renders");
+  assert.match(await liveView.text(), /is offline/, "An offline channel says so on the live view");
   const held = await expectRedirect(`/${oldName}/schedule`, 302, `/${username}/schedule`);
   assert.match(held.headers.get("cache-control") || "", /no-store/);
   for (const path of ["/settings", "/settings/profile", "/studio/channel", "/studio/stream", "/following"]) {

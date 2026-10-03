@@ -85,3 +85,10 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 @media(max-width:900px){.channel,.settings-body{padding:18px}.settings-page{flex-direction:column}.settings-nav{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line);padding:12px}.occurrences li{grid-template-columns:1fr 1fr}.identity{flex-direction:column}}
 @media(max-width:650px){.player-slot{aspect-ratio:2/1}.setup div{grid-template-columns:1fr}.user-card{width:260px}}
 .nav-dot{display:inline-block;width:6px;height:6px;margin-left:6px;vertical-align:middle;background:var(--accent);transform:rotate(45deg)}
+.player-slot:has(.live-player){aspect-ratio:auto}
+.live-player{position:relative;background:#000}
+.live-player video{display:block;width:100%;aspect-ratio:16/9;background:#000}
+.live-player.focused video{max-height:calc(100vh - 160px)}
+.player-status,.player-action{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);margin:0;padding:8px 14px;background:var(--panel);border:1px solid var(--line);text-align:center}
+.live-meta{margin:0;padding:10px 14px;background:var(--panel);border-top:1px solid var(--line)}
+.live.badge{border-color:var(--accent);color:var(--accent)}

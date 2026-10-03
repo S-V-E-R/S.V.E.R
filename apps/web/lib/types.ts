@@ -1,5 +1,5 @@
 export type Sizes = Record<string, string> | null;
-export type Chip = { username: string | null; display_name: string; avatar: Sizes; linked: boolean; deleted: boolean };
+export type Chip = { username: string | null; display_name: string; avatar: Sizes; linked: boolean; deleted: boolean; live?: boolean };
 export type Link = { platform: string; url: string };
 export type Song = { provider: "youtube" | "soundcloud"; media_id: string; title: string | null; artist: string | null; thumbnail: string | null; volume: number } | null;
 export type Viewer = { signed_in: boolean; is_owner: boolean; following: boolean; blocked: boolean; interaction_blocked: boolean };

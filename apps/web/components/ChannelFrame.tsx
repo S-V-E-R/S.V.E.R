@@ -3,6 +3,7 @@ import { joined, platformNames, type Channel } from "../lib/types";
 import { Avatar } from "./Avatar";
 import { ChannelActions } from "./ChannelActions";
 import { ChannelTabs } from "./ChannelTabs";
+import { LivePlayer } from "./LivePlayer";
 import { SongPlayer } from "./SongPlayer";
 import "../styles/profiles.css";
 
@@ -12,9 +13,11 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
   const banner = c.banner ? Object.entries(c.banner) : [];
   return <div className="channel">
     <section className="player-slot" aria-label="Stream">
+      <LivePlayer username={c.username}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       {banner.length ? <img className="banner" src={banner[0][1]} srcSet={banner.map(([w, u]) => `${u} ${w}w`).join(", ")} sizes="(max-width: 900px) 100vw, 1100px" alt="" /> : <div className="banner default-banner" aria-hidden="true" />}
       <span className="offline badge">Offline</span>
+      </LivePlayer>
     </section>
     <section className="identity panel">
       <Avatar sizes={c.avatar} name={c.display_name} size={112} />

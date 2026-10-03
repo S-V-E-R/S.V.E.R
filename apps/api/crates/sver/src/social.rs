@@ -526,6 +526,6 @@ pub async fn card(
         "joined_at": me.created_at,
         "viewer": {"signed_in": viewer.is_some(), "is_self": is_self, "following": following, "blocked": blocked},
         "faction": null,
-        "live": false,
+        "live": crate::playback::is_live(&mut db, &me.id).await?,
     })))
 }
