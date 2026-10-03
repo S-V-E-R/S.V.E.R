@@ -46,14 +46,14 @@ Each module is closed before the next starts:
 
 1. Login
 2. Profiles
-3. Live streams (includes chat, moderation, custom emotes, go-live alerts, raids and hosting)
+3. Live streams (includes chat, moderation, viewbot detection, custom emotes, go-live alerts, raids and hosting)
 4. Factions (full seasonal war at launch)
 5. MAGNet
 6. Support (subscriptions, Valor, channel rewards, co-streams, payouts)
 7. VODs and clips
 8. Beacons
 
-Modules 1 to 5 make the site functional. Phase 2 (Progression, Raven's Eye, viewbot detection) starts only after all eight close.
+Modules 1 to 5 make the site functional. Phase 2 (Progression, Raven's Eye) starts only after all eight close.
 
 ## The closure rule
 

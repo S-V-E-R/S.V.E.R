@@ -47,7 +47,7 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 
 - A streamer moves up when they meet every requirement for the next tier. Checked weekly, Monday 00:01 Eastern. Tiers never go down.
 - Each tier has a badge shown on the channel and in chat.
-- Viewer numbers (average and unique viewers) count real playback sessions only. Until viewbot detection ships (Phase 2), moving up to Pioneer or Pathfinder waits for a staff check.
+- Viewer numbers (average and unique viewers) use the Trusted count from Module 3 viewer integrity, so viewbotted viewers never help a streamer climb. A streamer with an open staff integrity case is not promoted until it is closed.
 - Valor cheers pay 0.8¢ per Valor at every tier.
 - Legacy tier benefits not carried over: the discovery boost (MAGNet never ranks by size), and referrals, affiliate, partnerships and priority support (deferred).
 - The ad split is recorded here so the tiers stay in one place; it applies once ads exist (Phase 4). Viewers' 5% becomes Ad Valor.
