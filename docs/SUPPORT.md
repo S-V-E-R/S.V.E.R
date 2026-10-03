@@ -115,4 +115,4 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 
 ## Done when
 
-An eligible streamer finishes payout setup; a viewer subscribes at each tier by card and by Valor, gifts subs, buys Valor and cheers; every transaction balances in the ledger and survives webhook retries, refunds and chargebacks; a streamer creates rewards and fulfills redemptions; a squad of up to 4 streams plays together; a test payout reaches a Stripe test account.
+An eligible streamer finishes payout setup; a viewer subscribes at each tier by card and by Valor, gifts subs, buys Valor and cheers; every transaction balances in the ledger and survives webhook retries, refunds and chargebacks; a streamer creates rewards and fulfills redemptions; a squad of up to 4 streams plays together in both modes, and merged-mode revenue splits correctly; weekly tier checks promote streamers and change their split and VOD retention; a test payout reaches a Stripe test account.
