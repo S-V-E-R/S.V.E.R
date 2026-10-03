@@ -23,12 +23,14 @@ function sql(statement) {
   return result.stdout.trim();
 }
 const get = (path, cookie = "") => fetch(`${origin}${path}`, { headers: cookie ? { cookie } : {}, redirect: "manual" });
-const navigation = html => html.match(/<header\b[\s\S]*?<\/header>/)?.[0] + html.match(/<aside\b[\s\S]*?<\/aside>/)?.[0];
+// Header plus sidebar; sign-in screens have a minimal header and no sidebar (docs/DESIGN.md).
+const navigation = html => (html.match(/<header\b[\s\S]*?<\/header>/)?.[0] ?? "") + (html.match(/<aside\b[\s\S]*?<\/aside>/)?.[0] ?? "");
 try {
   sql(`BEGIN; INSERT INTO users(id,email,username) VALUES('${id}','${id}@example.invalid','${username}'); INSERT INTO sessions(id,user_id,token_hash,auth_version,user_agent) VALUES('${randomUUID()}','${id}','${createHash("sha256").update(token).digest("hex")}',0,'Local navigation acceptance'); INSERT INTO username_holds(handle_canonical,user_id,released_at,redirect) VALUES('${oldName}','${id}',now()+interval '1 day',true); COMMIT;`);
   const guest = await get("/login");
   assert.equal(guest.status, 200);
-  assert.match(navigation(await guest.text()), /href="\/login"/);
+  assert.match(navigation(await guest.text()), /href="\/signup"/);
+  assert.match(navigation(await (await get("/signup")).text()), /href="\/login"/);
   assert.match(navigation(await (await get("/login", "sver_dev=invalid")).text()), /href="\/signup"/);
   // Public site pages never require a session or go through channel tab redirects.
   const sitePages = [["/about", "About S.V.E.R"], ["/factions", "Meet the factions"], ["/roadmap", "The road ahead"], ["/help", "Help &amp; FAQ"], ["/terms", "Terms of Service"], ["/privacy", "Privacy Policy"], ["/guidelines", "Community Guidelines"], ["/dmca", "Copyright &amp; DMCA"], ["/contact", "Contact S.V.E.R"]];
@@ -131,7 +133,7 @@ try {
   // Authenticated HTML must never leak into a following anonymous response.
   const after = await (await get("/login")).text();
   assert.doesNotMatch(navigation(after), new RegExp(username));
-  assert.match(navigation(after), /href="\/login"/);
+  assert.match(navigation(after), /href="\/signup"/);
   sql(`DELETE FROM sessions WHERE user_id='${id}';`);
   const revoked = await get("/account", cookie);
   assert.equal(revoked.status, 307);

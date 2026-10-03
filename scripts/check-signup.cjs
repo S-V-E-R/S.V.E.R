@@ -37,6 +37,8 @@ const compiled = { exports: {} };
 vm.runInThisContext(`(function(require, module, exports) {${source}\n})`, { filename: "screens.test.cjs" })(name => {
   if (name === "next/link") return ({ href, children, ...props }) => React.createElement("a", { href, ...props }, children);
   if (name === "next/script") return function Script({ onReady }) { React.useEffect(onReady, []); return null; };
+  // Account-only media is outside these signup checks.
+  if (name === "../components/Avatar") return { Avatar: () => null };
   return webRequire(name);
 }, compiled, compiled.exports);
 const root = createRoot(document.getElementById("root"));
