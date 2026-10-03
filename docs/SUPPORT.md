@@ -105,11 +105,19 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 
 ## Payouts
 
-- Monthly, with no minimum: every available balance is paid out. S.V.E.R pays Stripe's payout fees (currently $2 per paid account per month plus 0.25% + 25¢ per payout).
-- No hold: earnings are available for the next monthly payout as soon as Stripe settles them.
+Decided by Joe on October 3, 2026.
+
+- **Payday every 2 weeks:** the streamer's whole available balance is paid out by standard transfer (arrives in about 2 business days). No minimum and no hold: earnings are available as soon as Stripe settles them.
+- **Early Pay:** between paydays, a streamer can withdraw up to **75%** of what they've earned since the last payday, minus anything already withdrawn early. At most one Early Pay per day.
+  - **Standard** (about 2 business days): free to the streamer.
+  - **Instant** (minutes, to an eligible debit card): Stripe's 1% fee is paid by the streamer and shown before they confirm.
+- **The 25% that stays until payday** covers refunds and disputes that arrive during the period. Whatever is left is paid on payday.
+- **Taxes:** S.V.E.R doesn't withhold taxes; streamers are independent creators and Stripe handles tax forms. Creator Studio shows a reminder and an optional estimate of how much to set aside.
+- S.V.E.R pays Stripe's standard payout fees (currently $2 per paid account per month plus 0.25% + 25¢ per payout).
 - Stripe Chargeback Protection is turned on for Checkout payments (S.V.E.R pays its 0.4% fee). It reimburses fraud disputes only, up to its annual cap, and doesn't cover "cancelled subscription" or "not received" disputes or renewals outside Checkout.
-- A dispute that isn't reimbursed reverses the streamer's share. If that share was already paid out, the streamer's balance goes negative and is recovered from their future earnings before the next payout.
-- Tax reporting through Stripe. Payout setup lives in Creator Studio.
+- A dispute that isn't reimbursed reverses the streamer's share. If that share was already paid out, the streamer's balance goes negative and is recovered from their future earnings before the next payout or Early Pay.
+- Guardian-owned payout accounts (ages 13 to 17) work the same way; payouts go to the guardian's account.
+- Payout setup, Early Pay and payout history live in Creator Studio.
 
 ## Before launch
 
@@ -118,4 +126,4 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 
 ## Done when
 
-An eligible streamer finishes payout setup; a viewer subscribes at each tier by card and by Valor, gifts subs, buys Valor and cheers; every transaction balances in the ledger and survives webhook retries, refunds and chargebacks; a streamer creates rewards and fulfills redemptions; a squad of up to 4 streams plays together in both modes, and merged-mode revenue splits correctly; weekly tier checks promote streamers and change their split and VOD retention; a test payout reaches a Stripe test account.
+An eligible streamer finishes payout setup; a viewer subscribes at each tier by card and by Valor, gifts subs, buys Valor and cheers; every transaction balances in the ledger and survives webhook retries, refunds and chargebacks; a streamer creates rewards and fulfills redemptions; a squad of up to 4 streams plays together in both modes, and merged-mode revenue splits correctly; weekly tier checks promote streamers and change their split and VOD retention; a payday payout and a standard and instant Early Pay (capped at 75%, once a day) reach a Stripe test account, and a dispute after payout is recovered from later earnings.
