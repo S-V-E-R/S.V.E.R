@@ -83,6 +83,40 @@ Load fonts with `next/font/google` so they're self-hosted and subset. No `@impor
 
 Factions are a hint on most pages: crests, Ally and Enemy turf tags, territory status and the front-line banner. The faction hub and war map are where they take center stage.
 
+## Pages
+
+Every page uses the same shell (top bar, sidebar, main column) unless noted. Utility pages (auth, settings, account, admin) are calmer: corner brackets only on the outer panel, no banners or tags.
+
+**Landing (home, signed out).** The homepage above, with the signed-out variations: theme `neutral`, sidebar shows "Picked for you", and the front-line banner shows the season standing (a three-part bar), the three crests and an "Enlist" button. Clicking a crest goes to sign-up with that faction preselected. No separate marketing page: the first thing a visitor sees is live streams.
+
+**Sign up, log in, verify, reset, 2FA, OAuth sign-up.** One centered framed panel, 440 px wide, Cinzel title, no sidebar. Sign-up ends with the faction pick ("Choose your side"): three crest cards side by side, each with the faction name, epithet and one-line creed. Picking one immediately switches the page to that faction's theme so the user sees their colors before confirming. The one-free-switch-in-7-days rule is stated under the cards.
+
+**Channel page (`/username`).**
+- Header: a wide banner (16:5) inside a framed panel; avatar (96 px) overlapping its bottom-left edge with the owner's crest beside it; display name in Cinzel, `@username` beneath, faction tag, mood/status line, social links, and Follow (primary) on the right with the follower count.
+- If live, the player sits above the tabs with a LIVE tag; offline, the banner carries "Offline" and the next scheduled stream.
+- Tabs in Barlow Condensed: Home, Wall, Schedule, About, Fan art (when enabled), Followers, Following. Active tab: `--accent` underline.
+- Home tab: War Council (Top 8) as a 4×2 grid of small player cards (avatar, crest, name, live dot), the profile song as a compact one-line player, sponsors as a logo row, then the owner's custom blocks in framed panels.
+- Wall: posts in framed panels, newest first, pinned posts on top with a pin mark; replies indented one level.
+- **Colors (open question for Joe):** the site chrome uses the viewer's theme; the channel's banner frame, tabs and accents could use the *owner's* faction so each channel carries its own identity. Recommended: owner's faction inside the channel area, viewer's everywhere else.
+
+**Watch page.** Player first and largest (16:9), chat to its right at 340 px (below the player on narrow screens). Under the player: streamer bar (crest, name, title, category chip, faction tag, Follow), then "Up next" from MAGNet. Chat messages show the sender's crest (14 px) and name in their faction color; moderator actions in a small hover menu. When the stream ends, a framed overlay offers the next stream with a 10-second countdown and Cancel.
+
+**Browse.** Genre tabs across the top (grouped by holding faction, each with its crest), then category tiles at 3:4 with the holder's crest in the corner and the live count. A category page lists its live streams in fair rotation, with a faction filter.
+
+**Following.** Live channels first as stream cards, then offline channels as a compact list (crest, name, last live).
+
+**Settings, account, Creator Studio.** Two columns: a section list on the left in a framed panel, forms on the right. Inputs: dark fill, 1 px `--line` border, `--accent` border on focus, labels in Barlow Condensed above the field. Destructive actions (delete account, regenerate stream key) use an outline button in `--live` and a confirm step. Studio shows the stream key behind 2FA, the recommended OBS settings, and warnings (bitrate too high, B-frames on) as framed notices with a `--live` left bar.
+
+**Faction hub (`/factions/{faction}`).** The one place a crest is shown large (up to 160 px). Header with crest, name, epithet and creed in that faction's theme regardless of the viewer's; season standing; contribution leaderboard as player cards (rank, crest, name, influence); live streams from the faction; territories it holds.
+
+**War map.** Genres as a hex map, clustered by holding faction, each hex edged in the holder's color with the lead percentage; contested hexes get a white edge and a CONTESTED tag. Beside it: standings per faction and a short numbered list of how ground is taken.
+
+**Beacons feed.** One 9:16 video at a time, centered on desktop and full screen on phones, with a right-side rail: creator crest and name, like, view count, and Live now when the creator is streaming. Swipe or arrow keys move between Beacons.
+
+**Errors and empty states.** Short and plain ("This channel doesn't exist." / "Nothing live right now."), inside a framed panel, with one useful next step. When nothing is live, show recently live channels and the war map, never a blank grid.
+
+**Phones (below 960 px).** The sidebar becomes a drawer opened from a menu button in the top bar; grids drop to one or two columns; the watch page stacks player, streamer bar, then chat.
+
 ## Copy
 
 - Short, direct, specific. Say what something does ("Every live stream gets a turn here, whether it has 3 viewers or 3,000"), not slogans.
