@@ -129,6 +129,15 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 - Channel-ban playback denial for signed-in users (decision 1) needs the channel-ban table and lands with phase 4.
 - Covered by `tests/streams/playback.rs`: unknown channel, offline/STARTING/LIVE/RECONNECTING/ENDED visibility, URL shape, no secret, guest dedupe and renewal, invalid browser IDs, wrong broadcast, owner exclusion, expiry. Not yet verified in a real browser against SRS (WebRTC/HLS start, fallback timing, autoplay) or with CDN delivery; Following/user-card live badges are not added yet.
 
+## Chat core (phase 4a) — October 3
+
+- `chat_messages` (migration `0007`): client-generated UUID for idempotent retries, a server `seq` for ordering, bodies 1–500 characters, swept seven days after posting by the existing expiry job.
+- `GET /api/channels/{username}/chat` returns the latest 100 visible messages; `POST` sends; `/api/chat/ws?channel={username}` is the same-origin socket (Origin checked at handshake, session cookie only, 8 KiB frames, 30 connects per IP per minute, 10,000 sockets per instance). The socket subscribes before loading its snapshot, then forwards only newer `seq`s. A lagging reader is closed with code 4000 ("resync") and the client reconnects and reloads.
+- One `send` path for HTTP and socket: session rechecked on every send; verified, eligible (not restricted, deleted or internal) senders only; trimmed plain text, at most four line breaks, no control characters; a block with the channel owner in either direction refuses the send; 2 per second and 20 per ten seconds per account. A retried ID returns the stored message; another author reusing an ID gets 409.
+- Blocks between chatters hide each other in their own view (history and live), not for everyone.
+- Fanout is one in-process `tokio::broadcast` hub: one API instance only, as specified. The web `Chat` panel sits beside the player on `/{username}/live`; if the socket cannot connect (for example through the Next development rewrite), it polls every four seconds and sends over HTTPS. Staging Nginx gets an upgraded `location = /api/chat/ws`.
+- Covered by `tests/streams/chat.rs`, including a real WebSocket over TCP (dev-only `tokio-tungstenite`): origin refusal, snapshot, fanout, socket sends/acks, block filtering, malformed commands. Not yet: moderation (4b), reports/bans (4c), a real-browser run.
+
 ## Local backend and Studio implementation — October 3
 
 `apps/api/crates/sver/src/streams.rs` and migration `0005_streams.sql` implement settings, the seeded category catalog, encrypted credentials, broadcasts, retired-publisher records and durable disconnect jobs. Account locks serialize publishing, key changes, expiry and revocation. Each callback binds the public ID and credential generation to SRS's server ID, process/boot service ID and client ID. The exact direct peer and `x-srs-secret` authenticate only the two hook routes; forwarded browser IP headers cannot satisfy that check. Publishing also checks the current private SRS version response, failing closed on an unavailable or different boot.

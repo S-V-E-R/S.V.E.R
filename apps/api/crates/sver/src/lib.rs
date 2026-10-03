@@ -11,6 +11,7 @@ use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{sync::Arc, time::Duration};
 pub mod auth;
+pub mod chat;
 pub mod jobs;
 pub mod media;
 pub mod oauth;
@@ -132,6 +133,7 @@ pub struct App {
     pub http: reqwest::Client,
     pub hashing: Arc<tokio::sync::Semaphore>,
     pub dummy_hash: Arc<String>,
+    pub chat: chat::Hub,
 }
 impl App {
     pub async fn new(db: PgPool, config: Config) -> Result<Self> {
@@ -146,6 +148,7 @@ impl App {
                 .map_err(|_| Error::internal())?,
             hashing: Arc::new(tokio::sync::Semaphore::new(4)),
             dummy_hash: Arc::new(security::hash_sync(&security::token())?),
+            chat: chat::Hub::default(),
         })
     }
 }
@@ -308,6 +311,7 @@ pub fn router(app: App) -> Router {
         .merge(profile_routes())
         .merge(streams::routes())
         .merge(playback::routes())
+        .merge(chat::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)
