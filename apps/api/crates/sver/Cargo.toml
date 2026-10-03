@@ -34,7 +34,7 @@ argon2 = "0.5"
 bcrypt = "0.17"
 aes-gcm = "0.10"
 base64 = "0.23"
-rand = "0.8"
+rand = "0.10"
 sha2 = "0.10"
 sha1 = "0.10"
 totp-rs = { version = "5.7", features = ["otpauth"] }

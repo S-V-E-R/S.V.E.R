@@ -2262,7 +2262,7 @@ dependencies = [
  "hmac",
  "http-body-util",
  "image",
- "rand 0.8.8",
+ "rand 0.10.3",
  "reqwest",
  "serde",
  "serde_json",
