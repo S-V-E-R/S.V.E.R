@@ -42,15 +42,17 @@ Any account that is verified, has authenticator 2FA, and has finished Stripe Con
 
 ## Purchased Valor
 
-- Bought by card in packs, priced at 99¢ per 100 Valor with discounts on larger packs. The smallest pack is 500, because Stripe's fixed 30¢ fee makes smaller packs lose money. Starting price list (**Proposed** for the larger packs):
+- Bought by card in packs, priced at 99¢ per 100 Valor with discounts on larger packs. The smallest pack is 500, because Stripe's fixed 30¢ fee makes smaller packs lose money. Starting price list:
 
   | Pack | Price | Per 100 |
   | --- | --- | --- |
   | 500 | $4.99 | 99.8¢ |
-  | 1,500 | $14.49 | 96.6¢ |
+  | 1,000 | $9.79 | 97.9¢ |
+  | 2,500 | $23.99 | 96.0¢ |
   | 5,000 | $46.99 | 94.0¢ |
   | 10,000 | $89.99 | 90.0¢ |
-  | 25,000 | $219.99 | 88.0¢ |
+
+- No pack costs more than $100.
 
 - The streamer earns **0.8¢ per Valor** spent on them (cheers and Valor-paid subscriptions). S.V.E.R pays the card fees and keeps the rest; every pack in the list stays above cost.
 - Spent as **cheers** in chat (minimum 10 Valor; the message is highlighted and shows the amount) and on subscriptions.
