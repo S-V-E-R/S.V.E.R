@@ -341,6 +341,17 @@ Extend `playback_leases` with level, risk score, flags, hashed network fields an
 
 Automated coverage adds: guest and signed-in level transitions, Turnstile failure, metronomic heartbeat detection, household and carrier networks not penalized, hosting-network risk, provisional window timing, raid and MAGNet bursts not flagged, recovery from exclusion, counts used by each consumer, no raw IP stored or returned anywhere, staff-only case actions, and retention deletion.
 
+### S.V.E.R Plays
+
+S.V.E.R Plays moves from the legacy backend to this API as soon as Module 3 closes, and becomes the dedicated always-on stream used to monitor live delivery and integrity. Plays stays its own project; it talks to this API only through the internal interface below.
+
+- **Control gate (chat or AI player):** the API publishes, for the Plays channel only, the number of signed-in, verified viewers whose session is Counted or Trusted, refreshed every 5 seconds with a timestamp. The AI player may play only after that number has been 0 for the runner's grace period. A missing or stale value (older than 30 seconds) means chat mode: humans always win. Control goes back to chat as soon as one verified viewer is Counted (about 60 seconds after arriving), without waiting for Trusted.
+- **Votes:** a chat vote counts only if the voter's account has a Counted or Trusted playback session on the Plays broadcast. Chat-only accounts and Excluded sessions can't vote. One vote per account per window, as in legacy.
+- **Vote window:** scaled from the same verified-viewer count (legacy: 3 to 6 seconds).
+- **Faction rewards from votes:** Trusted sessions only, matching the influence rule.
+- **Interface:** an authenticated internal endpoint (or a Postgres notification consumed by the Plays bridge) providing the count and timestamp, plus the stream of chat commands from the Plays channel. No Redis is introduced for this.
+- **Acceptance:** with Plays running on this API, bots and chat-only accounts can't keep the AI player off or steer votes, and a real viewer takes control back within about a minute.
+
 ## Social features (approved by Joe, October 3, 2026)
 
 These were added to Module 3 after the core spec. They reuse the chat, moderation, block and playback-lease rules above. Numbers marked **Proposed** are defaults Joe can change; everything else is decided.
