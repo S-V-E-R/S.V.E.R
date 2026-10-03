@@ -129,6 +129,16 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 - Channel-ban playback denial for signed-in users (decision 1) needs the channel-ban table and lands with phase 4.
 - Covered by `tests/streams/playback.rs`: unknown channel, offline/STARTING/LIVE/RECONNECTING/ENDED visibility, URL shape, no secret, guest dedupe and renewal, invalid browser IDs, wrong broadcast, owner exclusion, expiry. Not yet verified in a real browser against SRS (WebRTC/HLS start, fallback timing, autoplay) or with CDN delivery; Following/user-card live badges are not added yet.
 
+## Channel moderation (phase 4b) — October 3
+
+- Migration `0008`: `channel_moderators`, `channel_restrictions` (timeout with an end, ban until lifted; a new timeout replaces the old end and never clears a ban), `chat_settings` (slow mode 0–3600 s, link blocking, up to 200 banned phrases of 1–64 characters) and `channel_moderation_log`.
+- `moderation.rs` implements the approved matrix. Roles are rechecked on every request: owner; appointed moderators who are still verified and eligible; staff with the admin role and MFA. Appointing needs the owner with a sign-in in the last five minutes; removal is the owner (same step-up) or staff. Nobody restricts the owner, themselves, a current moderator or staff (the owner removes a moderator first). Moderators cannot delete the owner's, other moderators' or staff messages.
+- Actions require a 1–500 character reason and commit with their audit row. Deletes are idempotent tombstones broadcast as `{"type":"delete"}` and logged once. Timeouts are 60 s to 14 days and return a retry time on send.
+- Sending applies, in order: ban/timeout, banned phrases (case-folded, whitespace-normalized literal match, no exemption), links (plain-text URL/domain detection; owner, moderators and staff exempt), slow mode (same exemptions, with retry time).
+- Decision 1: a channel ban also refuses signed-in playback (`banned: true`, no URLs, heartbeats not counted). Logged-out viewing is unaffected.
+- Web: moderator Delete/Timeout/Ban actions in the chat panel (confirmation and reason prompts), Studio → Chat for rules, moderators, active restrictions and the log, and the player's banned and no-playback states.
+- Covered by `tests/streams/moderation.rs` and a unit test for link and phrase matching.
+
 ## Chat core (phase 4a) — October 3
 
 - `chat_messages` (migration `0007`): client-generated UUID for idempotent retries, a server `seq` for ordering, bodies 1–500 characters, swept seven days after posting by the existing expiry job.

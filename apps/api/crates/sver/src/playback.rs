@@ -98,6 +98,16 @@ pub async fn live(
         return Ok(Json(json!({"live":false})));
     };
     let viewer = profiles::viewer(&app, &jar).await?;
+    // A channel ban refuses signed-in playback (logged-out viewing cannot be prevented).
+    if let Some(v) = &viewer
+        && crate::moderation::banned(&app, &owner, &v.id).await?
+    {
+        return Ok(Json(json!({
+            "live": true, "broadcast_id": b.id, "state": b.state, "title": b.title,
+            "category": b.category, "started_at": b.started_at, "viewers": b.viewers,
+            "is_owner": false, "banned": true, "playback": null,
+        })));
+    }
     let stream_app = app
         .config
         .streaming
@@ -150,6 +160,9 @@ pub async fn beat(
     let viewer = profiles::viewer(&app, &jar).await?;
     let key = match &viewer {
         Some(v) if v.id == owner => return Ok(Json(json!({"counted":false}))),
+        Some(v) if crate::moderation::banned(&app, &owner, &v.id).await? => {
+            return Ok(Json(json!({"counted":false})));
+        }
         Some(v) => format!("u:{}", v.id),
         None => format!("b:{}", sec::digest(id)),
     };

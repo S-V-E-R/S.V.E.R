@@ -1,11 +1,11 @@
 "use client";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { send } from "../lib/client-api";
+import { send, useLoad } from "../lib/client-api";
 import type { Chip } from "../lib/types";
 
-type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | null };
-type Event = { type: "snapshot"; messages: Message[] } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string };
+type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | null };
+type Event = { type: "snapshot"; messages: Message[] } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string };
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
@@ -18,6 +18,7 @@ export function Chat({ username, account }: { username: string; account: string 
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"connecting" | "live" | "polling">("connecting");
+  const [role, setRole] = useState<string | null>(null);
   const socket = useRef<WebSocket | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const path = `/api/channels/${encodeURIComponent(username)}/chat`;
@@ -30,6 +31,14 @@ export function Chat({ username, account }: { username: string; account: string 
       return [...byId.values()].sort((a, b) => a.seq - b.seq).slice(-100);
     });
   }, []);
+
+  // Owner, moderators and staff get per-message actions; the server enforces every permission.
+  const loadRole = useCallback(async () => {
+    if (!account) return;
+    const r = await send<{ role: string }>("GET", `${path}/moderation`);
+    if (r.ok) setRole(r.data.role);
+  }, [account, path]);
+  useLoad(loadRole);
 
   useEffect(() => {
     let closed = false;
@@ -51,6 +60,7 @@ export function Chat({ username, account }: { username: string; account: string 
         const data = JSON.parse(event.data) as Event;
         if (data.type === "snapshot") merge(data.messages, true);
         else if (data.type === "message" || data.type === "ack") merge([data.message]);
+        else if (data.type === "delete") setMessages(current => current.filter(m => m.id !== data.id));
         else setError(data.message);
       };
       ws.onclose = () => {
@@ -66,6 +76,25 @@ export function Chat({ username, account }: { username: string; account: string 
   }, [path, username, merge]);
 
   useEffect(() => { list.current?.lastElementChild?.scrollIntoView({ block: "nearest" }); }, [messages]);
+
+  async function moderate(action: "delete" | "timeout" | "ban", m: Message) {
+    const who = m.author.username;
+    if (!who) return;
+    let seconds: number | undefined;
+    if (action === "timeout") {
+      const minutes = Number(window.prompt(`Time out @${who} for how many minutes? (1–20160)`, "10"));
+      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 20160) return;
+      seconds = minutes * 60;
+    }
+    if (action === "ban" && !window.confirm(`Ban @${who} from this chat? They also can't watch here while signed in.`)) return;
+    const reason = window.prompt("Reason (required)")?.trim();
+    if (!reason) return;
+    const result = action === "delete"
+      ? await send("DELETE", `${path}/messages/${m.id}`, { reason })
+      : await send("POST", `${path}/restrictions`, { username: who, kind: action, seconds, reason });
+    if (!result.ok) setError(result.error);
+    else if (action === "delete") setMessages(current => current.filter(x => x.id !== m.id));
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -89,7 +118,12 @@ export function Chat({ username, account }: { username: string; account: string 
       {messages.map(m => <li key={m.id}>
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.username ? <Link href={`/${m.author.username}`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
-        {m.role === "owner" && <span className="badge">Streamer</span>}: <span className="chat-body">{m.body}</span>
+        {m.role === "owner" && <span className="badge">Streamer</span>}{m.role === "moderator" && <span className="badge">Mod</span>}: <span className="chat-body">{m.body}</span>
+        {role && m.author.username && m.author.username !== account && <span className="chat-actions">
+          <button type="button" className="small quiet" onClick={() => moderate("delete", m)} aria-label={`Delete message from ${m.author.display_name}`}>Delete</button>
+          <button type="button" className="small quiet" onClick={() => moderate("timeout", m)} aria-label={`Time out ${m.author.display_name}`}>Timeout</button>
+          <button type="button" className="small quiet" onClick={() => moderate("ban", m)} aria-label={`Ban ${m.author.display_name}`}>Ban</button>
+        </span>}
       </li>)}
     </ol>
     {account ? <form onSubmit={submit} className="chat-form">

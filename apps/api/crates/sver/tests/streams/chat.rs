@@ -14,14 +14,14 @@ use sver::security as sec;
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 use tower::ServiceExt;
 
-async fn person(e: &Env, id: &str, name: &str, verified: bool) -> String {
+pub async fn person(e: &Env, id: &str, name: &str, verified: bool) -> String {
     e.sql(&format!("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES('{id}','{id}@example.test','{name}',{verified},'1990-01-01')")).await;
     let token = sec::token();
     sqlx::query("INSERT INTO sessions(id,user_id,token_hash,auth_version,mfa_verified,user_agent) SELECT $1,id,$2,auth_version,false,'synthetic' FROM users WHERE id=$3")
         .bind(format!("{id}-session")).bind(sec::digest(&token)).bind(id).execute(&e.app.db).await.unwrap();
     token
 }
-async fn call(
+pub async fn call(
     e: &Env,
     method: &str,
     path: &str,
@@ -50,7 +50,7 @@ async fn call(
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     )
 }
-fn id() -> String {
+pub fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 async fn say(e: &Env, token: &str, body: &str) -> (StatusCode, Value) {

@@ -75,21 +75,20 @@ struct Row {
     id: String,
     seq: i64,
     author_id: String,
-    channel_id: String,
     body: String,
     created_at: DateTime<Utc>,
     author: Value,
+    role: Option<String>,
 }
 impl Row {
     fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        let role = (self.author_id == self.channel_id).then_some("owner");
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": role})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role})
     }
 }
 fn select() -> String {
     format!(
-        "SELECT m.id,m.seq,m.author_id,m.channel_id,m.body,m.created_at,{} AS author FROM chat_messages m JOIN channel_users a ON a.id=m.author_id",
+        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} AS author,CASE WHEN m.author_id=m.channel_id THEN 'owner' WHEN EXISTS(SELECT 1 FROM channel_moderators cm WHERE cm.channel_id=m.channel_id AND cm.user_id=m.author_id) THEN 'moderator' END AS role FROM chat_messages m JOIN channel_users a ON a.id=m.author_id",
         profiles::chip_sql("a")
     )
 }
@@ -176,6 +175,7 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
     if blocked {
         return Err(Fail::denied("You can't chat in this channel."));
     }
+    crate::moderation::check_send(app, channel, &user, body).await?;
     sec::reserve(app, vec![format!("chat-second:{}", user.id)], 2, 1).await?;
     sec::reserve(app, vec![format!("chat-ten:{}", user.id)], 20, 10).await?;
     let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING")

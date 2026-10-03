@@ -20,6 +20,8 @@ use tower::ServiceExt;
 
 #[path = "streams/chat.rs"]
 mod chat;
+#[path = "streams/moderation.rs"]
+mod moderation;
 #[path = "streams/playback.rs"]
 mod playback;
 #[path = "streams/real_media.rs"]
@@ -286,6 +288,7 @@ async fn streaming_lifecycle_and_security() {
 async fn exercise(e: &Env) {
     playback::exercise(e).await;
     chat::exercise(e).await;
+    moderation::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")

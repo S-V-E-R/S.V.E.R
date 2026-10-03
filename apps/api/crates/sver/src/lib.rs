@@ -14,6 +14,7 @@ pub mod auth;
 pub mod chat;
 pub mod jobs;
 pub mod media;
+pub mod moderation;
 pub mod oauth;
 pub mod playback;
 pub mod profile_import;
@@ -312,6 +313,7 @@ pub fn router(app: App) -> Router {
         .merge(streams::routes())
         .merge(playback::routes())
         .merge(chat::routes())
+        .merge(moderation::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

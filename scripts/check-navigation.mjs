@@ -67,7 +67,7 @@ try {
   assert.match(await liveView.text(), /is offline/, "An offline channel says so on the live view");
   const held = await expectRedirect(`/${oldName}/schedule`, 302, `/${username}/schedule`);
   assert.match(held.headers.get("cache-control") || "", /no-store/);
-  for (const path of ["/settings", "/settings/profile", "/studio/channel", "/studio/stream", "/following"]) {
+  for (const path of ["/settings", "/settings/profile", "/studio/channel", "/studio/stream", "/studio/chat", "/following"]) {
     const response = await get(path);
     assert.equal(response.status, 307, `${path} requires sign-in`);
     assert.equal(response.headers.get("location"), "/login");

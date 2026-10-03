@@ -101,3 +101,4 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .chat-form{display:grid;grid-template-columns:1fr auto;gap:8px}
 .chat-form textarea{resize:vertical}
 .chat-form .error{grid-column:1/-1;margin:0}
+.chat-actions{display:inline-flex;gap:4px;margin-left:6px}

@@ -5,7 +5,7 @@ import { send, useLoad } from "../lib/client-api";
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Live =
   | { live: false }
-  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; playback: Playback };
+  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; banned?: boolean; playback: Playback | null };
 type Phase = "loading" | "playing" | "reconnecting" | "blocked" | "failed";
 
 let cachedBrowserId = "";
@@ -88,15 +88,15 @@ export function LivePlayer({ username, focused = false, children }: { username: 
 
   const broadcast = live?.live ? live.broadcast_id : null;
   // Plain strings so a poll returning the same URLs does not restart playback.
-  const webrtc = live?.live ? live.playback.webrtc : null;
-  const hls = live?.live ? live.playback.hls : null;
-  const preferred = live?.live ? live.playback.preferred : null;
+  const webrtc = live?.live ? live.playback?.webrtc ?? null : null;
+  const hls = live?.live ? live.playback?.hls ?? null : null;
+  const preferred = live?.live ? live.playback?.preferred ?? null : null;
   const isOwner = live?.live ? live.is_owner : false;
 
   // Start (or restart, on `attempt`) playback for the current broadcast; the cleanup stops the retired transport.
   useEffect(() => {
     const element = video.current;
-    if (!broadcast || !element) return;
+    if (!broadcast || !element || (!webrtc && !hls)) return;
     let stop: (() => void) | null = null;
     let cancelled = false;
     const fail = () => { if (!cancelled) setPhase("reconnecting"); };
@@ -144,6 +144,7 @@ export function LivePlayer({ username, focused = false, children }: { username: 
   }, [broadcast, isOwner, path]);
 
   if (!live?.live) return <>{children}</>;
+  if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
   return <div className={focused ? "live-player focused" : "live-player"}>
     <video ref={video} controls playsInline aria-label={`${live.title}, live`} />
