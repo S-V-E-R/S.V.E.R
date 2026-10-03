@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
+import { ReportButton } from "./Report";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Live =
@@ -69,7 +70,7 @@ function playingWithin(video: HTMLVideoElement, ms: number) {
  * WebRTC first when offered; on failure or an 8-second startup timeout it falls back to HLS.
  * Uses native controls for keyboard, fullscreen, volume and captions.
  */
-export function LivePlayer({ username, focused = false, children }: { username: string; focused?: boolean; children?: React.ReactNode }) {
+export function LivePlayer({ username, focused = false, signedIn = false, children }: { username: string; focused?: boolean; signedIn?: boolean; children?: React.ReactNode }) {
   const [live, setLive] = useState<Live | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [attempt, setAttempt] = useState(0);
@@ -151,6 +152,6 @@ export function LivePlayer({ username, focused = false, children }: { username: 
     {status && <p className="player-status" role="status">{status}</p>}
     {phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
-    <p className="live-meta"><span className="live badge">Live</span> <strong>{live.title}</strong>{live.category && <span className="muted"> · {live.category}</span>} <span className="muted">· {live.viewers.toLocaleString()} watching</span></p>
+    <p className="live-meta"><span className="live badge">Live</span> <strong>{live.title}</strong>{live.category && <span className="muted"> · {live.category}</span>} <span className="muted">· {live.viewers.toLocaleString()} watching</span> {signedIn && !live.is_owner && <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" />}</p>
   </div>;
 }

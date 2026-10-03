@@ -129,6 +129,14 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 - Channel-ban playback denial for signed-in users (decision 1) needs the channel-ban table and lands with phase 4.
 - Covered by `tests/streams/playback.rs`: unknown channel, offline/STARTING/LIVE/RECONNECTING/ENDED visibility, URL shape, no secret, guest dedupe and renewal, invalid browser IDs, wrong broadcast, owner exclusion, expiry. Not yet verified in a real browser against SRS (WebRTC/HLS start, fallback timing, autoplay) or with CDN delivery; Following/user-card live badges are not added yet.
 
+## Stream and chat reports (phase 4c, part 1) — October 3
+
+- Migration `0010` adds `chat_message` and `live_stream` to the Module 2 report targets. Reports, the admin queue, strikes and appeals are reused unchanged. Channel moderator actions never create platform strikes; staff decide that from the queue.
+- A chat report is accepted only for a visible message. Its snapshot keeps the body, channel and send time, so the report outlives the seven-day chat expiry. Staff "remove content" tombstones the message and broadcasts the delete to open chats. It is not restored on appeal.
+- A live-stream report targets the broadcast ID and is accepted only while the stream is LIVE or RECONNECTING. The snapshot records title, category, broadcast ID, start time and report time; no video is recorded as evidence. Staff "remove content" stops the stream through `streams::revoke`: the key is revoked, the broadcast ends with reason `revoked`, and a durable disconnect is queued for the worker. Video already delivered cannot be recalled, and a stop is never undone.
+- Web: Report on other people's chat messages and "Report stream" on the live view, for signed-in viewers only. New labels on the admin queue filter and the reporter's history page.
+- Covered by `tests/streams/reports.rs`. Still to build in phase 4c: account bans with restricted sessions and one appeal within 14 days, and staff username resets for impersonation.
+
 ## Channel moderation (phase 4b) — October 3
 
 - Migration `0008`: `channel_moderators`, `channel_restrictions` (timeout with an end, ban until lifted; a new timeout replaces the old end and never clears a ban), `chat_settings` (slow mode off or 3–120 s, link blocking, up to 200 banned phrases of 1–64 characters) and `channel_moderation_log`.

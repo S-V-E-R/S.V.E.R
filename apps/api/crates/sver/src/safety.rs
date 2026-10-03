@@ -54,6 +54,8 @@ const TARGETS: &[&str] = &[
     "wall_reply",
     "fan_art",
     "setup_photo",
+    "chat_message",
+    "live_stream",
 ];
 pub const STANDING_MAIL: &str =
     "There's an update to your account standing. See sver.tv/settings/standing.";
@@ -180,6 +182,10 @@ async fn target(db: &mut PgConnection, kind: &str, id: &str, field: Option<&str>
         "wall_reply" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',r.body) FROM wall_replies r JOIN wall_posts p ON p.id=r.post_id JOIN channel_users c ON c.id=r.author_id JOIN channel_users o ON o.id=p.wall_owner_id WHERE r.id=$1 AND r.status='APPROVED' AND r.deleted_at IS NULL AND p.status='APPROVED' AND p.deleted_at IS NULL AND o.eligible AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
         "fan_art" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('image',f.image_key,'artist_name',f.artist_name,'artist_link',f.artist_link,'caption',f.caption) FROM fan_art f JOIN channel_users c ON c.id=f.submitter_id JOIN channel_users o ON o.id=f.channel_id WHERE f.id=$1 AND f.status='APPROVED' AND o.eligible AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
         "setup_photo" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('image',p.image_key||'/400.webp','alt',p.alt) FROM setup_photos p JOIN channel_users c ON c.id=p.user_id WHERE p.id=$1 AND p.status='VISIBLE' AND c.eligible").bind(id).fetch_optional(&mut *db).await?,
+        // The snapshot keeps the body, so a chat report outlives the seven-day message expiry.
+        "chat_message" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',m.body,'channel',o.username,'sent_at',m.created_at) FROM chat_messages m JOIN channel_users c ON c.id=m.author_id JOIN channel_users o ON o.id=m.channel_id WHERE m.id=$1 AND m.deleted_at IS NULL AND o.eligible AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
+        // Only a stream that is public now; no video is recorded as evidence.
+        "live_stream" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('title',coalesce(s.title,c.username||'''s stream'),'category',k.name,'broadcast_id',b.id,'started_at',b.started_at,'reported_at',now()) FROM broadcasts b JOIN channel_users c ON c.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories k ON k.id=s.category_id WHERE b.id=$1 AND b.state IN ('LIVE','RECONNECTING') AND c.eligible").bind(id).fetch_optional(&mut *db).await?,
         _ => return Err(Fail::field("target_type", "Choose what you're reporting.")),
     };
     let (owner_id, owner_name, snapshot) = row.ok_or_else(Fail::missing)?;
@@ -775,6 +781,39 @@ async fn reset_field(
 }
 /// Hides a wall post, reply or fan art item; returns the reference used to restore it on overturn.
 async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Value> {
+    match kind {
+        // A chat delete is a tombstone, like a channel moderator's; it is not restored on appeal.
+        "chat_message" => {
+            let visible: bool = sqlx::query_scalar(
+                "SELECT deleted_at IS NULL FROM chat_messages WHERE id=$1 FOR UPDATE",
+            )
+            .bind(id)
+            .fetch_optional(&mut *db)
+            .await?
+            .ok_or_else(Fail::missing)?;
+            if visible {
+                sqlx::query("UPDATE chat_messages SET deleted_at=now() WHERE id=$1")
+                    .bind(id)
+                    .execute(&mut *db)
+                    .await?;
+            }
+            let previous = if visible { "VISIBLE" } else { "REMOVED" };
+            return Ok(json!({"type": kind, "id": id, "previous": previous}));
+        }
+        // Removing a live stream stops it: the key is revoked and the worker disconnects the
+        // publisher. Already-delivered video cannot be recalled, and a stop is never undone.
+        "live_stream" => {
+            let (owner, state): (String, String) =
+                sqlx::query_as("SELECT owner_id,state FROM broadcasts WHERE id=$1")
+                    .bind(id)
+                    .fetch_optional(&mut *db)
+                    .await?
+                    .ok_or_else(Fail::missing)?;
+            crate::streams::revoke(db, &owner).await?;
+            return Ok(json!({"type": kind, "id": id, "previous": state}));
+        }
+        _ => {}
+    }
     let table = match kind {
         "wall_post" => "wall_posts",
         "wall_reply" => "wall_replies",
@@ -782,7 +821,7 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
         "setup_photo" => "setup_photos",
         _ => {
             return Err(Fail::bad(
-                "Only wall posts, replies, fan art and setup photos can be removed.",
+                "Only wall posts, replies, fan art, setup photos, chat messages and live streams can be removed.",
             ));
         }
     };
@@ -840,6 +879,18 @@ async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
                 .fetch_optional(&mut *db)
                 .await?
         }
+        "chat_message" => {
+            sqlx::query_scalar("SELECT author_id FROM chat_messages WHERE id=$1")
+                .bind(id)
+                .fetch_optional(&mut *db)
+                .await?
+        }
+        "live_stream" => {
+            sqlx::query_scalar("SELECT owner_id FROM broadcasts WHERE id=$1")
+                .bind(id)
+                .fetch_optional(&mut *db)
+                .await?
+        }
         _ => None,
     };
     match owner {
@@ -869,6 +920,8 @@ async fn current_content(
         "wall_post" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM wall_posts WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "wall_reply" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM wall_replies WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "setup_photo" => sqlx::query_scalar("SELECT jsonb_build_object('image',image_key||'/400.webp','alt',alt,'status',status) FROM setup_photos WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
+        "chat_message" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'deleted',deleted_at IS NOT NULL) FROM chat_messages WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
+        "live_stream" => sqlx::query_scalar("SELECT jsonb_build_object('state',state,'started_at',started_at,'ended_at',ended_at) FROM broadcasts WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         _ => sqlx::query_scalar("SELECT jsonb_build_object('image',image_key,'artist_name',artist_name,'caption',caption,'status',status) FROM fan_art WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
     })
 }
@@ -1039,6 +1092,18 @@ pub async fn admin_action(
         .await?;
     audit(&mut tx, Some(&actor.id), &input.action, &kind, &id, &report_ids, &note, json!({"field": input.field, "item_id": input.item_id, "strike_id": strike_id, "removed": removed}), false).await?;
     tx.commit().await?;
+    // Open chats drop a message staff removed, as they do for a channel moderator's delete.
+    if kind == "chat_message" && input.action == "remove_content" {
+        let channel: Option<String> =
+            sqlx::query_scalar("SELECT channel_id FROM chat_messages WHERE id=$1")
+                .bind(&id)
+                .fetch_optional(&app.db)
+                .await?;
+        if let Some(channel) = channel {
+            app.chat
+                .publish(&channel, None, 0, json!({"type":"delete","id":id}));
+        }
+    }
     log(&input.action, "ok");
     Ok(Json(
         json!({"closed_reports": report_ids.len(), "strike_id": strike_id}),
