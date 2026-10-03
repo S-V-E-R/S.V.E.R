@@ -45,7 +45,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
 chrono-tz = "0.10"
-hmac = "0.12"
+hmac = "0.13"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
