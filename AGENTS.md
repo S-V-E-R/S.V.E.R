@@ -17,7 +17,9 @@ Rules for that loop:
 
 ## The plan is the source of truth
 
-The full platform plan lives in the S.V.E.R 2.0 Platform Plan doc (Claude Docs). It holds the foundation, the principles, the hardened spec for every module, the parked systems, and the open questions. When this file and the plan disagree, the plan wins; tell Joe so this file can be fixed.
+The full platform plan lives in the S.V.E.R 2.0 Platform Plan doc (Claude Docs), with a private local copy at `docs/PLATFORM_PLAN.md` (gitignored). It holds the foundation, the principles, the hardened spec for every module, the parked systems, and the open questions. Public module specs live in `docs/` (`LOGIN.md`, `PROFILES.md`, `LIVE_STREAMS.md`, …). When this file and the plan disagree, the plan wins; tell Joe so this file can be fixed.
+
+Private files that stay on Joe's machine and never get committed: `docs/PLATFORM_PLAN.md`, `docs/OPERATIONS.md`, `ChangeLog.md`. Read them; log finished work in `ChangeLog.md`.
 
 ## What S.V.E.R is
 
@@ -64,15 +66,27 @@ Modules 1 to 5 make the site functional. Phase 2 (Valor, Progression, payouts, R
 One repo, one primary implementer (you). No lane rules, no agent ownership splits, no vendored copies across repos.
 
 ```
-/apps/web        Next.js frontend
-/apps/api        Rust backend (crates per module under /apps/api/crates)
-/migrations      SQLx migrations
-/infra           Docker, SRS config, Nginx, deploy scripts
-/scripts         One-off tools (including the legacy import)
-/docs            Short notes on decisions; the plan itself stays in the doc
+/apps/web               Next.js frontend (pnpm through corepack: `corepack pnpm ...`)
+/apps/api/crates/sver   Rust backend; each module is its own file under src/ (a folder once it grows)
+/migrations             SQLx migrations, applied by the API on startup
+/infra                  Dockerfiles, Nginx, backup units
+/scripts                dev.ps1, component/navigation/media checks, legacy export
+/docs                   Public module specs and ROADMAP.md
 ```
 
-Backend modules talk to each other through their public Rust interfaces only, never by reaching into another module's tables.
+Paths moved in the October 2026 merge: `server/` is now `apps/api/crates/sver/src/`, `web/` is now `apps/web/`, and npm is replaced by `corepack pnpm`. Rust is pinned by `rust-toolchain.toml`; Node is 24.
+
+Backend modules talk to each other through their public Rust interfaces only, never by reaching into another module's tables. If a module grows large enough to need its own crate, split it then, not before.
+
+## Open source
+
+This repo is public and licensed AGPL-3.0. It stays one repo: no open-core split, no private module repos, no vendored copies.
+
+- **Everything is public except secrets, tuning and the private files above.** Secrets live in server environment variables and `%USERPROFILE%\SVER-dev\`. Anti-abuse tuning (viewbot thresholds, influence weights, detection limits) is loaded at runtime from private server config; the code that uses it is public, and the repo ships safe example values for tests and local dev.
+- **Write every commit as if the world reads it.** No secrets, real user data, internal hostnames or server addresses, or tuning values in code, tests, commits, or docs. CI runs gitleaks on every push.
+- **Process is for outside contributors, not for you.** The CLA, issue templates and PR template exist for people outside the project. They never slow down work Joe asks for: no waiting on reviews, no extra approvals, no "this needs an RFC".
+- Keep `docs/ROADMAP.md` current when a module starts or closes, so contributors know what's being built.
+- Dependency bumps from Dependabot: merge patch and minor bumps when CI passes. Breaking bumps (a new major, or a new 0.x minor for Rust crates) need real migration work; do them as a normal task, not a click-merge.
 
 ## Product rules that affect code
 
@@ -101,8 +115,9 @@ The old codebase is frozen as a reference (tag `legacy-web-final`). It is a spec
 
 ## Quality bar
 
-- Rust: `cargo fmt`, `cargo clippy` with no warnings, tests pass.
-- Web: TypeScript strict, no `any` without a comment explaining why, lint and tests pass.
+- Rust: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` all pass.
+- Web: TypeScript strict, no `any` without a comment explaining why; `corepack pnpm typecheck`, `lint` and `build` pass.
+- `./scripts/dev.ps1 test` passes before you call a module done.
 - Every endpoint validates input and checks permissions.
 - Accessible markup: real buttons and links, labels on inputs, keyboard reachable.
 

@@ -3,9 +3,19 @@ updates:
   - package-ecosystem: cargo
     directory: /apps/api
     schedule: { interval: weekly }
+    groups:
+      # Patch and minor bumps arrive as one PR; breaking bumps stay separate.
+      rust-safe:
+        update-types: [patch, minor]
   - package-ecosystem: npm
     directory: /apps/web
     schedule: { interval: weekly }
+    groups:
+      web-safe:
+        update-types: [patch, minor]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    ignore:
+      # The ref is the Rust version, pinned to match rust-toolchain.toml. Bump both by hand.
+      - dependency-name: dtolnay/rust-toolchain
