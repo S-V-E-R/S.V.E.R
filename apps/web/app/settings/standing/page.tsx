@@ -1,6 +1,7 @@
 "use client";
 import { FormEvent, useCallback, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
+import { MyBans } from "../../../components/Bans";
 import { send, useLoad } from "../../../lib/client-api";
 import { reasons } from "../../../lib/types";
 
@@ -53,6 +54,7 @@ export default function StandingPage() {
       {data.restriction ? <p>Your channel is restricted {data.restriction.indefinite ? "until further review" : `until ${date(data.restriction.until!)}`}. While restricted, your channel is hidden and you can&apos;t edit it, post or report. You can still appeal.</p> : <p>{data.level === 0 ? "Your account is in good standing." : `Active strikes: ${data.level}.`}</p>}
       <p className="muted small-print">Strikes stop counting after 90 days (365 days for severe violations). A first strike is a warning, a second is a 72-hour restriction and a third is a restriction until further review.</p>
     </Section>
+    <MyBans />
     <Section title="Strikes">
       {data.strikes.length === 0 ? <p className="muted">No strikes.</p> : <ul className="list">{data.strikes.map(s => <li key={s.id} className="strike">
         <div className="row between"><strong>{penalties[s.penalty] || s.penalty} · {reasons.find(r => r[0] === s.reason)?.[1] || s.reason}</strong><span className="badge">{s.status === "active" ? "Active" : s.status === "expired" ? "Expired" : "Overturned"}</span></div>

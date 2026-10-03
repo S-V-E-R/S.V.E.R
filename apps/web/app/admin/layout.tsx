@@ -9,7 +9,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const { status } = await apiGet("/api/admin/appeals");
   if (status !== 200) notFound();
   return <div className="settings-page">
-    <nav className="settings-nav" aria-label="Admin"><span className="eyebrow">MODERATION</span><Link href="/admin/reports">Reports</Link><Link href="/admin/appeals">Appeals</Link></nav>
+    <nav className="settings-nav" aria-label="Admin"><span className="eyebrow">MODERATION</span><Link href="/admin/reports">Reports</Link><Link href="/admin/appeals">Appeals</Link><Link href="/admin/bans">Bans</Link></nav>
     <div className="settings-body">{children}</div>
   </div>;
 }

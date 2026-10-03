@@ -12,6 +12,7 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{sync::Arc, time::Duration};
 pub mod activity;
 pub mod auth;
+pub mod bans;
 pub mod chat;
 pub mod jobs;
 pub mod media;
@@ -251,6 +252,24 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
     {
         return Error::denied("Invalid request origin.").into_response();
     }
+    // A banned account keeps only security, standing and appeal writes (bans::blocked_write).
+    if !media_hook
+        && !matches!(
+            *req.method(),
+            axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+        )
+        && bans::blocked_write(
+            &app,
+            req.uri().path(),
+            &axum_extra::extract::cookie::CookieJar::from_headers(req.headers()),
+        )
+        .await
+    {
+        return Error::denied(
+            "Your account is banned. You can still manage account security, view your standing and appeal.",
+        )
+        .into_response();
+    }
     // Stored media keys are content-addressed (a hash of the kind, crop and source bytes), so a
     // served object never changes: only successful /api/media responses may be cached.
     let media = req.uri().path().starts_with("/api/media/");
@@ -325,6 +344,7 @@ pub fn router(app: App) -> Router {
         .merge(playback::routes())
         .merge(chat::routes())
         .merge(moderation::routes())
+        .merge(bans::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)
