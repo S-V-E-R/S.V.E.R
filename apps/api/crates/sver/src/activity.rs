@@ -141,7 +141,8 @@ pub async fn channel_activity(
     let after = parse_cursor(&q.cursor)?;
     // The subject must be eligible and outside any block with the viewer or the actor; follows
     // and wall posts must still exist and be visible.
-    let rows: Vec<(String, String, DateTime<Utc>, Option<Value>, Value)> = sqlx::query_as(&format!(
+    // Only the fixed chip SQL and numeric page limit are interpolated; request values are bound.
+    let rows: Vec<(String, String, DateTime<Utc>, Option<Value>, Value)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT e.id,e.kind,e.created_at,CASE WHEN s.id IS NULL THEN NULL ELSE {chip} END,e.data FROM activity_events e LEFT JOIN channel_users s ON s.id=e.subject_id \
          WHERE e.actor_id=$1 AND e.kind=ANY($2) \
          AND (e.subject_id IS NULL OR (s.eligible AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=e.subject_id AND b.blocked_id IN (e.actor_id,$3)) OR (b.blocked_id=e.subject_id AND b.blocker_id IN (e.actor_id,$3))))) \
@@ -150,7 +151,7 @@ pub async fn channel_activity(
          AND ($4::timestamptz IS NULL OR (e.created_at,e.id)<($4,$5)) ORDER BY e.created_at DESC,e.id DESC LIMIT {limit}",
         chip = chip_sql("s"),
         limit = PAGE + 1
-    ))
+    )))
     .bind(&channel.id)
     .bind(known_kinds())
     .bind(viewer_id.clone().unwrap_or_default())

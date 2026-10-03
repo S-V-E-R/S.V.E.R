@@ -108,7 +108,7 @@ struct ReplyRow {
     author: Value,
     author_deleted: bool,
 }
-fn visible(alias: &str) -> String {
+fn visible(alias: &'static str) -> String {
     // $1 owner, $2 viewer (nullable).
     format!(
         "{a}.deleted_at IS NULL AND ({a}.status='APPROVED' OR ({a}.status='PENDING' AND ($2::text={a}.author_id OR $2::text=$1)) OR ({a}.status IN ('REJECTED','REMOVED') AND $2::text={a}.author_id))",
@@ -159,12 +159,13 @@ async fn load_replies(
     after: Option<(DateTime<Utc>, String)>,
     limit: i64,
 ) -> Res<Vec<(ReplyRow, i64)>> {
-    let rows: Vec<(String, String, String, String, DateTime<Utc>, String, Value, bool, i64)> = sqlx::query_as(&format!(
+    // Only fixed wall SQL, literal aliases or the selected literal table are interpolated; values are bound.
+    let rows: Vec<(String, String, String, String, DateTime<Utc>, String, Value, bool, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM (SELECT r.id,r.post_id,r.body,r.status,r.created_at,r.author_id,{chip},a.deleted_at IS NOT NULL, row_number() OVER (PARTITION BY r.post_id ORDER BY r.created_at,r.id) AS n \
          FROM wall_replies r JOIN channel_users a ON a.id=r.author_id WHERE r.post_id=ANY($3) AND {rv} AND ($4::timestamptz IS NULL OR (r.created_at,r.id)>($4,$5))) x WHERE n<=$6 ORDER BY created_at,id",
         chip = chip_sql("a"),
         rv = visible("r")
-    ))
+    )))
     .bind(owner_id)
     .bind(viewer)
     .bind(post_ids)
@@ -252,15 +253,17 @@ pub async fn preview(
     viewer: Option<&User>,
 ) -> Res<Value> {
     let viewer_id = viewer.map(|v| v.id.clone());
-    let pinned: Vec<PostRow> = sqlx::query_as(&format!(
+    // Only fixed wall SQL, literal aliases or the selected literal table are interpolated; values are bound.
+    let pinned: Vec<PostRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{} AND p.status='APPROVED' AND p.pinned_position IS NOT NULL ORDER BY p.pinned_position",
         post_select()
-    ))
+    )))
     .bind(&owner.id)
     .bind(&viewer_id)
     .fetch_all(&mut *db)
     .await?;
-    let latest: Vec<PostRow> = sqlx::query_as(&format!("{} AND p.status='APPROVED' AND p.pinned_position IS NULL ORDER BY p.created_at DESC,p.id DESC LIMIT 3", post_select()))
+    // Only fixed wall SQL, literal aliases or the selected literal table are interpolated; values are bound.
+    let latest: Vec<PostRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} AND p.status='APPROVED' AND p.pinned_position IS NULL ORDER BY p.created_at DESC,p.id DESC LIMIT 3", post_select())))
         .bind(&owner.id)
         .bind(&viewer_id)
         .fetch_all(&mut *db)
@@ -287,7 +290,8 @@ pub async fn wall(
         .ok_or_else(Fail::channel_missing)?;
     let after = parse_cursor(&q.cursor)?;
     let pinned: Vec<PostRow> = if after.is_none() {
-        sqlx::query_as(&format!("{} AND p.status='APPROVED' AND p.pinned_position IS NOT NULL ORDER BY p.pinned_position", post_select()))
+        // Only fixed wall SQL, literal aliases or the selected literal table are interpolated; values are bound.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} AND p.status='APPROVED' AND p.pinned_position IS NOT NULL ORDER BY p.pinned_position", post_select())))
             .bind(&owner.id)
             .bind(&viewer_id)
             .fetch_all(&mut *db)
@@ -295,10 +299,11 @@ pub async fn wall(
     } else {
         Vec::new()
     };
-    let rows: Vec<PostRow> = sqlx::query_as(&format!(
+    // Only fixed wall SQL, literal aliases or the selected literal table are interpolated; values are bound.
+    let rows: Vec<PostRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{} AND NOT (p.status='APPROVED' AND p.pinned_position IS NOT NULL) AND ($3::timestamptz IS NULL OR (p.created_at,p.id)<($3,$4)) ORDER BY p.created_at DESC,p.id DESC LIMIT $5",
         post_select()
-    ))
+    )))
     .bind(&owner.id)
     .bind(&viewer_id)
     .bind(after.as_ref().map(|a| a.0))
@@ -580,12 +585,13 @@ pub async fn pending(
     let user = signed_in(&app, &jar).await?;
     let after = parse_cursor(&q.cursor)?;
     let mut db = app.db.acquire().await?;
-    let rows: Vec<(String, String, String, DateTime<Utc>, Value, Option<String>)> = sqlx::query_as(&format!(
+    // Only fixed wall SQL, literal aliases or the selected literal table are interpolated; values are bound.
+    let rows: Vec<(String, String, String, DateTime<Utc>, Value, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM (SELECT 'post' AS kind,p.id,p.body,p.created_at,{chip} AS author,NULL::text AS post_id FROM wall_posts p JOIN channel_users a ON a.id=p.author_id WHERE p.wall_owner_id=$1 AND p.status='PENDING' AND p.deleted_at IS NULL \
          UNION ALL SELECT 'reply',r.id,r.body,r.created_at,{chip},r.post_id FROM wall_replies r JOIN wall_posts p ON p.id=r.post_id JOIN channel_users a ON a.id=r.author_id WHERE p.wall_owner_id=$1 AND r.status='PENDING' AND r.deleted_at IS NULL AND p.deleted_at IS NULL) q \
          WHERE ($2::timestamptz IS NULL OR (created_at,id)>($2,$3)) ORDER BY created_at,id LIMIT $4",
         chip = chip_sql("a")
-    ))
+    )))
     .bind(&user.id)
     .bind(after.as_ref().map(|a| a.0))
     .bind(after.as_ref().map(|a| a.1.clone()).unwrap_or_default())
@@ -639,9 +645,10 @@ pub async fn review(
             } else {
                 "REJECTED"
             };
-            sqlx::query(&format!(
+            // Only fixed wall SQL, literal aliases or the selected literal table are interpolated; values are bound.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET status=$2,moderated_at=now() WHERE id=$1"
-            ))
+            )))
             .bind(&id)
             .bind(next)
             .execute(&mut *tx)

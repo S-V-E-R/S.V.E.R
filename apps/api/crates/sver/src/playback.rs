@@ -71,7 +71,8 @@ pub fn live_sql(id: &str) -> String {
     )
 }
 pub async fn is_live(db: &mut PgConnection, owner: &str) -> sqlx::Result<bool> {
-    sqlx::query_scalar(&format!("SELECT {}", live_sql("$1")))
+    // The live expression uses the literal $1 placeholder; the owner is bound.
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {}", live_sql("$1"))))
         .bind(owner)
         .fetch_one(db)
         .await

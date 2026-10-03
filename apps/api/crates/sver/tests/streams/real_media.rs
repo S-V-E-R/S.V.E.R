@@ -244,7 +244,7 @@ async fn real_srs_ingest() {
     let proof_db = db.clone();
     let result = tokio::spawn(async move { exercise_real(proof_db).await }).await;
     db.close().await;
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)
         .await
         .unwrap();

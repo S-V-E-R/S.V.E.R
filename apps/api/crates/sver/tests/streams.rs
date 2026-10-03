@@ -179,7 +179,7 @@ impl Env {
     async fn mine(&self) -> Value {
         self.call("GET", "/api/me/stream", Value::Null).await
     }
-    async fn sql(&self, query: &str) {
+    async fn sql(&self, query: impl sqlx::SqlSafeStr) {
         sqlx::query(query).execute(&self.app.db).await.unwrap();
     }
 }
@@ -198,7 +198,7 @@ async fn isolated_database() -> (sqlx::PgPool, sqlx::PgPool, String) {
         .await
         .unwrap();
     let schema = format!("streams_test_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&admin)
         .await
         .unwrap();
@@ -208,7 +208,9 @@ async fn isolated_database() -> (sqlx::PgPool, sqlx::PgPool, String) {
         .after_connect(move |conn, _| {
             let statement = statement.clone();
             Box::pin(async move {
-                sqlx::query(&statement).execute(conn).await?;
+                sqlx::query(sqlx::AssertSqlSafe(statement))
+                    .execute(conn)
+                    .await?;
                 Ok(())
             })
         })
@@ -280,7 +282,7 @@ async fn streaming_lifecycle_and_security() {
     let result = tokio::spawn(async move { exercise(&env).await }).await;
     upstream.abort();
     db.close().await;
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)
         .await
         .unwrap();

@@ -694,9 +694,11 @@ pub async fn mfa_setup(State(app): State<App>, jar: CookieJar) -> Result<Json<Va
     }
     sec::reserve(&app, vec![format!("setup:{}", user.id)], 5, 900).await?;
     let secret = totp_rs::Secret::Raw({
-        use rand::RngCore;
+        use rand::TryRng;
         let mut bytes = vec![0u8; 20];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        rand::rngs::SysRng
+            .try_fill_bytes(&mut bytes)
+            .map_err(|_| Error::internal())?;
         bytes
     })
     .to_encoded()

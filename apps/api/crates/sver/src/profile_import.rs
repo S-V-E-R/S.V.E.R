@@ -320,7 +320,8 @@ pub async fn run(
         "LOCK TABLE users, identities, legacy_account_data IN SHARE MODE".to_string(),
         format!("LOCK TABLE {LOCKED} IN SHARE ROW EXCLUSIVE MODE"),
     ] {
-        sqlx::query(&statement)
+        // Both statements contain only literal table names, including LOCKED.
+        sqlx::query(sqlx::AssertSqlSafe(statement))
             .execute(&mut *tx)
             .await
             .map_err(fail(
@@ -854,12 +855,15 @@ pub async fn run(
         media::record(&mut tx, owner, kind, &processed)
             .await
             .map_err(fail("Media record failed; import rolled back"))?;
-        sqlx::query(&format!("UPDATE profiles SET {column}=$2 WHERE user_id=$1"))
-            .bind(owner)
-            .bind(&processed.stored)
-            .execute(&mut *tx)
-            .await
-            .map_err(fail("Media key update failed; import rolled back"))?;
+        // Only the literal media column is interpolated; imported values are bound.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE profiles SET {column}=$2 WHERE user_id=$1"
+        )))
+        .bind(owner)
+        .bind(&processed.stored)
+        .execute(&mut *tx)
+        .await
+        .map_err(fail("Media key update failed; import rolled back"))?;
         if let Some(e) = expected_profiles
             .iter_mut()
             .find(|e| e["user_id"] == owner.as_str())

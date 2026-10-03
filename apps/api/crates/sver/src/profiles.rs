@@ -334,7 +334,7 @@ pub fn chip(app: &App, user: &ChannelUser) -> Value {
     }
     json!({"username": user.username, "display_name": user.display_name, "avatar": avatar_json(app, user.avatar_key.as_deref()), "linked": true, "deleted": false})
 }
-pub fn chip_sql(alias: &str) -> String {
+pub fn chip_sql(alias: &'static str) -> String {
     // jsonb chip built in SQL for list queries; the web maps avatar keys through `media_base`.
     format!(
         "jsonb_build_object('username',CASE WHEN {a}.deleted_at IS NULL THEN {a}.username END,'display_name',CASE WHEN {a}.deleted_at IS NOT NULL THEN 'Deleted user' WHEN {a}.eligible THEN {a}.display_name ELSE {a}.username END,'avatar_key',CASE WHEN {a}.eligible THEN {a}.avatar_key END,'linked',{a}.eligible,'deleted',{a}.deleted_at IS NOT NULL,'live',{a}.eligible AND {live})",

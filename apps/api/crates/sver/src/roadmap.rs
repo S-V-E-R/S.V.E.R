@@ -61,7 +61,10 @@ fn parse(source: &str) -> Result<Roadmap, &'static str> {
     }
     let data = serde_json::to_vec(&items).map_err(|_| "Invalid roadmap")?;
     Ok(Roadmap {
-        revision: format!("{:x}", Sha256::digest(data)),
+        revision: Sha256::digest(data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
         items,
     })
 }
