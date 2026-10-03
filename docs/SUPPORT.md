@@ -2,7 +2,7 @@
 
 Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Not started.
 
-This module lets viewers support streamers with money and loyalty, and gets streamers paid. It follows the closure rule: specify, build, then test against "Done when". Items marked **Open** need Joe's decision before building.
+This module lets viewers support streamers with money and loyalty, and gets streamers paid. It follows the closure rule: specify, build, then test against "Done when". All open items were decided by Joe on October 3, 2026.
 
 ## Scope
 
@@ -26,7 +26,7 @@ Any account that is verified, has authenticator 2FA, and has finished Stripe Con
 - Every money movement is a double-entry ledger row in Postgres (AGENTS.md). Balances are derived from the ledger, never stored only as a mutable number.
 - Stripe webhooks are signature-checked, stored, and processed idempotently by event ID; a replayed or out-of-order event never double-credits.
 - Refunds and chargebacks post reversing entries. A chargeback on a Valor purchase can push the buyer's Purchased Valor balance negative, which locks spending until settled.
-- Amounts are integer cents in USD; Valor earnings accrue in tenths of a cent and round down only at payout. **Open:** other currencies.
+- Amounts are integer cents in USD, the only currency at launch; Stripe converts foreign cards. Valor earnings accrue in tenths of a cent and round down only at payout.
 
 ## Creator tiers
 
@@ -63,7 +63,7 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - Gift subs: one month to a named viewer, or 5, 10 or 20 one-month gifts to random signed-in chatters in that channel who allow gifts (a setting, default on). A gifted month never auto-renews.
 - Paid by card (auto-renews monthly) or by Purchased Valor (one month at a time).
 - Cancel anytime; benefits run to the end of the paid month. Upgrading tiers takes effect immediately with Stripe's proration.
-- Buyers aged 13 to 17: before their first purchase a parent or guardian confirms, at checkout, that they are the cardholder and consent to the purchase. Purchases by an account under 18 are capped at $50 a month (**Proposed** amount). A parent can report an unauthorized purchase through support for a refund, which reverses the Valor or subscription.
+- Buyers aged 13 to 17: before their first purchase a parent or guardian confirms, at checkout, that they are the cardholder and consent to the purchase. Purchases by an account under 18 are capped at $50 a month. A parent can report an unauthorized purchase through support for a refund, which reverses the Valor or subscription.
 
 ## Purchased Valor
 
@@ -106,7 +106,9 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 ## Payouts
 
 - Monthly, with no minimum: every available balance is paid out. S.V.E.R pays Stripe's payout fees (currently $2 per paid account per month plus 0.25% + 25¢ per payout).
-- A hold period covers chargebacks before revenue becomes available. **Proposed:** 30 days.
+- No hold: earnings are available for the next monthly payout as soon as Stripe settles them.
+- Stripe Chargeback Protection is turned on for Checkout payments (S.V.E.R pays its 0.4% fee). It reimburses fraud disputes only, up to its annual cap, and doesn't cover "cancelled subscription" or "not received" disputes or renewals outside Checkout.
+- A dispute that isn't reimbursed reverses the streamer's share. If that share was already paid out, the streamer's balance goes negative and is recovered from their future earnings before the next payout.
 - Tax reporting through Stripe. Payout setup lives in Creator Studio.
 
 ## Before launch

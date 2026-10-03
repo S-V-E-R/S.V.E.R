@@ -354,7 +354,7 @@ S.V.E.R Plays moves from the legacy backend to this API as soon as Module 3 clos
 
 ## Social features (approved by Joe, October 3, 2026)
 
-These were added to Module 3 after the core spec. They reuse the chat, moderation, block and playback-lease rules above. Numbers marked **Proposed** are defaults Joe can change; everything else is decided.
+These were added to Module 3 after the core spec. They reuse the chat, moderation, block and playback-lease rules above. All numbers here were accepted by Joe as defaults on October 3, 2026 and can be tuned later.
 
 ### Chat additions
 
@@ -373,12 +373,12 @@ These were added to Module 3 after the core spec. They reuse the chat, moderatio
 
 ### Go-live alerts
 
-- Triggered when a broadcast starts. A reconnect inside the 60-second window is the same broadcast and sends nothing. **Proposed:** at most one alert per channel every 6 hours.
+- Triggered when a broadcast starts. A reconnect inside the 60-second window is the same broadcast and sends nothing. At most one alert per channel every 6 hours.
 - Three delivery methods, each switchable in settings: in-site notifications (the top-bar bell and a notifications list), browser push (standard Web Push with server-held VAPID keys, no outside service), and email through Resend. Email is opt-in; the others default on.
 - Per-channel opt-out: a bell next to the Follow button turns alerts off for that channel without unfollowing. Unfollowing removes alerts too.
 - Never sent to: the owner, users the owner blocked or banned, unverified or restricted accounts, or deleted accounts. Fan-out runs as Postgres-backed jobs, retried safely without duplicates.
 - Email has a one-click unsubscribe and respects the account's notification settings. Push subscriptions that fail permanently are removed.
-- **Proposed:** in-site notifications are kept 30 days.
+- In-site notifications are kept 30 days.
 
 ### Raids
 
@@ -386,7 +386,7 @@ These were added to Module 3 after the core spec. They reuse the chat, moderatio
 - The target can turn off incoming raids or block raids from specific channels. A target that blocked or banned the raider (or its owner) can't be raided by it.
 - Viewers on the raider's stream see a 10-second countdown with Cancel, then their player moves to the target. Signed-in viewers banned from the target stay put.
 - The target's chat gets a system line "name is raiding with n", where n counts playback leases that actually started on the target within 60 seconds and came from the raid. The count is never taken from the raider's viewer count.
-- **Proposed:** one raid per broadcast every 10 minutes; a raid can be cancelled by the raider during the countdown.
+- One raid per broadcast every 10 minutes; a raid can be cancelled by the raider during the countdown.
 - Faction influence for raids into ally or enemy channels is added by Module 4, with weights in the private tuning config.
 - Raids are audited (raider, target, time, arrivals).
 

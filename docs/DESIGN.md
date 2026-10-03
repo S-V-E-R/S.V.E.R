@@ -110,7 +110,7 @@ Every page uses the same shell (top bar, sidebar, main column) unless noted. Uti
 - Tabs in Barlow Condensed: Home, Wall, Schedule, About, Fan art (when enabled), Followers, Following. Active tab: `--accent` underline.
 - Home tab: War Council (Top 8) as a 4×2 grid of small player cards (avatar, crest, name, live dot), the profile song as a compact one-line player, sponsors as a logo row, then the owner's custom blocks in framed panels.
 - Wall: posts in framed panels, newest first, pinned posts on top with a pin mark; replies indented one level.
-- **Colors (open question for Joe):** the site chrome uses the viewer's theme; the channel's banner frame, tabs and accents could use the *owner's* faction so each channel carries its own identity. Recommended: owner's faction inside the channel area, viewer's everywhere else.
+- **Colors (decided by Joe, October 3, 2026):** inside the channel area (banner frame, tabs, accents, channel panels) the page uses the *owner's* faction theme, so each channel is its owner's territory; the site chrome (top bar, sidebar, footer) stays in the viewer's theme. An owner with no faction yet uses neutral.
 
 **Watch page.** Player first and largest (16:9), chat to its right at 340 px (below the player on narrow screens). Under the player: streamer bar (crest, name, title, category chip, faction tag, Follow), then "Up next" from MAGNet. Chat messages show the sender's crest (14 px) and name in their faction color; moderator actions in a small hover menu. When the stream ends, a framed overlay offers the next stream with a 10-second countdown and Cancel.
 
