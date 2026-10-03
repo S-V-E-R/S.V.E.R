@@ -7,7 +7,7 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | 0 | Foundation | Repo layout, Rust API with health check, web app shell with faction themes, CI | Done |
 | 1 | Login | Email and Google, Twitch, Discord sign-in; verification; sessions; 2FA for streamers | Done |
 | 2 | Profiles | Channel pages at sver.tv/username, follows, and branding tools: War Council (Top 8), the Wall, profile song, schedule, sponsors, fan art | In progress |
-| 3 | Live streams | OBS streaming over RTMP, WebRTC and LL-HLS playback, chat, moderation | Started |
+| 3 | Live streams | OBS streaming over RTMP, WebRTC and LL-HLS playback, chat, moderation | In progress |
 | 4 | Factions | Myria, Aetheron, Glint; the seasonal war over categories; the faction hub | Planned |
 | 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff | Planned |
 | 6 | VODs and clips | Past broadcasts and clipping | Planned |
