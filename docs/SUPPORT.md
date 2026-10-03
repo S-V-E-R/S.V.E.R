@@ -9,12 +9,12 @@ This module lets viewers support streamers with money and loyalty, and gets stre
 - Monetization eligibility and payout setup
 - Creator tiers (Scout, Trailblazer, Pioneer, Pathfinder)
 - Subscriptions (three tiers, gift subs, subscriber badges, emotes and chat mode)
-- Purchased Valor and cheers
+- Purchased Valor and tributes
 - Engagement Valor (per-channel loyalty points) and channel rewards
 - Co-streams as a squad view
 - Payouts
 
-Not in this module: Ad Valor and ad revenue sharing (Phase 4, with ads), Progression (Phase 2), alerts and overlays for cheers and subs (Phase 3), merch.
+Not in this module: Ad Valor and ad revenue sharing (Phase 4, with ads), Progression (Phase 2), alerts and overlays for tributes and subs (Phase 3), merch.
 
 ## Who can earn
 
@@ -48,7 +48,7 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - A streamer moves up when they meet every requirement for the next tier. Checked weekly, Monday 00:01 Eastern. Tiers never go down.
 - Each tier has a badge shown on the channel and in chat.
 - Viewer numbers (average and unique viewers) use the Trusted count from Module 3 viewer integrity, so viewbotted viewers never help a streamer climb. A streamer with an open staff integrity case is not promoted until it is closed.
-- Valor cheers pay 0.8¢ per Valor at every tier.
+- Valor tributes pay 0.8¢ per Valor at every tier.
 - Legacy tier benefits not carried over: the discovery boost (MAGNet never ranks by size), and referrals, affiliate, partnerships and priority support (deferred).
 - The ad split is recorded here so the tiers stay in one place; it applies once ads exist (Phase 4). Viewers' 5% becomes Ad Valor.
 
@@ -79,10 +79,10 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
   | $49.99 | 5,600 | 89.3¢ |
   | $99.99 | 11,500 | 86.9¢ |
 
-- The streamer earns **0.8¢ per Valor** spent on them (cheers and Valor-paid subscriptions). S.V.E.R pays the card fees and keeps the rest. Every pack covers its costs except the $0.99 pack, where Stripe's 30¢ fee means S.V.E.R loses about 14¢ when all 100 Valor are spent; Joe accepted that as the entry price.
-- Spent as **cheers** in chat (minimum 10 Valor; the message is highlighted and shows the amount) and on subscriptions.
+- The streamer earns **0.8¢ per Valor** spent on them (tributes and Valor-paid subscriptions). S.V.E.R pays the card fees and keeps the rest. Every pack covers its costs except the $0.99 pack, where Stripe's 30¢ fee means S.V.E.R loses about 14¢ when all 100 Valor are spent; Joe accepted that as the entry price.
+- Spent as **tributes** in chat (a viewer "pays tribute" with a message: minimum 10 Valor; the message is highlighted and shows the amount) and on subscriptions.
 - No expiry. Not transferable between accounts. Viewers can't cash it out. Purchases are non-refundable except where the law or the refund policy says otherwise.
-- Cheers obey chat rules: a cheer message that breaks banned-word or link rules is rejected before any Valor moves. A cheer to a channel that banned or blocked the viewer is refused.
+- Tributes obey chat rules: a tribute message that breaks banned-word or link rules is rejected before any Valor moves. A tribute to a channel that banned or blocked the viewer is refused.
 
 ## Engagement Valor
 
@@ -97,8 +97,8 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - A live owner invites 1 to 3 other live owners. When an invitee accepts, their stream joins the squad.
 - The squad page shows the streams side by side (stacked on phones). Viewers choose which stream they hear and whose chat they use; the others play muted.
 - The host picks one of two modes when creating the squad:
-  - **Separate:** each stream keeps its own chat, viewers, subs and cheers.
-  - **Merged:** one shared chat for the whole squad. Money spent through the squad page while it runs (cheers, gift subs and the first month of new subs) is pooled and split equally among the members live at that moment; each member's share is then paid at their own tier split. Later renewals of a sub go to the channel the viewer picked.
+  - **Separate:** each stream keeps its own chat, viewers, subs and tributes.
+  - **Merged:** one shared chat for the whole squad. Money spent through the squad page while it runs (tributes, gift subs and the first month of new subs) is pooled and split equally among the members live at that moment; each member's share is then paid at their own tier split. Later renewals of a sub go to the channel the viewer picked.
 - Each stream keeps its own viewer count and its own moderators. In merged mode, every member's moderators can moderate the shared chat, and a ban in any member's channel blocks that user from the shared chat.
 - Anyone can leave at any time; the squad ends when its host leaves or goes offline. Blocks and bans between members prevent invites.
 - No video mixing or re-encoding: each stream is delivered exactly as in Module 3.
@@ -126,4 +126,4 @@ Decided by Joe on October 3, 2026.
 
 ## Done when
 
-An eligible streamer finishes payout setup; a viewer subscribes at each tier by card and by Valor, gifts subs, buys Valor and cheers; every transaction balances in the ledger and survives webhook retries, refunds and chargebacks; a streamer creates rewards and fulfills redemptions; a squad of up to 4 streams plays together in both modes, and merged-mode revenue splits correctly; weekly tier checks promote streamers and change their split and VOD retention; a payday payout and a standard and instant Early Pay (capped at 75%, once a day) reach a Stripe test account, and a dispute after payout is recovered from later earnings.
+An eligible streamer finishes payout setup; a viewer subscribes at each tier by card and by Valor, gifts subs, buys Valor and pays tribute; every transaction balances in the ledger and survives webhook retries, refunds and chargebacks; a streamer creates rewards and fulfills redemptions; a squad of up to 4 streams plays together in both modes, and merged-mode revenue splits correctly; weekly tier checks promote streamers and change their split and VOD retention; a payday payout and a standard and instant Early Pay (capped at 75%, once a day) reach a Stripe test account, and a dispute after payout is recovered from later earnings.
