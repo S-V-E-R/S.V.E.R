@@ -9,7 +9,7 @@ export type Roadmap = { revision: string; items: RoadmapItem[] };
 
 export function parseRoadmap(value: unknown): Roadmap {
   if (!value || typeof value !== "object" || !("revision" in value) || typeof value.revision !== "string"
-    || !("items" in value) || !Array.isArray(value.items) || value.items.length !== 8) throw new Error("Roadmap unavailable");
+    || !("items" in value) || !Array.isArray(value.items) || value.items.length !== 9) throw new Error("Roadmap unavailable");
   const ids = new Set<string>();
   for (const item of value.items) {
     if (!item || typeof item !== "object" || typeof item.id !== "string" || !/^[a-z-]+$/.test(item.id)

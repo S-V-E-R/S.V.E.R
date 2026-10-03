@@ -839,9 +839,9 @@ This import is one-time and insert-only. It applies the same guardrails as the L
 | Live state, player, `/{username}/live`, live-first Following, War Council chat highlight, user card live dot and mod actions, chat use of blocks | Offline banner in the player slot; `/live` 302s to the channel; Following sorted by follow date; slots reserved, nothing rendered | Module 3 |
 | Faction badge on channel, card and War Council tiles; faction theme for signed-in viewers; VALOR wall reaction | Empty badge slot; neutral steel for everyone; Like only | Module 4 |
 | Schedule-aware discovery, similar channels | None | Module 5 |
-| Videos, clips, featured or pinned content on the channel page | No section rendered | Module 6 |
-| Beacons tab | None | Module 7 |
-| Wall SUBSCRIBERS option, Subscribe and Tip buttons | Hidden | Phase 2 |
+| Videos, clips, featured or pinned content on the channel page | No section rendered | Module 7 |
+| Beacons tab | None | Module 8 |
+| Wall SUBSCRIBERS option, Subscribe and Valor cheer buttons | Hidden | Module 6 |
 | Badges, achievements, featured stats, card frames | Not rendered; the only stats are follower and following counts and the join date | Phase 3 |
 | Channel rewards (`/{username}/rewards`, decision P8) | Reserved sub-path showing "Rewards are coming"; no tab | Module 4 / Phase 2 (economy) |
 | Notifications (wall posts, follows, approvals) | None; Studio shows pending counts. Report outcomes and strikes use `/settings/reports`, `/settings/standing` and the generic emails defined in Safety | Notification work (unscheduled) |

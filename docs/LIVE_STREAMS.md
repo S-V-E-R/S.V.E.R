@@ -16,7 +16,11 @@ This document expands Module 3 of [PLATFORM_PLAN.md](PLATFORM_PLAN.md), the secu
 - Owners appoint channel moderators. Owners/moderators delete messages, time out users for 1 minute through 14 days, and ban/unban. Slow mode is off or 3–120 seconds; link blocking exempts owners/moderators; banned words automatically reject matching messages.
 - Launch includes stream and chat reports/moderation. Reuse Module 2's staff permissions, report feedback, strikes and appeals. Its level-three strike opens a separate account-ban review; it never automatically bans an account.
 
-Deferred by the platform plan: SRT ingest, custom emotes, alerts/overlays, CrowdSync, external-platform chat, viewbot detection and chat replay. VODs/clips are Module 6. Faction influence and Engagement Valor belong to Module 4. Discovery rotation and MAGNet belong to their own modules; this module supplies live state and categories without adding ranking rules.
+Added October 3, 2026 by Joe: chat mentions, replies, a pinned message, badges and custom emotes; go-live alerts; raids; and hosting. They are specified in "Social features" below.
+
+Viewbot detection was moved into this module by Joe on October 3, 2026 ("Viewer integrity" below).
+
+Deferred by the platform plan: SRT ingest, animated emotes, alerts/overlays, CrowdSync, external-platform chat and chat replay. VODs/clips are Module 7. Faction influence belongs to Module 4. Subscriptions, Valor (Purchased and Engagement), co-streams and payouts are Module 6, Support ([SUPPORT.md](SUPPORT.md)). Discovery rotation and MAGNet belong to their own modules; this module supplies live state and categories without adding ranking rules.
 
 ## Investigation evidence
 
@@ -191,7 +195,7 @@ Restrict origin access so stopping a stream cannot be bypassed through an old or
 
 Count only a started player with progressing media and a heartbeat within 30 seconds. Send a heartbeat every ten seconds while playing; pause, ended media and prolonged stalled playback stop renewing it. A transport switch keeps the same lease. The creator's own preview, health probes and chat-only sockets are excluded. Return only aggregate counts publicly; no viewer identity list.
 
-Correlate WebRTC leases with actual SRS sessions where possible. CDN playback heartbeats are client assertions, so corroborate with delivery telemetry when available and bound lease issuance/rates. This excludes obvious page/chat counts without claiming bot-proof unique humans; viewbot detection remains deferred. Expired lease rows are cleaned by the existing worker.
+Correlate WebRTC leases with actual SRS sessions where possible. CDN playback heartbeats are client assertions, so corroborate with delivery telemetry when available and bound lease issuance/rates. This excludes obvious page/chat counts without claiming bot-proof unique humans; viewbot detection is specified in "Viewer integrity" below. Expired lease rows are cleaned by the existing worker.
 
 ## Chat protocol and persistence
 
@@ -263,6 +267,143 @@ New tables: stream settings/credentials, categories, broadcasts, playback leases
 
 On account erasure, remove credentials, leases, moderator memberships and ordinary chat bodies; preserve only the explicitly retained moderation evidence through the existing retention policy, with actor references anonymized as necessary. Stream revocation precedes destructive erasure. Legacy broadcast/chat/settings import is not implicit in the account migration; inventory and define a guarded rehearsal if it is requested. Never activate old credentials or old chat moderation grants through an unreviewed import.
 
+## Viewer integrity (viewbot detection) — approved by Joe, October 3, 2026
+
+Built inside Module 3 on top of the playback leases above, so every number S.V.E.R publishes or pays on is protected from day one. It replaces "viewbot detection remains deferred" in the viewer-count rules. The legacy design was reviewed: its principles carry over, but its implementation never received playback data in production, stored raw IP addresses and showed them to streamers, let a flagged streamer clear their own payout hold, and could freeze a channel's payouts because of bots someone else sent. Those are fixed here.
+
+### Principles
+
+- **Bots aimed at a channel never punish that channel.** Suspicious viewers are simply not counted. Penalties against a streamer (strikes, payout holds, tier removal) need staff review with evidence that the streamer or someone acting for them caused the traffic.
+- **Nobody is ranked by viewer count anyway.** MAGNet never sorts by size, which removes most of the incentive to viewbot. Integrity protects what counts do drive: creator tiers, payouts, Ad Valor, faction influence and the public number.
+- **No single signal decides.** A shared household, school or mobile network is normal. Decisions need several independent signals to agree.
+- **Privacy first.** Raw IP addresses are never stored. Streamers see how many viewers were not counted, never who or why.
+- **Fail safe for viewers.** If scoring is down, playback continues; new sessions simply wait to be counted.
+
+### Session levels
+
+Each playback lease gets one level, recalculated as heartbeats arrive:
+
+| Level | Public viewer count | Trusted count (tiers, payouts, Ad Valor, influence) |
+| --- | --- | --- |
+| **Pending** (first 60 seconds, or until checks pass) | No | No |
+| **Counted** | Yes | No |
+| **Trusted** | Yes | Yes |
+| **Excluded** | No | No |
+
+- **Counted** needs: a passed Turnstile check for the session (invisible for normal browsers; signed-in verified accounts skip it), heartbeats with advancing media, and no exclusion signal.
+- **Trusted** additionally needs: a signed-in, email-verified account in good standing, at least 2 minutes of watching with the page visible, and no risk signal above the private threshold. Guests are never trusted, which matches the rule that only verified accounts earn influence and Valor.
+- **Excluded** sessions keep playing normally; they just don't count. A session can recover: exclusion is re-evaluated every few minutes, except for hard evidence (below), which lasts for the rest of that session.
+- One account counts once per broadcast across all its tabs and devices (already true of leases).
+
+### Signals
+
+Collected from the playback lease heartbeats and the server, then scored by a background job:
+
+- **Account:** signed in, verified, account age, 2FA, standing, follows the channel.
+- **Network:** the client IP as reported by Cloudflare (the origin accepts traffic only from Cloudflare), looked up locally in the IPinfo Lite database (ASN and country, free for commercial use with attribution, refreshed daily). Hosting and VPN networks raise risk; residential and mobile networks don't.
+- **Concentration:** many sessions on one broadcast from the same network prefix (hashed /24 for IPv4, /48 for IPv6) at once. A whole ISP sharing viewers is normal and never penalized.
+- **Playback:** heartbeat regularity (perfectly metronomic timing is a bot signal), media time advancing in step with wall time, page visibility, stalls, and for WebRTC viewers, a matching live connection on SRS. CDN viewers get signed, per-lease playback URLs (Bunny token authentication) so a URL can't be shared to unregistered players.
+- **Cohort:** a burst of new sessions joining within seconds that share network, browser build and behavior. A real raid (Module 3 raids) or a MAGNet handoff explains a burst and is never treated as suspicious.
+- **Engagement (supporting only):** chat activity from the session's account. Absence of chat is never a penalty on its own.
+
+Weights and thresholds live in the private tuning config loaded at runtime; the repo ships safe example values for tests and local development.
+
+### Counts
+
+| Count | Meaning | Used by |
+| --- | --- | --- |
+| Raw | All live leases | Operations only, never shown |
+| Counted | Counted and Trusted sessions | The public viewer count |
+| Trusted | Trusted sessions | Creator tiers, payouts and ad revenue, Ad Valor, faction influence, staff dashboards |
+
+Snapshots of all three are stored every minute per live broadcast.
+
+### Spikes and enforcement
+
+- A sudden jump in sessions that is not explained by a raid, MAGNet handoff or go-live alert puts the new arrivals in a 5-minute provisional window measured from when they were flagged. They count only after it ends and only if they pass.
+- Automatic actions are limited to not counting sessions. Optional chat protection during a spike (followers-only for 10 minutes) is offered to the streamer and moderators as a one-click prompt; it is never turned on silently and it always expires.
+- A broadcast whose excluded share stays high across several windows opens a case in the staff integrity queue in `/admin`. Staff see aggregate evidence (counts, networks by type, timing patterns), never raw IPs.
+- Only staff can act on a case: dismiss, hold payouts for review, pause tier promotion, or issue a strike under the Profiles rules. Every action is audited and can be appealed like other strikes. A streamer can never clear their own case.
+
+### What streamers see
+
+Creator Studio shows the public count and, after the stream, "n viewers were not counted" with a short explanation of why counting can exclude viewers. No identities, networks or reasons per viewer.
+
+### Privacy and retention
+
+- IP addresses are kept only as keyed hashes (network prefix and full address) with a key rotated every 30 days, so they can't be reversed or linked across months.
+- Session-level integrity rows are deleted 30 days after the broadcast ends. Per-broadcast snapshots are kept for 1 year; open staff cases keep their evidence until closed plus 1 year.
+- The Privacy Policy describes this counting in plain words.
+
+### Storage and API outline
+
+Extend `playback_leases` with level, risk score, flags, hashed network fields and Turnstile result; add `integrity_snapshots` (per broadcast per minute) and `integrity_cases` with audited staff actions. Heartbeats gain visibility, media time and stall fields. The IPinfo Lite file is downloaded by the worker daily and checked before swap; if it is stale, network signals lower their confidence instead of excluding anyone.
+
+Automated coverage adds: guest and signed-in level transitions, Turnstile failure, metronomic heartbeat detection, household and carrier networks not penalized, hosting-network risk, provisional window timing, raid and MAGNet bursts not flagged, recovery from exclusion, counts used by each consumer, no raw IP stored or returned anywhere, staff-only case actions, and retention deletion.
+
+### S.V.E.R Plays
+
+S.V.E.R Plays moves from the legacy backend to this API as soon as Module 3 closes, and becomes the dedicated always-on stream used to monitor live delivery and integrity. Plays stays its own project; it talks to this API only through the internal interface below.
+
+- **Control gate (chat or AI player):** the API publishes, for the Plays channel only, the number of signed-in, verified viewers whose session is Counted or Trusted, refreshed every 5 seconds with a timestamp. The AI player may play only after that number has been 0 for the runner's grace period. A missing or stale value (older than 30 seconds) means chat mode: humans always win. Control goes back to chat as soon as one verified viewer is Counted (about 60 seconds after arriving), without waiting for Trusted.
+- **Votes:** a chat vote counts only if the voter's account has a Counted or Trusted playback session on the Plays broadcast. Chat-only accounts and Excluded sessions can't vote. One vote per account per window, as in legacy.
+- **Vote window:** scaled from the same verified-viewer count (legacy: 3 to 6 seconds).
+- **Faction rewards from votes:** Trusted sessions only, matching the influence rule.
+- **Interface:** an authenticated internal endpoint (or a Postgres notification consumed by the Plays bridge) providing the count and timestamp, plus the stream of chat commands from the Plays channel. No Redis is introduced for this.
+- **Acceptance:** with Plays running on this API, bots and chat-only accounts can't keep the AI player off or steer votes, and a real viewer takes control back within about a minute.
+
+## Social features (approved by Joe, October 3, 2026)
+
+These were added to Module 3 after the core spec. They reuse the chat, moderation, block and playback-lease rules above. All numbers here were accepted by Joe as defaults on October 3, 2026 and can be tuned later.
+
+### Chat additions
+
+- **Mentions:** `@username` in a message is matched against real accounts on the server and highlighted for the person named. No notification outside chat.
+- **Replies:** a message can reply to one visible message in the same channel. The reply shows a one-line quote (first 80 characters) of the original; if the original is deleted the quote reads "Message deleted" and never sends the deleted body.
+- **Pinned message:** the owner or a moderator pins one message (an existing visible message or new text up to 500 characters). It stays until unpinned or replaced, survives reconnects, and is cleared if the pinned message is deleted. Pinning is audited like other moderator actions.
+- **Badges:** Broadcaster, Moderator and Staff, decided on the server per message. Subscriber and Founder badges arrive with Support and the founders program. The sender's faction crest is separate (Module 4).
+
+### Custom emotes
+
+- Any channel owner can upload up to **10** emotes usable by anyone in that channel's chat. Subscriber-only emote slots come with Support.
+- Static PNG or WebP, square, at least 112 px, at most 1 MB upload. Animated files use the first frame (same rule as Profiles images). Served at 28, 56 and 112 px from the media bucket.
+- Code: 3 to 20 ASCII letters and digits, case-sensitive, unique within the channel. A message token that exactly matches a code of the current channel renders as that emote; everything else stays text. No cross-channel use in this module.
+- Emotes publish immediately. They can be reported (new report target EMOTE); staff can remove one, and removal is audited and can lead to a strike under the Profiles rules. Deleting an emote removes it from future rendering only.
+- Banned-word and link rules apply to codes.
+
+### Go-live alerts
+
+- Triggered when a broadcast starts. A reconnect inside the 60-second window is the same broadcast and sends nothing. At most one alert per channel every 6 hours.
+- Three delivery methods, each switchable in settings: in-site notifications (the top-bar bell and a notifications list), browser push (standard Web Push with server-held VAPID keys, no outside service), and email through Resend. Email is opt-in; the others default on.
+- Per-channel opt-out: a bell next to the Follow button turns alerts off for that channel without unfollowing. Unfollowing removes alerts too.
+- Never sent to: the owner, users the owner blocked or banned, unverified or restricted accounts, or deleted accounts. Fan-out runs as Postgres-backed jobs, retried safely without duplicates.
+- Email has a one-click unsubscribe and respects the account's notification settings. Push subscriptions that fail permanently are removed.
+- In-site notifications are kept 30 days.
+
+### Raids
+
+- A live owner starts a raid from Creator Studio or with `/raid username` in their own chat. The target must be live, not restricted, and accepting raids.
+- The target can turn off incoming raids or block raids from specific channels. A target that blocked or banned the raider (or its owner) can't be raided by it.
+- Viewers on the raider's stream see a 10-second countdown with Cancel, then their player moves to the target. Signed-in viewers banned from the target stay put.
+- The target's chat gets a system line "name is raiding with n", where n counts playback leases that actually started on the target within 60 seconds and came from the raid. The count is never taken from the raider's viewer count.
+- One raid per broadcast every 10 minutes; a raid can be cancelled by the raider during the countdown.
+- Faction influence for raids into ally or enemy channels is added by Module 4, with weights in the private tuning config.
+- Raids are audited (raider, target, time, arrivals).
+
+### Hosting
+
+- An offline channel can host one live channel. Its channel page shows the hosted stream with a "Hosting name" bar and a link to the target.
+- Auto-host: a priority list of up to **10** channels chosen by the owner. When the owner is offline, the first live, eligible channel on the list is hosted.
+- Hosting stops when the host goes live or the target goes offline; auto-host then moves to the next live channel on the list. When a raider ends their broadcast after a raid, their channel hosts the raid target.
+- Targets can opt out of being hosted; the same block and ban rules as raids apply.
+- Hosted viewers are counted for the target because they are real playback sessions on the target's broadcast; the host shows no count of its own.
+
+### Storage and API outline
+
+New tables: chat replies and pins (columns on chat messages plus a channel pin row), channel emotes, notification preferences (global and per channel), notifications, push subscriptions, raids, host settings and host state. New report target EMOTE. Endpoints live under `/api/channels/{username}/chat` (pin, unpin), `/api/me/emotes`, `/api/me/notifications`, `/api/me/push`, `/api/me/raids`, `/api/me/hosting`, and a per-follow alert toggle under `/api/channels/{username}/follow`.
+
+Automated coverage adds: mention matching and XSS, reply-to-deleted, pin permissions and reconnect, emote validation and render rules, alert throttling and opt-outs, push failure cleanup, raid eligibility, blocks and arrival counting, and host start/stop transitions.
+
 ## Delivery phases and checks
 
 1. **Media proof and concrete deployment design.** Use an isolated SRS instance/vhost with synthetic media and separate ports/output. Validate public-ID/secret separation, callback authentication, one-publisher enforcement, audio/video compatibility, CDN protocol/cache behavior, and fallback. No restart, hook switch or load test against the active sver-plays runtime. Save only aggregate measurements and sanitized configs in the repository.
@@ -295,4 +436,4 @@ Required automated coverage:
 
 ## Done when
 
-A verified creator with MFA broadcasts from OBS; an anonymous viewer watches through tested direct and CDN paths at the accepted latency targets; a reconnect within 60 seconds retains the broadcast; real playback drives counts; verified users chat; channel moderators can delete, timeout and ban; slow mode/link/word rules work; staff can handle stream/chat reports with the approved standing/appeal behavior; and Studio shows measured OBS warnings. Existing accounts, legacy data and sver-plays remain intact. Completing documentation or passing mocked media tests alone does not close this module.
+A verified creator with MFA broadcasts from OBS; an anonymous viewer watches through tested direct and CDN paths at the accepted latency targets; a reconnect within 60 seconds retains the broadcast; real playback drives counts; verified users chat; channel moderators can delete, timeout and ban; slow mode/link/word rules work; staff can handle stream/chat reports with the approved standing/appeal behavior; and Studio shows measured OBS warnings. Mentions, replies, pins, badges and custom emotes work; followers get go-live alerts from the channels they choose, with per-channel opt-out; a raid moves viewers after a countdown and reports an accurate arrival count; manual hosting and auto-host start and stop correctly; viewer integrity levels, the three counts and the staff integrity queue work, and no raw IP is stored. Existing accounts, legacy data and sver-plays remain intact. Completing documentation or passing mocked media tests alone does not close this module.
