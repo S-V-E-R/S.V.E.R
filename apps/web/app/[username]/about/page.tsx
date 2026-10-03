@@ -1,14 +1,23 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChannelFrame } from "../../../components/ChannelFrame";
+import { CopyButton } from "../../../components/CopyButton";
 import { Markdown } from "../../../components/Markdown";
+import { ReportButton } from "../../../components/Report";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../../lib/channel";
 import { apiGet } from "../../../lib/server-api";
 
 type Block = { type: "ABOUT" | "PANEL" | "QUOTES" | "GAME_SHELF"; enabled: boolean; config: { body?: string; title?: string; quotes?: { text: string; attribution: string }[]; games?: string[] } };
 type Sponsor = { id: string; name: string; description: string; link: string; discount_code: string; category: string; logo: string | null };
 type Setup = { category: string; name: string; note: string; link: string | null };
-type About = { bio: string; blocks: Block[]; sponsors: Sponsor[]; setup: Setup[] };
+type SetupPhoto = { id: string; image: { "400": string; "1600": string }; alt: string };
+type About = { bio: string; blocks: Block[]; sponsors: Sponsor[]; setup: Setup[]; setup_title?: string; setup_description?: string; setup_photos?: SetupPhoto[]; viewer?: { can_report: boolean } };
+/** Setup items grouped by category; categories appear in the order the owner first used them. */
+function groupSetup(items: Setup[]) {
+  const groups = new Map<string, Setup[]>();
+  for (const item of items) groups.set(item.category, [...(groups.get(item.category) ?? []), item]);
+  return [...groups.entries()];
+}
 const label = (value: string) => value.toLowerCase().replaceAll("_", " ").replace(/^./, c => c.toUpperCase());
 
 export async function generateMetadata({ params }: { params: ChannelParams }) {
@@ -32,11 +41,18 @@ export default async function AboutTab({ params }: { params: ChannelParams }) {
       {about?.sponsors.length ? <ul className="cards">{about.sponsors.map(s => <li key={s.id} className="panel">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {s.logo && <img src={s.logo} alt={`${s.name} logo`} width={64} height={64} />}
-        <div><a href={s.link} rel="sponsored noopener noreferrer" target="_blank"><strong>{s.name}</strong></a><small className="muted">{label(s.category)}</small>{s.description && <p>{s.description}</p>}{s.discount_code && <p>Code: <code>{s.discount_code}</code></p>}</div>
+        <div><a href={s.link} rel="sponsored nofollow noopener noreferrer" target="_blank"><strong>{s.name}</strong></a><small className="muted">{label(s.category)}</small>{s.description && <p>{s.description}</p>}{s.discount_code && <p className="row tight">Code: <code>{s.discount_code}</code><CopyButton value={s.discount_code} label={`${s.name} discount code`} /></p>}</div>
       </li>)}</ul> : <p className="muted">Add sponsors in <Link href="/studio/channel/sponsors">Creator Studio</Link>.</p>}
     </section>}
-    {(about?.setup.length || owner) && <section className="panel section"><h2>Streaming setup</h2>
-      {about?.setup.length ? <dl className="setup">{about.setup.map((s, i) => <div key={i}><dt>{label(s.category)}</dt><dd>{s.link ? <a href={s.link} rel="nofollow noopener noreferrer ugc" target="_blank">{s.name}</a> : s.name}{s.note && <small className="muted"> — {s.note}</small>}</dd></div>)}</dl> : <p className="muted">List your gear in <Link href="/studio/channel/setup">Creator Studio</Link>.</p>}
+    {(about?.setup.length || about?.setup_photos?.length || about?.setup_title || about?.setup_description || owner) && <section className="panel section setup-section"><h2>{about?.setup_title || "Streaming setup"}</h2>
+      {about?.setup_title && <p className="eyebrow">STREAMING SETUP</p>}
+      {about?.setup_description && <p className="setup-description">{about.setup_description}</p>}
+      {!!about?.setup_photos?.length && <ul className="setup-photos">{about.setup_photos.map((p, i) => <li key={p.id}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <a href={p.image["1600"]} target="_blank" rel="noopener"><img src={p.image["400"]} alt={p.alt || `Setup photo ${i + 1}`} loading="lazy" /></a>
+        {about.viewer?.can_report && <ReportButton target={{ target_type: "setup_photo", target_id: p.id }} />}
+      </li>)}</ul>}
+      {about?.setup.length ? <dl className="setup">{groupSetup(about.setup).map(([category, items]) => <div key={category}><dt>{label(category)}</dt>{items.map((s, i) => <dd key={i}>{s.link ? <a href={s.link} rel="sponsored nofollow noopener noreferrer" target="_blank">{s.name}</a> : s.name}{s.note && <small className="muted"> — {s.note}</small>}</dd>)}</div>)}</dl> : (owner && <p className="muted">List your gear in <Link href="/studio/channel/setup">Creator Studio</Link>.</p>)}
     </section>}
   </ChannelFrame>;
 }

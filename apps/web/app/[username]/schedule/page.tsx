@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { ChannelFrame } from "../../../components/ChannelFrame";
 import { Occurrences } from "../../../components/Schedule";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../../lib/channel";
@@ -11,13 +10,14 @@ export async function generateMetadata({ params }: { params: ChannelParams }) {
 }
 export default async function ScheduleTab({ params }: { params: ChannelParams }) {
   const data = await loadChannel((await params).username);
-  if (!data.tabs.schedule) notFound();
   const name = data.channel.username;
   const page = (await apiGet<{ timezone: string | null; items: Occurrence[] }>(`/api/channels/${encodeURIComponent(name)}/schedule`)).data;
   return <ChannelFrame data={data} path={`/${name}/schedule`}>
     <section className="panel section">
       <h2>Schedule</h2>
-      {page?.items.length ? <Occurrences items={page.items} zone={page.timezone} /> : <p className="muted">Nothing scheduled this week.{data.viewer.is_owner && <> <Link href="/studio/channel/schedule">Set your schedule</Link></>}</p>}
+      {!page ? <p className="muted">The schedule couldn&apos;t be loaded. Please try again.</p>
+        : page.items.length ? <Occurrences items={page.items} zone={page.timezone} />
+        : <p className="muted schedule-empty">No streams scheduled this week.{data.viewer.is_owner ? <> <Link href="/studio/channel/schedule">Set your schedule</Link></> : " Check back later."}</p>}
     </section>
   </ChannelFrame>;
 }

@@ -15,7 +15,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
   const account = await currentAccount();
   return <div className="channel watch">
     <div>
-    <LivePlayer username={c.username} focused>
+    <LivePlayer username={c.username} focused signedIn={!!account}>
       <section className="panel" aria-label="Stream">
         <h1>{c.display_name} is offline</h1>
         <p><Link href={`/${c.username}`}>Go to the channel</Link></p>

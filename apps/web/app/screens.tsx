@@ -2,6 +2,8 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Script from "next/script";
+import { Avatar } from "../components/Avatar";
+import type { Sizes } from "../lib/types";
 
 type Config = { providers: string[]; turnstile_site_key: string; development: boolean };
 type Me = { username: string; email: string; email_verified: boolean; mfa_enabled: boolean; has_password: boolean; providers: string[]; session_id: string; reauthenticated: boolean; recovery_codes_remaining: number; deletion_due: string | null };
@@ -64,6 +66,7 @@ function ProviderIcon({ name }: { name: string }) {
 export default function AuthScreen({ screen }: { screen: string }) {
   const [config, setConfig] = useState<Config>();
   const [me, setMe] = useState<Me>();
+  const [profile, setProfile] = useState<{ display_name: string; avatar: Sizes }>();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -81,6 +84,8 @@ export default function AuthScreen({ screen }: { screen: string }) {
 
   async function loadAccount() {
     const user = await request<Me>("me"); setMe(user);
+    // The channel avatar (Module 2). Best effort: without it the monogram stays.
+    fetch("/api/me/profile", { credentials: "same-origin", cache: "no-store" }).then(r => r.ok ? r.json() : undefined).then(p => p && setProfile({ display_name: p.display_name, avatar: p.avatar ?? null })).catch(() => {});
     if (!user.deletion_due) setSessions((await request<{ sessions: Session[] }>("sessions")).sessions);
   }
   useEffect(() => {
@@ -152,7 +157,7 @@ export default function AuthScreen({ screen }: { screen: string }) {
 
   if (screen === "account") return <div className="account-page"><div className="eyebrow">Account</div><h1>{titles.account[0]}</h1><p className="intro">{titles.account[1]}</p>{notice}
     {!me ? <p className="loading">{error ? "Account details are unavailable. Please retry or sign in again." : "Opening your account…"}</p> : me.deletion_due ? <section className="panel"><span className="eyebrow">DELETION GRACE PERIOD</span><h2>Your account is scheduled for deletion.</h2><p>It will be erased after {new Date(me.deletion_due).toLocaleString()}. Your account is restricted during this period.</p><button disabled={busy} onClick={() => run(async () => { await request("account/restore", {}); await loadAccount(); setMessage("Deletion cancelled. Welcome back."); })}>Keep my account</button><button className="quiet" disabled={busy} onClick={() => run(async () => { await request("logout", {}); window.location.assign("/login"); })}>Sign out</button></section> : <>
-      <section className="identity-panel panel"><div className="avatar" aria-hidden="true">{me.username.slice(0, 1).toUpperCase()}</div><div><span className="eyebrow">YOUR S.V.E.R IDENTITY</span><h2>@{me.username}</h2><p>{me.email}</p></div><span className={`badge ${me.email_verified ? "verified" : ""}`}>{me.email_verified ? "EMAIL VERIFIED" : "EMAIL UNVERIFIED"}</span>{!me.email_verified && <button className="quiet" disabled={busy} onClick={() => run(async () => { await request("email/resend", {}); setMessage("Verification email queued. Check your inbox."); })}>Resend verification</button>}</section>
+      <section className="identity-panel panel">{profile?.avatar ? <Avatar sizes={profile.avatar} name={profile.display_name || me.username} size={66} /> : <div className="avatar" aria-hidden="true">{me.username.slice(0, 1).toUpperCase()}</div>}<div><span className="eyebrow">YOUR S.V.E.R IDENTITY</span><h2>@{me.username}</h2><p>{me.email}</p></div><span className={`badge ${me.email_verified ? "verified" : ""}`}>{me.email_verified ? "EMAIL VERIFIED" : "EMAIL UNVERIFIED"}</span>{!me.email_verified && <button className="quiet" disabled={busy} onClick={() => run(async () => { await request("email/resend", {}); setMessage("Verification email queued. Check your inbox."); })}>Resend verification</button>}</section>
       <div className="account-grid"><section className="panel"><span className="eyebrow">01 / IDENTITY CHECK</span><h2>Confirm it’s you</h2><p>Security changes need a sign-in confirmation from the last five minutes{me.mfa_enabled ? " and a fresh authenticator or recovery code" : ""}.</p>
         {me.has_password ? <form onSubmit={e => { e.preventDefault(); run(async () => { await confirmPrimary(); await loadAccount(); setMessage("Identity confirmed for five minutes."); }); }}><label className="field" htmlFor="primary-password"><span>Current password</span><input id="primary-password" type="password" autoComplete="current-password" value={primaryPassword} onChange={e => setPrimaryPassword(e.target.value)} required /></label><button className="quiet" disabled={busy || !primaryPassword}>Confirm password</button></form> : <div className="stack">{me.providers.map(p => <button className="quiet" disabled={busy} key={p} onClick={() => oauth(p, "reauth")}>Confirm with {providerNames[p]}</button>)}</div>}
         {me.reauthenticated && <p className="small-text">Primary sign-in recently confirmed.</p>}
@@ -172,6 +177,7 @@ export default function AuthScreen({ screen }: { screen: string }) {
   const botRequired = isSignup || screen === "forgot";
   return <div className="entry-page">
     <section className="auth-panel panel" aria-labelledby="auth-title"><h1 id="auth-title" className="auth-title">{titles[screen][0]}</h1><p className="intro">{titles[screen][1]}</p>{notice}
+      {isSignup && <p className="signup-policy">By creating an account, you agree to the <Link href="/terms">Terms of Service</Link> and <Link href="/guidelines">Community Guidelines</Link>. Read our <Link href="/privacy">Privacy Policy</Link> to learn how we handle your information.</p>}
       {screen === "oauth-signup" && !pendingSignup && <p className="small-text">{error ? <Link href="/signup">Start signup again</Link> : "Checking your provider sign-in…"}</p>}
       {(screen !== "oauth-signup" || pendingSignup) && <form ref={form} onSubmit={submit}>
         {isSignup && <>{pendingSignup && <p className="small-text">Connected with {providerNames[pendingSignup.provider]}. Confirm your username and age to finish.</p>}<UsernameField initialUsername={pendingSignup?.username} /><Field label="Date of birth" name="date_of_birth" type="date" autoComplete="bday" hint="You must be at least 13. Your birthday stays private." /></>}

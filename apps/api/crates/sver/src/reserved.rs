@@ -59,6 +59,7 @@ pub const RESERVED: &[&str] = &[
     "guidelines",
     "dmca",
     "about",
+    "roadmap",
     "contact",
     "status",
     "report",

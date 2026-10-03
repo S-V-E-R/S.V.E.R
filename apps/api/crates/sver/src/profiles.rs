@@ -441,11 +441,7 @@ pub async fn channel(
         crate::social::war_council_read(&app, &mut db, &user.id, viewer_id, is_owner).await?;
     let wall_preview = crate::wall::preview(&app, &mut db, &user, viewer.as_ref()).await?;
     let schedule_next = crate::studio::next_occurrences(&mut db, &user.id, 3).await?;
-    let about_has_content: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_blocks WHERE user_id=$1 AND enabled) OR EXISTS(SELECT 1 FROM sponsors WHERE user_id=$1 AND active) OR EXISTS(SELECT 1 FROM setup_items WHERE user_id=$1)")
-        .bind(&user.id)
-        .fetch_one(&mut *db)
-        .await?;
-    let has_schedule: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM schedule_blocks WHERE user_id=$1) OR EXISTS(SELECT 1 FROM schedule_events WHERE user_id=$1 AND end_at>now())")
+    let about_has_content: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_blocks WHERE user_id=$1 AND enabled) OR EXISTS(SELECT 1 FROM sponsors WHERE user_id=$1 AND active) OR EXISTS(SELECT 1 FROM setup_items WHERE user_id=$1) OR EXISTS(SELECT 1 FROM setup_photos WHERE user_id=$1 AND status='VISIBLE') OR EXISTS(SELECT 1 FROM profiles WHERE user_id=$1 AND (setup_title<>'' OR setup_description<>''))")
         .bind(&user.id)
         .fetch_one(&mut *db)
         .await?;
@@ -474,11 +470,13 @@ pub async fn channel(
         },
         "tabs": {
             "wall": true,
-            "schedule": has_schedule || is_owner,
+            // The Schedule tab always exists; an empty week renders an empty state.
+            "schedule": true,
             "about": about_has_content || !user.bio.is_empty() || is_owner,
             "fan_art": fan_art_enabled && (approved_fan_art || is_owner),
         },
         "fan_art_enabled": fan_art_enabled,
+        "header": crate::studio::channel_header(&mut db, &user.id).await?,
         "war_council": war_council,
         "wall_preview": wall_preview,
         "schedule_next": schedule_next,
@@ -493,12 +491,12 @@ pub async fn my_profile(State(app): State<App>, jar: CookieJar) -> Res<Json<Valu
     let me = channel_user_by_id(&mut db, &user.id)
         .await?
         .ok_or_else(Fail::missing)?;
-    let (song_notice, email_updates): (Option<String>, bool) =
-        sqlx::query_as("SELECT song_notice,email_report_updates FROM profiles WHERE user_id=$1")
+    let (song_notice, email_updates, show_linked): (Option<String>, bool, bool) =
+        sqlx::query_as("SELECT song_notice,email_report_updates,show_linked_accounts FROM profiles WHERE user_id=$1")
             .bind(&user.id)
             .fetch_optional(&mut *db)
             .await?
-            .unwrap_or((None, false));
+            .unwrap_or((None, false, false));
     let rename = crate::rename::status(&mut db, &user).await?;
     Ok(Json(json!({
         "username": me.username,
@@ -520,7 +518,73 @@ pub async fn my_profile(State(app): State<App>, jar: CookieJar) -> Res<Json<Valu
         "song_notice": song_notice,
         "email_report_updates": email_updates,
         "mfa_enabled": user.mfa_enabled,
+        "mood_presets": text::MOOD_PRESETS,
+        "show_linked_accounts": show_linked,
     })))
+}
+
+/// GET /api/me/link-suggestions: links derived from linked Twitch and Discord identities, for
+/// the user to add and confirm (decision P5). Nothing is saved here.
+pub async fn link_suggestions(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut db = app.db.acquire().await?;
+    let identities: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT provider,subject,handle FROM identities WHERE user_id=$1 AND provider IN ('twitch','discord') ORDER BY provider DESC",
+    )
+    .bind(&user.id)
+    .fetch_all(&mut *db)
+    .await?;
+    let existing: Vec<String> =
+        sqlx::query_scalar("SELECT platform FROM social_links WHERE user_id=$1")
+            .bind(&user.id)
+            .fetch_all(&mut *db)
+            .await?;
+    let mut suggestions = Vec::new();
+    let mut missing_handle = Vec::new();
+    for (provider, subject, handle) in identities {
+        if existing.contains(&provider) {
+            continue;
+        }
+        let url = match (provider.as_str(), handle.as_deref()) {
+            ("twitch", Some(h)) => Some(format!("https://twitch.tv/{h}")),
+            ("discord", _) => Some(format!("https://discord.com/users/{subject}")),
+            _ => None,
+        };
+        // Only suggest what the link validator accepts.
+        match url.filter(|u| text::social_link(&provider, u).is_ok()) {
+            Some(url) => suggestions.push(
+                json!({"platform": provider, "url": url, "label": handle.unwrap_or_default()}),
+            ),
+            None => missing_handle.push(provider),
+        }
+    }
+    Ok(Json(
+        json!({"suggestions": suggestions, "missing_handle": missing_handle, "link_count": existing.len()}),
+    ))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CardSettings {
+    show_linked_accounts: bool,
+}
+/// PUT /api/me/card-settings: the opt-in "Also known as" line (decision P6).
+pub async fn card_settings(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<CardSettings>,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut tx = app.db.begin().await?;
+    ensure_profile(&mut tx, &user.id).await?;
+    sqlx::query("UPDATE profiles SET show_linked_accounts=$2,updated_at=now() WHERE user_id=$1")
+        .bind(&user.id)
+        .bind(input.show_linked_accounts)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(
+        json!({"saved": true, "show_linked_accounts": input.show_linked_accounts}),
+    ))
 }
 
 #[derive(Deserialize)]

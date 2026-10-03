@@ -182,6 +182,10 @@ pub struct Options {
     /// Rehearsal-only preview: continue past the internal-account stop so the remaining counts
     /// can be reviewed. Live modes never set it.
     pub preview_extra_internal: bool,
+    /// Operator decision (October 3, 2026): only admin, support and SVER are internal. Accounts
+    /// carrying only the legacy system flag import as normal public profiles and are counted, so
+    /// they can be hidden later. Allowed in every mode.
+    pub named_internal_only: bool,
 }
 pub type Counts = BTreeMap<String, u64>;
 pub struct Outcome {
@@ -374,19 +378,24 @@ pub async fn run(
             "admin" | "support" | "sver"
         )
     };
+    let flagged_only = accounts
+        .iter()
+        .filter(|a| !named(a) && a.account["isSystemAccount"] == true)
+        .count();
     let internal: HashSet<&str> = accounts
         .iter()
-        .filter(|a| named(a) || a.account["isSystemAccount"] == true)
+        .filter(|a| {
+            named(a) || (!options.named_internal_only && a.account["isSystemAccount"] == true)
+        })
         .map(|a| a.id.as_str())
         .collect();
     tally.set("accounts.internal", internal.len());
-    tally.set(
-        "accounts.internal_added_by_system_flag",
-        accounts
-            .iter()
-            .filter(|a| !named(a) && a.account["isSystemAccount"] == true)
-            .count(),
-    );
+    if options.named_internal_only {
+        tally.set("accounts.internal_added_by_system_flag", 0);
+        tally.set("accounts.system_flag_imported_as_public", flagged_only);
+    } else {
+        tally.set("accounts.internal_added_by_system_flag", flagged_only);
+    }
     // Decision 3: the legacy system-account flag may not add internal accounts beyond the
     // three named ones (and the set may never exceed three).
     let added = tally.counts["accounts.internal_added_by_system_flag"];
@@ -795,7 +804,27 @@ pub async fn run(
             );
             continue;
         }
-        let processed = match media::process_async(file.bytes.clone(), kind, None).await {
+        let mut result = media::process_async(file.bytes.clone(), kind, None).await;
+        if kind == Kind::Banner
+            && result
+                .as_ref()
+                .is_err_and(|e| e.message.contains("too small"))
+        {
+            // Import-only fallback: upscale the centered 3:1 crop to the 1200x400 minimum.
+            let bytes = file.bytes.clone();
+            let upscaled =
+                tokio::task::spawn_blocking(move || media::upscale_banner_to_minimum(&bytes))
+                    .await
+                    .map_err(fail("Banner fallback failed; import rolled back"))?;
+            if let Ok(png) = upscaled {
+                let fallback = media::process_async(png, kind, None).await;
+                if fallback.is_ok() {
+                    tally.add("media.banner_upscaled_to_minimum");
+                    result = fallback;
+                }
+            }
+        }
+        let processed = match result {
             Ok(p) => p,
             Err(e) => {
                 // The normal pipeline applies: a crop below the minimum size is "too small".

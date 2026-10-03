@@ -3,8 +3,8 @@ import { FormEvent, useState } from "react";
 import { send } from "../lib/client-api";
 import { reasons } from "../lib/types";
 
-export type ReportTarget = { target_type: "profile" | "wall_post" | "wall_reply" | "fan_art"; target_id: string; field?: string };
-const fields: [string, string][] = [["display_name", "Display name"], ["username", "Username"], ["avatar", "Avatar"], ["banner", "Banner"], ["bio", "Bio"], ["status", "Status"], ["mood", "Mood"], ["links", "Links"], ["song", "Profile song"], ["war_council", "War Council"], ["sponsors", "Sponsors"], ["setup", "Streaming setup"], ["blocks", "About blocks"]];
+export type ReportTarget = { target_type: "profile" | "wall_post" | "wall_reply" | "fan_art" | "setup_photo" | "chat_message" | "live_stream"; target_id: string; field?: string };
+const fields: [string, string][] = [["display_name", "Display name"], ["username", "Username"], ["avatar", "Avatar"], ["banner", "Banner"], ["bio", "Bio"], ["status", "Status"], ["mood", "Mood"], ["links", "Links"], ["song", "Profile song"], ["war_council", "War Council"], ["sponsors", "Sponsors"], ["setup", "Streaming setup"], ["blocks", "About blocks"], ["header", "Page header text"]];
 
 /** Report form (reason, optional note; channel reports also pick the part of the channel). */
 export function ReportForm({ target, onDone }: { target: ReportTarget; onDone: () => void }) {

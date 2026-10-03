@@ -14,6 +14,14 @@ permissions:
 
 jobs:
   cla:
+    # The CLA is for outside contributors. Pull requests opened by the project (owner, members,
+    # collaborators) or by bots such as Dependabot skip it; a skipped required check counts as passing.
+    # Commits in project PRs may be authored by tools working for the owner (e.g. the `claude` account).
+    # Event payloads report a private org membership as CONTRIBUTOR, so maintainers are also named.
+    if: >-
+      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association || github.event.issue.author_association)
+      && !contains(fromJSON('["JoeTheChode"]'), github.event.pull_request.user.login || github.event.issue.user.login)
+      && (github.event.pull_request.user.type || github.event.issue.user.type) != 'Bot'
     runs-on: ubuntu-latest
     steps:
       - name: Check CLA signatures

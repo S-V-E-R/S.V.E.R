@@ -1,12 +1,14 @@
 //! Image pipeline and media storage (docs/PROFILES.md, "Avatar and banner").
 //!
 //! Uploads are decoded and re-encoded on the server, so no client-supplied bytes are ever served.
-//! Storage is a local filesystem directory in development or an S3-compatible bucket (the future
-//! `media.sver.tv` bucket) configured from the external environment.
+//! Storage is a local filesystem directory (development, or an explicit persistent `MEDIA_DIR` in
+//! production until the bucket exists) or an S3-compatible bucket (the future `media.sver.tv`
+//! bucket) configured from the external environment.
 use crate::{
     App,
     profiles::{
-        Fail, Res, avatar_json, banner_json, ensure_profile, ensure_unrestricted, rate, signed_in,
+        Fail, Res, avatar_json, banner_json, ensure_profile, ensure_unrestricted, media_url, rate,
+        signed_in,
     },
 };
 use axum::{
@@ -36,6 +38,9 @@ pub struct S3 {
     pub region: String,
     pub access_key: String,
     pub secret_key: String,
+    /// Optional object-key prefix (for example `v2/`) so the bucket can be shared with other
+    /// data, such as the legacy R2 files, without ever touching their keys.
+    pub prefix: String,
 }
 #[derive(Clone, Debug)]
 pub enum Storage {
@@ -63,7 +68,14 @@ impl MediaConfig {
                     },
                     access_key: env("MEDIA_S3_ACCESS_KEY_ID"),
                     secret_key: env("MEDIA_S3_SECRET_ACCESS_KEY"),
+                    prefix: env("MEDIA_S3_PREFIX"),
                 };
+                if !valid_prefix(&s3.prefix) {
+                    return Err(
+                        "MEDIA_S3_PREFIX must be a lowercase key prefix ending in '/', such as v2/"
+                            .into(),
+                    );
+                }
                 if !s3.endpoint.starts_with("https://")
                     || s3.bucket.is_empty()
                     || s3.access_key.is_empty()
@@ -87,16 +99,25 @@ impl MediaConfig {
                 };
                 Storage::Filesystem(dir)
             }
+            // Production filesystem storage (interim, before the bucket exists): an explicit,
+            // absolute MEDIA_DIR on a persistent volume, served by `serve_local`.
+            "filesystem" => {
+                let dir = env("MEDIA_DIR");
+                if dir.is_empty() || !std::path::Path::new(&dir).is_absolute() {
+                    return Err(
+                        "MEDIA_STORAGE=filesystem in production requires an absolute MEDIA_DIR on a persistent volume".into(),
+                    );
+                }
+                Storage::Filesystem(PathBuf::from(dir))
+            }
             // Production without a configured bucket: uploads are unavailable (503).
             "" | "disabled" => Storage::Disabled,
             _ => {
-                return Err(
-                    "MEDIA_STORAGE must be s3, filesystem (development only) or disabled".into(),
-                );
+                return Err("MEDIA_STORAGE must be s3, filesystem or disabled".into());
             }
         };
         let public_base = if env("MEDIA_PUBLIC_BASE").is_empty() {
-            if production {
+            if production && !matches!(storage, Storage::Filesystem(_)) {
                 "https://media.sver.tv".to_string()
             } else {
                 format!("{origin}/api/media")
@@ -111,6 +132,10 @@ impl MediaConfig {
     }
 }
 
+/// An empty prefix, or a lowercase key prefix ending in '/' (for example `v2/`).
+fn valid_prefix(prefix: &str) -> bool {
+    prefix.is_empty() || (prefix.ends_with('/') && valid_key(prefix))
+}
 fn valid_key(key: &str) -> bool {
     !key.is_empty()
         && key.len() < 200
@@ -129,6 +154,10 @@ fn hmac(key: &[u8], data: &str) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 impl S3 {
+    /// Path-style object URL, with the configured key prefix applied.
+    pub fn object_url(&self, key: &str) -> String {
+        format!("{}/{}/{}{}", self.endpoint, self.bucket, self.prefix, key)
+    }
     /// AWS Signature Version 4 request for a single object (path-style URL).
     fn request(
         &self,
@@ -137,8 +166,7 @@ impl S3 {
         key: &str,
         body: &[u8],
     ) -> Result<reqwest::RequestBuilder, Fail> {
-        let url = url::Url::parse(&format!("{}/{}/{}", self.endpoint, self.bucket, key))
-            .map_err(|_| Fail::internal())?;
+        let url = url::Url::parse(&self.object_url(key)).map_err(|_| Fail::internal())?;
         let host = match url.port() {
             Some(port) => format!("{}:{port}", url.host_str().unwrap_or_default()),
             None => url.host_str().unwrap_or_default().to_string(),
@@ -290,6 +318,7 @@ pub enum Kind {
     SponsorLogo,
     FanArt,
     SongThumb,
+    SetupPhoto,
 }
 impl Kind {
     pub fn name(self) -> &'static str {
@@ -299,11 +328,12 @@ impl Kind {
             Kind::SponsorLogo => "sponsor_logo",
             Kind::FanArt => "fan_art",
             Kind::SongThumb => "song_thumb",
+            Kind::SetupPhoto => "setup_photo",
         }
     }
     pub fn max_bytes(self) -> usize {
         match self {
-            Kind::Avatar | Kind::FanArt => 5 * 1024 * 1024,
+            Kind::Avatar | Kind::FanArt | Kind::SetupPhoto => 5 * 1024 * 1024,
             Kind::Banner => 10 * 1024 * 1024,
             Kind::SponsorLogo => 2 * 1024 * 1024,
             Kind::SongThumb => 5 * 1024 * 1024,
@@ -318,6 +348,7 @@ impl Kind {
                 Kind::SponsorLogo => "Sponsor logos can be up to 2 MB.",
                 Kind::FanArt => "Fan art can be up to 5 MB.",
                 Kind::SongThumb => "That image is too large to process.",
+                Kind::SetupPhoto => "Setup photos can be up to 5 MB.",
             },
         )
     }
@@ -362,7 +393,11 @@ fn decode(bytes: &[u8], kind: Kind) -> Res<DynamicImage> {
     let (width, height) = ImageReader::with_format(Cursor::new(bytes), format)
         .into_dimensions()
         .map_err(|_| Fail::field("file", "We couldn't read that image."))?;
-    let side = if kind == Kind::FanArt { 4096 } else { 10_000 };
+    let side = if matches!(kind, Kind::FanArt | Kind::SetupPhoto) {
+        4096
+    } else {
+        10_000
+    };
     if width > side || height > side || (width as u64) * (height as u64) > 50_000_000 {
         return Err(Fail::field("file", "That image is too large to process."));
     }
@@ -535,7 +570,7 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
                 }],
             })
         }
-        Kind::FanArt => {
+        Kind::FanArt | Kind::SetupPhoto => {
             if width < 64 || height < 64 {
                 return Err(Fail::field("file", "That image is too small."));
             }
@@ -546,7 +581,12 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
                 height,
             };
             let hash = content_hash(bytes, kind, &crop);
-            let prefix = format!("fanart/{hash}");
+            let folder = if kind == Kind::FanArt {
+                "fanart"
+            } else {
+                "setup"
+            };
+            let prefix = format!("{folder}/{hash}");
             let mut variants = Vec::new();
             for size in [400u32, 1600] {
                 let resized = if width > size || height > size {
@@ -568,6 +608,26 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
             })
         }
     }
+}
+/// Import-only fallback for a legacy banner whose centered 3:1 crop is below the 1200x400
+/// minimum: the same centered crop is upscaled (Lanczos3) to exactly 1200x400 and returned as
+/// PNG for the normal pipeline. Crops needing more than a 2x upscale are refused. User uploads
+/// never use this; they still get "That image is too small."
+pub fn upscale_banner_to_minimum(bytes: &[u8]) -> Res<Vec<u8>> {
+    let image = decode(bytes, Kind::Banner)?;
+    let (width, height) = image.dimensions();
+    let crop = centered(width, height, 3.0);
+    if crop.width * 2 < 1200 || crop.height * 2 < 400 {
+        return Err(Fail::field("file", "That image is too small."));
+    }
+    let upscaled = image
+        .crop_imm(crop.x, crop.y, crop.width, crop.height)
+        .resize_exact(1200, 400, FilterType::Lanczos3);
+    let mut out = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(upscaled.to_rgba8())
+        .write_to(&mut out, image::ImageFormat::Png)
+        .map_err(|_| Fail::internal())?;
+    Ok(out.into_inner())
 }
 pub async fn process_async(bytes: Vec<u8>, kind: Kind, crop: Option<Crop>) -> Res<Processed> {
     tokio::task::spawn_blocking(move || process(&bytes, kind, crop))
@@ -788,16 +848,35 @@ pub async fn remove_banner(State(app): State<App>, jar: CookieJar) -> Res<Json<V
     remove(app, jar, Kind::Banner).await
 }
 
-/// GET /api/media/{key}: development-only serving of the local filesystem store.
+/// GET /api/media/{key}: serves the filesystem store (development, and production while the
+/// interim filesystem adapter is configured). Keys are content-hashed, so responses are immutable.
 pub async fn serve_local(State(app): State<App>, Path(key): Path<String>) -> Response {
-    let Storage::Filesystem(dir) = &app.config.media.storage else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if app.config.production || !valid_key(&key) {
+    if !valid_key(&key) || !key.ends_with(".webp") {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let dir = match &app.config.media.storage {
+        Storage::Filesystem(dir) => dir,
+        // After moving to a bucket, URLs issued under the interim filesystem store keep working:
+        // keys are unchanged, so they redirect permanently to the public bucket URL.
+        Storage::S3(_) => {
+            return (
+                StatusCode::PERMANENT_REDIRECT,
+                [(header::LOCATION, media_url(&app, &key))],
+            )
+                .into_response();
+        }
+        Storage::Disabled => return StatusCode::NOT_FOUND.into_response(),
+    };
     match tokio::fs::read(dir.join(&key)).await {
-        Ok(bytes) => ([(header::CONTENT_TYPE, "image/webp")], Bytes::from(bytes)).into_response(),
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "image/webp"),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            Bytes::from(bytes),
+        )
+            .into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -826,4 +905,114 @@ pub async fn cleanup(app: &App) -> Res<usize> {
         }
     }
     Ok(deleted)
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    fn alpha_at(webp: &[u8], x: u32, y: u32) -> u8 {
+        let image = image::load_from_memory_with_format(webp, image::ImageFormat::WebP).unwrap();
+        image.to_rgba8().get_pixel(x, y)[3]
+    }
+
+    /// Transparent PNGs (RGBA and indexed with tRNS) keep their transparency in every variant;
+    /// opaque images stay opaque with no matte or padding.
+    #[test]
+    fn avatars_keep_transparency() {
+        let rgba = image::RgbaImage::from_fn(300, 300, |x, y| {
+            if (100..200).contains(&x) && (100..200).contains(&y) {
+                image::Rgba([200, 30, 30, 255])
+            } else {
+                image::Rgba([0, 0, 0, 0])
+            }
+        });
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(rgba.clone())
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let webp = encode(&DynamicImage::ImageRgba8(rgba)).unwrap();
+        let fixtures = [
+            include_bytes!("../tests/fixtures/avatar-indexed-trns.png").to_vec(),
+            include_bytes!("../tests/fixtures/avatar-rgb-trns.png").to_vec(),
+            include_bytes!("../tests/fixtures/avatar-gray-alpha.png").to_vec(),
+        ];
+        for source in [png.into_inner(), webp].into_iter().chain(fixtures) {
+            let processed = process(&source, Kind::Avatar, None).unwrap();
+            assert_eq!(processed.variants.len(), 3);
+            for v in &processed.variants {
+                assert_eq!(
+                    alpha_at(&v.bytes, 0, 0),
+                    0,
+                    "{} corner is transparent",
+                    v.key
+                );
+                assert_eq!(
+                    alpha_at(&v.bytes, v.width - 1, v.height - 1),
+                    0,
+                    "{}",
+                    v.key
+                );
+                assert_eq!(
+                    alpha_at(&v.bytes, v.width / 2, v.height / 2),
+                    255,
+                    "{} center is opaque",
+                    v.key
+                );
+            }
+        }
+        // An opaque JPEG fills the whole square: no white matte or padding is added.
+        let rgb = image::RgbImage::from_fn(300, 200, |_, _| image::Rgb([20, 40, 160]));
+        let mut jpeg = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(rgb)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let processed = process(&jpeg.into_inner(), Kind::Avatar, None).unwrap();
+        for v in &processed.variants {
+            let image = image::load_from_memory_with_format(&v.bytes, image::ImageFormat::WebP)
+                .unwrap()
+                .to_rgba8();
+            for (x, y) in [
+                (0, 0),
+                (v.width - 1, 0),
+                (0, v.height - 1),
+                (v.width - 1, v.height - 1),
+            ] {
+                let p = image.get_pixel(x, y);
+                assert_eq!(p[3], 255);
+                assert!(
+                    p[2] > 120 && p[0] < 60,
+                    "{} edge keeps the image colour",
+                    v.key
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prefixes_and_object_urls() {
+        for ok in ["", "v2/", "media/v2/"] {
+            assert!(valid_prefix(ok), "{ok}");
+        }
+        for bad in ["v2", "/v2/", "V2/", "../", "a//../", "v2 /"] {
+            assert!(!valid_prefix(bad), "{bad}");
+        }
+        let mut s3 = S3 {
+            endpoint: "https://account.r2.cloudflarestorage.com".into(),
+            bucket: "sver".into(),
+            region: "auto".into(),
+            access_key: "k".into(),
+            secret_key: "s".into(),
+            prefix: String::new(),
+        };
+        assert_eq!(
+            s3.object_url("avatars/abc/64.webp"),
+            "https://account.r2.cloudflarestorage.com/sver/avatars/abc/64.webp"
+        );
+        s3.prefix = "v2/".into();
+        assert_eq!(
+            s3.object_url("avatars/abc/64.webp"),
+            "https://account.r2.cloudflarestorage.com/sver/v2/avatars/abc/64.webp"
+        );
+    }
 }

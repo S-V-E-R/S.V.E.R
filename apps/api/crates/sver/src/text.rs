@@ -220,6 +220,34 @@ pub fn mood(value: &str) -> Result<String, Fail> {
     }
     Ok(text)
 }
+/// Mood presets offered under the Mood field (decision P2); each must pass `mood`.
+pub const MOOD_PRESETS: &[&str] = &[
+    "🎮", "🔥", "😎", "🎧", "⚔️", "🛡️", "🏆", "💀", "😴", "🍕", "🎉", "❤️",
+];
+/// `/users/{17-20 digit snowflake}`: a Discord profile link (decision P5).
+fn discord_user_path(path: &str) -> bool {
+    path.strip_prefix("/users/")
+        .map(|id| id.trim_end_matches('/'))
+        .is_some_and(|id| (17..=20).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit()))
+}
+/// The public provider handle kept on an identity, or None when it doesn't fit the pattern.
+pub fn provider_handle(provider: &str, value: &str) -> Option<String> {
+    let v = value.trim().to_ascii_lowercase();
+    let ok = match provider {
+        "twitch" => {
+            (3..=25).contains(&v.len())
+                && v.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        }
+        "discord" => {
+            (2..=32).contains(&v.len())
+                && v.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'.')
+        }
+        _ => false,
+    };
+    ok.then_some(v)
+}
 pub fn valid_mood(value: &str) -> bool {
     mood(value).is_ok_and(|m| m == value)
 }
@@ -296,7 +324,8 @@ pub fn social_link(platform: &str, value: &str) -> Result<String, Fail> {
     let ok = match platform {
         "discord" => {
             host_matches(&host, "discord.gg")
-                || (host_matches(&host, "discord.com") && parsed.path().starts_with("/invite/"))
+                || (host_matches(&host, "discord.com")
+                    && (parsed.path().starts_with("/invite/") || discord_user_path(parsed.path())))
         }
         "fourthwall" => host.ends_with(".4thwall.com"),
         _ => hosts.iter().any(|allowed| host_matches(&host, allowed)),

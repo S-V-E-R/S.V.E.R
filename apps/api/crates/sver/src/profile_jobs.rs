@@ -16,7 +16,8 @@ pub async fn erase(db: &mut PgConnection, user_id: &str) -> Result<()> {
     };
     crate::streams::revoke(db, user_id).await?;
     // Media they own, and fan art others submitted to their channel, is queued for storage deletion.
-    sqlx::query("UPDATE media_objects SET delete_after=now() WHERE owner_id=$1 OR key LIKE ANY(SELECT image_key||'%' FROM fan_art WHERE channel_id=$1 OR submitter_id=$1)").bind(user_id).execute(&mut *db).await?;
+    // Setup photos are queued too, except content-addressed keys another user's setup photo still uses.
+    sqlx::query("UPDATE media_objects m SET delete_after=now() WHERE (m.owner_id=$1 OR m.key LIKE ANY(SELECT image_key||'%' FROM fan_art WHERE channel_id=$1 OR submitter_id=$1) OR m.key LIKE ANY(SELECT image_key||'/%' FROM setup_photos WHERE user_id=$1)) AND NOT EXISTS(SELECT 1 FROM setup_photos o WHERE o.user_id<>$1 AND m.key LIKE o.image_key||'/%')").bind(user_id).execute(&mut *db).await?;
     // Counts affected by removed follows are recomputed after the cascade (see `refresh`).
     let touched: Vec<String> = sqlx::query_scalar("SELECT following_id FROM follows WHERE follower_id=$1 UNION SELECT follower_id FROM follows WHERE following_id=$1").bind(user_id).fetch_all(&mut *db).await?;
     // War Councils they appear in are compacted after the cascade.
@@ -95,6 +96,11 @@ pub async fn tick(app: &App) -> Result<()> {
         .execute(&app.db)
         .await?;
     sqlx::query("DELETE FROM username_holds WHERE released_at<=now()")
+        .execute(&app.db)
+        .await?;
+    // Activity feed retention (docs/PROFILES.md, P7).
+    sqlx::query("DELETE FROM activity_events WHERE created_at<now()-make_interval(days=>$1)")
+        .bind(crate::activity::RETENTION_DAYS)
         .execute(&app.db)
         .await?;
     // Rejected fan art files are deleted from storage after 7 days.

@@ -15,7 +15,7 @@ const ITEMS: Item[] = [
 ];
 
 // Destinations from docs/DESIGN.md that aren't built yet. They are shown, but never linked,
-// until their routes exist (Browse and the war map with Modules 4–5, Beacons with Module 7).
+// until their routes exist (Browse and the war map with Modules 4–5, Beacons with Module 8).
 const SOON = [
   { label: "Browse", icon: <BrowseIcon /> },
   { label: "Beacons", icon: <BeaconsIcon /> },

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Barlow, Barlow_Condensed, Cinzel } from "next/font/google";
 import Link from "next/link";
-import { Chrome } from "../components/shell/Chrome";
+import SiteShell from "../components/SiteShell";
 import { BellIcon, MagnetMark } from "../components/shell/Icons";
 import { SideNav } from "../components/shell/SideNav";
 import type { PeoplePage } from "../components/People";
@@ -10,6 +10,8 @@ import { themeFor } from "../lib/theme";
 import { currentAccount, hasAlerts } from "./session";
 import "./globals.css";
 import "../styles/profiles.css";
+import "../styles/design.css";
+import "../styles/site-pages.css";
 
 // Type per docs/DESIGN.md "Type": self-hosted and subset by next/font.
 const cinzel = Cinzel({ subsets: ["latin"], weight: ["700", "800"], variable: "--font-cinzel", display: "swap" });
@@ -57,18 +59,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     </section>}
   </>;
 
-  // TODO(policy pages): add footer links to About, Factions, Roadmap, Help, Terms, Privacy, Guidelines,
-  // DMCA, Take It Down requests and Contact as each page lands (docs/DESIGN.md "Footer"). Take It Down
-  // requests must be clearly visible from the homepage. None of these routes exist yet, so no links.
-  const footer = <footer className="site-footer">
-    <div className="footer-brand"><span className="logo small">S.V.E.R</span><span>For streamers who play, build, and make.</span></div>
-    <span>© {new Date().getFullYear()} SVER LLC</span>
-  </footer>;
-
   return <html lang="en" data-theme={themeFor(account)} className={`${cinzel.variable} ${barlow.variable} ${barlowCondensed.variable}`}>
     <body>
-      <a className="skip" href="#main">Skip to content</a>
-      <Chrome actions={actions} sidebar={sidebar} footer={footer}>{children}</Chrome>
+      <SiteShell account={account} alerts={alerts} actions={actions} sidebar={sidebar}>{children}</SiteShell>
     </body>
   </html>;
 }

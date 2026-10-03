@@ -5,17 +5,18 @@ import { useState } from "react";
 import { send } from "../lib/client-api";
 import type { Viewer } from "../lib/types";
 import { ReportForm } from "./Report";
+import { ShareButton } from "./ShareButton";
 
-/** Follow / Following, the Block and Report menu, or Edit profile on your own channel. */
-export function ChannelActions({ username, viewer, path }: { username: string; viewer: Viewer; path: string }) {
+/** Follow / Following, the Block and Report menu, or Edit profile on your own channel; Share for everyone. */
+export function ChannelActions({ username, displayName, viewer, path }: { username: string; displayName: string; viewer: Viewer; path: string }) {
   const router = useRouter();
   const [following, setFollowing] = useState(viewer.following);
   const [blocked, setBlocked] = useState(viewer.blocked);
   const [menu, setMenu] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [error, setError] = useState("");
-  if (viewer.is_owner) return <div className="channel-actions"><Link className="button small" href="/settings/profile">Edit profile</Link><Link className="button small quiet" href="/studio/channel">Creator Studio</Link></div>;
-  if (!viewer.signed_in) return <div className="channel-actions"><Link className="button small" href="/login" data-from={path}>Log in to follow</Link></div>;
+  if (viewer.is_owner) return <div className="channel-actions"><Link className="button small" href="/settings/profile">Edit profile</Link><Link className="button small quiet" href="/studio/channel">Creator Studio</Link><ShareButton username={username} displayName={displayName} /></div>;
+  if (!viewer.signed_in) return <div className="channel-actions"><Link className="button small" href="/login" data-from={path}>Log in to follow</Link><ShareButton username={username} displayName={displayName} /></div>;
   async function follow() {
     const result = await send<{ following: boolean }>(following ? "DELETE" : "PUT", `/api/follows/${encodeURIComponent(username)}`);
     if (result.ok) { setFollowing(result.data.following); setError(""); router.refresh(); } else setError(result.error);
@@ -27,6 +28,7 @@ export function ChannelActions({ username, viewer, path }: { username: string; v
   }
   return <div className="channel-actions">
     {!blocked && !viewer.interaction_blocked && <button type="button" className={following ? "small quiet" : "small"} aria-pressed={following} onClick={follow}>{following ? "Following" : "Follow"}</button>}
+    <ShareButton username={username} displayName={displayName} />
     <div className="menu">
       <button type="button" className="small quiet" aria-haspopup="true" aria-expanded={menu} onClick={() => setMenu(!menu)}>More <span aria-hidden="true">▾</span></button>
       {menu && <div className="menu-list panel" role="menu">

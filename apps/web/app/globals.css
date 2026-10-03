@@ -15,6 +15,7 @@
   --aetheron: #A68BFF;
   --glint: #E9C35A;
   /* Type ("Type"); the --font-* variables come from next/font in app/layout.tsx */
+  --font-heading: var(--font-cinzel);
   --font-display: var(--font-cinzel), Georgia, serif;
   --font-body: var(--font-barlow), system-ui, sans-serif;
   --font-label: var(--font-barlow-condensed), var(--font-barlow), system-ui, sans-serif;

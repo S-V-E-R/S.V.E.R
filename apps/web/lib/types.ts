@@ -11,6 +11,8 @@ export type Channel = {
   channel: { username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: null };
   tabs: { wall: boolean; schedule: boolean; about: boolean; fan_art: boolean };
   fan_art_enabled: boolean;
+  /** Owner-editable header copy with defaults resolved (docs/PROFILES.md, P9). */
+  header: { label: string | null; welcome: string | null; intro_title: string; intro_body: string; vibe: string };
   war_council: { members: { position: number; user: Chip; crown: boolean }[]; unavailable_count: number };
   wall_preview: { pinned: Post[]; latest: Post[]; viewer: WallViewer };
   schedule_next: { timezone: string | null; items: Occurrence[] };
@@ -18,5 +20,24 @@ export type Channel = {
   redirect_to?: string;
 };
 export const platformNames: Record<string, string> = { twitch: "Twitch", youtube: "YouTube", kick: "Kick", tiktok: "TikTok", instagram: "Instagram", x: "X", bluesky: "Bluesky", discord: "Discord", facebook: "Facebook", patreon: "Patreon", kofi: "Ko-fi", fourthwall: "Fourthwall", website: "Website" };
+/** Profile URL templates for the social-link handle field, as legacy built them (docs/PROFILES.md, "Social links"). */
+export const linkTemplates: Record<string, (handle: string) => string> = {
+  twitch: h => `https://twitch.tv/${h}`, youtube: h => `https://youtube.com/@${h}`, kick: h => `https://kick.com/${h}`, tiktok: h => `https://tiktok.com/@${h}`,
+  instagram: h => `https://instagram.com/${h}`, x: h => `https://x.com/${h}`, bluesky: h => `https://bsky.app/profile/${h}`, discord: h => `https://discord.gg/${h}`,
+  facebook: h => `https://facebook.com/${h}`, patreon: h => `https://patreon.com/${h}`, kofi: h => `https://ko-fi.com/${h}`, fourthwall: h => `https://${h}.4thwall.com`, website: h => `https://${h}`,
+};
+/** A typed URL (any scheme) is kept for the server to validate; a handle, with or without "@", becomes the platform's profile URL. */
+export function linkUrl(platform: string, value: string) {
+  const typed = value.trim();
+  if (!typed || /^[a-z][a-z0-9+.-]*:/i.test(typed)) return typed;
+  // "twitch.tv/name" (an address typed without https://) is an address, not a handle.
+  if (platform === "website" || /^[a-z0-9-]+(\.[a-z0-9-]+)+\//i.test(typed)) return linkTemplates.website(typed.replace(/^\/+/, ""));
+  return (linkTemplates[platform] || linkTemplates.website)(encodeURIComponent(typed.replace(/^@/, "")));
+}
+/** Host shown next to a social link, without "www.". */
+export const linkHost = (url: string) => { try { return new URL(url).host.replace(/^www\./, ""); } catch { return ""; } };
+export const followedOn = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 export const reasons: [string, string][] = [["spam", "Spam"], ["harassment", "Harassment or bullying"], ["hate", "Hate speech"], ["sexual", "Sexual content"], ["violence", "Violence or threats"], ["impersonation", "Impersonation"], ["private_information", "Private information"], ["copyright", "Copyright"], ["other", "Something else"]];
 export const joined = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+/** One channel activity event (docs/PROFILES.md, P7). Kinds unknown to this build are not rendered. */
+export type ActivityItem = { id: string; kind: string; created_at: string; subject: Chip | null; data: Record<string, unknown> };

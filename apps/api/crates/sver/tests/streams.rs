@@ -26,6 +26,8 @@ mod moderation;
 mod playback;
 #[path = "streams/real_media.rs"]
 mod real_media;
+#[path = "streams/reports.rs"]
+mod reports;
 
 #[derive(Default)]
 struct Media {
@@ -289,6 +291,7 @@ async fn exercise(e: &Env) {
     playback::exercise(e).await;
     chat::exercise(e).await;
     moderation::exercise(e).await;
+    reports::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")
