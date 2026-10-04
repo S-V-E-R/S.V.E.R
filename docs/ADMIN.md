@@ -16,6 +16,8 @@ These carry over from [PROFILES.md](PROFILES.md), "Staff roles and the review qu
   - Raw IP addresses aren't stored anywhere, so they never show.
   - DMs are readable only through a report naming that conversation ([COMMUNITY.md](COMMUNITY.md)).
 - **Tuning values stay out of the web.** Thresholds, weights and caps live in the private tuning config on the server and change through a deploy, not from a page, so a stolen staff session can't quietly change how the platform works.
+- **Nobody acts on their own account**, and moderators and support staff can't act on another staff account. Only an admin can act on staff, and only an admin can act on another admin.
+- **The last admin can't be removed:** the role command refuses to revoke the last remaining admin.
 - **Self-review:** when the only staff member available made the original decision, they may decide its appeal with a required note, flagged `self_review` (already in Profiles).
 
 ## Staff roles
@@ -67,6 +69,12 @@ The page only reads. Every action happens on its own page.
   - Beacons
   - guilds
   - DMs
+- **Users page additions** (legacy had these without notes or notice):
+  - End all sessions: support and admin only, needs a reason, and the user is told.
+  - Resend a verification email.
+  - Username reset for impersonation, as specified in Live streams.
+  - Restore content: when an appeal is overturned, or a removal was a mistake.
+  - Staff never set someone's email as verified, and never set a password.
 - **Take It Down** (`/admin/take-it-down`): the request queue, countdowns, removal and copy-matching tools, and the 3-year records ([TAKE_IT_DOWN.md](TAKE_IT_DOWN.md)).
 - **Child safety** (`/admin/child-safety`, admin only):
   - **Matches:** a hash match from the matching service in [BEACONS.md](BEACONS.md) blocks the media and opens a case here.
@@ -82,6 +90,12 @@ The page only reads. Every action happens on its own page.
 
 - **Categories and genres** (`/admin/categories`): add, rename and merge categories, and assign each to a genre. A category can't move to another genre mid-season ([FACTIONS.md](FACTIONS.md)).
 - **Setup parts** (`/admin/parts`): already built.
+- **Media review** (`/admin/media`): one queue for uploads that need a look before or after they go public:
+  - custom emotes
+  - guild emblems ([GUILDS.md](GUILDS.md))
+  - CrowdSync effect uploads ([CROWDSYNC.md](CROWDSYNC.md))
+- **Guilds** (`/admin/guilds`): requests to verify a guild as a real organization, plus rename, reset or disband for guilds that break the rules ([GUILDS.md](GUILDS.md)).
+- **Plays** (`/admin/plays`): start, stop and pause, the game library and rotation, and the health alerts ([PLAYS.md](PLAYS.md)). Legacy's Plays admin routes always failed their sign-in check, so this is rebuilt rather than ported.
 - **MAGNet** (`/admin/magnet`): Hype channels on and off, force a stream on and release it, emergency stop, staff spotlights, and the 7-day decision log ([MAGNET.md](MAGNET.md)).
 - **Factions** (`/admin/factions`):
   - The checkpoint and season timeline, read-only.
@@ -92,8 +106,10 @@ The page only reads. Every action happens on its own page.
 **Money** (`/admin/money`)
 
 - **Read-only views** of payments, subscriptions, tributes, payouts and Early Pay, refunds and chargebacks, negative balances, and accounts waiting for guardian approval ([SUPPORT.md](SUPPORT.md)). Stripe stays the source of truth for card and bank details, which never show here.
+- **Good Works badges:** review the amount a streamer reports raising for charity, with its proof, and award or decline the badge ([SUPPORT.md](SUPPORT.md)).
+- **Tax forms:** Stripe collects streamers' tax information and issues their tax forms. This page shows only whether each streamer's tax information is complete. S.V.E.R doesn't collect W-9s itself.
 - **Refunds** go through Stripe from this page and post reversing ledger entries.
-- **Valor adjustments** are double-entry ledger rows with a reason. They need a second staff member's approval once there's more than one person who can approve. They are never edits to a balance.
+- **Valor adjustments** are double-entry ledger rows with a reason. Any adjustment above a cap (in the private tuning config) needs a second staff member's approval once there's more than one person who can approve. Legacy allowed one admin to grant any amount. They are never edits to a balance.
 
 **Operations**
 
@@ -104,6 +120,23 @@ The page only reads. Every action happens on its own page.
 - **Site banner** (`/admin/banner`): one dismissible message across the top of every page for maintenance or incidents, with an optional end time.
 - **Jobs** (`/admin/jobs`): failed and stuck jobs from the Postgres queue (media, notifications, payouts, checkpoints), with their error and a retry button. A job retried by hand still runs exactly once.
 - **Audit log** (`/admin/audit`): `moderation_actions`, searchable by staff member, action, target and date. It is read-only, and nobody can edit or delete rows, admins included.
+
+## Not carried over from legacy
+
+| Legacy | Rebuild |
+| --- | --- |
+| IP and device bans, shared-IP lookups | Raw IPs aren't stored. Ban evasion shows up through viewer-integrity signals and account bans, and staff never see an IP address. |
+| Shadowbans (never actually enforced) | Dropped. Every penalty is visible to the person and can be appealed. |
+| Two separate role systems; a moderator could ban an admin | One role table, with the staff safeguards above. |
+| Role changes from the web with no reason or last-admin guard | Command line only, with the last-admin guard and an audit row. |
+| Separate audit tables for each feature, and many actions not logged | One audit log for every staff action. |
+| Read-only feature-flag page driven by environment variables | Emergency switches that act instantly. |
+| Force-verify email, and disable 2FA with no reason | Resend verification only. 2FA recovery goes through the audited recovery process. |
+| Analytics and top-creator dashboards | Raven's Eye in Phase 2. The home page shows only what's needed to run things. |
+| Ads admin | Phase 4, with ads. |
+| Creator applications, partnerships, mentorship | Dropped: anyone verified with 2FA can stream, and mentorship isn't returning. |
+| OAuth key rotation page | Done from the server command line, never the web. |
+| Plays admin routes that always failed their sign-in check | Rebuilt on the new rules. |
 
 ## When each piece is built
 
@@ -119,4 +152,5 @@ The page only reads. Every action happens on its own page.
 4. Emergency switches turn a feature off in seconds with a clear message to users, and back on, with no deploy.
 5. The home page shows Take It Down deadlines and queue counts accurately.
 6. A failed job can be retried from the jobs page and still runs only once.
-7. No admin page shows a raw IP address, a full card or bank number, or a DM outside a report.
+7. Nobody can act on their own account, moderators get refused on staff accounts, and the role command refuses to remove the last admin.
+8. No admin page shows a raw IP address, a full card or bank number, or a DM outside a report.
