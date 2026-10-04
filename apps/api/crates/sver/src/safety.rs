@@ -75,17 +75,17 @@ fn restriction_json(until: Option<DateTime<Utc>>) -> Value {
         _ => Value::Null,
     }
 }
-fn date_in(at: DateTime<Utc>, zone: Option<&str>) -> String {
+pub(crate) fn date_in(at: DateTime<Utc>, zone: Option<&str>) -> String {
     let tz = zone
         .and_then(|z| Tz::from_str(z).ok())
         .unwrap_or(chrono_tz::UTC);
     at.with_timezone(&tz).format("%B %-d, %Y").to_string()
 }
-fn log(action: &str, outcome: &str) {
+pub(crate) fn log(action: &str, outcome: &str) {
     // Fixed fields only: no user IDs, content or notes (Login's audit-event rule).
     eprintln!("mod_event={action} outcome={outcome}");
 }
-fn note(value: Option<&str>, field: &'static str, required: bool) -> Res<String> {
+pub(crate) fn note(value: Option<&str>, field: &'static str, required: bool) -> Res<String> {
     let value = text::clean(value.unwrap_or(""), field, true)?;
     if required && value.is_empty() {
         return Err(Fail::field(field, "A moderator note is required."));
@@ -332,7 +332,7 @@ pub async fn level(db: &mut PgConnection, user_id: &str) -> Res<i32> {
 pub async fn recompute(db: &mut PgConnection, user_id: &str) -> Res<Option<DateTime<Utc>>> {
     auth::stream_owner(db, user_id).await?;
     profiles::ensure_profile(db, user_id).await?;
-    let until: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT max(t) FROM (SELECT CASE WHEN penalty='RESTRICT_INDEFINITE' THEN $2 ELSE penalty_until END AS t FROM strikes WHERE user_id=$1 AND status='ACTIVE' AND penalty_lifted_at IS NULL AND penalty<>'WARNING' UNION ALL SELECT until FROM interim_restrictions WHERE user_id=$1 AND resolution='OPEN' AND until>now()) x WHERE t>now()")
+    let until: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT max(t) FROM (SELECT CASE WHEN penalty='RESTRICT_INDEFINITE' THEN $2 ELSE penalty_until END AS t FROM strikes WHERE user_id=$1 AND status='ACTIVE' AND penalty_lifted_at IS NULL AND penalty<>'WARNING' UNION ALL SELECT until FROM interim_restrictions WHERE user_id=$1 AND resolution='OPEN' AND until>now() UNION ALL SELECT coalesce(until,$2) FROM account_bans WHERE user_id=$1 AND status='ACTIVE') x WHERE t>now()")
         .bind(user_id)
         .bind(indefinite())
         .fetch_one(&mut *db)
@@ -1004,9 +1004,11 @@ pub async fn admin_reports(
     let interim: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',i.id,'username',u.username,'starts_at',i.starts_at,'until',i.until,'overdue',i.until<=now(),'note',i.note) FROM interim_restrictions i JOIN users u ON u.id=i.user_id WHERE i.resolution='OPEN' ORDER BY i.until")
         .fetch_all(&mut *db)
         .await?;
-    let appeals: i64 = sqlx::query_scalar("SELECT count(*) FROM appeals WHERE status='PENDING'")
-        .fetch_one(&mut *db)
-        .await?;
+    let appeals: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM appeals WHERE status='PENDING' AND strike_id IS NOT NULL",
+    )
+    .fetch_one(&mut *db)
+    .await?;
     log("admin_queue_read", "ok");
     Ok(Json(
         json!({"groups": out, "next_cursor": next, "interim_restrictions": interim, "pending_appeals": appeals}),
@@ -1165,7 +1167,7 @@ async fn set_interim(
     log("interim_restriction_set", "ok");
     Ok(id)
 }
-async fn admin_target(db: &mut PgConnection, name: &str) -> Res<String> {
+pub(crate) async fn admin_target(db: &mut PgConnection, name: &str) -> Res<String> {
     sqlx::query_scalar("SELECT id FROM users WHERE lower(username)=lower($1)")
         .bind(name)
         .fetch_optional(&mut *db)
@@ -1389,6 +1391,10 @@ pub async fn decide(
     sqlx::query("UPDATE appeals SET status=$2,reviewed_by=$3,reviewed_at=now(),message_to_user=$4,staff_note=$5,self_review=$6 WHERE id=$1").bind(&id).bind(final_status).bind(&actor.id).bind(&message).bind(&staff_note).bind(self_review).execute(&mut *tx).await?;
     if final_status == "OVERTURNED" {
         sqlx::query("UPDATE strikes SET status='OVERTURNED',overturned_at=now() WHERE id=$1")
+            .bind(&strike_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE account_bans SET review_requested_at=now() WHERE strike_id=$1 AND status='ACTIVE'")
             .bind(&strike_id)
             .execute(&mut *tx)
             .await?;

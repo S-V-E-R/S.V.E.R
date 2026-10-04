@@ -133,13 +133,23 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 - Channel-ban playback denial for signed-in users (decision 1) needs the channel-ban table and lands with phase 4.
 - Covered by `tests/streams/playback.rs`: unknown channel, offline/STARTING/LIVE/RECONNECTING/ENDED visibility, URL shape, no secret, guest dedupe and renewal, invalid browser IDs, wrong broadcast, owner exclusion, expiry. Not yet verified in a real browser against SRS (WebRTC/HLS start, fallback timing, autoplay) or with CDN delivery; Following/user-card live badges are not added yet.
 
+## Account bans (phase 4c, part 2) — October 3
+
+- Migration `0013`: `account_bans` (reason, message to the user, private staff note, issuer, optional end, optional related strike, `ACTIVE`/`LIFTED`/`OVERTURNED`). `appeals` now targets a strike *or* a ban (exactly one, enforced by a constraint), so ban appeals reuse the same table, limits and review separation.
+- Staff (admin role, MFA, recent sign-in) ban from the admin user page: indefinite, or 1 hour to 365 days. Staff, internal accounts and yourself can't be banned, and an account has at most one ban in force. Issuing a ban in one transaction: restricts the account through `safety::recompute` (channel hidden, public actions refused, stream key revoked, broadcast stopped), ends every session through `auth::invalidate`, writes the audit row and queues the standing email.
+- A banned account can still sign in, but the router (`bans::blocked_write`) refuses every write except `/api/auth/*` (security, logout, deletion), standing, strike and ban appeals. The check is on the account, so password reset or another provider can't get around it, and it fails closed on a database error. Reads stay available.
+- A timed ban ends by database time with no cleanup job. Old sessions and stream keys are never restored.
+- One appeal per ban within 14 days, 1–1000 characters. The issuer can't decide it while another MFA admin exists. Overturning ends the ban and recomputes the restriction. Staff can also lift a ban with a required note. An overturned strike flags any ban that references it for re-review (`review_requested_at`); it never cancels the ban.
+- Web: "Account bans" with the appeal form on Settings → Standing, "Ban account" on the admin user page, and an Admin → Bans queue (appeals waiting, bans in force with re-review flags first, Lift).
+- Covered by `tests/streams/bans.rs`.
+
 ## Stream and chat reports (phase 4c, part 1) — October 3
 
 - Migration `0010` adds `chat_message` and `live_stream` to the Module 2 report targets. Reports, the admin queue, strikes and appeals are reused unchanged. Channel moderator actions never create platform strikes; staff decide that from the queue.
 - A chat report is accepted only for a visible message. Its snapshot keeps the body, channel and send time, so the report outlives the seven-day chat expiry. Staff "remove content" tombstones the message and broadcasts the delete to open chats. It is not restored on appeal.
 - A live-stream report targets the broadcast ID and is accepted only while the stream is LIVE or RECONNECTING. The snapshot records title, category, broadcast ID, start time and report time; no video is recorded as evidence. Staff "remove content" stops the stream through `streams::revoke`: the key is revoked, the broadcast ends with reason `revoked`, and a durable disconnect is queued for the worker. Video already delivered cannot be recalled, and a stop is never undone.
 - Web: Report on other people's chat messages and "Report stream" on the live view, for signed-in viewers only. New labels on the admin queue filter and the reporter's history page.
-- Covered by `tests/streams/reports.rs`. Still to build in phase 4c: account bans with restricted sessions and one appeal within 14 days, and staff username resets for impersonation.
+- Covered by `tests/streams/reports.rs`. Account bans are below; staff username resets for impersonation are still to build.
 
 ## Channel moderation (phase 4b) — October 3
 

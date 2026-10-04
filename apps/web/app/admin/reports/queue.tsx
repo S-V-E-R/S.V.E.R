@@ -66,7 +66,7 @@ export default function QueuePage() {
   if (!queue) return <p className="loading">{error || "Loading…"}</p>;
   return <><h1>Reports</h1>
     {error && <p role="alert" className="form-message error">{error}</p>}
-    <p className="muted"><Link href="/admin/appeals">{queue.pending_appeals} appeal(s) waiting</Link></p>
+    <p className="muted"><Link href="/admin/appeals">{queue.pending_appeals} strike appeal(s) waiting</Link> · <Link href="/admin/bans">Account bans and ban appeals</Link></p>
     {queue.interim_restrictions.length > 0 && <Section title="Interim restrictions">
       <ul className="list">{queue.interim_restrictions.map(i => <li key={i.id} className="row between"><span><Link href={`/admin/users/${i.username}`}>@{i.username}</Link> until {when(i.until)} {i.overdue && <span className="badge danger-text">Overdue: record a strike or lift</span>}</span><button type="button" className="small quiet" onClick={() => lift(i.username)}>Lift</button></li>)}</ul>
     </Section>}
