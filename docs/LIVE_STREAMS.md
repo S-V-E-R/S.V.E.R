@@ -133,6 +133,16 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 - Channel-ban playback denial for signed-in users (decision 1) needs the channel-ban table and lands with phase 4.
 - Covered by `tests/streams/playback.rs`: unknown channel, offline/STARTING/LIVE/RECONNECTING/ENDED visibility, URL shape, no secret, guest dedupe and renewal, invalid browser IDs, wrong broadcast, owner exclusion, expiry. Not yet verified in a real browser against SRS (WebRTC/HLS start, fallback timing, autoplay) or with CDN delivery; Following/user-card live badges are not added yet.
 
+## Staff username resets (phase 4c, part 3) — October 4
+
+- `POST /api/admin/users/{username}/username-reset` (staff: admin role, MFA, recent sign-in) with a required reason that the user sees. Staff, internal and deleted accounts can't be reset.
+- Under the account lifecycle lock, the account gets a neutral, unused, unreserved, unheld name: `user` + 8 digits. Its identity, follows, content and sessions are unchanged.
+- The impersonating name is held for 90 days **without a redirect**: it neither leads to the account nor can be claimed by anyone, including the account itself. Any older rename redirects the account still had are turned off too.
+- Migration `0016`: `username_history` accepts `staff_reset` and gains a `note` holding the reason. A reset doesn't count toward the user's 60-day rename limit, so they can pick a new name right away. Audited as `username_reset`; the standing email is queued.
+- A reset isn't separately appealable: staff attach a strike when the impersonation warrants one, and the user appeals that.
+- Web: "Reset username" on the admin user page (moves to the new name afterwards) and "Username resets" on Settings → Standing.
+- Covered by `tests/streams/resets.rs`.
+
 ## Account bans (phase 4c, part 2) — October 3
 
 - Migration `0013`: `account_bans` (reason, message to the user, private staff note, issuer, optional end, optional related strike, `ACTIVE`/`LIFTED`/`OVERTURNED`). `appeals` now targets a strike *or* a ban (exactly one, enforced by a constraint), so ban appeals reuse the same table, limits and review separation.
@@ -149,7 +159,7 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 - A chat report is accepted only for a visible message. Its snapshot keeps the body, channel and send time, so the report outlives the seven-day chat expiry. Staff "remove content" tombstones the message and broadcasts the delete to open chats. It is not restored on appeal.
 - A live-stream report targets the broadcast ID and is accepted only while the stream is LIVE or RECONNECTING. The snapshot records title, category, broadcast ID, start time and report time; no video is recorded as evidence. Staff "remove content" stops the stream through `streams::revoke`: the key is revoked, the broadcast ends with reason `revoked`, and a durable disconnect is queued for the worker. Video already delivered cannot be recalled, and a stop is never undone.
 - Web: Report on other people's chat messages and "Report stream" on the live view, for signed-in viewers only. New labels on the admin queue filter and the reporter's history page.
-- Covered by `tests/streams/reports.rs`. Account bans are below; staff username resets for impersonation are still to build.
+- Covered by `tests/streams/reports.rs`. Account bans and staff username resets are below.
 
 ## Channel moderation (phase 4b) — October 3
 

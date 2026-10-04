@@ -414,8 +414,12 @@ pub async fn standing(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>
             .await?
             .flatten();
     let list = strikes(&mut db, &user.id, false).await?;
+    let resets: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('old_username',old_username,'new_username',new_username,'reason',note,'changed_at',changed_at) FROM username_history WHERE user_id=$1 AND reason='staff_reset' ORDER BY changed_at DESC")
+        .bind(&user.id)
+        .fetch_all(&mut *db)
+        .await?;
     Ok(Json(
-        json!({"level": level, "restriction": restriction_json(until), "strikes": list}),
+        json!({"level": level, "restriction": restriction_json(until), "strikes": list, "username_resets": resets}),
     ))
 }
 pub async fn acknowledge(

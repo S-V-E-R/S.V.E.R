@@ -504,6 +504,10 @@ fn profile_routes() -> Router<App> {
             get(sa::admin_standing),
         )
         .route(
+            "/api/admin/users/{username}/username-reset",
+            post(crate::rename::staff_reset),
+        )
+        .route(
             "/api/admin/users/{username}/strikes",
             post(sa::admin_strike),
         )

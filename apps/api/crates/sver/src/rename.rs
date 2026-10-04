@@ -188,3 +188,103 @@ pub fn shape_error(name: &str) -> Option<&'static str> {
         None
     }
 }
+
+#[derive(Deserialize)]
+pub struct ResetInput {
+    /// Shown to the user on their standing page.
+    reason: String,
+}
+/// How long an impersonating name stays held (without a redirect) after a staff reset.
+const RESET_HOLD_DAYS: i64 = 90;
+
+/// POST /api/admin/users/{username}/username-reset: staff replace an impersonating username with a
+/// neutral one (`user` + 8 digits). The account keeps its identity, follows and content. The old
+/// name is held without a redirect, so it neither points at the account nor can be reclaimed by
+/// anyone while the hold lasts. A reset doesn't count toward the user's own 60-day rename limit.
+pub async fn staff_reset(
+    State(app): State<App>,
+    jar: CookieJar,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Json(input): Json<ResetInput>,
+) -> Res<Json<Value>> {
+    let actor = crate::safety::staff_write(&app, &jar).await?;
+    let reason = crate::safety::note(Some(&input.reason), "reason", true)?;
+    let mut tx = app.db.begin().await?;
+    let user_id = crate::safety::admin_target(&mut tx, &name).await?;
+    // The account lifecycle lock serializes this with sign-in, renames and stream starts.
+    let user = auth::stream_owner(&mut tx, &user_id)
+        .await?
+        .ok_or_else(Fail::missing)?;
+    let target = crate::profiles::channel_user_by_id(&mut tx, &user_id)
+        .await?
+        .ok_or_else(Fail::missing)?;
+    if target.internal || target.deleted_at.is_some() {
+        return Err(Fail::bad("This account's username can't be reset."));
+    }
+    if crate::safety::is_staff(&mut tx, &user_id).await? {
+        return Err(Fail::bad(
+            "Remove the staff role before resetting this username.",
+        ));
+    }
+    let old = user.username.clone();
+    let mut new = None;
+    for _ in 0..20 {
+        let candidate = format!("user{:08}", uuid::Uuid::new_v4().as_u128() % 100_000_000);
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=lower($1))",
+        )
+        .bind(&candidate)
+        .fetch_one(&mut *tx)
+        .await?;
+        if shape_error(&candidate).is_none()
+            && !reserved::is_reserved(&candidate)
+            && !taken
+            && !held(&mut tx, &candidate, None).await?
+        {
+            new = Some(candidate);
+            break;
+        }
+    }
+    let new = new.ok_or_else(|| Fail::unavailable("No replacement name was free. Try again."))?;
+    sqlx::query("UPDATE users SET username=$2 WHERE id=$1")
+        .bind(&user_id)
+        .bind(&new)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_unique)?;
+    sqlx::query("INSERT INTO username_history(id,user_id,old_username,new_username,reason,note) VALUES($1,$2,$3,$4,'staff_reset',$5)")
+        .bind(crate::profiles::new_id()).bind(&user_id).bind(&old).bind(&new).bind(&reason)
+        .execute(&mut *tx).await?;
+    // Any redirect the account still had (earlier names) stops pointing at it, and the
+    // impersonating name is held, unredirected, for everyone.
+    sqlx::query("UPDATE username_holds SET redirect=false WHERE user_id=$1")
+        .bind(&user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO username_holds(handle_canonical,user_id,released_at,redirect) VALUES(lower($1),$2,now()+make_interval(days=>$3),false) ON CONFLICT (handle_canonical) DO UPDATE SET user_id=EXCLUDED.user_id,released_at=EXCLUDED.released_at,redirect=false,created_at=now()")
+        .bind(&old).bind(&user_id).bind(RESET_HOLD_DAYS as i32)
+        .execute(&mut *tx).await?;
+    crate::safety::audit(
+        &mut tx,
+        Some(&actor.id),
+        "username_reset",
+        "user",
+        &user_id,
+        &[],
+        &reason,
+        json!({"old": old, "new": new}),
+        false,
+    )
+    .await?;
+    crate::safety::queue_notice(
+        &app,
+        &mut tx,
+        &user_id,
+        "Your S.V.E.R account standing",
+        crate::safety::STANDING_MAIL,
+    )
+    .await?;
+    tx.commit().await.map_err(map_unique)?;
+    crate::safety::log("username_reset", "ok");
+    Ok(Json(json!({"username": new})))
+}

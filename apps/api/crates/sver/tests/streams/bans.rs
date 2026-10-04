@@ -13,7 +13,7 @@ async fn sign_in(e: &Env, user: &str) -> String {
         .bind(id()).bind(sec::digest(&token)).bind(user).execute(&e.app.db).await.unwrap();
     token
 }
-async fn staff(e: &Env, user: &str, name: &str) -> String {
+pub async fn staff(e: &Env, user: &str, name: &str) -> String {
     let token = person(e, user, name, true).await;
     for statement in [
         "UPDATE users SET mfa_enabled=true,mfa_secret='synthetic' WHERE id=$1",
