@@ -145,9 +145,9 @@ Stage spot-checks ran on October 3 against `https://sver.tv` with API `sitepages
 
 | Legacy feature or setting | 2.0 status | Where / reason | Evidence |
 |---|---|---|---|
-| Gear list with links (peripherals) | SHIPPED | `/studio/channel/setup`, About tab | Code path |
-| CPU / GPU / RAM / storage specs | SHIPPED | As setup categories (CPU, GPU, PC; others under OTHER) | Code path |
-| Grouped by category | SHIPPED (built Oct 3) | `about/page.tsx` `groupSetup` | Local browser check |
+| Gear list with links (peripherals) | SHIPPED | `/studio/channel/setup`, About tab; since Oct 3 (4:52 PM ET) picked through the setup parts picker, with custom entries for anything not listed | API tests and local browser check (parts picker) |
+| CPU / GPU / RAM / storage specs | SHIPPED | Parts picker categories CPU, GPU, RAM and Motherboard (storage is out by Joe's decision of Oct 3; older entries such as PC stay under Other) | API tests (migration keeps all 14 old categories) |
+| Grouped by category | SHIPPED (built Oct 3) | `about/page.tsx` with `groupByCategory` (`lib/setup-parts.ts`), fixed picker order, Other last | Local browser check |
 | Setup photos (up to 3, lightbox), setup title and description | SHIPPED (P4) | `/studio/channel/setup`; media kind `setup_photo` (400/1600 WebP), report target `setup_photo` with Remove/overturn like fan art; the 1600 px image opens in a new tab instead of a lightbox | API tests (limits, moderation, appeal, reset, erasure); origin upload route 401 (not 413); uploads through Cloudflare need the WAF rule change |
 
 ## Blocks
@@ -221,7 +221,7 @@ Legacy profiles had none of the following, so there is nothing to carry over:
 - custom CSS
 - free-form layout options beyond block order (block order is SHIPPED)
 
-VOD view counts belong to Module 6. The guestbook is the Wall (SHIPPED).
+VOD view counts belong to Module 6. The guestbook is the Wall (SHIPPED). The setup parts picker (SVER's own parts list plus the staff review queue at `/admin/parts`) is new and has no legacy counterpart; see docs/PROFILES.md, "Setup parts picker".
 
 ## MISSING: resolved
 

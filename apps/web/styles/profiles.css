@@ -140,3 +140,19 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .setup-photo-editor li{padding:12px;display:flex;flex-direction:column;gap:8px}
 .setup-photo-editor img{width:100%;height:auto;border:1px solid var(--line)}
 .rewards-stub h2{margin:10px 0 6px}
+/* Setup parts picker (docs/PROFILES.md, "Setup parts picker"): square, bordered, no gradients or glows. */
+.gear-category{padding:12px 0;border-bottom:1px solid var(--line)}
+.gear-category:last-of-type{border-bottom:0}
+.gear-category h3{margin:0 0 8px;font-size:15px}
+.gear-list{list-style:none;padding:0;margin:0 0 8px}
+.gear-item{padding:6px 0}
+.gear-name{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:240px}
+.tag{display:inline-block;border:1px solid var(--line);padding:1px 6px;font-size:11px;color:var(--muted);letter-spacing:.02em}
+.part-picker{position:relative;max-width:520px}
+.part-picker .field{margin:0}
+.part-options{position:absolute;z-index:20;left:0;right:0;top:100%;margin:2px 0 0;padding:0;list-style:none;background:var(--panel);border:1px solid var(--steel);max-height:320px;overflow-y:auto}
+.part-options li{padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--line)}
+.part-options li:last-child{border-bottom:0}
+.part-options li.active,.part-options li[aria-selected="true"]{background:var(--panel-hi);outline:1px solid var(--steel);outline-offset:-1px}
+.small-print{font-size:12px;margin:4px 0 0}
+.part-review{margin-top:8px}

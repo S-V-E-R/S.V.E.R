@@ -1,5 +1,7 @@
 # Module 2: Profiles
 
+**Closed — October 3, 2026, 7:31 PM ET.** Joe accepted Module 2 on staging: he confirmed that everything looks good, including the setup on his own channel (JoeTheChode) built with the parts picker, and closed Profiles. Under the closure rule it is not reopened for polish; improvements go on a later list and bugs are still fixed. See "Closure" under "Acceptance".
+
 Approved — Oct 3, 2026. The user (Joe) approved this specification, including every rule first drafted as "Proposed", on October 3, 2026. Implementation progress is recorded in `ChangeLog.md`; this document is not evidence that any part is implemented, migrated or deployed. It follows the closure rule: specify, build, then test against "Done when".
 
 Sources: `docs/PLATFORM_PLAN.md` (2. Profiles), `AGENTS.md`, `docs/LOGIN.md`, `docs/OPERATIONS.md`, the user's Module 2 decisions in `ChangeLog.md`, and the read-only legacy triage in ignored `tmp/module2-legacy-triage.md` (legacy code under `C:\Streaming\SVER` and `C:\Streaming\Website`).
@@ -372,8 +374,8 @@ All profile text is NFC-normalized and trimmed. Control characters, bidi overrid
 ## Streaming setup
 - **Items:** up to 20, in owner order.
 - **Fields:**
-  - category: CAMERA, MICROPHONE, AUDIO_INTERFACE, HEADPHONES, PC, CPU, GPU, CAPTURE, LIGHTING, MONITOR, KEYBOARD, MOUSE, CONTROLLER or OTHER
-  - name (1-80)
+  - category: CPU, GPU, RAM, MOTHERBOARD, CAMERA, MIC or PERIPHERALS, picked through the parts picker (see "Setup parts picker" below). OTHER holds entries kept from before the picker. The original 14 categories (CAMERA, MICROPHONE, AUDIO_INTERFACE, HEADPHONES, PC, CPU, GPU, CAPTURE, LIGHTING, MONITOR, KEYBOARD, MOUSE, CONTROLLER, OTHER) were mapped by migration `0011_setup_parts.sql`.
+  - name (1-80): a part from SVER's parts list or a custom entry
   - optional note (up to 120)
   - optional https link (`rel="sponsored nofollow noopener"`)
 - Shown on About, grouped by category.
@@ -628,6 +630,7 @@ IDs are text, matching Login. Imported rows keep their legacy IDs; new rows get 
 | `wall_likes` | `post_id`, `user_id` PK pair; `created_at` |
 | `schedules`, `schedule_blocks`, `schedule_events` | owner timezone; weekday, start, end, label; title, start_at, end_at |
 | `sponsors`, `setup_items`, `profile_blocks` | ordered owner rows; `profile_blocks.type` enum ABOUT/PANEL/QUOTES/GAME_SHELF; `config` jsonb validated per type in code |
+| `parts`, `part_submissions` (`0011_setup_parts.sql`) | SVER's setup parts list: `id`; `category`; `brand`; `model`; `norm`; `rank`; `source` SEED/STAFF; `status` ACTIVE/RETIRED; unique (`category`, `norm`). Custom-entry queue: `id`; `category`; `name`; `norm`; `submitted_by`; `status` PENDING/APPROVED/DISMISSED; `part_id`; `reviewed_by`; `reviewed_at`; unique (`category`, `norm`). `setup_items` gains `part_id`, `submission_id` and `legacy_category` |
 | `fan_art` | `id`; `channel_id`; `submitter_id`; `image_key`; `artist_name`; `artist_link`; `caption`; `status`; `submitted_at`; `reviewed_at` |
 | `reports` | `id`; `reporter_id` (nullable after erasure); `target_type`; `target_id`; `field`; `reason`; `note`; `snapshot` jsonb; `status` OPEN/ACTIONED/DISMISSED; `created_at`; `closed_at`; `reporter_notice` NONE/ACTION_TAKEN; `reporter_seen_at`; one open report per reporter and target |
 | `strikes` | `id`; `user_id`; `reason`; `severity` STANDARD/SEVERE; `content_snapshot` jsonb; `report_ids` text[]; `removed_refs` jsonb (content to restore if overturned); `penalty` WARNING/RESTRICT_72H/RESTRICT_INDEFINITE; `interim_restriction_id` (nullable; the converted interim restriction); `penalty_starts_at` (the converted interim restriction's start, otherwise `issued_at`); a level-2 strike sets `penalty_until = penalty_starts_at + 72 hours`; `penalty_until` (nullable; `infinity` for indefinite); `message_to_user`; `issued_by`; `issued_at`; `expires_at`; `status` ACTIVE/OVERTURNED; `acknowledged_at`; `overturned_at` |
@@ -688,6 +691,9 @@ Public reads need no session. Mutations need a session and the exact Origin. Res
   - `POST /admin/users/{username}/restriction/lift`
   - `GET /admin/appeals?cursor=`
   - `POST /admin/appeals/{id}/decision`: body `{outcome: upheld|overturned, staff_note, message_to_user?}`
+  - `GET /admin/parts?status=PENDING|APPROVED|DISMISSED`
+  - `POST /admin/parts/{id}/decision`: body `{decision: approve|dismiss, brand?, model?}`
+- **Setup parts:** `GET /parts?category=&q=` (signed in).
   - `GET /admin/moderation-actions?cursor=`
 - **Status codes:**
   - 400 validation, with `{"error", "field"}` (the `field` key is new)
@@ -973,10 +979,14 @@ One imported banner's centered 3:1 crop was below 1200x400, so the import upscal
 
 Status, October 3, 2026, 3:15 PM ET: the 9 parity additions (P1–P9) are deployed to staging as API and web `m2p2-20261003` (migration `0009`). Their automated acceptance tests pass locally, and a signed-out headless-Chrome pass on staging shows the Share button, header copy and rewards stub with no client errors.
 
-Profiles stays open until:
+Before closure, Profiles stayed open until:
 - Cloudflare's "SVER Uploads" skip rule covers `/api/me/setup/photos` (setup photo uploads through Cloudflare get 403 until then; the exact change is in `docs/OPERATIONS.md`)
 - a signed-in staging browser pass covers settings, Studio (including P3, P4 and P9), the wall and the admin Reports and Appeals queues
 - Joe confirms his own channel
+
+### Closure
+
+Closed October 3, 2026, 7:31 PM ET. Joe confirmed on staging that everything looks good, including his JoeTheChode setup built with the parts picker, and said to close Profiles. Staging then ran API and web `m2interfaces-20261003` (migrations through `0012`). Remaining items are later or follow-up work, not closure conditions: the `media.sver.tv` media domain (images stay on the server's filesystem until then), whether to hide the 2 imported accounts with the legacy system flag, and site polish. Operations follow-ups are tracked in `ChangeLog.md`.
 
 ## Done when
 
@@ -1275,6 +1285,66 @@ Acceptance:
 - Defaults render for a new channel; edits persist and render.
 - Clearing restores the defaults; toggle off hides the label and welcome line; the intro is hidden when its body is empty.
 - Limits and the filter are enforced; the reset field restores the defaults.
+
+## Setup parts picker: Joe's decision, October 3, 2026 (4:52 PM ET)
+Spec addition. Users build their streaming setup by picking parts instead of typing everything.
+
+Decision:
+- PCPartPicker has no public API and its terms bar copying its catalog, so SVER keeps its **own** parts list. The seed list was written from general knowledge of popular current and recent parts. Nothing is scraped or copied from PCPartPicker or any other catalog.
+- "Just core streaming stuff someone would need to know." Categories are **only**: CPU, GPU, RAM, Motherboard, Camera, Mic, Peripherals.
+  - Peripherals is one category covering headsets, keyboards, mice, monitors, capture cards and stream decks.
+  - No case, cooler, PSU, storage or other accessories.
+- v1 has no prices or store links. The owner's own optional link per item stays as before.
+
+Parts list:
+- Each part has a brand and a model. The shown name is "brand model".
+- Names are normalized for matching: lowercase, `+` read as "plus", every other non-letter or non-digit becomes a space, spaces collapsed. One part per category and normalized name.
+- Seed (migration `0011_setup_parts.sql`, 335 parts): CPU 46 (Intel and AMD), GPU 50 (NVIDIA, AMD and Intel), RAM 36 (common DDR4 and DDR5 kits), Motherboard 46 (popular boards by chipset), Camera 41 (webcams, mirrorless and streaming cameras), Mic 41 (popular USB and XLR mics), Peripherals 75.
+- **Audio interfaces in Mic (Joe's decision, October 3, 2026, 5:52 PM ET):** the Mic category also lists audio interfaces and streaming mixers. Migration `0012_mic_interfaces.sql` adds 41 of them, written from general knowledge, including the GoXLR and GoXLR Mini, the Focusrite Scarlett and Vocaster lines, RODECaster Duo and Pro II, Elgato Wave XLR, Universal Audio Volt, MOTU M2/M4, Audient iD and EVO, PreSonus, Behringer UMC, Shure MVX2U and Beacn Mix. That makes Mic 82 parts and the list 376.
+  - `parts.kind` is `AUDIO_INTERFACE` for these and null for everything else. The insert is idempotent: re-running it only marks existing names as interfaces.
+  - The category shows as **Mic & audio interface**. Search results, Studio items and About entries for interfaces carry an "Audio interface" label.
+  - Entries from the old AUDIO_INTERFACE category (already in Mic, with `legacy_category`) show as interfaces too, while they stay custom entries. A linked entry takes its kind from the part.
+- Staff add parts by approving custom entries. Parts are never deleted while in use; `RETIRED` hides a part from search and new picks.
+
+Picker (Studio, Streaming setup):
+- One search-as-you-type box per category: an ARIA combobox (arrow keys, Enter, Escape) over `GET /api/parts?category=&q=`.
+  - Signed in only. Up to 10 results.
+  - Every typed word must match. Results are ordered exact match, then name starts with, ends with, word starts with, then shorter names and the seed rank. An empty box shows the category's top 10.
+- Picking a part adds it with the canonical name and a "SVER list" tag.
+- **Custom entry fallback:** the last option is always "Add “typed text” as a custom entry" unless the text exactly matches a listed part. Typing a listed part's exact name (after normalization) picks that part.
+- Each item keeps its optional note and link, can move up or down within its category, and can be removed. 20 items in total, as before. Nothing is saved until Save setup.
+- The public About tab groups items in the fixed category order (CPU, GPU, RAM, Motherboard, Camera, Mic, Peripherals, then Other), in owner order within a category. Custom entries show right away, exactly as typed.
+
+Custom entries and staff review:
+- A custom entry is saved on the user's setup immediately and queued for staff review as PENDING.
+  - One queue entry per category and normalized name. Later users who type the same name share it.
+  - A user can create up to 30 new queue entries per 24 hours. Past that, entries still save but aren't queued.
+  - Names use the usual setup text rules (1–80 characters, word filter).
+- Staff review at `/admin/parts` ("Setup parts" in the admin nav). It reuses the Module 2 admin rules: staff role plus MFA to view (everyone else gets 404), and step-up within the last five minutes for decisions (403 otherwise).
+  - Waiting / Added / Dismissed tabs. Each entry shows the category, typed name, who first added it, when, how many setups use it, and similar listed parts.
+  - **Add to the parts list:** staff tidy the brand and model, which adds a STAFF part (or reuses an existing part with the same normalized name). Every setup entry linked to that queue entry becomes that part with its canonical name.
+  - **Dismiss:** setups keep the entry as typed. The name isn't queued again.
+  - A second decision on the same entry gets 409. Both decisions are audited (`part_approved`, `part_dismissed`).
+- Studio tags custom entries "Custom · waiting for review" while pending, otherwise "Custom".
+
+Existing data (no one loses what they entered):
+- Migration `0011_setup_parts.sql` keeps every existing item's name, note, link and order, and stores the original category in `legacy_category`.
+- Mapping: MICROPHONE and AUDIO_INTERFACE → Mic (AUDIO_INTERFACE entries are labeled "Audio interface"). HEADPHONES, CAPTURE, MONITOR, KEYBOARD, MOUSE and CONTROLLER → Peripherals. CPU, GPU and CAMERA are unchanged. PC, LIGHTING and OTHER → Other.
+- Other is shown in Studio and on About only when a user has such items. Kept names are read-only; owners can change the note and link or remove the item, and add new items in the seven categories. New items can't use Other.
+- Existing items stay custom (untagged) until the owner next saves. That save links an exact match to the listed part and queues the rest like any custom entry.
+- The setup title, description and photos are unaffected.
+
+Edge cases:
+- A picked part that has since been retired or doesn't match the category gets "Choose a part from the list again."
+- Account erasure deletes the user's setup items and the queue entries they started. Other users' entries that shared a deleted queue entry stay on their setups and are queued again on their next save.
+- No new upload kinds, prices, store links or affiliate data.
+
+Acceptance:
+- Seed counts per category as above. All seven pickers search, pick by keyboard and mouse, and offer the custom entry.
+- Custom entries save at once, appear on About, and queue as pending. Staff can approve one (the setups link to the new part) or dismiss it (setups unchanged).
+- Non-staff get 404 on the queue and its API. A stale step-up gets 403. Search is 401 when signed out.
+- Pre-picker items of all 14 old categories survive the migration with name, note, link and order intact.
+- Setup photos and the rest of Profiles still work.
 
 ## Deferred to later modules
 - Account-wide ban mechanics, which level 3 escalates to, and username resets for impersonation: the Module 3 moderation pass.

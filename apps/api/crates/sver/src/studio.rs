@@ -712,22 +712,6 @@ const SPONSOR_CATEGORIES: &[&str] = &[
     "SERVICES",
     "OTHER",
 ];
-const SETUP_CATEGORIES: &[&str] = &[
-    "CAMERA",
-    "MICROPHONE",
-    "AUDIO_INTERFACE",
-    "HEADPHONES",
-    "PC",
-    "CPU",
-    "GPU",
-    "CAPTURE",
-    "LIGHTING",
-    "MONITOR",
-    "KEYBOARD",
-    "MOUSE",
-    "CONTROLLER",
-    "OTHER",
-];
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SponsorInput {
@@ -924,6 +908,9 @@ pub struct SetupInput {
     #[serde(default)]
     note: String,
     link: Option<String>,
+    /// A part picked from the SVER parts list; omitted for a custom entry.
+    #[serde(default)]
+    part_id: Option<String>,
 }
 #[derive(Deserialize)]
 pub struct SetupList {
@@ -964,8 +951,19 @@ async fn setup_text(db: &mut PgConnection, user_id: &str) -> Res<(String, String
     .fetch_one(&mut *db)
     .await?)
 }
+/// An item's kind: `AUDIO_INTERFACE` for interfaces in Mic, from the linked part, or for custom entries
+/// from the old AUDIO_INTERFACE category (docs/PROFILES.md, "Setup parts picker"). Needs `setup_items i`
+/// and `parts p` joined on `p.id = i.part_id`.
+const SETUP_KIND: &str = "CASE WHEN i.part_id IS NOT NULL THEN p.kind WHEN i.legacy_category='AUDIO_INTERFACE' THEN 'AUDIO_INTERFACE' END";
 async fn setup_json(db: &mut PgConnection, user_id: &str) -> Res<Vec<Value>> {
-    Ok(sqlx::query_scalar("SELECT jsonb_build_object('category',category,'name',name,'note',note,'link',link) FROM setup_items WHERE user_id=$1 ORDER BY position").bind(user_id).fetch_all(&mut *db).await?)
+    // SETUP_KIND is a fixed SQL expression; the owner ID is bound.
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT jsonb_build_object('category',i.category,'name',i.name,'note',i.note,'link',i.link,'kind',{SETUP_KIND}) FROM setup_items i LEFT JOIN parts p ON p.id=i.part_id WHERE i.user_id=$1 ORDER BY i.position"))).bind(user_id).fetch_all(&mut *db).await?)
+}
+/// The owner's Studio view of setup items: also the catalog link, the review state of a custom
+/// entry (PENDING, DISMISSED, or null) and the category it had before the parts picker.
+async fn setup_owner_json(db: &mut PgConnection, user_id: &str) -> Res<Vec<Value>> {
+    // SETUP_KIND is a fixed SQL expression; the owner ID is bound.
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT jsonb_build_object('category',i.category,'name',i.name,'note',i.note,'link',i.link,'part_id',i.part_id,'review',CASE WHEN i.part_id IS NULL THEN s.status END,'legacy_category',i.legacy_category,'kind',{SETUP_KIND}) FROM setup_items i LEFT JOIN part_submissions s ON s.id=i.submission_id LEFT JOIN parts p ON p.id=i.part_id WHERE i.user_id=$1 ORDER BY i.position"))).bind(user_id).fetch_all(&mut *db).await?)
 }
 /// GET /api/me/setup
 pub async fn my_setup(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
@@ -973,12 +971,12 @@ pub async fn my_setup(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>
     let mut db = app.db.acquire().await?;
     let (title, description) = setup_text(&mut db, &user.id).await?;
     Ok(Json(json!({
-        "items": setup_json(&mut db, &user.id).await?,
+        "items": setup_owner_json(&mut db, &user.id).await?,
         "title": title,
         "description": description,
         "photos": setup_photos_json(&app, &mut db, &user.id, true).await?,
         "max_photos": MAX_SETUP_PHOTOS,
-        "categories": SETUP_CATEGORIES,
+        "categories": crate::parts::CATEGORIES,
         "revision": section_revision(&mut db, &user.id, "setup").await?,
     })))
 }
@@ -994,8 +992,12 @@ pub async fn save_setup(
     }
     let mut rows = Vec::new();
     for item in &input.items {
-        if !SETUP_CATEGORIES.contains(&item.category.as_str()) {
+        let other = item.category == crate::parts::OTHER;
+        if !other && !crate::parts::CATEGORIES.contains(&item.category.as_str()) {
             return Err(Fail::field("category", "Choose a category."));
+        }
+        if other && item.part_id.is_some() {
+            return Err(Fail::field("part_id", "Choose a part from the list again."));
         }
         let name = text::plain(&item.name, "name", 1, 80, 0, true)?;
         let note = text::plain(&item.note, "note", 0, 120, 0, true)?;
@@ -1005,7 +1007,13 @@ pub async fn save_setup(
             .filter(|l| !l.trim().is_empty())
             .map(|l| text::website_url(l, "link"))
             .transpose()?;
-        rows.push((item.category.clone(), name, note, link));
+        rows.push((
+            item.category.clone(),
+            name,
+            note,
+            link,
+            item.part_id.clone(),
+        ));
     }
     let title = input
         .title
@@ -1021,6 +1029,52 @@ pub async fn save_setup(
     ensure_unrestricted(&mut tx, &user.id).await?;
     ensure_profile(&mut tx, &user.id).await?;
     let revision = bump_section(&mut tx, &user.id, "setup", input.revision).await?;
+    // "Other" holds entries kept from before the parts picker: they can stay or go, not be added.
+    let kept: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT name,legacy_category FROM setup_items WHERE user_id=$1 AND category='OTHER' FOR UPDATE",
+    )
+    .bind(&user.id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut available = kept.clone();
+    let mut legacy = Vec::new();
+    for (category, name, ..) in &rows {
+        if category != crate::parts::OTHER {
+            legacy.push(None);
+            continue;
+        }
+        let Some(i) = available.iter().position(|(n, _)| n == name) else {
+            return Err(Fail::field(
+                "category",
+                "Choose one of the setup categories for new items.",
+            ));
+        };
+        legacy.push(available.remove(i).1);
+    }
+    // Items keep the category they had before the picker (the migration's legacy_category) while
+    // they keep their name and category.
+    let previous: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT category,name,legacy_category FROM setup_items WHERE user_id=$1 AND legacy_category IS NOT NULL AND category<>'OTHER'",
+    )
+    .bind(&user.id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut previous = previous;
+    for (i, (category, name, ..)) in rows.iter().enumerate() {
+        if legacy[i].is_none()
+            && let Some(j) = previous
+                .iter()
+                .position(|(c, n, _)| c == category && n == name)
+        {
+            legacy[i] = previous.remove(j).2;
+        }
+    }
+    let mut resolved = Vec::new();
+    for (category, name, _, _, part_id) in &rows {
+        resolved.push(
+            crate::parts::resolve(&mut tx, &user.id, category, name, part_id.as_deref()).await?,
+        );
+    }
     sqlx::query("UPDATE profiles SET setup_title=coalesce($2,setup_title),setup_description=coalesce($3,setup_description),updated_at=now() WHERE user_id=$1")
         .bind(&user.id)
         .bind(&title)
@@ -1031,8 +1085,8 @@ pub async fn save_setup(
         .bind(&user.id)
         .execute(&mut *tx)
         .await?;
-    for (i, (category, name, note, link)) in rows.iter().enumerate() {
-        sqlx::query("INSERT INTO setup_items(id,user_id,position,category,name,note,link) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(new_id()).bind(&user.id).bind(i as i32).bind(category).bind(name).bind(note).bind(link).execute(&mut *tx).await?;
+    for (i, ((category, _, note, link, _), r)) in rows.iter().zip(&resolved).enumerate() {
+        sqlx::query("INSERT INTO setup_items(id,user_id,position,category,name,note,link,part_id,submission_id,legacy_category) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(new_id()).bind(&user.id).bind(i as i32).bind(category).bind(&r.name).bind(note).bind(link).bind(&r.part_id).bind(&r.submission_id).bind(&legacy[i]).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(Json(json!({"saved": true, "revision": revision})))

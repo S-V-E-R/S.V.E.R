@@ -6,18 +6,13 @@ import { Markdown } from "../../../components/Markdown";
 import { ReportButton } from "../../../components/Report";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../../lib/channel";
 import { apiGet } from "../../../lib/server-api";
+import { groupByCategory, kindLabel, setupLabel } from "../../../lib/setup-parts";
 
 type Block = { type: "ABOUT" | "PANEL" | "QUOTES" | "GAME_SHELF"; enabled: boolean; config: { body?: string; title?: string; quotes?: { text: string; attribution: string }[]; games?: string[] } };
 type Sponsor = { id: string; name: string; description: string; link: string; discount_code: string; category: string; logo: string | null };
-type Setup = { category: string; name: string; note: string; link: string | null };
+type Setup = { category: string; name: string; note: string; link: string | null; kind?: string | null };
 type SetupPhoto = { id: string; image: { "400": string; "1600": string }; alt: string };
 type About = { bio: string; blocks: Block[]; sponsors: Sponsor[]; setup: Setup[]; setup_title?: string; setup_description?: string; setup_photos?: SetupPhoto[]; viewer?: { can_report: boolean } };
-/** Setup items grouped by category; categories appear in the order the owner first used them. */
-function groupSetup(items: Setup[]) {
-  const groups = new Map<string, Setup[]>();
-  for (const item of items) groups.set(item.category, [...(groups.get(item.category) ?? []), item]);
-  return [...groups.entries()];
-}
 const label = (value: string) => value.toLowerCase().replaceAll("_", " ").replace(/^./, c => c.toUpperCase());
 
 export async function generateMetadata({ params }: { params: ChannelParams }) {
@@ -52,7 +47,7 @@ export default async function AboutTab({ params }: { params: ChannelParams }) {
         <a href={p.image["1600"]} target="_blank" rel="noopener"><img src={p.image["400"]} alt={p.alt || `Setup photo ${i + 1}`} loading="lazy" /></a>
         {about.viewer?.can_report && <ReportButton target={{ target_type: "setup_photo", target_id: p.id }} />}
       </li>)}</ul>}
-      {about?.setup.length ? <dl className="setup">{groupSetup(about.setup).map(([category, items]) => <div key={category}><dt>{label(category)}</dt>{items.map((s, i) => <dd key={i}>{s.link ? <a href={s.link} rel="sponsored nofollow noopener noreferrer" target="_blank">{s.name}</a> : s.name}{s.note && <small className="muted"> — {s.note}</small>}</dd>)}</div>)}</dl> : (owner && <p className="muted">List your gear in <Link href="/studio/channel/setup">Creator Studio</Link>.</p>)}
+      {about?.setup.length ? <dl className="setup">{groupByCategory(about.setup).map(([category, items]) => <div key={category}><dt>{setupLabel(category)}</dt>{items.map((s, i) => <dd key={i}>{s.link ? <a href={s.link} rel="sponsored nofollow noopener noreferrer" target="_blank">{s.name}</a> : s.name}{kindLabel(s.kind) && <small className="muted"> · {kindLabel(s.kind)}</small>}{s.note && <small className="muted"> — {s.note}</small>}</dd>)}</div>)}</dl> : (owner && <p className="muted">List your gear in <Link href="/studio/channel/setup">Creator Studio</Link>.</p>)}
     </section>}
   </ChannelFrame>;
 }

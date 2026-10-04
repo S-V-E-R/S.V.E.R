@@ -293,6 +293,7 @@ async fn profiles_acceptance() {
             wall(&env).await;
             studio_sections(&env, &media_dir).await;
             parity_additions(&env, &media_dir).await;
+            parts_picker(&env).await;
             renames(&env).await;
             safety(&env).await;
             erasure(&env).await;
@@ -1499,7 +1500,7 @@ async fn studio_sections(env: &Env, media_dir: &std::path::Path) {
         .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let items: Vec<Value> = (0..21)
-        .map(|i| json!({"category": "PC", "name": format!("Part {i}")}))
+        .map(|i| json!({"category": "CPU", "name": format!("Part {i}")}))
         .collect();
     assert_eq!(
         owner
@@ -1507,7 +1508,7 @@ async fn studio_sections(env: &Env, media_dir: &std::path::Path) {
             .await,
         StatusCode::BAD_REQUEST
     );
-    owner.ok("PUT", "/api/me/setup", json!({"items": [{"category": "MICROPHONE", "name": "Synthetic Mic", "note": "Cardioid", "link": "https://mic.example"}]})).await;
+    owner.ok("PUT", "/api/me/setup", json!({"items": [{"category": "MIC", "name": "Synthetic Mic", "note": "Cardioid", "link": "https://mic.example"}]})).await;
     assert_eq!(
         owner
             .status(
@@ -1908,7 +1909,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         .ok(
             "PUT",
             "/api/me/setup",
-            json!({"items": [{"category": "MICROPHONE", "name": "Desk mic"}], "title": "My desk", "description": "Two monitors\nOne mic", "revision": setup["revision"]}),
+            json!({"items": [{"category": "MIC", "name": "Desk mic"}], "title": "My desk", "description": "Two monitors\nOne mic", "revision": setup["revision"]}),
         )
         .await;
     let mut photo_ids = Vec::new();
@@ -2447,6 +2448,577 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
     let _ = fan_id;
     eprintln!(
         "Passed: parity additions (mood presets, header copy, readiness, setup photos with moderation, link suggestions, opt-in card, activity feed)."
+    );
+}
+
+/// Setup parts picker (docs/PROFILES.md, "Setup parts picker"): the seed list, search, picked and
+/// custom entries, the staff review queue, entries kept from before the picker, and erasure.
+async fn parts_picker(env: &Env) {
+    let db = &env.app.db;
+    let counts: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT category,count(*) FROM parts WHERE source='SEED' GROUP BY 1 ORDER BY 1",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap();
+    assert_eq!(counts.len(), 7, "{counts:?}");
+    // Mic also lists audio interfaces and mixers (0012, Joe's decision of 5:52 PM ET); everything else is 30-80.
+    let interfaces = env
+        .count("SELECT count(*) FROM parts WHERE source='SEED' AND kind='AUDIO_INTERFACE'")
+        .await;
+    assert!(interfaces >= 30, "{interfaces} interfaces");
+    assert_eq!(
+        env.count("SELECT count(*) FROM parts WHERE kind IS NOT NULL AND category<>'MIC'")
+            .await,
+        0
+    );
+    for (category, n) in &counts {
+        assert!(sver::parts::CATEGORIES.contains(&category.as_str()));
+        let n = if category == "MIC" {
+            n - interfaces
+        } else {
+            *n
+        };
+        assert!((30..=80).contains(&n), "{category}: {n} seed parts");
+    }
+    let stored: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT brand,model,norm FROM parts")
+            .fetch_all(db)
+            .await
+            .unwrap();
+    for (brand, model, norm) in &stored {
+        assert_eq!(&sver::text::part_norm(&format!("{brand} {model}")), norm);
+    }
+    assert_eq!(sver::text::part_norm("  Elgato Wave:3 "), "elgato wave 3");
+    assert_eq!(sver::text::part_norm("Shure MV7+"), "shure mv7 plus");
+
+    // Search: signed in only, every typed word, compact forms, popular parts for an empty box.
+    let (owner_id, owner) = env.user("PartsOwner", true).await;
+    assert_eq!(
+        env.anon
+            .status("GET", "/api/parts?category=GPU&q=4070", Value::Null)
+            .await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        owner
+            .status("GET", "/api/parts?category=CASE&q=", Value::Null)
+            .await,
+        StatusCode::BAD_REQUEST
+    );
+    let names = |v: &Value| -> Vec<String> {
+        v["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let gpus = owner
+        .ok("GET", "/api/parts?category=GPU&q=rtx%204070", Value::Null)
+        .await;
+    assert_eq!(names(&gpus)[0], "NVIDIA GeForce RTX 4070", "{gpus}");
+    assert!(names(&gpus).iter().all(|n| n.contains("4070")));
+    let compact = owner
+        .ok("GET", "/api/parts?category=GPU&q=RTX4070", Value::Null)
+        .await;
+    assert_eq!(names(&compact)[0], "NVIDIA GeForce RTX 4070");
+    let popular = owner
+        .ok("GET", "/api/parts?category=MIC&q=", Value::Null)
+        .await;
+    assert_eq!(names(&popular).len(), 10);
+    assert_eq!(names(&popular)[0], "Shure SM7B");
+    let plus = owner
+        .ok("GET", "/api/parts?category=MIC&q=mv7%2B", Value::Null)
+        .await;
+    assert_eq!(names(&plus)[0], "Shure MV7+");
+    let goxlr = owner
+        .ok("GET", "/api/parts?category=MIC&q=goxlr", Value::Null)
+        .await;
+    assert_eq!(
+        names(&goxlr)[..2],
+        ["TC-Helicon GoXLR", "TC-Helicon GoXLR Mini"],
+        "{goxlr}"
+    );
+    assert_eq!(goxlr["parts"][0]["kind"], "AUDIO_INTERFACE");
+    assert_eq!(
+        popular["parts"][0]["kind"],
+        Value::Null,
+        "mics have no kind"
+    );
+    assert_eq!(
+        names(
+            &owner
+                .ok(
+                    "GET",
+                    "/api/parts?category=MIC&q=scarlett%202i2",
+                    Value::Null
+                )
+                .await
+        )[0],
+        "Focusrite Scarlett 2i2 (4th Gen)"
+    );
+    let none = owner
+        .ok("GET", "/api/parts?category=CPU&q=zzzz", Value::Null)
+        .await;
+    assert!(names(&none).is_empty());
+    let gpu_id = gpus["parts"][0]["id"].as_str().unwrap().to_string();
+
+    // Saving: a picked part takes the list's name; a typed exact match links itself; anything
+    // else is a custom entry, saved as typed and queued for review.
+    let setup = owner.ok("GET", "/api/me/setup", Value::Null).await;
+    assert_eq!(
+        setup["categories"],
+        json!([
+            "CPU",
+            "GPU",
+            "RAM",
+            "MOTHERBOARD",
+            "CAMERA",
+            "MIC",
+            "PERIPHERALS"
+        ])
+    );
+    let bad = |items: Value| json!({"items": items});
+    for items in [
+        json!([{"category": "CPU", "name": "x", "part_id": gpu_id}]),
+        json!([{"category": "GPU", "name": "x", "part_id": "part_missing"}]),
+        json!([{"category": "OTHER", "name": "Ring light"}]),
+        json!([{"category": "CASE", "name": "Big case"}]),
+    ] {
+        assert_eq!(
+            owner.status("PUT", "/api/me/setup", bad(items)).await,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    owner
+        .ok(
+            "PUT",
+            "/api/me/setup",
+            json!({"items": [
+                {"category": "GPU", "name": "my card", "part_id": gpu_id},
+                {"category": "MIC", "name": "shure  sm7b"},
+                {"category": "CAMERA", "name": "My Custom Cam 9000", "note": "On a tripod"},
+            ], "revision": setup["revision"]}),
+        )
+        .await;
+    let mine = owner.ok("GET", "/api/me/setup", Value::Null).await;
+    let items = mine["items"].as_array().unwrap();
+    assert_eq!(items[0]["name"], "NVIDIA GeForce RTX 4070");
+    assert_eq!(items[0]["part_id"], gpu_id.as_str());
+    assert_eq!(items[0]["review"], Value::Null);
+    assert_eq!(items[1]["name"], "Shure SM7B");
+    assert!(items[1]["part_id"].is_string());
+    assert_eq!(items[2]["name"], "My Custom Cam 9000");
+    assert_eq!(items[2]["part_id"], Value::Null);
+    assert_eq!(items[2]["review"], "PENDING");
+    let about = env
+        .anon
+        .ok("GET", "/api/channels/PartsOwner/about", Value::Null)
+        .await;
+    assert_eq!(about["setup"].as_array().unwrap().len(), 3);
+    assert_eq!(about["setup"][2]["name"], "My Custom Cam 9000");
+    assert_eq!(about["setup"][2]["note"], "On a tripod");
+    assert!(
+        about["setup"][2].get("review").is_none(),
+        "Review state is private"
+    );
+
+    // Another user typing the same name (any spacing or case) shares the one queue entry.
+    let (other_id, other) = env.user("PartsOther", true).await;
+    other
+        .ok(
+            "PUT",
+            "/api/me/setup",
+            json!({"items": [{"category": "CAMERA", "name": "my custom  cam-9000"}]}),
+        )
+        .await;
+    assert_eq!(
+        env.count("SELECT count(*) FROM part_submissions WHERE norm='my custom cam 9000'")
+            .await,
+        1
+    );
+
+    // The queue: staff with MFA only (404 otherwise), step-up for decisions.
+    assert_eq!(
+        owner.status("GET", "/api/admin/parts", Value::Null).await,
+        StatusCode::NOT_FOUND
+    );
+    let (_, stale, staff_client) = staff(env, "PartsStaff").await;
+    let queue = staff_client
+        .ok("GET", "/api/admin/parts", Value::Null)
+        .await;
+    let entry = queue["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "My Custom Cam 9000")
+        .cloned()
+        .expect("custom entry is queued");
+    assert_eq!(entry["uses"], 2);
+    assert_eq!(entry["submitted_by"], "PartsOwner");
+    assert_eq!(entry["category"], "CAMERA");
+    let id = entry["id"].as_str().unwrap().to_string();
+    let decide = format!("/api/admin/parts/{id}/decision");
+    assert_eq!(
+        stale
+            .status(
+                "POST",
+                &decide,
+                json!({"decision": "approve", "brand": "Custom", "model": "Cam 9000"})
+            )
+            .await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        staff_client
+            .status(
+                "POST",
+                &decide,
+                json!({"decision": "approve", "brand": "", "model": "Cam 9000"})
+            )
+            .await,
+        StatusCode::BAD_REQUEST
+    );
+    let approved = staff_client
+        .ok(
+            "POST",
+            &decide,
+            json!({"decision": "approve", "brand": "Custom", "model": "Cam 9000"}),
+        )
+        .await;
+    assert_eq!(approved["linked"], 2);
+    assert_eq!(approved["added"], true);
+    assert_eq!(
+        staff_client
+            .status("POST", &decide, json!({"decision": "dismiss"}))
+            .await,
+        StatusCode::CONFLICT
+    );
+    let mine = owner.ok("GET", "/api/me/setup", Value::Null).await;
+    assert_eq!(mine["items"][2]["name"], "Custom Cam 9000");
+    assert!(mine["items"][2]["part_id"].is_string());
+    assert_eq!(mine["items"][2]["review"], Value::Null);
+    assert_eq!(mine["items"][2]["note"], "On a tripod");
+    let found = owner
+        .ok(
+            "GET",
+            "/api/parts?category=CAMERA&q=cam%209000",
+            Value::Null,
+        )
+        .await;
+    assert_eq!(names(&found)[0], "Custom Cam 9000");
+    assert_eq!(
+        env.count("SELECT count(*) FROM moderation_actions WHERE action='part_approved' AND target_type='part_submission'").await,
+        1
+    );
+    let approved_list = staff_client
+        .ok("GET", "/api/admin/parts?status=APPROVED", Value::Null)
+        .await;
+    assert_eq!(approved_list["items"][0]["part"], "Custom Cam 9000");
+    assert_eq!(approved_list["items"][0]["reviewed_by"], "PartsStaff");
+
+    // Dismissed: the entry stays on the setup as typed and the name is never queued again.
+    let keep: Vec<Value> = mine["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| json!({"category": i["category"], "name": i["name"], "note": i["note"], "link": i["link"], "part_id": i["part_id"]}))
+        .collect();
+    let mut with_socks = keep.clone();
+    with_socks.push(json!({"category": "PERIPHERALS", "name": "Lucky Socks"}));
+    owner
+        .ok("PUT", "/api/me/setup", json!({"items": with_socks}))
+        .await;
+    let queue = staff_client
+        .ok("GET", "/api/admin/parts", Value::Null)
+        .await;
+    let socks = queue["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "Lucky Socks")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    staff_client
+        .ok(
+            "POST",
+            &format!("/api/admin/parts/{socks}/decision"),
+            json!({"decision": "dismiss"}),
+        )
+        .await;
+    let mine = owner.ok("GET", "/api/me/setup", Value::Null).await;
+    assert_eq!(mine["items"][3]["name"], "Lucky Socks");
+    assert_eq!(mine["items"][3]["review"], "DISMISSED");
+    other
+        .ok(
+            "PUT",
+            "/api/me/setup",
+            json!({"items": [{"category": "PERIPHERALS", "name": "lucky socks"}]}),
+        )
+        .await;
+    assert_eq!(
+        env.count("SELECT count(*) FROM part_submissions WHERE norm='lucky socks'")
+            .await,
+        1
+    );
+    assert_eq!(
+        other.ok("GET", "/api/me/setup", Value::Null).await["items"][0]["review"],
+        "DISMISSED"
+    );
+
+    // Entries from before the picker: kept, editable and removable; "Other" can't grow.
+    let (legacy_id, legacy) = env.user("PartsLegacy", true).await;
+    env.sql(sqlx::AssertSqlSafe(format!("INSERT INTO setup_items(id,user_id,position,category,name,note,link,legacy_category) VALUES('{}','{legacy_id}',0,'OTHER','Ring light','Left side',NULL,'LIGHTING'),('{}','{legacy_id}',1,'PERIPHERALS','Old Headset','',NULL,'HEADPHONES'),('{}','{legacy_id}',2,'MIC','Blue Yeti','','https://legacy.example/mic','MICROPHONE'),('{}','{legacy_id}',3,'MIC','Old Interface Box','',NULL,'AUDIO_INTERFACE')", uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), uuid::Uuid::new_v4()))).await;
+    let before = legacy.ok("GET", "/api/me/setup", Value::Null).await;
+    assert_eq!(before["items"][0]["category"], "OTHER");
+    assert_eq!(before["items"][0]["legacy_category"], "LIGHTING");
+    let back: Vec<Value> = before["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| json!({"category": i["category"], "name": i["name"], "note": i["note"], "link": i["link"]}))
+        .collect();
+    legacy
+        .ok("PUT", "/api/me/setup", json!({"items": back.clone()}))
+        .await;
+    let after = legacy.ok("GET", "/api/me/setup", Value::Null).await;
+    assert_eq!(after["items"][0]["name"], "Ring light");
+    assert_eq!(after["items"][0]["note"], "Left side");
+    assert_eq!(after["items"][0]["legacy_category"], "LIGHTING");
+    assert_eq!(after["items"][1]["legacy_category"], "HEADPHONES");
+    assert_eq!(
+        after["items"][2]["name"], "Blue Yeti",
+        "An exact list match links"
+    );
+    assert!(after["items"][2]["part_id"].is_string());
+    assert_eq!(after["items"][2]["link"], "https://legacy.example/mic");
+    // Entries from the old AUDIO_INTERFACE category show as interfaces under Mic, before and after a save;
+    // a picked interface takes its kind from the list.
+    assert_eq!(before["items"][3]["kind"], "AUDIO_INTERFACE");
+    assert_eq!(after["items"][3]["category"], "MIC");
+    assert_eq!(after["items"][3]["legacy_category"], "AUDIO_INTERFACE");
+    assert_eq!(after["items"][3]["kind"], "AUDIO_INTERFACE");
+    assert_eq!(after["items"][2]["kind"], Value::Null);
+    let legacy_name: String = sqlx::query_scalar("SELECT username FROM users WHERE id=$1")
+        .bind(&legacy_id)
+        .fetch_one(db)
+        .await
+        .unwrap();
+    let public = env
+        .anon
+        .ok(
+            "GET",
+            &format!("/api/channels/{legacy_name}/about"),
+            Value::Null,
+        )
+        .await;
+    let kinds: Vec<&Value> = public["setup"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| &i["kind"])
+        .collect();
+    assert_eq!(kinds[3], "AUDIO_INTERFACE", "{public}");
+    let goxlr_id = goxlr["parts"][0]["id"].as_str().unwrap();
+    let mut with_mixer = back.clone();
+    with_mixer.push(json!({"category": "MIC", "name": "ignored", "part_id": goxlr_id}));
+    legacy
+        .ok("PUT", "/api/me/setup", json!({"items": with_mixer}))
+        .await;
+    let mixed = legacy.ok("GET", "/api/me/setup", Value::Null).await;
+    let mixer = mixed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["part_id"] == goxlr_id)
+        .unwrap();
+    assert_eq!(mixer["name"], "TC-Helicon GoXLR");
+    assert_eq!(mixer["kind"], "AUDIO_INTERFACE");
+    assert_eq!(
+        after["items"][1]["review"], "PENDING",
+        "Kept custom entries are queued on save"
+    );
+    let mut renamed = back.clone();
+    renamed[0]["name"] = json!("Ring light 2");
+    assert_eq!(
+        legacy
+            .status("PUT", "/api/me/setup", json!({"items": renamed}))
+            .await,
+        StatusCode::BAD_REQUEST
+    );
+    legacy
+        .ok("PUT", "/api/me/setup", json!({"items": back[1..].to_vec()}))
+        .await;
+    assert_eq!(
+        env.count(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM setup_items WHERE user_id='{legacy_id}' AND category='OTHER'"
+        )))
+        .await,
+        0
+    );
+
+    // Flood limit: past 30 new entries a day, custom entries still save but aren't queued.
+    env.sql(sqlx::AssertSqlSafe(format!("INSERT INTO part_submissions(id,category,name,norm,submitted_by) SELECT 'flood'||g,'CPU','Flood '||g,'flood '||g,'{other_id}' FROM generate_series(1,30) g"))).await;
+    other
+        .ok(
+            "PUT",
+            "/api/me/setup",
+            json!({"items": [{"category": "CPU", "name": "Prototype Chip X"}]}),
+        )
+        .await;
+    assert_eq!(
+        other.ok("GET", "/api/me/setup", Value::Null).await["items"][0]["review"],
+        Value::Null
+    );
+    assert_eq!(
+        env.count("SELECT count(*) FROM part_submissions WHERE norm='prototype chip x'")
+            .await,
+        0
+    );
+
+    // Erasure: a user's queue entries go with the account; catalog parts and others' entries stay.
+    env.sql(sqlx::AssertSqlSafe(format!(
+        "DELETE FROM users WHERE id='{owner_id}'"
+    )))
+    .await;
+    assert_eq!(
+        env.count(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM part_submissions WHERE submitted_by='{owner_id}'"
+        )))
+        .await,
+        0
+    );
+    assert_eq!(
+        env.count("SELECT count(*) FROM parts WHERE norm='custom cam 9000'")
+            .await,
+        1
+    );
+    assert_eq!(
+        other.ok("GET", "/api/me/setup", Value::Null).await["items"][0]["name"],
+        "Prototype Chip X"
+    );
+    env.sql("DELETE FROM part_submissions WHERE id LIKE 'flood%'")
+        .await;
+    println!(
+        "Passed: parts picker (seed list, search, picked and custom entries, review queue, kept entries, flood limit, erasure)."
+    );
+}
+
+/// Migration 0011 keeps every setup entry made before the parts picker: name, note and link
+/// unchanged, mapped to the new categories, with the old category kept in `legacy_category`.
+#[tokio::test]
+async fn setup_parts_migration_keeps_entries() {
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("Use scripts/dev.ps1 test with an isolated local database");
+    let parsed = url::Url::parse(&database_url).unwrap();
+    assert!(
+        matches!(parsed.host_str(), Some("localhost" | "127.0.0.1"))
+            && parsed.path() == "/sver_rebuild",
+        "Tests require the isolated local sver_rebuild database"
+    );
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&database_url)
+        .await
+        .unwrap();
+    let schema = format!("parts_migration_{}", uuid::Uuid::new_v4().simple());
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let search_path = format!("SET search_path TO {schema}");
+    let db = PgPoolOptions::new()
+        .max_connections(2)
+        .after_connect(move |connection, _| {
+            let statement = search_path.clone();
+            Box::pin(async move {
+                sqlx::query(sqlx::AssertSqlSafe(statement))
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&database_url)
+        .await
+        .unwrap();
+    let pool = db.clone();
+    let result = tokio::spawn(async move {
+        let db = pool;
+        let mut before = sqlx::migrate!("../../../../migrations");
+        before.migrations = before
+            .migrations
+            .iter()
+            .filter(|m| m.version < 11)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        before.run(&db).await.unwrap();
+        let user = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users(id,email,username,email_verified,created_at,date_of_birth) VALUES($1,'parts-migration@example.invalid','PartsMigration',true,now(),'1995-01-01')")
+            .bind(&user)
+            .execute(&db)
+            .await
+            .unwrap();
+        let old = [
+            ("CAMERA", "CAMERA"),
+            ("MICROPHONE", "MIC"),
+            ("AUDIO_INTERFACE", "MIC"),
+            ("HEADPHONES", "PERIPHERALS"),
+            ("PC", "OTHER"),
+            ("CPU", "CPU"),
+            ("GPU", "GPU"),
+            ("CAPTURE", "PERIPHERALS"),
+            ("LIGHTING", "OTHER"),
+            ("MONITOR", "PERIPHERALS"),
+            ("KEYBOARD", "PERIPHERALS"),
+            ("MOUSE", "PERIPHERALS"),
+            ("CONTROLLER", "PERIPHERALS"),
+            ("OTHER", "OTHER"),
+        ];
+        for (i, (category, _)) in old.iter().enumerate() {
+            sqlx::query("INSERT INTO setup_items(id,user_id,position,category,name,note,link) VALUES($1,$2,$3,$4,$5,'note','https://example.com/x')")
+                .bind(format!("item{i}"))
+                .bind(&user)
+                .bind(i as i32)
+                .bind(category)
+                .bind(format!("Thing {category}"))
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        sqlx::migrate!("../../../../migrations").run(&db).await.unwrap();
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT category,name,note,link,legacy_category FROM setup_items ORDER BY position",
+        )
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), old.len());
+        for ((was, now), (category, name, note, link, legacy)) in old.iter().zip(&rows) {
+            assert_eq!(category, now, "{was}");
+            assert_eq!(name, &format!("Thing {was}"));
+            assert_eq!(note, "note");
+            assert_eq!(link.as_deref(), Some("https://example.com/x"));
+            assert_eq!(
+                legacy.as_deref(),
+                (was != now).then_some(*was),
+                "{was} keeps its old category"
+            );
+        }
+    })
+    .await;
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    assert!(
+        result.is_ok(),
+        "Setup migration check failed; its isolated schema was removed"
     );
 }
 

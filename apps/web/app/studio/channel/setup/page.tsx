@@ -1,12 +1,14 @@
 "use client";
 import { useCallback, useState } from "react";
 import { Section, STALE, Status, type SaveState } from "../../../../components/Form";
+import { PartPicker, type Pick } from "../../../../components/PartPicker";
 import { send, useLoad } from "../../../../lib/client-api";
+import { setupLabel, kindLabel } from "../../../../lib/setup-parts";
 
-type Item = { category: string; name: string; note: string; link: string | null };
+type Item = { category: string; name: string; note: string; link: string | null; part_id?: string | null; review?: "PENDING" | "DISMISSED" | null; legacy_category?: string | null; kind?: string | null };
 type Photo = { id: string; image: { "400": string; "1600": string }; alt: string; status: "VISIBLE" | "REMOVED" };
 type Setup = { items: Item[]; title: string; description: string; photos: Photo[]; max_photos: number; categories: string[]; revision: number };
-const label = (v: string) => v.toLowerCase().replaceAll("_", " ").replace(/^./, c => c.toUpperCase());
+const MAX_ITEMS = 20;
 
 export default function SetupStudio() {
   const [data, setData] = useState<Setup | null>(null);
@@ -23,8 +25,13 @@ export default function SetupStudio() {
   useLoad(load);
   if (!data) return <p className="loading">Loading…</p>;
   const set = (i: number, p: Partial<Item>) => setItems(items.map((s, j) => j === i ? { ...s, ...p } : s));
+  // Items stay grouped by category (picker order, then "Other"); owner order within a category.
+  const order = [...data.categories, "OTHER"];
+  const sorted = (list: Item[]) => [...list].sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category));
+  const add = (category: string, pick: Pick) => setItems(sorted([...items, { category, name: pick.name, note: "", link: null, part_id: pick.part_id, review: null, kind: pick.kind ?? null }]));
+  const moveItem = (i: number, d: number) => { const next = [...items]; [next[i], next[i + d]] = [next[i + d], next[i]]; setItems(next); };
   async function save() {
-    const result = await send("PUT", "/api/me/setup", { items: items.map(i => ({ ...i, link: i.link?.trim() ? i.link : null })), title, description, revision: data!.revision });
+    const result = await send("PUT", "/api/me/setup", { items: sorted(items).map(i => ({ category: i.category, name: i.name, note: i.note, link: i.link?.trim() ? i.link : null, ...(i.part_id ? { part_id: i.part_id } : {}) })), title, description, revision: data!.revision });
     setState(result.ok ? { saved: "Setup saved." } : result.status === 409 ? { error: STALE } : result);
     if (result.ok) load();
   }
@@ -73,15 +80,33 @@ export default function SetupStudio() {
       </div>
       <Status state={photoState} />
     </Section>
-    <Section title="Your gear" intro="Up to 20 items, shown on your About tab.">
-      {items.map((s, i) => <div key={i} className="row wrap">
-        <select aria-label="Category" value={s.category} onChange={e => set(i, { category: e.target.value })}>{data.categories.map(c => <option key={c} value={c}>{label(c)}</option>)}</select>
-        <input aria-label="Name" value={s.name} maxLength={80} placeholder="Name" onChange={e => set(i, { name: e.target.value })} />
-        <input aria-label="Note" value={s.note} maxLength={120} placeholder="Note (optional)" onChange={e => set(i, { note: e.target.value })} />
-        <input aria-label="Link" type="url" value={s.link || ""} placeholder="https:// (optional)" onChange={e => set(i, { link: e.target.value })} />
-        <button type="button" className="small quiet" onClick={() => setItems(items.filter((_, j) => j !== i))}>Remove</button>
-      </div>)}
-      <div className="row">{items.length < 20 && <button type="button" className="small quiet" onClick={() => setItems([...items, { category: data.categories[0] || "OTHER", name: "", note: "", link: null }])}>Add item</button>}<button type="button" className="small" onClick={save}>Save setup</button></div>
+    <Section title={`Your gear (${items.length} of ${MAX_ITEMS})`} intro="Search SVER's parts list in each category. If yours isn't listed, add it as a custom entry: it shows on your page right away, and staff may add it to the list. Nothing is saved until you press Save setup.">
+      {[...data.categories, ...(items.some(i => i.category === "OTHER") ? ["OTHER"] : [])].map(category => {
+        const rows = items.map((s, i) => [s, i] as const).filter(([s]) => s.category === category);
+        return <div key={category} className="gear-category" data-category={category}>
+          <h3>{setupLabel(category)}</h3>
+          {category === "OTHER" && <p className="muted">Kept from before the parts list. You can change the note and link or remove these; new items go in one of the categories above.</p>}
+          {rows.length > 0 && <ul className="gear-list">{rows.map(([s, i], k) => <li key={i} className="gear-item">
+            <div className="row wrap">
+              {s.part_id ? <span className="gear-name"><strong>{s.name}</strong> <span className="tag">SVER list</span>{kindLabel(s.kind) && <> <span className="tag">{kindLabel(s.kind)}</span></>}</span>
+                : category === "OTHER" ? <span className="gear-name"><strong>{s.name}</strong></span>
+                : <span className="gear-name"><input aria-label={`${setupLabel(category)} name`} value={s.name} maxLength={80} onChange={e => set(i, { name: e.target.value, review: null })} />
+                  {kindLabel(s.kind) && <span className="tag">{kindLabel(s.kind)}</span>}
+                  {category !== "OTHER" && <span className="tag">{s.review === "PENDING" ? "Custom · waiting for review" : "Custom"}</span>}</span>}
+              <input aria-label={`Note for ${s.name || "this item"}`} value={s.note} maxLength={120} placeholder="Note (optional)" onChange={e => set(i, { note: e.target.value })} />
+              <input aria-label={`Link for ${s.name || "this item"}`} type="url" value={s.link || ""} placeholder="https:// (optional)" onChange={e => set(i, { link: e.target.value })} />
+              <div className="row tight">
+                {k > 0 && <button type="button" className="small quiet" aria-label={`Move ${s.name} up`} onClick={() => moveItem(i, rows[k - 1][1] - i)}>Up</button>}
+                {k < rows.length - 1 && <button type="button" className="small quiet" aria-label={`Move ${s.name} down`} onClick={() => moveItem(i, rows[k + 1][1] - i)}>Down</button>}
+                <button type="button" className="small quiet" aria-label={`Remove ${s.name}`} onClick={() => setItems(items.filter((_, j) => j !== i))}>Remove</button>
+              </div>
+            </div>
+          </li>)}</ul>}
+          {category !== "OTHER" && <PartPicker category={category} label={setupLabel(category)} disabled={items.length >= MAX_ITEMS} onPick={pick => add(category, pick)} />}
+        </div>;
+      })}
+      {items.length >= MAX_ITEMS && <p className="muted">You&apos;ve reached 20 items. Remove one to add another.</p>}
+      <div className="row"><button type="button" className="small" onClick={save}>Save setup</button></div>
       <Status state={state} />
     </Section></>;
 }

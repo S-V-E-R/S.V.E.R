@@ -45,7 +45,7 @@ Do not add Valkey/Redis, NATS, ClickHouse, gRPC, LiveKit, or Kubernetes unless J
 Each module is closed before the next starts:
 
 1. Login
-2. Profiles
+2. Profiles (closed October 3, 2026, 7:31 PM ET, after Joe accepted it on staging)
 3. Live streams (includes chat, moderation, viewbot detection, custom emotes, go-live alerts, raids and hosting)
 4. Factions (full seasonal war at launch)
 5. MAGNet

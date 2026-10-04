@@ -13,7 +13,7 @@ assert.match(process.env.DATABASE_URL || "", /@(localhost|127\.0\.0\.1)(:\d+)?\/
 assert.match(origin, /^http:\/\/127\.0\.0\.1:\d+$/);
 const sql = s => { const r = spawnSync("psql", [process.env.DATABASE_URL, "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1"], { input: s, encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
 const mk = p => { const id = randomUUID(); return { id, token: randomBytes(32).toString("base64url"), username: `${p}_${id.replaceAll("-", "").slice(0, 10)}` }; };
-const A = mk("PrA"), B = mk("PrB");
+const A = mk("PrA"), B = mk("PrB"), S = mk("PrS");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // A small solid-color PNG for the setup photo upload.
 const png = (w, h) => {
@@ -30,14 +30,17 @@ let dbg = null;
 const check = (name, ok, detail = "") => { results.push({ name, ok: !!ok, detail }); if (!ok && dbg && process.env.PARITY_DEBUG) dbg().then(v => console.log("DEBUG", name, v)); };
 try {
   const ins = u => `INSERT INTO users(id,email,username,email_verified,created_at) VALUES('${u.id}','${u.id}@example.invalid','${u.username}',true,now()-interval '30 days'); INSERT INTO sessions(id,user_id,token_hash,auth_version,user_agent) VALUES('${randomUUID()}','${u.id}','${createHash("sha256").update(u.token).digest("hex")}',0,'Local parity check'); INSERT INTO profiles(user_id,display_name) VALUES('${u.id}','${u.username}') ON CONFLICT (user_id) DO NOTHING;`;
-  sql(`BEGIN; ${ins(A)} ${ins(B)}
+  sql(`BEGIN; ${ins(A)} ${ins(B)} ${ins(S)}
+    UPDATE users SET mfa_enabled=true,mfa_secret='synthetic-sealed-secret' WHERE id='${S.id}'; UPDATE sessions SET mfa_verified=true WHERE user_id='${S.id}';
+    INSERT INTO staff_roles(user_id,role) VALUES('${S.id}','admin');
     INSERT INTO follows(follower_id,following_id,created_at) VALUES('${B.id}','${A.id}','2026-09-14T12:00:00Z');
     UPDATE profiles SET follower_count=1 WHERE user_id='${A.id}'; UPDATE profiles SET following_count=1 WHERE user_id='${B.id}';
     UPDATE profiles SET song_provider='youtube',song_media_id='dQw4w9WgXcQ',song_url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',song_title='Test Song',song_artist='Test Artist',song_volume=35 WHERE user_id='${A.id}';
     INSERT INTO war_council(user_id,position,member_id) VALUES('${A.id}',1,'${B.id}');
     INSERT INTO wall_posts(id,wall_owner_id,author_id,body,status,created_at) VALUES('${randomUUID()}','${A.id}','${B.id}','Clip here: https://example.com/clip?x=1. Nice','APPROVED',now()-interval '2 hours');
     INSERT INTO sponsors(id,user_id,position,active,name,link,discount_code,category) VALUES('${randomUUID()}','${A.id}',1,true,'Test Sponsor','https://example.com/sponsor','SAVE10','HARDWARE');
-    INSERT INTO setup_items(id,user_id,position,category,name,link) VALUES('${randomUUID()}','${A.id}',1,'CAMERA','Cam One','https://example.com/cam'),('${randomUUID()}','${A.id}',2,'MICROPHONE','Mic One',NULL),('${randomUUID()}','${A.id}',3,'CAMERA','Cam Two',NULL);
+    INSERT INTO setup_items(id,user_id,position,category,name,link) VALUES('${randomUUID()}','${A.id}',1,'CAMERA','Cam One','https://example.com/cam'),('${randomUUID()}','${A.id}',2,'MIC','Mic One',NULL),('${randomUUID()}','${A.id}',3,'CAMERA','Cam Two',NULL);
+    INSERT INTO setup_items(id,user_id,position,category,legacy_category,name,link) VALUES('${randomUUID()}','${A.id}',4,'OTHER','LIGHTING','Old Key Light',NULL);
     INSERT INTO identities(provider,subject,user_id,handle) VALUES('twitch','tw-${A.id}','${A.id}','pr_twitch_handle'),('discord','${String(Date.now()).padEnd(18, "7")}','${A.id}','pr.discord');
     COMMIT;`);
   let ws;
@@ -105,7 +108,7 @@ try {
   await evalv("document.querySelector('button[aria-label*=\"discount code\"]').click()");
   check("sponsor: copy button copies the code", (await until("document.querySelector('button[aria-label*=\"discount code\"]').textContent === 'Copied'")) && (await evalv("window.__copied.join()")) === "SAVE10");
   const groups = await evalv("JSON.stringify([...document.querySelectorAll('.setup > div')].map(d => [d.querySelector('dt').textContent, d.querySelectorAll('dd').length]))");
-  check("setup: grouped by category in owner order", groups === JSON.stringify([["Camera", 2], ["Microphone", 1]]), groups);
+  check("setup: grouped by category in owner order", groups === JSON.stringify([["Camera", 2], ["Mic & audio interface", 1], ["Other", 1]]), groups);
   await shot("about-desktop");
   check("setup: link rel sponsored nofollow", (await evalv("document.querySelector('.setup a').getAttribute('rel')")) === "sponsored nofollow noopener noreferrer");
 
@@ -196,6 +199,71 @@ try {
   check("P4 setup: About shows title, description and photo", (await evalv("document.querySelector('.setup-section h2').textContent + '|' + document.querySelector('.setup-description').textContent + '|' + /\\/setup\\/[0-9a-f]+\\/400\\.webp$/.test(document.querySelector('.setup-photos img').src) + '|' + /1600\\.webp$/.test(document.querySelector('.setup-photos a').href)")) === "Battle Station|Desk notes|true|true");
   check("P4 setup: owner sees no Report on own photo", await evalv("!document.querySelector('.setup-photos .link-button')"));
   await shot("about-setup");
+
+  // Setup parts picker (docs/PROFILES.md, "Setup parts picker"): search, keyboard pick, custom entry, save, About grouping,
+  // then the staff queue approves the custom entry into the list.
+  const press = async (key, code, vk) => { for (const type of ["keyDown", "keyUp"]) await cmd("Input.dispatchKeyEvent", { type, key, code, windowsVirtualKeyCode: vk }); };
+  const typeIn = async (category, text) => { await evalv(`(() => { const i = document.querySelector('[data-category=${category}] input[role=combobox]'); i.focus(); i.select(); })()`); await cmd("Input.insertText", { text }); };
+  const optionTexts = category => evalv(`JSON.stringify([...document.querySelectorAll('[data-category=${category}] [role=option]')].map(o => o.textContent))`);
+  const customName = `Zeta Cam ${process.pid}`;
+  await go("/studio/channel/setup", "!!document.querySelector('[data-category=GPU] input[role=combobox]')");
+  const blocks = await evalv("JSON.stringify([...document.querySelectorAll('.gear-category')].map(d => d.dataset.category))");
+  check("parts: a picker block per category, Other last for kept entries", blocks === JSON.stringify(["CPU", "GPU", "RAM", "MOTHERBOARD", "CAMERA", "MIC", "PERIPHERALS", "OTHER"]), blocks);
+  check("parts: no picker in Other, kept names read-only", await evalv("!document.querySelector('[data-category=OTHER] input[role=combobox]') && !document.querySelector('[data-category=OTHER] .gear-name input') && document.querySelector('[data-category=OTHER] .gear-name').textContent === 'Old Key Light'"));
+  await typeIn("GPU", "rtx 4070");
+  const gpuOpts = await until("(() => { const o = [...document.querySelectorAll('[data-category=GPU] [role=option]')]; return o.length > 1 && o[0].textContent.includes('4070') && JSON.stringify(o.map(x => x.textContent)); })()");
+  check("parts: search-as-you-type lists SVER parts, best match first", gpuOpts && JSON.parse(gpuOpts)[0] === "NVIDIA GeForce RTX 4070" && JSON.parse(gpuOpts).every(t => /4070/.test(t) || /custom entry/.test(t)), gpuOpts);
+  check("parts: combobox expanded with a listbox", (await evalv("document.querySelector('[data-category=GPU] input[role=combobox]').getAttribute('aria-expanded')")) === "true");
+  await press("ArrowDown", "ArrowDown", 40);
+  check("parts: arrow key sets the active option", (await evalv("(() => { const i = document.querySelector('[data-category=GPU] input[role=combobox]'); return document.getElementById(i.getAttribute('aria-activedescendant'))?.getAttribute('aria-selected'); })()")) === "true");
+  await press("Enter", "Enter", 13);
+  check("parts: Enter picks the part as an SVER list item", !!(await until("[...document.querySelectorAll('[data-category=GPU] .gear-name')].some(n => n.textContent === 'NVIDIA GeForce RTX 4070 SVER list')", 20)));
+  check("parts: picker clears after a pick", (await evalv("document.querySelector('[data-category=GPU] input[role=combobox]').value")) === "");
+  await typeIn("MIC", "shure");
+  await until("document.querySelectorAll('[data-category=MIC] [role=option]').length > 1", 20);
+  await press("Escape", "Escape", 27);
+  check("parts: Escape closes the list", (await evalv("document.querySelector('[data-category=MIC] input[role=combobox]').getAttribute('aria-expanded')")) === "false");
+  await evalv("document.querySelector('[data-category=MIC] input[role=combobox]').blur()");
+  // Mic also lists audio interfaces and mixers (Joe's decision, 5:52 PM ET), marked as such.
+  await typeIn("MIC", "goxlr mini");
+  const micOpt = await until("(() => { const o = document.querySelector('[data-category=MIC] [role=option]'); return o && o.textContent.includes('GoXLR Mini') && o.textContent; })()", 20);
+  check("parts: Mic search lists interfaces, labeled", micOpt === "TC-Helicon GoXLR Mini · Audio interface", micOpt || (await optionTexts("MIC")) + " value=" + (await evalv("document.querySelector('[data-category=MIC] input[role=combobox]').value")));
+  await press("ArrowDown", "ArrowDown", 40); await press("Enter", "Enter", 13);
+  check("parts: picked interface tagged Audio interface", !!(await until("[...document.querySelectorAll('[data-category=MIC] .gear-name')].some(n => n.textContent === 'TC-Helicon GoXLR Mini SVER list Audio interface')", 20)));
+  await typeIn("CAMERA", customName);
+  const camOpts = await until(`(() => { const o = [...document.querySelectorAll('[data-category=CAMERA] [role=option]')]; const last = o[o.length - 1]?.textContent || ''; return last.includes(${JSON.stringify(customName)}) && last; })()`, 20);
+  check("parts: unknown name offers a custom entry", /as a custom entry/.test(camOpts || ""), camOpts || await optionTexts("CAMERA"));
+  await press("Enter", "Enter", 13);
+  check("parts: custom entry added with a Custom tag", !!(await until(`[...document.querySelectorAll('[data-category=CAMERA] .gear-name')].some(n => n.querySelector('input')?.value === ${JSON.stringify(customName)} && n.textContent.includes('Custom'))`, 20)));
+  await click("Save setup");
+  await until("/Saved/.test(document.body.innerText)", 20);
+  check("parts: picked part saved with its part ID", sql(`SELECT count(*) FROM setup_items s JOIN parts p ON p.id=s.part_id WHERE s.user_id='${A.id}' AND s.category='GPU' AND s.name='NVIDIA GeForce RTX 4070'`) === "1");
+  check("parts: custom entry saved and queued as pending", sql(`SELECT s.name||'|'||coalesce(s.part_id,'-')||'|'||p.status FROM setup_items s JOIN part_submissions p ON p.id=s.submission_id WHERE s.user_id='${A.id}' AND s.category='CAMERA' AND s.name='${customName}'`) === `${customName}|-|PENDING`);
+  check("parts: kept Other entry and its legacy category survive the save", sql(`SELECT category||'|'||legacy_category FROM setup_items WHERE user_id='${A.id}' AND name='Old Key Light'`) === "OTHER|LIGHTING");
+  await go("/studio/channel/setup", "!!document.querySelector('[data-category=CAMERA] .gear-name')");
+  check("parts: Studio shows the pending review", !!(await until(`[...document.querySelectorAll('[data-category=CAMERA] .gear-name')].some(n => n.textContent.includes('Custom · waiting for review'))`, 20)));
+  await shot("studio-parts");
+  await go(`/${A.username}/about`, "!!document.querySelector('.setup')");
+  const groups2 = await evalv("JSON.stringify([...document.querySelectorAll('.setup > div')].map(d => [d.querySelector('dt').textContent, [...d.querySelectorAll('dd')].map(x => x.textContent.split(' — ')[0])]))");
+  check("parts: About groups by picker category, custom entry shown right away", (() => { const g = JSON.parse(groups2 || "[]"); return JSON.stringify(g.map(x => x[0])) === JSON.stringify(["GPU", "Camera", "Mic & audio interface", "Other"]) && g[0][1].some(t => t.includes("NVIDIA GeForce RTX 4070")) && g[1][1].some(t => t.includes(customName)); })(), groups2);
+  check("parts: About marks the interface", await evalv("[...document.querySelectorAll('.setup dd')].some(d => d.textContent === 'TC-Helicon GoXLR Mini · Audio interface')"));
+  check("parts: non-staff get 404 on the queue", (await evalv("fetch('/admin/parts').then(r => r.status)")) === 404);
+  await as(S);
+  await go("/admin/parts", `[...document.querySelectorAll('section h2')].some(h => h.textContent === ${JSON.stringify(`Camera · ${customName}`)})`);
+  const entry = `[...document.querySelectorAll('section')].find(x => x.querySelector('h2')?.textContent === ${JSON.stringify(`Camera · ${customName}`)})`;
+  check("parts queue: entry shows submitter and use count", new RegExp(`First added by @${A.username} .* used in 1 setup$`).test(await evalv(`${entry}.querySelector('p.muted').textContent`) || ""), await evalv(`${entry}.querySelector('p.muted').textContent`));
+  check("parts queue: approve form prefilled from the typed name", (await evalv(`${entry}.querySelector('input[name=brand]').value + '|' + ${entry}.querySelector('input[name=model]').value`)) === `Zeta|Cam ${process.pid}`);
+  await evalv(`(() => { const f = ${entry}.querySelector('form'); f.querySelector('input[name=brand]').value = 'ZETA'; f.requestSubmit(f.querySelector('button[value=approve]')); })()`);
+  const notice = await until("document.querySelector('[role=status]')?.textContent");
+  check("parts queue: approve adds it to the list and links the setup", notice === `Added “ZETA Cam ${process.pid}” to the list; 1 setup entry linked.`, notice);
+  check("parts queue: submission approved and setup item linked", sql(`SELECT p.status||'|'||s.name||'|'||(s.part_id=p.part_id) FROM part_submissions p JOIN setup_items s ON s.submission_id=p.id WHERE s.user_id='${A.id}' AND s.category='CAMERA' AND p.norm='zeta cam ${process.pid}'`) === `APPROVED|ZETA Cam ${process.pid}|true`);
+  check("parts queue: approval audited", sql(`SELECT count(*) FROM moderation_actions WHERE action='part_approved' AND actor_id='${S.id}'`) === "1");
+  await click("Added");
+  check("parts queue: Added tab lists the decision", !!(await until(`[...document.querySelectorAll('section p')].some(p => p.textContent.startsWith(${JSON.stringify(`Added as “ZETA Cam ${process.pid}” by @${S.username}`)}))`, 20)));
+  await shot("admin-parts");
+  await as(A);
+  await go("/studio/channel/setup", "!!document.querySelector('[data-category=CAMERA] .gear-name')");
+  check("parts: approved entry now shows as an SVER list item", !!(await until(`[...document.querySelectorAll('[data-category=CAMERA] .gear-name')].some(n => n.textContent === ${JSON.stringify(`ZETA Cam ${process.pid} SVER list`)})`, 20)));
   // P2 mood presets.
   await go("/settings/profile", "!!document.querySelector('.mood-presets')");
   check("P2 mood: 12 presets plus Clear", (await evalv("document.querySelectorAll('.mood-presets button').length")) === 13);
@@ -261,8 +329,8 @@ try {
 } finally {
   chrome.kill();
   try { (await import("node:fs")).unlinkSync(photoPath); } catch {}
-  sql(`DELETE FROM sessions WHERE user_id IN ('${A.id}','${B.id}'); DELETE FROM users WHERE (id='${A.id}' AND username='${A.username}') OR (id='${B.id}' AND username='${B.username}');`);
-  assert.equal(sql(`SELECT count(*) FROM users WHERE id IN ('${A.id}','${B.id}')`), "0");
+  sql(`DELETE FROM sessions WHERE user_id IN ('${A.id}','${B.id}','${S.id}'); DELETE FROM users WHERE (id='${A.id}' AND username='${A.username}') OR (id='${B.id}' AND username='${B.username}') OR (id='${S.id}' AND username='${S.username}'); DELETE FROM parts WHERE source='STAFF' AND norm='zeta cam ${process.pid}';`);
+  assert.equal(sql(`SELECT count(*) FROM users WHERE id IN ('${A.id}','${B.id}','${S.id}')`), "0");
 }
 for (const r of results) console.log(`${r.ok ? "PASS" : "FAIL"} ${r.name}${r.ok || !r.detail ? "" : `  (${r.detail})`}`);
 const failed = results.filter(r => !r.ok).length;

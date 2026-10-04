@@ -6,7 +6,7 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | --- | --- | --- | --- |
 | 0 | Foundation | The site foundation, shared interface, security boundaries and automated checks | Done |
 | 1 | Login | Email and Google, Twitch, Discord sign-in; verification; sessions; 2FA for streamers | Done |
-| 2 | Profiles | Channel pages, follows, War Council, the Wall, profile songs, schedules, sponsors and fan art. Final account and upload acceptance checks remain. | In progress |
+| 2 | Profiles | Channel pages, follows, War Council, the Wall, profile songs, schedules, sponsors and fan art | Done |
 | 3 | Live streams | Creator Studio, OBS streaming, playback, chat and moderation, viewbot detection, custom emotes, go-live alerts, raids and hosting. Live delivery is still being prepared and verified. | In progress |
 | 4 | Factions | Myria, Aetheron, Glint; the seasonal war over categories; the faction hub | Planned |
 | 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff | Planned |

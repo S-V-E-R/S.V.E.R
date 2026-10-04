@@ -18,6 +18,7 @@ pub mod jobs;
 pub mod media;
 pub mod moderation;
 pub mod oauth;
+pub mod parts;
 pub mod playback;
 pub mod profile_import;
 pub mod profile_jobs;
@@ -505,6 +506,9 @@ fn profile_routes() -> Router<App> {
             post(sa::admin_lift),
         )
         .route("/api/admin/appeals", get(sa::admin_appeals))
+        .route("/api/admin/parts", get(parts::admin_queue))
+        .route("/api/admin/parts/{id}/decision", post(parts::admin_decide))
+        .route("/api/parts", get(parts::search))
         .route("/api/admin/appeals/{id}/decision", post(sa::decide))
         .route("/api/admin/moderation-actions", get(sa::admin_actions))
         .route("/api/admin/{*rest}", get(admin_missing).post(admin_missing))

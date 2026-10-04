@@ -364,3 +364,20 @@ pub fn contains_url(value: &str) -> bool {
         })
     }
 }
+
+/// Normalized parts-list name (docs/PROFILES.md, "Setup parts picker"): lowercase, `+` spelled
+/// "plus", every other non-alphanumeric character a separator, single spaces. Migration
+/// `0011_setup_parts.sql` stores this for the seed list, and a test checks the two agree.
+pub fn part_norm(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars().flat_map(char::to_lowercase) {
+        if c == '+' {
+            out.push_str(" plus ");
+        } else if c.is_alphanumeric() {
+            out.push(c);
+        } else {
+            out.push(' ');
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
