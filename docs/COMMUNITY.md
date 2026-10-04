@@ -5,7 +5,7 @@ Decided by Joe on October 3, 2026. These are smaller features carried over from 
 | Feature | When |
 | --- | --- |
 | Download my data | Right after Live streams closes (with Linked chat) |
-| Chat commands and the channel bot | Right after Live streams closes |
+| Chat commands and the faction bots (PYRE, ECHO, JINX, VOLK) | Right after Live streams closes |
 | GIFs in chat | Right after Live streams closes |
 | Live captions from OBS | After Live streams closes, once a media test confirms captions pass through |
 | Direct messages | With Guilds, right after Factions |
@@ -28,9 +28,29 @@ Not coming back: mentorship, team relay, patronage, the social feed and simulcas
 - **Built-in commands** for viewers and moderators already in specs (`/raid`, `/flag`, `/timeout`, `/ban`, `/slow`, `/poll` …) get one consistent help list (`/help`).
 - **Custom commands:** a streamer creates `!name` → reply text (up to 300 characters), with who can use it (everyone, followers, subscribers, moderators) and a cooldown. Variables: `{user}`, `{channel}`, `{uptime}`, `{game}`, `{followers}`.
 - **Timed messages:** up to 5 messages posted every N minutes (at least 10) while live, only if chat has had activity since the last one.
-- Replies come from the channel's **S.V.E.R bot**, a built-in system account shown with a bot badge. No third-party bot is needed; a public bot API can come later.
+- Replies come from the channel's **bot**, a built-in system account shown with a bot badge. No third-party bot is needed; a public bot API can come later.
+
+### The faction bots
+
+Carried over from legacy: each faction has its own bot persona, and a neutral one.
+
+| Bot | For | Tagline |
+| --- | --- | --- |
+| **PYRE** | Myria | Discipline is the flame that never dies. |
+| **ECHO** | Aetheron | (legacy tagline to carry over) |
+| **JINX** | Glint | (legacy tagline to carry over) |
+| **VOLK** | Neutral (no faction, or the streamer prefers it) | The grey wolf watches. |
+
+- A channel gets its owner's faction bot by default; a streamer can switch to VOLK or to another faction's bot.
+- **Personality settings:** Chill (warm, little faction flavor; the default), Battle (full faction personality) and Event (maximum hype for tournaments, charity streams and milestones). Personality shows in event messages (follows, subs, raids, Surge levels, milestones) and optional cross-faction greetings. Random quips are off by default.
+- **Moderation help:** the bot enforces the channel's AutoMod settings: excessive caps, repeated messages, symbol or emote spam, and the existing banned-word and link rules. It follows a ladder the streamer configures (warn, then a short timeout, then a longer one), announces actions in the bot's voice, and logs each action for moderators, who can reverse it. It never bans on its own; bans stay with people.
+- **Giveaways:** the streamer starts one with a keyword; the bot picks a random winner among eligible chatters (Counted session, not banned), shown publicly. Prizes are the streamer's responsibility; the Terms cover it.
+- **Starter timers:** new channels can add starter timed messages (social links, chat rules).
+- Bot lore and copy are original to S.V.E.R. Legacy PYRE lore borrowed names from a published novel series; that text is not carried over and gets rewritten.
+- Song requests from the legacy bot are not carried over (music licensing).
+
 - Commands and bot replies follow the channel's banned-word and link rules.
-- **Done when:** a streamer creates custom and timed commands, viewers trigger them within their permissions and cooldowns, and the bot replies with variables filled in.
+- **Done when:** a streamer creates custom and timed commands, viewers trigger them within their permissions and cooldowns, and the bot replies with variables filled in; each channel gets its faction's bot (or VOLK) with the chosen personality; AutoMod catches caps, repeats and spam and follows the warn-and-timeout ladder, with every action reversible by moderators; a giveaway picks a fair winner.
 
 ## GIFs in chat
 
