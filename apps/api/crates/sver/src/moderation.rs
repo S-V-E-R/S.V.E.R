@@ -24,7 +24,7 @@ pub enum Role {
     Staff,
 }
 impl Role {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Role::Owner => "owner",
             Role::Moderator => "moderator",
@@ -50,7 +50,7 @@ pub async fn role_of(app: &App, channel: &str, user: &auth::User) -> Res<Option<
     }
     Ok(None)
 }
-async fn actor(app: &App, jar: &CookieJar, channel: &str) -> Res<(auth::User, Role)> {
+pub(crate) async fn actor(app: &App, jar: &CookieJar, channel: &str) -> Res<(auth::User, Role)> {
     let user = profiles::signed_in(app, jar).await?;
     let role = role_of(app, channel, &user)
         .await?
@@ -82,7 +82,7 @@ async fn protected(app: &App, channel: &str, actor: &str, target: &str) -> Res<b
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_moderators WHERE channel_id=$1 AND user_id=$2) OR EXISTS(SELECT 1 FROM staff_roles WHERE user_id=$2)")
         .bind(channel).bind(target).fetch_one(&app.db).await?)
 }
-fn reason(text: &str) -> Res<String> {
+pub(crate) fn reason(text: &str) -> Res<String> {
     let text = text.trim();
     if text.is_empty() || text.chars().count() > 500 {
         return Err(Fail::field("reason", "Give a reason of 1–500 characters."));
@@ -90,7 +90,7 @@ fn reason(text: &str) -> Res<String> {
     Ok(text.to_string())
 }
 #[allow(clippy::too_many_arguments)]
-async fn log(
+pub(crate) async fn log(
     db: &mut PgConnection,
     channel: &str,
     actor: &str,
@@ -140,6 +140,22 @@ fn has_link(body: &str) -> bool {
             None => false,
         }
     })
+}
+
+/// Upload codes obey the channel's content rules, without consuming chat slow-mode windows.
+pub async fn check_emote_code(db: &mut sqlx::PgConnection, channel: &str, code: &str) -> Res<()> {
+    let rules: Option<(bool, Vec<String>)> =
+        sqlx::query_as("SELECT block_links,banned_words FROM chat_settings WHERE channel_id=$1")
+            .bind(channel)
+            .fetch_optional(db)
+            .await?;
+    if let Some((links, words)) = rules {
+        let folded = fold(code);
+        if words.iter().any(|w| folded.contains(w)) || (links && has_link(code)) {
+            return Err(Fail::bad("That code isn't allowed in this chat."));
+        }
+    }
+    Ok(())
 }
 
 /// Chat rules applied by `chat::send` before a message is stored.

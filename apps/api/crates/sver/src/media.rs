@@ -328,6 +328,7 @@ pub enum Kind {
     FanArt,
     SongThumb,
     SetupPhoto,
+    Emote,
 }
 impl Kind {
     pub fn name(self) -> &'static str {
@@ -338,6 +339,7 @@ impl Kind {
             Kind::FanArt => "fan_art",
             Kind::SongThumb => "song_thumb",
             Kind::SetupPhoto => "setup_photo",
+            Kind::Emote => "emote",
         }
     }
     pub fn max_bytes(self) -> usize {
@@ -346,6 +348,7 @@ impl Kind {
             Kind::Banner => 10 * 1024 * 1024,
             Kind::SponsorLogo => 2 * 1024 * 1024,
             Kind::SongThumb => 5 * 1024 * 1024,
+            Kind::Emote => 1024 * 1024,
         }
     }
     fn too_big(self) -> Fail {
@@ -358,6 +361,7 @@ impl Kind {
                 Kind::FanArt => "Fan art can be up to 5 MB.",
                 Kind::SongThumb => "That image is too large to process.",
                 Kind::SetupPhoto => "Setup photos can be up to 5 MB.",
+                Kind::Emote => "Emotes can be up to 1 MB.",
             },
         )
     }
@@ -399,6 +403,9 @@ fn decode(bytes: &[u8], kind: Kind) -> Res<DynamicImage> {
         sniff(bytes).ok_or_else(|| Fail::field("file", "Use a JPG, PNG or WebP image."))?;
     if bytes.len() > kind.max_bytes() {
         return Err(kind.too_big());
+    }
+    if kind == Kind::Emote && format == image::ImageFormat::Jpeg {
+        return Err(Fail::field("file", "Use a PNG or WebP image."));
     }
     let (width, height) = ImageReader::with_format(Cursor::new(bytes), format)
         .into_dimensions()
@@ -470,6 +477,40 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
     let fingerprints = removal::fingerprints(bytes, &image);
     let (width, height) = image.dimensions();
     let mut processed = match kind {
+        Kind::Emote => {
+            if width != height || width < 112 {
+                return Err(Fail::field(
+                    "file",
+                    "Emotes must be square and at least 112 pixels.",
+                ));
+            }
+            let hash = content_hash(
+                bytes,
+                kind,
+                &Crop {
+                    x: 0,
+                    y: 0,
+                    width,
+                    height,
+                },
+            );
+            let prefix = format!("emotes/{hash}");
+            let mut variants = Vec::new();
+            for size in crate::emotes::SIZES {
+                let resized = image.resize_exact(size, size, FilterType::Lanczos3);
+                variants.push(Variant {
+                    key: format!("{prefix}/{size}.webp"),
+                    bytes: encode(&resized)?,
+                    width: size,
+                    height: size,
+                });
+            }
+            Ok(Processed {
+                stored: prefix,
+                variants,
+                fingerprints,
+            })
+        }
         Kind::Avatar | Kind::Banner => {
             let (ratio, min_w, min_h) = if kind == Kind::Avatar {
                 (1.0, 128, 128)
@@ -938,6 +979,9 @@ pub async fn cleanup(app: &App) -> Res<usize> {
         if removal::held(&mut tx, &key).await? {
             continue;
         }
+        if key.starts_with("emotes/") && crate::emotes::referenced(&mut tx, &key).await? {
+            continue;
+        }
         let pending: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM media_objects WHERE key=$1 AND delete_after<=now())",
         )
@@ -969,6 +1013,45 @@ pub async fn cleanup(app: &App) -> Res<usize> {
 #[cfg(test)]
 mod storage_tests {
     use super::*;
+
+    #[test]
+    fn emotes_are_static_sized_webp_with_transparency() {
+        let animated = process(
+            include_bytes!("../tests/fixtures/emote-animated.png"),
+            Kind::Emote,
+            None,
+        )
+        .unwrap();
+        for v in animated.variants {
+            let decoded = image::load_from_memory(&v.bytes).unwrap().to_rgba8();
+            assert_eq!(
+                decoded.get_pixel(14, 14).0,
+                [200, 30, 30, 255],
+                "Animation uses its first frame"
+            );
+        }
+        let source = include_bytes!("../tests/fixtures/avatar-indexed-trns.png");
+        let processed = process(source, Kind::Emote, None).unwrap();
+        assert_eq!(
+            processed
+                .variants
+                .iter()
+                .map(|v| v.width)
+                .collect::<Vec<_>>(),
+            vec![28, 56, 112]
+        );
+        for v in &processed.variants {
+            assert_eq!(alpha_at(&v.bytes, 0, 0), 0);
+            assert_eq!(v.width, v.height);
+            assert!(!v.bytes.windows(4).any(|w| w == b"ANIM" || w == b"EXIF"));
+        }
+        assert!(process(&processed.variants[2].bytes, Kind::Emote, None).is_ok());
+        let mut jpeg = Cursor::new(Vec::new());
+        DynamicImage::new_rgb8(112, 112)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        assert!(process(&jpeg.into_inner(), Kind::Emote, None).is_err());
+    }
 
     #[test]
     fn signing_hmac_matches_rfc_4231() {

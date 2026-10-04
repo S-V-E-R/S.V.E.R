@@ -51,6 +51,7 @@ pub const FIELDS: &[&str] = &[
     "header",
 ];
 const TARGETS: &[&str] = &[
+    "emote",
     "profile",
     "wall_post",
     "wall_reply",
@@ -186,6 +187,7 @@ struct Target {
 /// Resolves a report target that the reporter can currently see.
 async fn target(db: &mut PgConnection, kind: &str, id: &str, field: Option<&str>) -> Res<Target> {
     let row: Option<(String, String, Value)> = match kind {
+        "emote" => crate::emotes::target(db, id).await?,
         "profile" => {
             let user = profiles::eligible_by_name(db, id).await?.ok_or_else(Fail::missing)?;
             let field = field.filter(|f| FIELDS.contains(f)).ok_or_else(|| Fail::field("field", "Choose what part of the channel you're reporting."))?;
@@ -849,6 +851,9 @@ async fn reset_field(
 }
 /// Hides a wall post, reply or fan art item; returns the reference used to restore it on overturn.
 async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Value> {
+    if kind == "emote" {
+        return crate::emotes::remove(db, id).await;
+    }
     match kind {
         // A chat delete is a tombstone, like a channel moderator's; it is not restored on appeal.
         "chat_message" => {
@@ -919,6 +924,7 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
 }
 async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
     let owner: Option<String> = match kind {
+        "emote" => crate::emotes::owner(db, id).await?,
         "profile" => {
             sqlx::query_scalar("SELECT id FROM users WHERE id=$1")
                 .bind(id)
@@ -983,6 +989,7 @@ async fn current_content(
     field: Option<&str>,
 ) -> Res<Value> {
     Ok(match kind {
+        "emote" => crate::emotes::current(db, id).await?,
         "profile" => match profile_snapshot(db, id, field).await {
             Ok(v) => v,
             Err(_) => Value::Null,
@@ -1155,6 +1162,9 @@ pub async fn admin_action(
         strike_id = Some(sid);
     }
     let actioned = input.action != "dismiss";
+    if kind == "emote" && matches!(input.action.as_str(), "dismiss" | "remove_content") {
+        crate::emotes::reviewed(&mut tx, &id).await?;
+    }
     sqlx::query("UPDATE reports SET status=$2,closed_at=now(),closed_reason=$3,reporter_notice=CASE WHEN $4 THEN 'ACTION_TAKEN' ELSE 'NONE' END WHERE id=ANY($1)")
         .bind(&report_ids)
         .bind(if actioned { "ACTIONED" } else { "DISMISSED" })
@@ -1165,6 +1175,9 @@ pub async fn admin_action(
     audit(&mut tx, Some(&actor.id), &input.action, &kind, &id, &report_ids, &note, json!({"field": input.field, "item_id": input.item_id, "strike_id": strike_id, "removed": removed}), false).await?;
     tx.commit().await?;
     // Open chats drop a message staff removed, as they do for a channel moderator's delete.
+    if kind == "emote" {
+        app.chat.publish(&owner, None, 0, json!({"type":"emotes"}));
+    }
     if kind == "chat_message" && input.action == "remove_content" {
         let channel: Option<String> =
             sqlx::query_scalar("SELECT channel_id FROM chat_messages WHERE id=$1")
@@ -1471,6 +1484,10 @@ pub async fn decide(
                 continue;
             };
             let table = match kind {
+                "emote" => {
+                    crate::emotes::restore(&mut tx, item_id, previous).await?;
+                    continue;
+                }
                 "wall_post" => "wall_posts",
                 "wall_reply" => "wall_replies",
                 "fan_art" => "fan_art",

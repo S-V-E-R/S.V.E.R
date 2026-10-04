@@ -72,6 +72,20 @@ pub async fn held(db: &mut PgConnection, key: &str) -> Res<bool> {
     .fetch_one(db)
     .await?)
 }
+/// Batch visibility check for a catalog of stored image roots.
+pub async fn held_roots(
+    db: &mut PgConnection,
+    roots: &[String],
+) -> Res<std::collections::HashSet<String>> {
+    Ok(
+        sqlx::query_scalar::<_, String>("SELECT root FROM media_removal_holds WHERE root=ANY($1)")
+            .bind(roots)
+            .fetch_all(db)
+            .await?
+            .into_iter()
+            .collect(),
+    )
+}
 pub async fn existing_root(db: &mut PgConnection, key: &str) -> Res<Option<String>> {
     if !valid_key(key) {
         return Ok(None);

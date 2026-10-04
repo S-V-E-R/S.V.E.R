@@ -73,7 +73,7 @@ fn bodies(history: &Value) -> Vec<String> {
         .map(|m| m["body"].as_str().unwrap().to_string())
         .collect()
 }
-async fn next_json(
+pub(super) async fn next_json(
     ws: &mut tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
@@ -192,11 +192,16 @@ pub async fn exercise(e: &Env) {
     // Two sends per second per account.
     tokio::time::sleep(Duration::from_millis(1100)).await;
     assert_eq!(say(e, &chatter, &"y".repeat(500)).await.0, StatusCode::OK);
+    // Keep this fixture's window open while real database requests run. A loaded runner
+    // can take over a second for three sends; that must not masquerade as a limiter failure.
+    e.sql("UPDATE rate_limits SET expires_at=now()+interval '1 minute' WHERE key='chat-second:chat-user'").await;
     assert_eq!(say(e, &chatter, "two").await.0, StatusCode::OK);
     assert_eq!(
         say(e, &chatter, "three").await.0,
         StatusCode::TOO_MANY_REQUESTS
     );
+    e.sql("DELETE FROM rate_limits WHERE key='chat-second:chat-user'")
+        .await;
 
     // Blocks: the watcher hides the chatter in their own view only; an owner block stops sending.
     e.sql("INSERT INTO user_blocks(blocker_id,blocked_id) VALUES('chat-watcher','chat-user')")

@@ -86,7 +86,6 @@ pub async fn tick(app: &App) -> Result<()> {
         "oauth_signups",
         "sessions",
         "rate_limits",
-        "chat_messages",
     ] {
         // The table comes from the fixed maintenance list above.
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -95,6 +94,7 @@ pub async fn tick(app: &App) -> Result<()> {
         .execute(&app.db)
         .await?;
     }
+    crate::chat::expire(app).await?;
     Ok(())
 }
 

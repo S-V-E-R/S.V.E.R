@@ -10,7 +10,7 @@ export default async function StudioLayout({ children }: { children: React.React
   const account = await currentAccount();
   if (!account) redirect("/login");
   return <div className="settings-page">
-    <nav className="settings-nav" aria-label="Creator Studio"><span className="eyebrow">CREATOR STUDIO</span><Link href="/studio/stream">Live stream</Link><Link href="/studio/chat">Chat</Link>{sections.map(([href, label]) => <Link key={href} href={href ? `/studio/channel/${href}` : "/studio/channel"}>{label}</Link>)}<Link href={`/${account.username}`}>View channel</Link></nav>
+    <nav className="settings-nav" aria-label="Creator Studio"><span className="eyebrow">CREATOR STUDIO</span><Link href="/studio/stream">Live stream</Link><Link href="/studio/chat">Chat</Link><Link href="/studio/emotes">Emotes</Link>{sections.map(([href, label]) => <Link key={href} href={href ? `/studio/channel/${href}` : "/studio/channel"}>{label}</Link>)}<Link href={`/${account.username}`}>View channel</Link></nav>
     <div className="settings-body"><ReadinessBanner />{children}</div>
   </div>;
 }
