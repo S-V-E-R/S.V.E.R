@@ -4,7 +4,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const SOURCE: &str = include_str!("../../../../../docs/ROADMAP.md");
-const IDS: [&str; 9] = [
+const IDS: [&str; 10] = [
     "foundation",
     "login",
     "profiles",
@@ -12,6 +12,7 @@ const IDS: [&str; 9] = [
     "factions",
     "magnet",
     "support",
+    "crowdsync",
     "vods-clips",
     "beacons",
 ];
@@ -82,7 +83,7 @@ mod tests {
     #[test]
     fn published_table_is_complete_and_changes_are_observable() {
         let initial = parse(SOURCE).unwrap();
-        assert_eq!(initial.items.len(), 9);
+        assert_eq!(initial.items.len(), 10);
         let changed = parse(&SOURCE.replacen("| Done |", "| In progress |", 1)).unwrap();
         assert_ne!(initial.revision, changed.revision);
         assert_eq!(changed.items[0].status, "In progress");
@@ -99,8 +100,8 @@ mod tests {
         for source in [
             String::new(),
             SOURCE.replace("| Planned |", "| Almost done |"),
-            SOURCE.replace("| 8 |", "| 7 |"),
-            SOURCE.replace("| 8 |", "| 9 |"),
+            SOURCE.replace("| 9 |", "| 8 |"),
+            SOURCE.replace("| 9 |", "| 10 |"),
             SOURCE.replace("| 0 | Foundation |", "| 0 | |"),
         ] {
             assert!(parse(&source).is_err());

@@ -28,7 +28,7 @@ function compile(file, dependencies = {}) {
 }
 const data = compile("apps/web/app/roadmap/data.ts");
 const Progress = compile("apps/web/app/roadmap/progress.tsx", { "./data": data, "next/link": ({ href, children }) => React.createElement("a", { href }, children) }).default;
-const initial = { revision: "a", items: ["foundation", "login", "profiles", "live-streams", "factions", "magnet", "support", "vods-clips", "beacons"].map((id, number) => ({ id, number, name: id, detail: "Public progress", status: number < 2 ? "Done" : "Planned" })) };
+const initial = { revision: "a", items: ["foundation", "login", "profiles", "live-streams", "factions", "magnet", "support", "crowdsync", "vods-clips", "beacons"].map((id, number) => ({ id, number, name: id, detail: "Public progress", status: number < 2 ? "Done" : "Planned" })) };
 let result = initial, offline = false, requests = 0;
 global.fetch = async (url, options) => {
   assert.equal(url, "/api/roadmap");
@@ -43,15 +43,15 @@ const root = createRoot(document.getElementById("root"));
   try {
     for (const invalid of [null, {}, { ...initial, items: [] }, { ...initial, items: initial.items.map(item => ({ ...item, status: "Unknown" })) }, { ...initial, items: initial.items.map(item => ({ ...item, id: "duplicate" })) }]) assert.throws(() => data.parseRoadmap(invalid));
     await act(async () => { root.render(React.createElement(Progress, { initial })); });
-    assert.match(document.body.textContent, /2 of 9 milestones complete/);
+    assert.match(document.body.textContent, /2 of 10 milestones complete/);
     result = { ...initial, revision: "b", items: initial.items.map(item => item.id === "profiles" ? { ...item, status: "Done" } : item) };
     await act(async () => { interval(); });
-    assert.match(document.body.textContent, /3 of 9 milestones complete/);
+    assert.match(document.body.textContent, /3 of 10 milestones complete/);
     assert.equal(document.querySelector("#profiles .roadmap-status").textContent, "Done");
     offline = true;
     await act(async () => { interval(); });
     assert.match(document.querySelector('[role="status"]').textContent, /last received progress/);
-    assert.match(document.body.textContent, /3 of 9 milestones complete/);
+    assert.match(document.body.textContent, /3 of 10 milestones complete/);
     const before = requests;
     Object.defineProperty(document, "hidden", { configurable: true, value: true });
     await act(async () => { interval(); });
@@ -65,7 +65,7 @@ const root = createRoot(document.getElementById("root"));
     assert.equal(document.querySelectorAll(".roadmap-item").length, 0, "No invented statuses during initial outage");
     offline = false;
     await act(async () => { interval(); });
-    assert.equal(document.querySelectorAll(".roadmap-item").length, 9);
+    assert.equal(document.querySelectorAll(".roadmap-item").length, 10);
     console.log("Roadmap checks passed: live status/count updates, stale data, recovery, hidden tabs, invalid payloads and cleanup.");
   } finally {
     await act(async () => { root.unmount(); });

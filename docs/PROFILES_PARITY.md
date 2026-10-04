@@ -199,7 +199,7 @@ Stage spot-checks ran on October 3 against `https://sver.tv` with API `sitepages
 | Activity feed | SHIPPED (P7) | "Recent activity" on Home, `GET /api/channels/{u}/activity`; follows, wall posts, War Council, song and schedule changes; kind registry in `activity.rs` for Module 5 | API tests (blocks, restrictions, internal, erasure, pagination); stage: API 200, empty until new events |
 | Similar streamers | STUB | Module 5 | — |
 | Featured video, trailer, pinned and recent content | STUB | Module 6 | — |
-| Beacon tab | STUB | Module 7 | — |
+| Beacon tab | STUB | Module 9 | — |
 | `/{u}/rewards` | STUB (P8) | Reserved sub-path with "Rewards are coming", no tab; filled by the economy (Module 4 / Phase 2) | Stage: 200 with the placeholder, no Rewards tab, unknown name 404 |
 | Shop / storefront tabs and pages | ARCHIVED | Spec ARCHIVE | — |
 | Posts / Community tabs | ARCHIVED | Spec ARCHIVE | — |
