@@ -54,6 +54,7 @@ The repo is public, so this doc describes the method only. Measured numbers, ser
    - Increase viewers in steps until one limit is hit: p95 delay above 1.5 seconds, playback success below 99%, a stall rate above the agreed level, CPU above 70%, or bandwidth above the share allowed below.
    - The last step that passed every check, minus 30% headroom, is the per-broadcast budget.
    - Bandwidth limits are also calculated: each WebRTC viewer costs about one stream's bitrate. Generators only need to reach the point where CPU per viewer is clear; the bandwidth ceiling is worked out from B rather than paid for in full.
+   - Watch per-core load, not just total CPU. SRS does most of its work on one core per process, so a single process can hit its ceiling while the machine looks mostly idle. If that happens first, repeat the run with several SRS processes sharing the load, and set the budget from the setup that scales best.
 2. **WebRTC, many broadcasts.** Repeat with 5, then 20 simultaneous broadcasts with viewers spread across them. Many broadcasts cost more CPU than one broadcast with the same number of viewers, so the global budget comes from this run, again with 30% headroom.
 3. **CDN path under load.**
    - A few hundred CDN viewers on one broadcast, enough to prove two things:
