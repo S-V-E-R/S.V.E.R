@@ -56,7 +56,7 @@ Each module is closed before the next starts:
 6. Support (subscriptions, Valor, channel rewards, co-streams, payouts)
 7. CrowdSync (interactive boards, Skills, polls and predictions)
 8. VODs and clips (`docs/VODS_CLIPS.md`)
-9. Beacons
+9. Beacons (`docs/BEACONS.md`)
 
 Modules 1 to 5 make the site functional. Phase 2 (Progression, Raven's Eye) starts only after all nine close.
 
