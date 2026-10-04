@@ -40,6 +40,8 @@ The same checks run on every push (`.github/workflows/ci.yml`), plus a scan for 
 
 Browser-level checks: `node scripts/check-navigation.mjs` (against a built frontend on port 13001 and the local API), `node scripts/check-signup.cjs <path-to-jsdom>` and `node scripts/check-stream-studio.cjs <path-to-jsdom>` for component checks with mocked network traffic, and `scripts/check-media.cjs` for the isolated real-media proof.
 
+The anonymous removal form also has a component check: `node scripts/check-take-it-down.cjs <path-to-jsdom>`. Its backend acceptance cases run within the Profiles integration suite, using generated non-sensitive images and a fake cache-purge service.
+
 The opt-in Rust/SRS ingest test also checks real callbacks, media decoding, reconnect, rotation and Stop against an isolated database and disposable media server. See [prerequisites and run command](docs/LIVE_STREAMS.md#integrated-rustsrs-ingest-proof--october-3); it is separate from normal CI and does not establish OBS/browser/CDN acceptance.
 
 The single reserved-username list is `apps/api/crates/sver/src/reserved.rs`; `tests/reserved_routes.rs` fails if any `apps/web/app` or `apps/web/public` top-level entry or `apps/web/next.config.ts` redirect source is not reserved.
@@ -51,6 +53,8 @@ OAuth callbacks default to `APP_ORIGIN/api/auth/oauth/{google,twitch,discord}/ca
 Production requires `APP_ENV=production`, an HTTPS `APP_ORIGIN`, real Turnstile keys, `RESEND_API_KEY`, a verified `MAIL_FROM`, a durable encryption key and a dedicated clean database. Serve Next and `/api` on the same origin and bind the API privately. If using `TRUSTED_PROXY_IP`, the proxy must overwrite `X-Real-IP` with the client IP and block direct public access to the API; otherwise the API uses the socket address. Images are built from `infra/api.Dockerfile` and `infra/web.Dockerfile` (see `compose.stage.yaml`).
 
 Passwords, stream keys and 2FA setup/recovery values never belong in logs. Back up the database and the encryption key separately. `sver-import-check` defaults to a disposable local rehearsal; its `--check-live` and `--apply-live` modes are restricted to the dedicated live database.
+
+Take It Down deployment also needs `MEDIA_CLOUDFLARE_ZONE_ID` and `MEDIA_CLOUDFLARE_PURGE_TOKEN` with Cache Purge permission for the zone serving media. Verify a synthetic URL purge before activation; storage deletion alone does not remove cached copies. Configure the staff `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`, then enroll each staff browser from `/admin/take-it-down`. Mail and push use durable Postgres jobs. See [the removal spec and acceptance limits](docs/TAKE_IT_DOWN.md).
 
 ## Contributing
 

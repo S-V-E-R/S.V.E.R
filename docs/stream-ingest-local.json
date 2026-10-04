@@ -1,6 +1,6 @@
 {
   "authenticated_real_callbacks": true,
-  "checked_at": "2026-10-03T07:36:04.672312Z",
+  "checked_at": "2026-10-04T15:50:45.546710700Z",
   "hls_audio_video_decode": true,
   "key_rejection": true,
   "latency_acceptance": false,
@@ -12,6 +12,7 @@
     "live deployment"
   ],
   "passed": true,
+  "playback_denies_when_authorization_unavailable": true,
   "reconnect_preserves_broadcast": true,
   "reconnect_publish_attempts": 2,
   "rotation_disconnects_and_rejects_old_key": true,
@@ -19,5 +20,8 @@
   "single_publisher": true,
   "srs_image": "ossrs/srs@sha256:2e96f38660211b8e8dd324bee0d3ade90f1e44ab815813a1684eb78ab2ad17d6",
   "srs_version": "7.0.157",
-  "stop_confirms_disconnect_and_rejects_reconnect": true
+  "stop_confirms_disconnect_and_rejects_reconnect": true,
+  "take_down_blocks_saved_hls_and_whep": true,
+  "take_down_rejects_republish": true,
+  "take_down_stops_publisher": true
 }

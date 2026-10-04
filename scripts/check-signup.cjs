@@ -32,13 +32,19 @@ global.fetch = async (url, options = {}) => {
   requests.push({ url, body: JSON.parse(options.body) });
   return reply({}); // Do not navigate away in this component check.
 };
-const source = ts.transpileModule(fs.readFileSync("apps/web/app/screens.tsx", "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+const compile = file => ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+const source = compile("apps/web/app/screens.tsx");
 const compiled = { exports: {} };
 vm.runInThisContext(`(function(require, module, exports) {${source}\n})`, { filename: "screens.test.cjs" })(name => {
   if (name === "next/link") return ({ href, children, ...props }) => React.createElement("a", { href, ...props }, children);
   if (name === "next/script") return function Script({ onReady }) { React.useEffect(onReady, []); return null; };
   // Account-only media is outside these signup checks.
   if (name === "../components/Avatar") return { Avatar: () => null };
+  if (name === "../components/Turnstile") {
+    const component = { exports: {} };
+    vm.runInThisContext(`(function(require,module,exports){${compile("apps/web/components/Turnstile.tsx")}\n})`)(dependency => dependency === "next/script" ? function Script({onReady}) { React.useEffect(onReady,[]); return null; } : webRequire(dependency),component,component.exports);
+    return component.exports;
+  }
   return webRequire(name);
 }, compiled, compiled.exports);
 const root = createRoot(document.getElementById("root"));

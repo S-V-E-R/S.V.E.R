@@ -94,6 +94,75 @@ fn identifier(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
+// Only paths emitted by our HLS config and the public WHEP endpoint may reach SRS.
+fn playback_id(uri: &str) -> Option<String> {
+    if uri.len() > 1024 {
+        return None;
+    }
+    let uri: axum::http::Uri = uri.parse().ok()?;
+    if uri.scheme().is_some() || uri.authority().is_some() {
+        return None;
+    }
+    let id = if uri.path() == "/rebuild/whep/" {
+        let params: Vec<_> = url::form_urlencoded::parse(uri.query()?.as_bytes()).collect();
+        if params.len() != 2
+            || params
+                .iter()
+                .filter(|(k, v)| k == "app" && v == "rebuild")
+                .count()
+                != 1
+        {
+            return None;
+        }
+        params.iter().find(|(k, _)| k == "stream")?.1.to_string()
+    } else {
+        let file = uri.path().strip_prefix("/rebuild/")?;
+        if let Some(id) = file.strip_suffix(".m3u8") {
+            id.to_string()
+        } else {
+            let parts: Vec<_> = file.strip_suffix(".ts")?.split('-').collect();
+            if parts.len() != 3
+                || !parts[1..].iter().all(|p| {
+                    !p.is_empty() && p.len() <= 20 && p.bytes().all(|b| b.is_ascii_digit())
+                })
+            {
+                return None;
+            }
+            parts[0].to_string()
+        }
+    };
+    (id.len() == 32
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    .then_some(id)
+}
+/// Nginx auth_request gate. A stopped/revoked publisher must not leave replayable HLS files.
+async fn authorize_playback(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<StatusCode> {
+    authorize_hook(&app, peer, &headers)?;
+    let id = headers
+        .get("x-original-uri")
+        .and_then(|v| v.to_str().ok())
+        .and_then(playback_id)
+        .ok_or_else(|| Error::denied("Playback is unavailable."))?;
+    let owner: Option<String> = sqlx::query_scalar("SELECT b.owner_id FROM broadcasts b JOIN stream_credentials c ON c.owner_id=b.owner_id AND c.public_id=b.public_id AND c.generation=b.generation WHERE b.public_id=$1 AND c.revoked_at IS NULL AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>clock_timestamp()))")
+        .bind(id).fetch_optional(&app.db).await?;
+    if let Some(owner) = owner {
+        let mut db = app.db.acquire().await?;
+        if profiles::channel_user_by_id(&mut db, &owner)
+            .await
+            .map_err(|_| Error::unavailable())?
+            .is_some_and(|u| u.eligible)
+        {
+            return Ok(StatusCode::NO_CONTENT);
+        }
+    }
+    Err(Error::denied("Playback is unavailable."))
+}
 fn conflict(message: &'static str) -> Error {
     Error(StatusCode::CONFLICT, message, None)
 }
@@ -363,6 +432,16 @@ pub async fn stop(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>>
         json!({"broadcast_closed":true,"key_revoked":true,"disconnect_pending":pending}),
     ))
 }
+/// Staff removals must wait for the media server to confirm that a revoked publisher is gone.
+pub async fn confirm_stopped(app: &App, owner: &str) -> Result<bool> {
+    drain_stops(app, Some(owner)).await?;
+    Ok(!sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM stream_stop_jobs WHERE owner_id=$1)",
+    )
+    .bind(owner)
+    .fetch_one(&app.db)
+    .await?)
+}
 
 #[derive(Deserialize)]
 pub struct Hook {
@@ -547,6 +626,7 @@ pub async fn hook(
 }
 pub fn routes() -> Router<App> {
     Router::new()
+        .route("/api/internal/streams/playback", get(authorize_playback))
         .route("/api/categories", get(categories))
         .route("/api/me/stream", get(mine).patch(save))
         .route("/api/me/stream/health", get(mine))

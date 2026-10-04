@@ -1,7 +1,7 @@
 "use client";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import Script from "next/script";
+import { Turnstile } from "../components/Turnstile";
 import { Avatar } from "../components/Avatar";
 import type { Sizes } from "../lib/types";
 
@@ -16,16 +16,6 @@ async function request<T = Reply>(path: string, data?: unknown, method?: string)
   const result = await response.json().catch(() => ({ error: "The service could not be reached. Please try again." }));
   if (!response.ok) throw new Error(result.error || "The request could not be completed.");
   return result as T;
-}
-function Turnstile({ sitekey, action, onToken }: { sitekey: string; action: string; onToken: (s: string) => void }) {
-  const root = useRef<HTMLDivElement>(null);
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    if (!ready || !window.turnstile || !root.current) return;
-    const id = window.turnstile.render(root.current, { sitekey, action, theme: "dark", callback: onToken, "expired-callback": () => onToken(""), "error-callback": () => onToken("") });
-    return () => { window.turnstile?.remove(id); };
-  }, [ready, sitekey, action, onToken]);
-  return <><Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" onReady={() => setReady(true)} /><div ref={root} className="turnstile" /></>;
 }
 function Field({ label, name, type = "text", autoComplete, minLength, maxLength, hint, required = true, pattern }: { label: string; name: string; type?: string; autoComplete?: string; minLength?: number; maxLength?: number; hint?: string; required?: boolean; pattern?: string }) {
   return <label className="field" htmlFor={name}><span>{label}</span><input id={name} name={name} type={type} autoComplete={autoComplete} required={required} minLength={minLength} maxLength={maxLength} pattern={pattern} aria-describedby={hint ? `${name}-hint` : undefined} />{hint && <small id={`${name}-hint`}>{hint}</small>}</label>;

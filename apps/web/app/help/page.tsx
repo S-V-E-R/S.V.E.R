@@ -39,6 +39,7 @@ export default function HelpPage() {
     </section>
     <section id="safety">
       <h2>Safety & support</h2>
+      <details><summary>How do I get an intimate image removed?</summary><p>Use <Link href="/take-it-down">Take It Down requests</Link>, even without an account. Give the S.V.E.R links, your contact details, authority to act, good-faith statement and electronic signature. Do not upload a copy of the image. We review valid requests as soon as possible, within 48 hours including weekends and holidays. Keep your request number to check the outcome.</p></details>
       <details><summary>How do I report content or appeal a decision?</summary><p>Use report controls on channels, Wall posts and fan art, or contact <a href="mailto:safety@sver.tv">safety@sver.tv</a> with the relevant URL. You do not need an account to email. Track site reports in <Link href="/settings/reports">My reports</Link> and review platform actions or available appeals in <Link href="/settings/standing">Account standing</Link>.</p></details>
       <details><summary>How do I get help with something else?</summary><p>Visit <Link href="/contact">Contact</Link> for account help, privacy requests, copyright notices and appeals. Include your username and a description of the issue. Never send passwords, authenticator codes, recovery codes or stream keys.</p></details>
     </section>

@@ -93,6 +93,40 @@ fn select() -> String {
     )
 }
 
+/// Refresh a moderation change for already-connected viewers after its database commit.
+pub async fn notify_changed(app: &App, id: &str) -> Res<()> {
+    let row: Option<(String, bool)> =
+        sqlx::query_as("SELECT channel_id,deleted_at IS NOT NULL FROM chat_messages WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&app.db)
+            .await?;
+    let Some((channel, hidden)) = row else {
+        return Ok(());
+    };
+    if hidden {
+        app.chat
+            .publish(&channel, None, 0, json!({"type":"delete","id":id}));
+    } else {
+        let message: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{} WHERE m.id=$1 AND m.deleted_at IS NULL AND m.expires_at>now()",
+            select()
+        )))
+        .bind(id)
+        .fetch_optional(&app.db)
+        .await?;
+        if let Some(message) = message {
+            let author = message.author_id.clone();
+            app.chat.publish(
+                &channel,
+                Some(&author),
+                0,
+                json!({"type":"message","message":message.json(app)}),
+            );
+        }
+    }
+    Ok(())
+}
+
 /// The channel's owner id; unknown, deleted and restricted channels get the same 404 as profiles.
 async fn channel(app: &App, name: &str) -> Res<String> {
     let mut conn = app.db.acquire().await?;

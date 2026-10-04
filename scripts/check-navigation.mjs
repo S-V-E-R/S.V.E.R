@@ -33,7 +33,7 @@ try {
   assert.match(navigation(await (await get("/signup")).text()), /href="\/login"/);
   assert.match(navigation(await (await get("/login", "sver_dev=invalid")).text()), /href="\/signup"/);
   // Public site pages never require a session or go through channel tab redirects.
-  const sitePages = [["/about", "About S.V.E.R"], ["/factions", "Meet the factions"], ["/roadmap", "The road ahead"], ["/help", "Help &amp; FAQ"], ["/terms", "Terms of Service"], ["/privacy", "Privacy Policy"], ["/guidelines", "Community Guidelines"], ["/dmca", "Copyright &amp; DMCA"], ["/contact", "Contact S.V.E.R"]];
+  const sitePages = [["/about", "About S.V.E.R"], ["/factions", "Three factions. One family."], ["/roadmap", "The road ahead"], ["/help", "Help &amp; FAQ"], ["/terms", "Terms of Service"], ["/privacy", "Privacy Policy"], ["/guidelines", "Community Guidelines"], ["/dmca", "Copyright &amp; DMCA"], ["/contact", "Contact S.V.E.R"], ["/take-it-down", "Take It Down requests"]];
   for (const [path, title] of sitePages) {
     for (const cookie of ["", "sver_dev=invalid", `sver_dev=${token}`]) {
       const response = await get(`${path}?tab=wall`, cookie);
@@ -42,7 +42,7 @@ try {
       assert.ok(html.includes(`<h1>${title}</h1>`), `${path} must render its own content`);
       assert.match(html, /data-theme="neutral"/, "The current server-rendered theme is neutral");
       assert.doesNotMatch(html, /<aside class="sidebar"/, `${path} must omit the application sidebar`);
-      if (["/terms", "/privacy", "/guidelines", "/dmca"].includes(path)) {
+      if (["/terms", "/privacy", "/guidelines", "/dmca", "/take-it-down"].includes(path)) {
         assert.match(html, /The short version/);
         assert.match(html, /aria-label="On this page"/);
         for (const [, anchor] of html.matchAll(/href="#(section-\d+)"/g)) assert.ok(html.includes(`id="${anchor}"`), `Policy anchor ${anchor} must exist`);

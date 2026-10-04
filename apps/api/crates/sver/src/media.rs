@@ -30,6 +30,8 @@ use std::{io::Cursor, path::PathBuf};
 
 /// Body limit for upload routes (10 MB banners plus multipart overhead; nginx allows 11 MB).
 pub const UPLOAD_LIMIT: usize = 11 * 1024 * 1024;
+#[path = "media_removal.rs"]
+pub mod removal;
 
 #[derive(Clone, Debug)]
 pub struct S3 {
@@ -288,15 +290,22 @@ impl Storage {
     }
     pub async fn get(&self, http: &reqwest::Client, key: &str) -> Res<Option<Vec<u8>>> {
         match self {
-            Storage::Filesystem(dir) => Ok(tokio::fs::read(dir.join(key)).await.ok()),
+            Storage::Filesystem(dir) => match tokio::fs::read(dir.join(key)).await {
+                Ok(bytes) => Ok(Some(bytes)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(_) => Err(Fail::unavailable("Image storage is unavailable.")),
+            },
             Storage::S3(s3) => {
                 let response = s3
                     .request(http, reqwest::Method::GET, key, b"")?
                     .send()
                     .await
                     .map_err(|_| Fail::unavailable("Image storage is unavailable."))?;
-                if !response.status().is_success() {
+                if response.status() == StatusCode::NOT_FOUND {
                     return Ok(None);
+                }
+                if !response.status().is_success() {
+                    return Err(Fail::unavailable("Image storage is unavailable."));
                 }
                 Ok(Some(
                     response
@@ -371,6 +380,7 @@ pub struct Processed {
     /// The value stored on the owning row (prefix or full key, see `stored_prefix`).
     pub stored: String,
     pub variants: Vec<Variant>,
+    pub fingerprints: Vec<String>,
 }
 
 pub fn sniff(bytes: &[u8]) -> Option<image::ImageFormat> {
@@ -457,8 +467,9 @@ fn content_hash(bytes: &[u8], kind: Kind, crop: &Crop) -> String {
 /// Decodes, validates, crops, resizes and re-encodes an image. CPU-bound: run on a blocking thread.
 pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
     let image = decode(bytes, kind)?;
+    let fingerprints = removal::fingerprints(bytes, &image);
     let (width, height) = image.dimensions();
-    match kind {
+    let mut processed = match kind {
         Kind::Avatar | Kind::Banner => {
             let (ratio, min_w, min_h) = if kind == Kind::Avatar {
                 (1.0, 128, 128)
@@ -509,9 +520,10 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
                         height: size,
                     });
                 }
-                Ok(Processed {
+                Ok::<Processed, Fail>(Processed {
                     stored: prefix,
                     variants,
+                    fingerprints,
                 })
             } else {
                 let prefix = format!("banners/{hash}");
@@ -533,6 +545,7 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
                 Ok(Processed {
                     stored: format!("{prefix}@{largest}"),
                     variants,
+                    fingerprints,
                 })
             }
         }
@@ -562,6 +575,7 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
             let (w, h) = resized.dimensions();
             Ok(Processed {
                 stored: key.clone(),
+                fingerprints,
                 variants: vec![Variant {
                     key,
                     bytes: encode(&resized)?,
@@ -605,9 +619,20 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
             Ok(Processed {
                 stored: prefix,
                 variants,
+                fingerprints,
             })
         }
+    }?;
+    for variant in &processed.variants {
+        let image = image::load_from_memory_with_format(&variant.bytes, image::ImageFormat::WebP)
+            .map_err(|_| Fail::internal())?;
+        processed
+            .fingerprints
+            .extend(removal::fingerprints(&variant.bytes, &image));
     }
+    processed.fingerprints.sort();
+    processed.fingerprints.dedup();
+    Ok(processed)
 }
 /// Import-only fallback for a legacy banner whose centered 3:1 crop is below the 1200x400
 /// minimum: the same centered crop is upscaled (Lanczos3) to exactly 1200x400 and returned as
@@ -637,6 +662,8 @@ pub async fn process_async(bytes: Vec<u8>, kind: Kind, crop: Option<Crop>) -> Re
 
 /// Uploads every variant before the database change commits. On failure, removes what it wrote.
 pub async fn store(app: &App, processed: &Processed) -> Res<()> {
+    let mut tx = app.db.begin().await?;
+    removal::upload_allowed(&mut tx, processed).await?;
     let mut written = Vec::new();
     for variant in &processed.variants {
         if let Err(e) = app
@@ -652,7 +679,10 @@ pub async fn store(app: &App, processed: &Processed) -> Res<()> {
             return Err(e);
         }
         written.push(&variant.key);
+        sqlx::query("INSERT INTO media_objects(key,kind,bytes,width,height,delete_after,fingerprinted) VALUES($1,'pending',$2,$3,$4,now()+interval '1 hour',true) ON CONFLICT DO NOTHING")
+            .bind(&variant.key).bind(variant.bytes.len() as i64).bind(variant.width as i32).bind(variant.height as i32).execute(&mut *tx).await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 /// Records stored variants (clearing any pending deletion of identical content).
@@ -662,8 +692,9 @@ pub async fn record(
     kind: Kind,
     processed: &Processed,
 ) -> Res<()> {
+    removal::upload_allowed(db, processed).await?;
     for v in &processed.variants {
-        sqlx::query("INSERT INTO media_objects(key,owner_id,kind,bytes,width,height) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (key) DO UPDATE SET delete_after=NULL,owner_id=EXCLUDED.owner_id")
+        sqlx::query("INSERT INTO media_objects(key,owner_id,kind,bytes,width,height,fingerprinted) VALUES($1,$2,$3,$4,$5,$6,true) ON CONFLICT (key) DO UPDATE SET delete_after=NULL,owner_id=EXCLUDED.owner_id,kind=EXCLUDED.kind,fingerprinted=true")
             .bind(&v.key)
             .bind(owner)
             .bind(kind.name())
@@ -858,6 +889,13 @@ pub async fn serve_local(State(app): State<App>, Path(key): Path<String>) -> Res
     if !valid_key(&key) || !key.ends_with(".webp") {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let held = match app.db.acquire().await {
+        Ok(mut db) => removal::held(&mut db, &key).await.unwrap_or(true),
+        Err(_) => true,
+    };
+    if held {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let dir = match &app.config.media.storage {
         Storage::Filesystem(dir) => dir,
         // After moving to a bucket, URLs issued under the interim filesystem store keep working:
@@ -888,11 +926,27 @@ pub async fn serve_local(State(app): State<App>, Path(key): Path<String>) -> Res
 /// Deletes queued objects from storage, except media retained by open report snapshots or
 /// strikes. Runs from the maintenance job.
 pub async fn cleanup(app: &App) -> Res<usize> {
-    let keys: Vec<String> = sqlx::query_scalar("SELECT m.key FROM media_objects m WHERE m.delete_after<=now() AND NOT EXISTS(SELECT 1 FROM reports r WHERE r.status='OPEN' AND position(split_part(split_part(m.key,'/',1)||'/'||split_part(m.key,'/',2),'@',1) IN r.snapshot::text)>0) AND NOT EXISTS(SELECT 1 FROM strikes s WHERE position(split_part(split_part(m.key,'/',1)||'/'||split_part(m.key,'/',2),'@',1) IN s.content_snapshot::text)>0) ORDER BY m.delete_after LIMIT 100")
+    let keys: Vec<String> = sqlx::query_scalar("SELECT m.key FROM media_objects m WHERE m.delete_after<=now() AND NOT EXISTS(SELECT 1 FROM media_removal_holds h WHERE m.key=h.root OR m.key LIKE h.root||'/%') AND NOT EXISTS(SELECT 1 FROM reports r WHERE r.status='OPEN' AND position(split_part(split_part(m.key,'/',1)||'/'||split_part(m.key,'/',2),'@',1) IN r.snapshot::text)>0) AND NOT EXISTS(SELECT 1 FROM strikes s WHERE position(split_part(split_part(m.key,'/',1)||'/'||split_part(m.key,'/',2),'@',1) IN s.content_snapshot::text)>0) ORDER BY m.delete_after LIMIT 100")
         .fetch_all(&app.db)
         .await?;
     let mut deleted = 0;
     for key in keys {
+        let mut tx = app.db.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(1414087745)")
+            .execute(&mut *tx)
+            .await?;
+        if removal::held(&mut tx, &key).await? {
+            continue;
+        }
+        let pending: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM media_objects WHERE key=$1 AND delete_after<=now())",
+        )
+        .bind(&key)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !pending {
+            continue;
+        }
         if app
             .config
             .media
@@ -903,10 +957,11 @@ pub async fn cleanup(app: &App) -> Res<usize> {
         {
             sqlx::query("DELETE FROM media_objects WHERE key=$1 AND delete_after<=now()")
                 .bind(&key)
-                .execute(&app.db)
+                .execute(&mut *tx)
                 .await?;
             deleted += 1;
         }
+        tx.commit().await?;
     }
     Ok(deleted)
 }

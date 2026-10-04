@@ -17,6 +17,8 @@ use sqlx::postgres::PgPoolOptions;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use sver::{App, Config, media, profile_import, security as sec, studio};
 use tower::ServiceExt;
+#[path = "profiles/take_down.rs"]
+mod take_down;
 
 #[derive(Clone)]
 struct Client {
@@ -248,6 +250,40 @@ async fn profiles_acceptance() {
         .await
         .unwrap();
     let fake = Router::new()
+        .route(
+            "/mail",
+            axum::routing::post(|headers: HeaderMap| async move {
+                assert!(headers.contains_key("idempotency-key"));
+                if headers
+                    .get("authorization")
+                    .is_some_and(|h| h == "Bearer synthetic-mail-ok")
+                {
+                    StatusCode::OK
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            }),
+        )
+        .route(
+            "/purge",
+            axum::routing::post(|headers: HeaderMap| async move {
+                if headers
+                    .get("authorization")
+                    .is_some_and(|h| h == "Bearer synthetic-purge-ok")
+                {
+                    (StatusCode::OK, axum::Json(json!({"success":true})))
+                } else {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        axum::Json(json!({"success":false})),
+                    )
+                }
+            }),
+        )
+        .route(
+            "/turnstile",
+            axum::routing::post(|| async { axum::Json(json!({"success":true})) }),
+        )
         .route("/oembed", get(oembed))
         .route("/thumb.png", get(|| async { png(480, 360) }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -260,8 +296,10 @@ async fn profiles_acceptance() {
     ));
     std::fs::create_dir_all(&media_dir).unwrap();
     let mut config = Config::from_env().unwrap();
-    config.turnstile_secret = "test-only-secret".into();
+    config.turnstile_secret = "1x000-test-only-secret".into();
+    config.turnstile_url = format!("{base}/turnstile");
     config.resend_key.clear();
+    config.staff_push = Default::default();
     config.media = media::MediaConfig {
         storage: media::Storage::Filesystem(media_dir.clone()),
         public_base: format!("{}/api/media", config.origin),
@@ -286,6 +324,7 @@ async fn profiles_acceptance() {
         let env = env.clone();
         let media_dir = media_dir.clone();
         async move {
+            take_down::exercise(&env, &media_dir).await;
             identity_and_channel(&env, &media_dir).await;
             bucket_redirects(&env).await;
             follows_council_and_blocks(&env).await;

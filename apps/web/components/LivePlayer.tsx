@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
-import { ReportButton } from "./Report";
+import { ReportButton, TakeDownLink } from "./Report";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Live =
@@ -152,6 +152,6 @@ export function LivePlayer({ username, focused = false, signedIn = false, childr
     {status && <p className="player-status" role="status">{status}</p>}
     {phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
-    <p className="live-meta"><span className="live badge">Live</span> <strong>{live.title}</strong>{live.category && <span className="muted"> · {live.category}</span>} <span className="muted">· {live.viewers.toLocaleString()} watching</span> {signedIn && !live.is_owner && <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" />}</p>
+    <p className="live-meta"><span className="live badge">Live</span> <strong>{live.title}</strong>{live.category && <span className="muted"> · {live.category}</span>} <span className="muted">· {live.viewers.toLocaleString()} watching</span> {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</p>
   </div>;
 }

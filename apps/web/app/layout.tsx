@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Barlow, Barlow_Condensed, Cinzel } from "next/font/google";
 import Link from "next/link";
 import SiteShell from "../components/SiteShell";
+import { StaffRemovalAlerts } from "../components/StaffRemovalAlerts";
 import { BellIcon, MagnetMark } from "../components/shell/Icons";
 import { SideNav } from "../components/shell/SideNav";
 import type { PeoplePage } from "../components/People";
@@ -42,6 +43,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   const actions = account
     ? <>
+      <StaffRemovalAlerts />
       <Link href="/settings/profile" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
       <Link href={`/${account.username}`} className="player-chip">
         {/* Crest placeholder until Module 4 gives the account a faction. */}

@@ -3,6 +3,7 @@ import Link from "next/link";
 const policyLinks = [
   ["/terms", "Terms"], ["/privacy", "Privacy"],
   ["/guidelines", "Guidelines"], ["/dmca", "Copyright & DMCA"],
+  ["/take-it-down", "Take It Down requests"],
 ] as const;
 
 export default function SitePage({ path, title, intro, children, policy = false, wide = false }: {
@@ -19,7 +20,7 @@ export default function SitePage({ path, title, intro, children, policy = false,
       <h1>{title}</h1>
       <p className="site-intro">{intro}</p>
       {policy && <>
-        <p className="site-updated">Last updated <time dateTime="2026-10-03">October 3, 2026</time> · Effective <time dateTime="2026-10-03">October 3, 2026</time></p>
+        <p className="site-updated">Last updated <time dateTime={path === "/dmca" ? "2026-10-03" : "2026-10-04"}>October {path === "/dmca" ? "3" : "4"}, 2026</time> · Effective <time dateTime={path === "/take-it-down" ? "2026-10-04" : "2026-10-03"}>October {path === "/take-it-down" ? "4" : "3"}, 2026</time></p>
         <nav className="site-links policy-tabs" aria-label="Policies">{policyLinks.map(([href, label]) =>
           <Link key={href} href={href} aria-current={path === href ? "page" : undefined}>{label}</Link>)}</nav>
       </>}

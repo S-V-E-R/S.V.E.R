@@ -24,6 +24,8 @@ use serde_json::{Value, json};
 /// Writes a banned account may still make: account security (all of Login), standing and appeals.
 fn allowed_while_banned(path: &str) -> bool {
     path.starts_with("/api/auth/")
+        || path == "/api/take-it-down"
+        || path == "/api/take-it-down/status"
         || path.starts_with("/api/me/strikes/")
         || path.starts_with("/api/me/bans/")
         || path == "/api/me/reports/seen"

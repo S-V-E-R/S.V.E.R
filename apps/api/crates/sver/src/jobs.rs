@@ -28,8 +28,38 @@ struct Mail {
     id: String,
     payload: String,
     attempts: i32,
+    retry_until_expiry: bool,
+}
+/// Transactional mail for a contact who may not have a S.V.E.R account.
+pub async fn queue_address(
+    app: &App,
+    db: &mut PgConnection,
+    user_id: Option<&str>,
+    email: &str,
+    subject: &str,
+    body: &str,
+) -> Result<String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let payload = json!({"to":[email],"subject":subject,"text":body});
+    sqlx::query("INSERT INTO mail_jobs(id,user_id,payload,expires_at,retry_until_expiry) VALUES($1,$2,$3,now()+interval '7 days',true)")
+        .bind(&id).bind(user_id).bind(sec::seal(app,"mail",&payload.to_string())?).execute(db).await?;
+    Ok(id)
+}
+/// Existing account notices keep their normal retry budget unless a removal case owns them.
+pub async fn removal_notice(db: &mut PgConnection, id: &str) -> Result<()> {
+    sqlx::query("UPDATE mail_jobs SET retry_until_expiry=true,expires_at=greatest(expires_at,created_at+interval '7 days') WHERE id=$1")
+        .bind(id).execute(db).await?;
+    Ok(())
 }
 pub async fn tick(app: &App) -> Result<()> {
+    // Deliver urgent notices before historical media indexing or other maintenance work.
+    if crate::staff_push::tick(app).await.is_err() {
+        eprintln!("staff_push_event=delivery outcome=retry");
+    }
+    deliver_mail(app).await?;
+    if crate::take_down::tick(app).await.is_err() {
+        eprintln!("take_down_event=maintenance outcome=retry");
+    }
     // Only this rebuild database is touched. Future modules extend the user FK erasure policy.
     // Module 2 erasure steps run first so holds, report closures and counts are kept consistent.
     crate::profile_jobs::tick(app).await?;
@@ -38,13 +68,21 @@ pub async fn tick(app: &App) -> Result<()> {
     )
     .execute(&app.db)
     .await?;
+    let mut tx = app.db.begin().await?;
+    let expired: Vec<String> =
+        sqlx::query_scalar("DELETE FROM mail_jobs WHERE expires_at<=now() RETURNING id")
+            .fetch_all(&mut *tx)
+            .await?;
+    for id in expired {
+        crate::take_down::notice_result(&mut tx, &id, "expired", false).await?;
+    }
+    tx.commit().await?;
     for table in [
         "challenges",
         "oauth_states",
         "oauth_signups",
         "sessions",
         "rate_limits",
-        "mail_jobs",
         "playback_leases",
         "chat_messages",
     ] {
@@ -55,12 +93,16 @@ pub async fn tick(app: &App) -> Result<()> {
         .execute(&app.db)
         .await?;
     }
+    Ok(())
+}
+
+async fn deliver_mail(app: &App) -> Result<()> {
     if app.config.resend_key.is_empty() {
         return Ok(());
     }
     for _ in 0..20 {
         let mut tx = app.db.begin().await?;
-        let mail:Option<Mail>=sqlx::query_as("SELECT * FROM mail_jobs WHERE available_at<=now() AND attempts<10 AND expires_at>now() ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await?;
+        let mail:Option<Mail>=sqlx::query_as("SELECT * FROM mail_jobs WHERE available_at<=now() AND (attempts<10 OR retry_until_expiry) AND expires_at>now() ORDER BY retry_until_expiry DESC,available_at FOR UPDATE SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await?;
         let Some(mail) = mail else {
             return Ok(());
         };
@@ -76,13 +118,21 @@ pub async fn tick(app: &App) -> Result<()> {
             .send()
             .await
             .is_ok_and(|r| r.status().is_success());
+        let state = if delivered {
+            "accepted"
+        } else if !mail.retry_until_expiry && mail.attempts >= 9 {
+            "failed"
+        } else {
+            "retrying"
+        };
+        crate::take_down::notice_result(&mut tx, &mail.id, state, true).await?;
         if delivered {
             sqlx::query("DELETE FROM mail_jobs WHERE id=$1")
                 .bind(mail.id)
                 .execute(&mut *tx)
                 .await?;
         } else {
-            let delay = (30_i32 * 2_i32.pow(mail.attempts as u32)).min(1800);
+            let delay = (30_i32 * 2_i32.pow(mail.attempts.min(6) as u32)).min(1800);
             sqlx::query("UPDATE mail_jobs SET attempts=attempts+1,available_at=now()+make_interval(secs=>$2) WHERE id=$1").bind(mail.id).bind(delay as f64).execute(&mut *tx).await?;
             eprintln!(
                 "Email delivery failed; queued for retry (attempt {}).",

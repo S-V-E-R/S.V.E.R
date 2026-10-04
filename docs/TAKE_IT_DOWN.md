@@ -43,7 +43,7 @@ Optional: anything else that helps (other places it appears).
 
 ## Records
 
-Every request keeps: request number, received time, requester contact, the four parts, content located, actions with times and staff, outcome, and notices sent. Kept for 3 years (**Proposed**), access limited to staff, and used for a monthly compliance check (requests received, median and longest time to removal, any over 48 hours).
+Every request keeps: request number, received time, requester contact, the four parts, content located, actions with times and staff, outcome, and notices sent. Kept for 3 years (confirmed October 4, 2026), access limited to staff, and used for a monthly compliance check (requests received, median and longest time to removal, any over 48 hours).
 
 ## Policy text to add
 
@@ -55,3 +55,19 @@ Every request keeps: request number, received time, requester contact, the four 
 ## Done when
 
 The footer link appears on every page; a signed-out visitor submits a request with the four required parts and gets a request number and email; the content is hidden immediately and staff are alerted; staff remove it with the 48-hour countdown visible; an identical copy uploaded elsewhere is found and removed, and a re-upload is blocked; the requester and uploader are notified; the status page shows the outcome; records are complete; an invalid request restores the content.
+
+## Implementation status — October 4, 2026
+
+The request workflow is implemented locally, pending deployment and live acceptance; playback authorization has shipped separately, as described below. Migration 0014 adds encrypted request records, action and email-delivery records, reversible media holds, image fingerprints and staff push jobs. Staff access uses the existing admin role and MFA rules; decisions and evidence viewing require a recent sign-in. Ordinary completed records expire three years after receipt. Valid cases involving a minor retain a legal hold and require a CyberTipline/preservation reference before closure. Reporting to CyberTipline is a staff action, not an automated submission.
+
+Migration 0015 adds durable notification outcomes. Requester, staff and uploader emails take priority and retry for up to seven days; login emails keep their existing retry limit. Security resets retain these removal notices. Staff push attempts expire after two days, with hourly reminders for unresolved requests after the first 24 hours. The staff case record shows pending, retrying, accepted, failed and expired notices after queue cleanup. Provider acceptance does not establish receipt or reading. Missing email or push destinations are recorded, and staff follow up through an available channel. Saved preservation references and minor flags survive subsequent review actions.
+
+The direct playback proxy now checks current stream authorization on every HLS playlist/segment and new WHEP request. Staff stopping a stream revokes its playback URLs immediately, including saved URLs for files still in SRS's rolling buffer. Responses use `no-store`. The private check requires the existing media-proxy secret and peer address, validates the media path, and refuses retired keys, ended streams and expired reconnect windows. It uses Nginx's [auth_request module](https://nginx.org/en/docs/http/ngx_http_auth_request_module.html); the API and playback proxy configuration must ship together, with the API activated first. Future CDN delivery must enforce equivalent revocation before it is enabled.
+
+Playback authorization was deployed independently on October 4, without new migrations. Public checks confirmed denial of inactive HLS playlists, segment GET/HEAD requests and new WHEP requests, `no-store` responses, and rejection of public access to the private authorization endpoint. Health, the public roadmap and other services were preserved. A disposable Linux rehearsal verified both allowed live playback and denied revoked playback with the release image. These checks do not establish successful production browser playback or acceptance of the undeployed request workflow.
+
+The isolated SRS/FFmpeg acceptance test now covers anonymous live-stream reporting, staff review, publisher disconnect, saved HLS URL denial, WHEP denial, final requester status and rejection of republishing. Its receipt is [stream-ingest-local.json](stream-ingest-local.json). This is direct local playback verification; it does not establish browser, CDN, capacity or production acceptance.
+
+Image matching covers original upload bytes, decoded pixels and generated variants across the current avatar, banner, song, sponsor, setup and fan-art pipelines. Historical uploads can only be indexed from their surviving published files. Cropped or otherwise edited copies are not perceptual matches. Future video uploads and live video-frame matching still require media-pipeline work; live requests currently use the existing stream-stop process. Do not treat this as complete video fingerprint coverage.
+
+Acceptance still needs a working production cache-purge credential, end-to-end staff email/push and browser checks, and review of the legal text/process. Internal service accounts keep their existing exemption from strikes; their content is removed and a staff-access review is recorded.

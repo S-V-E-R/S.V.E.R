@@ -125,7 +125,7 @@ impl Rig {
             docker(&["network", "rm", &self.name])?;
             self.network = false;
         }
-        for name in ["srs.conf", "nginx.conf"] {
+        for name in ["srs.conf", "nginx.conf", "secret.conf"] {
             let file = self.directory.join(name);
             if file.exists() {
                 fs::remove_file(file).map_err(|_| "Temporary file cleanup failed")?;
@@ -262,7 +262,28 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
     let address = listener.local_addr().unwrap();
     let secret = sec::token();
     fs::write(rig.directory.join("srs.conf"), "listen 1935;\ndaemon off;\nsrs_log_tank console;\nsrs_log_level error;\nhttp_api { enabled on; listen 1985; }\nhttp_server { enabled on; listen 8080; dir /media; }\nvhost __defaultVhost__ {\n play { gop_cache off; }\n hls { enabled on; hls_path /media; hls_ctx off; hls_fragment 1; hls_window 6; hls_wait_keyframe on; hls_ts_file [app]/[stream]-[timestamp]-[seq].ts; }\n http_hooks { enabled on; on_publish http://hooks:8089/publish; on_unpublish http://hooks:8089/unpublish; }\n}\n").unwrap();
-    fs::write(rig.directory.join("nginx.conf"), format!("events {{}}\nhttp {{ access_log off; error_log /dev/null; server {{ listen 8089; location / {{ proxy_set_header x-srs-secret {secret}; proxy_pass http://host.docker.internal:{}/api/internal/srs/; }} }} }}", address.port())).unwrap();
+    let playback_config = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../infra/media/nginx-stream-playback.conf"),
+    )
+    .unwrap()
+    .replace("127.0.0.1:8090", "origin:8080")
+    .replace("127.0.0.1:1986", "origin:1985")
+    .replace(
+        "127.0.0.1:18080",
+        &format!("host.docker.internal:{}", address.port()),
+    )
+    .replace("proxy_bind 127.0.0.2;", "")
+    .replace(
+        "/etc/nginx/sver-rebuild-hook-secret.conf",
+        "/fixture/secret.conf",
+    );
+    fs::write(
+        rig.directory.join("secret.conf"),
+        format!("proxy_set_header x-srs-secret {secret};\n"),
+    )
+    .unwrap();
+    fs::write(rig.directory.join("nginx.conf"), format!("events {{}}\nhttp {{ access_log off; error_log /dev/null; server {{ listen 8089; location / {{ proxy_set_header x-srs-secret {secret}; proxy_pass http://host.docker.internal:{}/api/internal/srs/; }} }} server {{ listen 8091; {playback_config} }} }}", address.port())).unwrap();
     docker(&[
         "network",
         "create",
@@ -283,19 +304,11 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
             .to_string_lossy()
             .replace('\\', "/")
     );
-    rig.start(
-        "hooks",
-        &[
-            "--network-alias",
-            "hooks",
-            "-v",
-            &nginx_mount,
-            "nginx:1.28-alpine",
-        ],
-    );
     let srs = rig.start(
         "srs",
         &[
+            "--network-alias",
+            "origin",
             "-p",
             "127.0.0.1::1935",
             "-p",
@@ -312,12 +325,30 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
             "/fixture/srs.conf",
         ],
     );
+    let proxy = rig.start(
+        "hooks",
+        &[
+            "--network-alias",
+            "hooks",
+            "-p",
+            "127.0.0.1::8091",
+            "-v",
+            &nginx_mount,
+            "-v",
+            &mount,
+            "nginx:1.28-alpine",
+        ],
+    );
     let api = format!("http://127.0.0.1:{}", port(&srs, "1985/tcp"));
     let ingest = format!("rtmp://127.0.0.1:{}/rebuild", port(&srs, "1935/tcp"));
     let origin = format!("http://127.0.0.1:{}", port(&srs, "8080/tcp"));
+    let public = format!("http://127.0.0.1:{}", port(&proxy, "8091/tcp"));
     let mut config = Config::from_env().unwrap();
     assert!(!config.production, "Never use production configuration");
     config.resend_key.clear();
+    config.staff_push = Default::default();
+    config.turnstile_secret = "1x000-synthetic-local-turnstile".into();
+    config.turnstile_url = format!("http://{address}/synthetic/turnstile");
     config.streaming = Some(streams::Config {
         api_url: api.clone(),
         ingest_url: ingest.clone(),
@@ -331,7 +362,12 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
     let api_task = tokio::spawn(async move {
         axum::serve(
             listener,
-            sver::router(app).into_make_service_with_connect_info::<SocketAddr>(),
+            sver::router(app)
+                .route(
+                    "/synthetic/turnstile",
+                    axum::routing::post(|| async { Json(json!({"success":true})) }),
+                )
+                .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
         .unwrap()
@@ -358,7 +394,7 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
         assert_eq!(first["health"]["audio_codec"], "AAC");
         let mut competing = Encoder::new(&format!("{ingest}/{key}")); competing.rejected().await;
         assert_eq!(e.mine().await["broadcast"]["id"], first["id"]);
-        let media_url = format!("{origin}/rebuild/{id}.m3u8");
+        let media_url = format!("{public}/rebuild/{id}.m3u8");
         let mut decode = command("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-i", &media_url, "-map", "0:v:0", "-map", "0:a:0", "-t", "2", "-f", "null", "-"]).stdout(Stdio::null()).spawn().unwrap();
         let decode_status = tokio::time::timeout(Duration::from_secs(20), async {
             loop { if let Some(status) = decode.try_wait().unwrap() { break status; } tokio::time::sleep(Duration::from_millis(100)).await; }
@@ -366,6 +402,10 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
         let _ = decode.kill(); let _ = decode.wait();
         assert!(decode_status.expect("HLS decoder timed out").success(), "Real HLS audio/video decode failed");
         eprintln!("Real media: HLS audio/video decoded");
+        let playlist = e.app.http.get(&media_url).send().await.unwrap();
+        assert_eq!(playlist.headers()["cache-control"],"no-store");
+        let private_gate = e.app.http.get(format!("{public}/_rebuild_playback_auth")).send().await.unwrap();
+        assert_eq!(private_gate.status(),StatusCode::NOT_FOUND,"Clients cannot invoke the internal authorization subrequest");
         drop(publisher);
         wait_state(&e, "RECONNECTING").await;
         // SRS sends on_unpublish before releasing the old media connection.
@@ -409,11 +449,63 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
             assert!(Instant::now()<end, "Real disconnect was never confirmed");
             streams::tick(&e.app).await.unwrap(); tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        assert_eq!(e.app.http.get(&media_url).send().await.unwrap().status(),StatusCode::FORBIDDEN,"A retired public URL stays closed after key rotation");
+
+        // Exercise the anonymous request and staff review against an actual publisher and
+        // the repository's Nginx playback config, including a previously saved segment URL.
+        let removal_key = e.key("rotate").await;
+        let removal_public_id = removal_key.split('?').next().unwrap();
+        let mut removal_publisher = Encoder::new(&format!("{ingest}/{removal_key}"));
+        let removal_broadcast = wait_state(&e,"LIVE").await;
+        let removal_url = format!("{public}/rebuild/{removal_public_id}.m3u8");
+        let until = Instant::now()+Duration::from_secs(12);
+        let saved_segment = loop {
+            let response = e.app.http.get(&removal_url).send().await.unwrap();
+            if response.status().is_success() {
+                let body=response.text().await.unwrap();
+                if let Some(segment) = body.lines().rfind(|l| !l.starts_with('#') && l.ends_with(".ts")) { break segment.to_string(); }
+            }
+            assert!(Instant::now()<until,"HLS did not publish a test segment");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        };
+        let segment_url = format!("{public}/rebuild/{saved_segment}");
+        assert_eq!(e.app.http.get(&segment_url).send().await.unwrap().status(),StatusCode::OK);
+        let (status,receipt)=chat::call(&e,"POST","/api/take-it-down",None,json!({"name":"Synthetic Requester","email":"requester@example.invalid","capacity":"shown","locations":[format!("{}/Streamer/live?report=live_stream&id={}",e.app.config.origin,removal_broadcast["id"].as_str().unwrap())],"description":"Synthetic color-bar broadcast only","good_faith":true,"signature":"Synthetic Requester","signed_on":chrono::Utc::now().date_naive(),"turnstile_token":"synthetic"})).await;
+        assert_eq!(status,StatusCode::OK,"{receipt}");
+        assert_eq!(e.app.http.get(&segment_url).send().await.unwrap().status(),StatusCode::OK,"A live report waits for staff review before stopping media");
+        let staff=chat::person(&e,"removal-staff","RemovalStaff",true).await;
+        e.sql("UPDATE users SET mfa_enabled=true,mfa_secret='synthetic' WHERE id='removal-staff'").await;
+        e.sql("UPDATE sessions SET mfa_verified=true WHERE user_id='removal-staff'").await;
+        e.sql("INSERT INTO staff_roles(user_id,role) VALUES('removal-staff','admin')").await;
+        let decision=format!("/api/admin/take-it-down/{}",receipt["number"].as_str().unwrap());
+        let (status,body)=chat::call(&e,"POST",&decision,Some(&staff),json!({"action":"review","reason":"Synthetic staff review"})).await;
+        assert_eq!(status,StatusCode::OK,"{body}");
+        for url in [&removal_url,&segment_url] {
+            assert_eq!(e.app.http.get(url).send().await.unwrap().status(),StatusCode::FORBIDDEN,"Stopped media must be inaccessible even while SRS retains the file");
+            assert_eq!(e.app.http.head(url).send().await.unwrap().status(),StatusCode::FORBIDDEN);
+        }
+        let whep=e.app.http.post(format!("{public}/rebuild/whep/?app=rebuild&stream={removal_public_id}")).body("synthetic SDP").send().await.unwrap();
+        assert_eq!(whep.status(),StatusCode::FORBIDDEN,"New WebRTC sessions cannot reconnect to a removed stream");
+        let origin_saved=e.app.http.get(format!("{origin}/rebuild/{saved_segment}")).send().await.unwrap();
+        assert_eq!(origin_saved.status(),StatusCode::OK,"The check must prove denial before SRS deletes its rolling files");
+        removal_publisher.rejected().await;
+        let (status,body)=chat::call(&e,"POST",&decision,Some(&staff),json!({"action":"remove","reason":"Synthetic valid removal"})).await;
+        assert_eq!(status,StatusCode::OK,"{body}");
+        let (status,outcome)=chat::call(&e,"POST","/api/take-it-down/status",None,json!({"number":receipt["number"],"email":"requester@example.invalid","turnstile_token":"synthetic"})).await;
+        assert_eq!(status,StatusCode::OK);
+        assert_eq!(outcome["status"],"removed");
+        let mut removed_reconnect=Encoder::new(&format!("{ingest}/{removal_key}")); removed_reconnect.rejected().await;
+        assert!(streams::confirm_stopped(&e.app,"stream-owner").await.unwrap());
+        eprintln!("Real media: anonymous removal stops SRS, denies saved HLS/WHEP URLs and rejects republishing");
+        e.app.db.close().await;
+        assert_eq!(e.app.http.get(&segment_url).send().await.unwrap().status(),StatusCode::INTERNAL_SERVER_ERROR,"An unavailable authorization database must not expose retained origin files");
         json!({"checked_at":chrono::Utc::now(),"scope":"isolated Rust API, Postgres, SRS and FFmpeg", "passed":true,
             "srs_version":ready["data"]["version"], "srs_image":SRS, "authenticated_real_callbacks":true,
             "key_rejection":true,"single_publisher":true,"hls_audio_video_decode":true,"reconnect_preserves_broadcast":true,
             "reconnect_publish_attempts":reconnect_attempts,
             "rotation_disconnects_and_rejects_old_key":true,"stop_confirms_disconnect_and_rejects_reconnect":true,
+            "take_down_stops_publisher":true,"take_down_blocks_saved_hls_and_whep":true,"take_down_rejects_republish":true,
+            "playback_denies_when_authorization_unavailable":true,
             "latency_acceptance":false,"not_established":["OBS UI","browser playback","CDN","capacity","live deployment"]})
     }).await;
     abort.abort();

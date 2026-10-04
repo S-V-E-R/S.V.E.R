@@ -36,6 +36,7 @@ export default function GuidelinesPage() {
       <p>Do not inflate viewer counts or other activity with bots, coordinate abuse, evade bans or mislead people about who you are. Follow the rules of the channel you visit. Streamers should moderate their communities, and moderators must use their tools responsibly.</p>
     </> },
     { title: "Report a problem", content: <>
+      <p>For intimate content shared without consent, including sexual deepfakes of a real person, use <Link href="/take-it-down">Take It Down requests</Link>. No account is required. Do not send a copy of the image.</p>
       <p>Use the report controls on a channel, Wall post or fan-art item, or email <a href="mailto:safety@sver.tv">safety@sver.tv</a>. You can contact us without an account. Include the page URL and enough detail to locate the issue. Do not resend harmful images or include passwords, authenticator codes or stream keys.</p>
       <p>You can follow reports submitted through the site in <Link href="/settings/reports">My reports</Link>. If someone faces immediate danger, contact local emergency services.</p>
     </> },

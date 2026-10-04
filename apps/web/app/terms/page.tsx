@@ -64,6 +64,7 @@ export default function TermsPage() {
       <p>These Terms are governed by United States and Delaware law, without regard to conflict-of-law principles, subject to any mandatory protections that apply where you live.</p>
     </> },
     { title: "Changes and contact", content: <>
+      <p>Intimate images shared without consent are prohibited, including sexual deepfakes of real people. The person shown or their authorized representative can submit a <Link href="/take-it-down">Take It Down request</Link> without an account. Valid requests lead to permanent content removal, a level-three strike and account-ban review. Knowingly false removal requests violate these Terms. An account sanction may be appealed; a valid removal is not reversed.</p>
       <p>We may update these Terms. We will give notice of material changes on the Platform or by email. Continued use after changes take effect constitutes acceptance to the extent permitted by law. If a provision is unenforceable, it will be modified only as needed, and the remaining provisions continue to apply.</p>
       <p>Questions about these Terms: <a href="mailto:legal@sver.tv">legal@sver.tv</a>. Account help: <Link href="/contact">Contact S.V.E.R</Link>.</p>
     </> },

@@ -8,6 +8,7 @@ const siteLinks = [
   ["/about", "About"], ["/factions", "Factions"], ["/roadmap", "Roadmap"], ["/help", "Help & FAQ"], ["/terms", "Terms"],
   ["/privacy", "Privacy"], ["/guidelines", "Guidelines"],
   ["/dmca", "Copyright & DMCA"], ["/contact", "Contact"],
+  ["/take-it-down", "Take It Down requests"],
 ] as const;
 
 export default function SiteShell({ account, alerts, actions, sidebar, children }: {

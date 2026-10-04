@@ -20,6 +20,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use std::str::FromStr;
+#[path = "safety_take_down.rs"]
+pub mod take_down;
 
 pub const REASONS: &[&str] = &[
     "spam",
@@ -104,22 +106,34 @@ pub async fn queue_notice(
     subject: &str,
     body: &str,
 ) -> Res<bool> {
+    Ok(queue_notice_id(app, db, user_id, subject, body)
+        .await?
+        .is_some())
+}
+pub async fn queue_notice_id(
+    app: &App,
+    db: &mut PgConnection,
+    user_id: &str,
+    subject: &str,
+    body: &str,
+) -> Res<Option<String>> {
     let row: Option<(String, bool)> =
         sqlx::query_as("SELECT email,email_verified FROM users WHERE id=$1 AND deleted_at IS NULL")
             .bind(user_id)
             .fetch_optional(&mut *db)
             .await?;
     let Some((email, true)) = row else {
-        return Ok(false);
+        return Ok(None);
     };
     let payload = json!({"to": [email], "subject": subject, "text": body});
+    let id = new_id();
     sqlx::query("INSERT INTO mail_jobs(id,user_id,payload,expires_at) VALUES($1,$2,$3,now()+interval '24 hours')")
-        .bind(new_id())
+        .bind(&id)
         .bind(user_id)
         .bind(crate::security::seal(app, "mail", &payload.to_string())?)
         .execute(&mut *db)
         .await?;
-    Ok(true)
+    Ok(Some(id))
 }
 pub async fn audit(
     db: &mut PgConnection,
@@ -318,8 +332,14 @@ pub async fn alerts(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
         .bind(&user.id)
         .fetch_one(&app.db)
         .await?;
+    let mut db = app.db.acquire().await?;
+    let urgent = if user.mfa_enabled && is_staff(&mut db, &user.id).await? {
+        crate::take_down::open_count(&mut db).await?
+    } else {
+        0
+    };
     Ok(Json(
-        json!({"signed_in": true, "unread_reports": reports, "new_strikes": strikes, "restriction": restriction_json(until)}),
+        json!({"signed_in": true, "unread_reports": reports, "new_strikes": strikes, "restriction": restriction_json(until),"urgent_take_down":urgent}),
     ))
 }
 
@@ -526,7 +546,7 @@ pub struct StrikeInput {
     message_to_user: String,
     interim_restriction_id: Option<String>,
 }
-/// Issues a strike and applies its penalty; returns the strike ID and level.
+/// Issues a strike and applies its penalty; returns the strike ID, level and queued notice ID.
 pub async fn issue_strike(
     app: &App,
     db: &mut PgConnection,
@@ -537,7 +557,7 @@ pub async fn issue_strike(
     snapshot: Value,
     removed: Value,
     staff_note: &str,
-) -> Res<(String, i32)> {
+) -> Res<(String, i32, Option<String>)> {
     let target = profiles::channel_user_by_id(db, user_id)
         .await?
         .ok_or_else(Fail::missing)?;
@@ -632,15 +652,15 @@ pub async fn issue_strike(
         )
         .await?;
     }
-    if queue_notice(
+    let notice = queue_notice_id(
         app,
         db,
         user_id,
         "Your S.V.E.R account standing",
         STANDING_MAIL,
     )
-    .await?
-    {
+    .await?;
+    if notice.is_some() {
         audit(
             db,
             Some(&actor.id),
@@ -655,7 +675,7 @@ pub async fn issue_strike(
         .await?;
     }
     log("strike_issued", "ok");
-    Ok((id, reached))
+    Ok((id, reached, notice))
 }
 
 /// Reset a profile field to its default (Reset field action).
@@ -1077,7 +1097,7 @@ pub async fn admin_action(
         _ => return Err(Fail::field("action", "Choose an action.")),
     }
     if let Some(strike) = &input.strike {
-        let (sid, _) = issue_strike(
+        let (sid, _, _) = issue_strike(
             &app,
             &mut tx,
             &actor,
@@ -1221,7 +1241,7 @@ pub async fn admin_strike(
     let snapshot = profile_snapshot(&mut tx, &user_id, None)
         .await
         .unwrap_or(json!({"field": null, "value": null}));
-    let (id, level) = issue_strike(
+    let (id, level, _) = issue_strike(
         &app,
         &mut tx,
         &actor,

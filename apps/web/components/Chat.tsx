@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
-import { ReportButton } from "./Report";
+import { ReportButton, TakeDownLink } from "./Report";
 import type { Chip } from "../lib/types";
 
 type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | null };
@@ -121,6 +121,7 @@ export function Chat({ username, account }: { username: string; account: string 
         {m.author.username ? <Link href={`/${m.author.username}`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
         {m.role === "owner" && <span className="badge">Streamer</span>}{m.role === "moderator" && <span className="badge">Mod</span>}: <span className="chat-body">{m.body}</span>
         {account && m.author.username && m.author.username !== account && <ReportButton target={{ target_type: "chat_message", target_id: m.id }} />}
+        {(!account || !m.author.username || m.author.username === account) && <TakeDownLink target={{ target_type: "chat_message", target_id: m.id }} />}
         {role && m.author.username && m.author.username !== account && <span className="chat-actions">
           <button type="button" className="small quiet" onClick={() => moderate("delete", m)} aria-label={`Delete message from ${m.author.display_name}`}>Delete</button>
           <button type="button" className="small quiet" onClick={() => moderate("timeout", m)} aria-label={`Time out ${m.author.display_name}`}>Timeout</button>

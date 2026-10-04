@@ -171,7 +171,8 @@ pub async fn invalidate(
     .bind(user_id)
     .execute(&mut *db)
     .await?;
-    sqlx::query("DELETE FROM mail_jobs WHERE user_id=$1")
+    // Security resets invalidate login links, but must not silently discard removal notices.
+    sqlx::query("DELETE FROM mail_jobs WHERE user_id=$1 AND NOT retry_until_expiry")
         .bind(user_id)
         .execute(&mut *db)
         .await?;

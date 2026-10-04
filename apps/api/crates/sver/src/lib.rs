@@ -29,8 +29,10 @@ pub mod roadmap;
 pub mod safety;
 pub mod security;
 pub mod social;
+pub mod staff_push;
 pub mod streams;
 pub mod studio;
+pub mod take_down;
 pub mod text;
 pub mod wall;
 
@@ -54,6 +56,8 @@ pub struct Config {
     pub thumbnail_hosts: Vec<String>,
     pub streaming: Option<streams::Config>,
     pub playback: playback::Config,
+    pub take_down: take_down::Config,
+    pub staff_push: staff_push::Config,
 }
 impl Config {
     pub fn from_env() -> std::result::Result<Self, String> {
@@ -115,6 +119,8 @@ impl Config {
             media,
             streaming: streams::Config::from_env()?,
             playback: playback::Config::from_env(production)?,
+            take_down: take_down::Config::from_env(),
+            staff_push: staff_push::Config::from_env(),
             youtube_oembed_url: "https://www.youtube.com/oembed".into(),
             soundcloud_oembed_url: "https://soundcloud.com/oembed".into(),
             thumbnail_hosts: vec!["ytimg.com".into(), "sndcdn.com".into()],
@@ -233,7 +239,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Response {
     let media_hook = matches!(
         req.uri().path(),
-        "/api/internal/srs/publish" | "/api/internal/srs/unpublish"
+        "/api/internal/srs/publish"
+            | "/api/internal/srs/unpublish"
+            | "/api/internal/streams/playback"
     );
     if media_hook {
         let Some(peer) = req
@@ -346,6 +354,8 @@ pub fn router(app: App) -> Router {
         .merge(chat::routes())
         .merge(moderation::routes())
         .merge(bans::routes())
+        .merge(take_down::routes())
+        .merge(staff_push::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

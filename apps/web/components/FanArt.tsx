@@ -3,7 +3,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { send } from "../lib/client-api";
 import type { Chip } from "../lib/types";
-import { ReportButton } from "./Report";
+import { ReportButton, TakeDownLink } from "./Report";
 import { UserChip } from "./UserChip";
 
 export type FanArtItem = { id: string; image: Record<string, string>; artist_name: string; artist_link: string | null; caption: string; status: string; submitted_at: string; submitter: Chip; can_delete: boolean; can_report: boolean };
@@ -50,7 +50,7 @@ export function FanArtGallery({ username, page }: { username: string; page: FanA
       </a>
       <p>{item.artist_link ? <a href={item.artist_link} rel="nofollow noopener noreferrer ugc" target="_blank">{item.artist_name}</a> : item.artist_name}</p>
       {item.caption && <p className="muted">{item.caption}</p>}
-      <div className="meta"><UserChip user={item.submitter} size={20} />{item.status !== "APPROVED" && <span className="badge">{item.status === "PENDING" ? "Waiting for approval" : "Not approved"}</span>}{item.can_delete && <button type="button" className="link-button" onClick={() => remove(item.id)}>{page.viewer.is_owner ? "Remove" : "Withdraw"}</button>}{item.can_report && <ReportButton target={{ target_type: "fan_art", target_id: item.id }} />}</div>
+      <div className="meta"><UserChip user={item.submitter} size={20} />{item.status !== "APPROVED" && <span className="badge">{item.status === "PENDING" ? "Waiting for approval" : "Not approved"}</span>}{item.can_delete && <button type="button" className="link-button" onClick={() => remove(item.id)}>{page.viewer.is_owner ? "Remove" : "Withdraw"}</button>}{item.can_report ? <ReportButton target={{ target_type: "fan_art", target_id: item.id }} /> : <TakeDownLink target={{ target_type: "fan_art", target_id: item.id }} />}</div>
     </li>)}</ul>}
   </>;
 }

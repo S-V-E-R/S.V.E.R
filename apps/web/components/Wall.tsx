@@ -3,7 +3,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { send } from "../lib/client-api";
 import type { Post, Reply, WallViewer } from "../lib/types";
-import { ReportButton } from "./Report";
+import { ReportButton, TakeDownLink } from "./Report";
 import { Ago, Linkified } from "./Text";
 import { UserChip } from "./UserChip";
 
@@ -36,7 +36,7 @@ function ReplyItem({ reply, onChange }: { reply: Reply; onChange: () => void }) 
   return <li className="reply">
     <UserChip user={reply.author} size={24} />
     {reply.body === null ? <p className="muted">{reply.status === "REMOVED" ? "Removed by S.V.E.R moderators." : "This reply is unavailable."}</p> : <p className="wall-body"><Linkified text={reply.body} /></p>}
-    <div className="meta"><Ago iso={reply.created_at} />{reply.status_label && <span className="badge">{reply.status_label}</span>}{reply.can_delete && <button type="button" className="link-button" onClick={remove}>Delete</button>}{reply.can_report && <ReportButton target={{ target_type: "wall_reply", target_id: reply.id }} />}</div>
+    <div className="meta"><Ago iso={reply.created_at} />{reply.status_label && <span className="badge">{reply.status_label}</span>}{reply.can_delete && <button type="button" className="link-button" onClick={remove}>Delete</button>}{reply.can_report ? <ReportButton target={{ target_type: "wall_reply", target_id: reply.id }} /> : <TakeDownLink target={{ target_type: "wall_reply", target_id: reply.id }} />}</div>
   </li>;
 }
 
@@ -82,6 +82,7 @@ export function WallPost({ post, viewer }: { post: Post; viewer: WallViewer }) {
       {viewer.can_post && post.status === "APPROVED" && <button type="button" className="link-button" onClick={() => setReplying(!replying)}>Reply</button>}
       {post.can_delete && <button type="button" className="link-button" onClick={remove}>Delete</button>}
       {post.can_report && <ReportButton target={{ target_type: "wall_post", target_id: post.id }} />}
+      {!post.can_report && <TakeDownLink target={{ target_type: "wall_post", target_id: post.id }} />}
       {post.can_pin && <button type="button" className="link-button" onClick={pin}>{post.pinned_position ? "Unpin" : "Pin"}</button>}
     </div>
     {notice && <p role="alert" className="form-message">{notice}</p>}
