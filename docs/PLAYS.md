@@ -20,12 +20,12 @@ Expanded October 3, 2026 by Joe. S.V.E.R Plays is S.V.E.R's own always-on channe
 
 | Step | When | What |
 | --- | --- | --- |
-| 1. Move | Right after Live streams closes | Plays runs on the new API: integrity-based control gate, counted-session votes, Democracy and Anarchy, stream-time vote windows, reliability fixes |
+| 1. Move | Right after Live streams closes | Plays runs on the new API: integrity-based control gate, counted-session votes, Democracy and Anarchy, stream-time vote windows, the controller board (the first CrowdSync board), reliability fixes |
 | 2. Fill empty moments | With MAGNet (Module 5) | Plays appears on the homepage and Hype channels when nothing else is live |
 | 3. Faction credit | With Factions (Module 4) | Milestones credited to the faction whose votes drove them |
 | 4. Rewards and milestones | With Support (Module 6) | Capped Engagement Valor for voting; milestones and badges from real game events |
 | 5. Next game vote | After step 4 | The community picks the next game from the library |
-| Later | With CrowdSync (Module 7) | Optional: Plays votes and events on a CrowdSync board |
+| With CrowdSync (Module 7) | | CrowdSync generalizes the Plays board so every streamer can build boards |
 
 ## Who can control the game
 
@@ -40,6 +40,20 @@ Decided earlier, in [LIVE_STREAMS.md](LIVE_STREAMS.md#sver-plays):
 - **Switching modes:** chat votes on the mode. A switch needs a clear majority of counted viewers (**Proposed:** 75% of votes in a 30-second vote, at most once every 5 minutes), so a few accounts can't flip it.
 - **Fair for delayed viewers:** vote windows run on stream time. A viewer 3–5 seconds behind gets the same window as a viewer 1 second behind, and votes are matched to the window the viewer was actually watching.
 - The command list is per game; `select` and other disruptive commands can be limited in Anarchy.
+
+## The controller board (decided October 3, 2026)
+
+Plays is the **first CrowdSync board**. It is built in step 1 using CrowdSync's board format ([CROWDSYNC.md](CROWDSYNC.md)), so it proves the board design early; Module 7 later opens board building to every streamer. The design is on the S.V.E.R design canvas ("Watch pages: S.V.E.R Plays").
+
+- **Placement:** directly under the player, above the streamer bar's details; chat stays on the right. On phones it stacks under the player.
+- **Controller:** laid out like a game controller: D-pad on the left, Select and Start in the middle, B and A on the right. The buttons come from the current game's command list. Each button shows its live share of the current window's votes as a percentage and a fill; the leading button is outlined; the viewer's own vote is highlighted. Real buttons, keyboard reachable, with labels for screen readers.
+- **Control status bar:** the mode (Democracy or Anarchy), who is in control ("Chat is in control" or "AI is playing · vote to take over"), a countdown to the next input in stream time with a progress bar, and the viewer's current vote.
+- **Input history strip:** the last 10 inputs that ran, each marked with the faction color of the voters who won it.
+- **Faction tug-of-war:** each faction's share of winning votes this hour.
+- **Milestone tracker:** progress to the next milestone (for example "Badge 3 of 8") and the last milestone with its faction credit.
+- **Mode switch:** a vote bar showing progress toward the 75% needed, with a Vote button and the time left.
+- **Chat:** typed commands still count as votes and show as small command chips; the window results and milestones appear as quiet system lines.
+- Guests see the board but get a sign-in prompt instead of voting; viewers without a counted session see why they can't vote yet.
 
 ## Rewards and milestones (step 4)
 
@@ -74,4 +88,4 @@ Decided earlier, in [LIVE_STREAMS.md](LIVE_STREAMS.md#sver-plays):
 
 ## Done when (step 1)
 
-On the new API, Plays streams continuously; bots, guests and chat-only accounts can't vote or keep the AI off; a real viewer takes control back within about a minute; Democracy and Anarchy work and the mode switch needs a clear majority; votes from 1-second and 5-second viewers land in the right windows; a crash restarts the stream automatically and an alert fires on a frozen picture.
+On the new API, Plays streams continuously; bots, guests and chat-only accounts can't vote or keep the AI off; a real viewer takes control back within about a minute; Democracy and Anarchy work and the mode switch needs a clear majority; the controller board shows live vote shares, the control status, input history, tug-of-war and milestones; votes from 1-second and 5-second viewers land in the right windows; a crash restarts the stream automatically and an alert fires on a frozen picture.
