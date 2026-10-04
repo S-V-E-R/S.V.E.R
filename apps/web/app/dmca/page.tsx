@@ -28,7 +28,16 @@ export default function DmcaPage() {
       <p>We may forward a valid counter-notification to the original claimant. Restoration generally follows the statutory 10–14 business-day process unless we receive notice of a court action seeking to restrain infringement. Other Platform rules can independently prevent restoration.</p>
     </> },
     { title: "Copyright contact", content: <>
-      <p>Email <a href="mailto:dmca@sver.tv">dmca@sver.tv</a> for notices and counter-notices. For formal service or agent contact details, contact <a href="mailto:legal@sver.tv">legal@sver.tv</a>. SVER LLC’s designated agent is registered in the <a href="https://www.copyright.gov/dmca-directory/">Copyright Office directory</a> under registration number DMCA-1081854.</p>
+      <p>Send notices and counter-notices to our designated agent. Email is fastest.</p>
+      <address className="dmca-agent">
+        Copyright Agent<br />
+        SVER LLC<br />
+        4030 Wake Forest Road, Suite 349<br />
+        Raleigh, NC 27609<br />
+        Phone: <a href="tel:+12526639474">(252) 663-9474</a><br />
+        Email: <a href="mailto:dmca@sver.tv">dmca@sver.tv</a>
+      </address>
+      <p>This agent is registered in the <a href="https://www.copyright.gov/dmca-directory/">Copyright Office directory</a> under registration number DMCA-1081854.</p>
       <p>For safety concerns unrelated to copyright, email <a href="mailto:safety@sver.tv">safety@sver.tv</a>.</p>
     </> },
   ]} />;
