@@ -1,0 +1,18 @@
+# Module 3 media server for the rebuilt site, run as its own Compose project so stage deploys
+# never restart it. Isolated from the legacy SRS (sver-plays). See infra/media/srs.conf for ports.
+#   sudo docker compose --env-file /opt/sver-rebuild/shared/stage.env -f infra/media/compose.media.yaml up -d
+name: sver-rebuild-media
+services:
+  srs:
+    # SRS 7.0.157, the digest the local media and ingest proofs ran against.
+    image: ossrs/srs@sha256:2e96f38660211b8e8dd324bee0d3ade90f1e44ab815813a1684eb78ab2ad17d6
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      CANDIDATE: ${SVER_MEDIA_CANDIDATE:?Set the server's public IPv4 in the external environment}
+    command: ["./objs/srs", "-c", "conf/sver-rebuild.conf"]
+    volumes:
+      - ./srs.conf:/usr/local/srs/conf/sver-rebuild.conf:ro
+    # HLS output is short-lived (6 one-second segments per stream); keep it in memory.
+    tmpfs:
+      - /media:size=2g
