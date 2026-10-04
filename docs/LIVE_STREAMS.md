@@ -424,7 +424,7 @@ Automated coverage adds: mention matching and XSS, reply-to-deleted, pin permiss
 
 Media acceptance uses a timestamp burned into synthetic frames plus a receiver-side reference to measure capture-to-display delay, not just playlist distance. Record codec, bitrate, keyframe interval, host/version, client/browser, network region, sample count, p50/p95 delay, startup success, stalls, CPU and egress. **Proposed:** at least 30 observations per path/scenario over ten minutes, then repeat at increasing real playback concurrency and across multiple broadcasts. HTTP requests that fetch playlists alone are not WebRTC viewers. Synthetic load against paid/live infrastructure needs a concrete duration/traffic budget first.
 
-Measure the largest stable direct-WebRTC load with headroom and derive both per-stream and global budgets; do not infer capacity from a configured maximum or the legacy report helper. The CDN run must meet the accepted 3–5-second objective under the selected test load, with the large-stream under-five-second requirement checked explicitly. If no tested configuration meets it, document the failure and resolve the media design before closure.
+Measure the largest stable direct-WebRTC load with headroom and derive both per-stream and global budgets; do not infer capacity from a configured maximum or the legacy report helper. The CDN run must meet the accepted 3–5-second objective under the selected test load, with the large-stream under-five-second requirement checked explicitly. If no tested configuration meets it, document the failure and resolve the media design before closure. The full method, scenarios, abort rules and budget formulas are in [LOAD_TEST.md](LOAD_TEST.md).
 
 Required automated coverage:
 
