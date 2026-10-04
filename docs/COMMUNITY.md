@@ -14,7 +14,7 @@ Decided by Joe on October 3, 2026. These are smaller features carried over from 
 | Phone as camera | Phase 3, with alerts and overlays |
 | Mobile web | Every module (pages must work on phones); installable web app after MAGNet |
 
-Not coming back: mentorship, team relay, patronage, the social feed and simulcasting from S.V.E.R (streamers can already multistream with their own tools).
+Not coming back: mentorship, team relay, patronage and the social feed. Restreaming from S.V.E.R came back the same day as part of Multistream ([LINKED_CHAT.md](LINKED_CHAT.md)).
 
 ## Download my data
 
