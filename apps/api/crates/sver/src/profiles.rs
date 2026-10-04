@@ -402,12 +402,12 @@ pub async fn channel(
     let (followers, following) = follower_counts(&mut db, &user.id).await?;
     let relation = match viewer_id {
         Some(v) if !is_owner => {
-            let (following, blocked, blocked_by): (bool, bool, bool) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2),EXISTS(SELECT 1 FROM user_blocks WHERE blocker_id=$1 AND blocked_id=$2),EXISTS(SELECT 1 FROM user_blocks WHERE blocker_id=$2 AND blocked_id=$1)")
+            let (following, alerts, blocked, blocked_by): (bool, bool, bool, bool) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2),EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2 AND alerts),EXISTS(SELECT 1 FROM user_blocks WHERE blocker_id=$1 AND blocked_id=$2),EXISTS(SELECT 1 FROM user_blocks WHERE blocker_id=$2 AND blocked_id=$1)")
                 .bind(v)
                 .bind(&user.id)
                 .fetch_one(&mut *db)
                 .await?;
-            json!({"signed_in": true, "is_owner": false, "following": following, "blocked": blocked, "interaction_blocked": blocked || blocked_by})
+            json!({"signed_in": true, "is_owner": false, "following": following, "alerts": alerts, "blocked": blocked, "interaction_blocked": blocked || blocked_by})
         }
         Some(_) => {
             json!({"signed_in": true, "is_owner": true, "following": false, "blocked": false, "interaction_blocked": false})

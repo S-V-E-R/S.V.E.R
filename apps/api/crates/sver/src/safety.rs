@@ -340,8 +340,9 @@ pub async fn alerts(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
     } else {
         0
     };
+    let notifications = crate::alerts::unread(&app, &user.id).await?;
     Ok(Json(
-        json!({"signed_in": true, "unread_reports": reports, "new_strikes": strikes, "restriction": restriction_json(until),"urgent_take_down":urgent}),
+        json!({"signed_in": true, "unread_reports": reports, "new_strikes": strikes, "restriction": restriction_json(until),"urgent_take_down":urgent,"notifications":notifications}),
     ))
 }
 

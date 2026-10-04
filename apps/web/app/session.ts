@@ -21,7 +21,7 @@ export const hasAlerts = cache(async (): Promise<boolean> => {
     const response = await fetch(`${process.env.API_INTERNAL_ORIGIN || "http://127.0.0.1:8080"}/api/me/alerts`, { headers: { cookie: jar.toString() }, cache: "no-store" });
     if (!response.ok) return false;
     const alerts = await response.json();
-    return Number(alerts.unread_reports) > 0 || Number(alerts.new_strikes) > 0;
+    return Number(alerts.unread_reports) > 0 || Number(alerts.new_strikes) > 0 || Number(alerts.notifications) > 0;
   } catch {
     return false;
   }

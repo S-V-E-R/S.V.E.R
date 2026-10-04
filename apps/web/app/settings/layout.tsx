@@ -7,7 +7,7 @@ export const metadata = { title: "Settings | S.V.E.R", robots: { index: false, f
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
   if (!(await currentAccount())) redirect("/login");
   return <div className="settings-page">
-    <nav className="settings-nav" aria-label="Settings"><Link href="/settings/profile">Profile</Link><Link href="/settings/blocked">Blocked users</Link><Link href="/settings/reports">My reports</Link><Link href="/settings/standing">Account standing</Link><Link href="/account">Account security</Link></nav>
+    <nav className="settings-nav" aria-label="Settings"><Link href="/settings/profile">Profile</Link><Link href="/settings/notifications">Notifications</Link><Link href="/settings/blocked">Blocked users</Link><Link href="/settings/reports">My reports</Link><Link href="/settings/standing">Account standing</Link><Link href="/account">Account security</Link></nav>
     <div className="settings-body">{children}</div>
   </div>;
 }

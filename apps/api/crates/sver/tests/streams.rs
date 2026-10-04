@@ -18,6 +18,8 @@ use std::{
 use sver::{App, Config, security as sec, streams};
 use tower::ServiceExt;
 
+#[path = "streams/alerts.rs"]
+mod alerts;
 #[path = "streams/bans.rs"]
 mod bans;
 #[path = "streams/chat.rs"]
@@ -317,6 +319,7 @@ async fn exercise(e: &Env) {
     resets::exercise(e).await;
     integrity::exercise(e).await;
     staff_window::exercise(e).await;
+    alerts::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")

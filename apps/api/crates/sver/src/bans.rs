@@ -29,6 +29,11 @@ fn allowed_while_banned(path: &str) -> bool {
         || path.starts_with("/api/me/strikes/")
         || path.starts_with("/api/me/bans/")
         || path == "/api/me/reports/seen"
+        // Turning alerts off is always allowed.
+        || path == "/api/notifications/unsubscribe"
+        || path == "/api/me/notifications/settings"
+        || path == "/api/me/notifications/read"
+        || path == "/api/me/push"
 }
 /// Called by the router for every non-GET request: true when the session belongs to a banned
 /// account and the route isn't one it may still use. Password reset or another sign-in method

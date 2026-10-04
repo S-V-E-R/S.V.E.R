@@ -44,7 +44,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const actions = account
     ? <>
       <StaffRemovalAlerts />
-      <Link href="/settings/profile" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
+      <Link href="/notifications" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
       <Link href={`/${account.username}`} className="player-chip">
         {/* Crest placeholder until Module 4 gives the account a faction. */}
         <span className="crest-slot" aria-hidden="true">{initial}</span>

@@ -31,16 +31,66 @@ impl Config {
     }
 }
 #[derive(Deserialize, Serialize)]
-struct Keys {
+pub(crate) struct Keys {
     p256dh: String,
     auth: String,
 }
 #[derive(Deserialize, Serialize)]
-struct Subscription {
-    endpoint: String,
+pub(crate) struct Subscription {
+    pub(crate) endpoint: String,
     keys: Keys,
 }
-fn validate(input: &Subscription) -> Res<(PublicKey, Auth)> {
+pub(crate) enum Sent {
+    Accepted,
+    Gone,
+    Retry,
+}
+/// The VAPID signing key, or None when push is not configured.
+pub(crate) fn signing_key(app: &App) -> Res<Option<ES256KeyPair>> {
+    let config = &app.config.staff_push;
+    if config.private_key.is_empty() {
+        return Ok(None);
+    }
+    let key = URL_SAFE_NO_PAD
+        .decode(&config.private_key)
+        .map_err(|_| Fail::internal())?;
+    Ok(Some(
+        ES256KeyPair::from_bytes(&key).map_err(|_| Fail::internal())?,
+    ))
+}
+/// Encrypts and posts one Web Push message; shared by staff and viewer push.
+pub(crate) async fn send(
+    app: &App,
+    key: &ES256KeyPair,
+    input: &Subscription,
+    topic: &str,
+    payload: &Value,
+) -> Res<Sent> {
+    let (public, auth) = validate(input)?;
+    let request = WebPushBuilder::new(
+        input.endpoint.parse().map_err(|_| Fail::internal())?,
+        public,
+        auth,
+    )
+    .with_vapid(key, &app.config.staff_push.subject)
+    .build(payload.to_string())
+    .map_err(|_| Fail::internal())?;
+    let (parts, body) = request.into_parts();
+    let response = app
+        .http
+        .post(parts.uri.to_string())
+        .headers(parts.headers)
+        .header("Topic", &sec::digest(topic)[..32])
+        .body(body)
+        .send()
+        .await;
+    Ok(match response.map(|r| r.status()) {
+        Ok(status) if status.is_success() => Sent::Accepted,
+        Ok(axum::http::StatusCode::NOT_FOUND | axum::http::StatusCode::GONE) => Sent::Gone,
+        _ => Sent::Retry,
+    })
+}
+pub(crate) fn validate(input: &Subscription) -> Res<(PublicKey, Auth)> {
     let url =
         url::Url::parse(&input.endpoint).map_err(|_| Fail::bad("Invalid push subscription."))?;
     let host = url.host_str().unwrap_or("");
@@ -121,14 +171,9 @@ pub async fn tick(app: &App) -> Res<()> {
         crate::take_down::notice_result(&mut tx, &id, "expired", false).await?;
     }
     tx.commit().await?;
-    let config = &app.config.staff_push;
-    if config.private_key.is_empty() {
+    let Some(key) = signing_key(app)? else {
         return Ok(());
-    }
-    let key = URL_SAFE_NO_PAD
-        .decode(&config.private_key)
-        .map_err(|_| Fail::internal())?;
-    let key = ES256KeyPair::from_bytes(&key).map_err(|_| Fail::internal())?;
+    };
     for _ in 0..20 {
         let mut tx = app.db.begin().await?;
         let row:Option<(String,String,String,i32)> = sqlx::query_as("SELECT j.id,s.id,s.subscription,j.attempts FROM staff_push_jobs j JOIN staff_push_subscriptions s ON s.id=j.subscription_id JOIN staff_roles r ON r.user_id=s.user_id AND r.role='admin' WHERE j.delivered_at IS NULL AND j.available_at<=now() AND j.created_at>now()-interval '2 days' ORDER BY j.available_at FOR UPDATE OF j SKIP LOCKED LIMIT 1")
@@ -139,27 +184,16 @@ pub async fn tick(app: &App) -> Res<()> {
         let input: Subscription =
             serde_json::from_str(&sec::unseal(app, "staff-push", &encrypted)?)
                 .map_err(|_| Fail::internal())?;
-        let (public, auth) = validate(&input)?;
-        let request=WebPushBuilder::new(input.endpoint.parse().map_err(|_|Fail::internal())?,public,auth).with_vapid(&key,&config.subject)
-            .build(json!({"id":id,"title":"S.V.E.R staff alert","body":"Check urgent removal requests in the staff console.","url":"/admin/take-it-down"}).to_string()).map_err(|_|Fail::internal())?;
-        let (parts, body) = request.into_parts();
-        let response = app
-            .http
-            .post(parts.uri.to_string())
-            .headers(parts.headers)
-            .header("Topic", &sec::digest(&id)[..32])
-            .body(body)
-            .send()
-            .await;
-        match response.map(|r| r.status()) {
-            Ok(status) if status.is_success() => {
+        let payload = json!({"id":id,"tag":format!("sver-staff-{id}"),"title":"S.V.E.R staff alert","body":"Check urgent removal requests in the staff console.","url":"/admin/take-it-down"});
+        match send(app, &key, &input, &id, &payload).await? {
+            Sent::Accepted => {
                 crate::take_down::notice_result(&mut tx, &id, "accepted", true).await?;
                 sqlx::query("UPDATE staff_push_jobs SET delivered_at=now() WHERE id=$1")
                     .bind(&id)
                     .execute(&mut *tx)
                     .await?;
             }
-            Ok(axum::http::StatusCode::NOT_FOUND | axum::http::StatusCode::GONE) => {
+            Sent::Gone => {
                 let failed: Vec<String> = sqlx::query_scalar("SELECT id FROM staff_push_jobs WHERE subscription_id=$1 AND delivered_at IS NULL")
                     .bind(&subscription).fetch_all(&mut *tx).await?;
                 for job in failed {
@@ -170,7 +204,7 @@ pub async fn tick(app: &App) -> Res<()> {
                     .execute(&mut *tx)
                     .await?;
             }
-            _ => {
+            Sent::Retry => {
                 crate::take_down::notice_result(&mut tx, &id, "retrying", true).await?;
                 sqlx::query("UPDATE staff_push_jobs SET attempts=attempts+1,available_at=now()+make_interval(secs=>$2) WHERE id=$1").bind(id).bind((30_i32 * 2_i32.pow(attempts.min(6) as u32)).min(1800) as f64).execute(&mut *tx).await?;
             }

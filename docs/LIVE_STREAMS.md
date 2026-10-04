@@ -406,7 +406,7 @@ The chat interface supports Reply/Cancel reply, Pin/Unpin and Send and pin, with
 
 Deployed October 4 after a verified backup and a restore rehearsal that preserved all account rows. Migration 19 and a compatible rollback API passed on the restored database. Rust formatting, Clippy, the full standard Cargo suite, the development acceptance script, web typecheck/lint/build, the chat component checks and the secret scan passed (lint retains existing warnings outside chat). Synthetic desktop/phone browser checks covered the populated interface; public browser checks confirmed guest WebSocket snapshots, no uncaught errors and no horizontal overflow. Signed-in production chat actions have not been exercised. The opt-in real-media test was not rerun for this chat-only release.
 
-Remaining in this module: notifications/go-live alerts, raids/hosting, the staff operations pages, the remaining integrity integrations, and measured live-media acceptance. Custom emotes are implemented below. No module closure is claimed.
+Remaining in this module: raids/hosting, the staff operations pages, the remaining integrity integrations, and measured live-media acceptance. Custom emotes and go-live alerts are implemented below. No module closure is claimed.
 
 ### Custom emotes
 
@@ -432,6 +432,10 @@ Deployment verification (October 4): migration 20 was rehearsed on an isolated r
 - Never sent to: the owner, users the owner blocked or banned, unverified or restricted accounts, or deleted accounts. Fan-out runs as Postgres-backed jobs, retried safely without duplicates.
 - Email has a one-click unsubscribe and respects the account's notification settings. Push subscriptions that fail permanently are removed.
 - In-site notifications are kept 30 days.
+
+Implementation (October 4; migration `0021_go_live_alerts.sql`, `alerts.rs`): the jobs pass fans out each broadcast once, when it first reaches LIVE, in one transaction that also marks the broadcast (`alert_state` sent/throttled/skipped), so retries never duplicate. Broadcasts that existed before the migration, or that end before LIVE, never alert. The 6-hour throttle counts only alerts actually sent. Viewer push reuses the staff VAPID keys and the site's one service worker; a push is dropped when the stream ends or after an hour, and a subscription the push service reports gone (404/410), or that can't be read, is deleted. Email uses the existing mail queue, expires after two hours and carries `List-Unsubscribe`/`List-Unsubscribe-Post` (RFC 8058) with an encrypted token. That one route is exempt from the Origin check and the ban write block, and it can only turn email off; turning alerts off is also allowed for banned accounts. Pages: `/notifications` (the top-bar bell), `/settings/notifications`, `/unsubscribe` and the bell next to Following. Bursts after an alert fall inside the integrity start-of-stream grace window.
+
+Automated coverage: `tests/streams/alerts.rs` (fan-out once, reconnect, throttle, excluded recipients, per-channel and per-method opt-outs, list/bell/read, one-click unsubscribe without Origin, stale push and 30-day retention). Not verified yet: real push delivery to a browser and a real Resend email.
 
 ### Raids
 

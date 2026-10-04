@@ -56,7 +56,13 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::staff_push::tick(app).await.is_err() {
         eprintln!("staff_push_event=delivery outcome=retry");
     }
+    if crate::alerts::fan_out(app).await.is_err() {
+        eprintln!("alerts_event=fan_out outcome=retry");
+    }
     deliver_mail(app).await?;
+    if crate::alerts::deliver(app).await.is_err() {
+        eprintln!("alerts_event=push outcome=retry");
+    }
     if crate::take_down::tick(app).await.is_err() {
         eprintln!("take_down_event=maintenance outcome=retry");
     }
