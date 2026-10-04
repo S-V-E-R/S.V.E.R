@@ -48,6 +48,7 @@ Each module is closed before the next starts:
 2. Profiles (closed October 3, 2026, 7:31 PM ET, after Joe accepted it on staging)
 3. Live streams (includes chat, moderation, viewbot detection, custom emotes, go-live alerts, raids and hosting)
    - then Multistream (`docs/LINKED_CHAT.md`): restreaming to other platforms from one OBS output, plus Linked chat merging their chat into S.V.E.R chat, built right after Live streams closes
+   - then the small steps in `docs/COMMUNITY.md` placed after Live streams (data export, chat commands, GIFs, captions)
 4. Factions (full seasonal war at launch)
 5. MAGNet
 6. Support (subscriptions, Valor, channel rewards, co-streams, payouts)
