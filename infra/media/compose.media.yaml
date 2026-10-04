@@ -8,6 +8,11 @@ services:
     image: ossrs/srs@sha256:2e96f38660211b8e8dd324bee0d3ade90f1e44ab815813a1684eb78ab2ad17d6
     restart: unless-stopped
     network_mode: host
+    # SRS refuses max_connections above the open-file limit (container default 1024).
+    ulimits:
+      nofile:
+        soft: 10000
+        hard: 10000
     environment:
       CANDIDATE: ${SVER_MEDIA_CANDIDATE:?Set the server's public IPv4 in the external environment}
     command: ["./objs/srs", "-c", "conf/sver-rebuild.conf"]
