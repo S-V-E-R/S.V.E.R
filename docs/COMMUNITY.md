@@ -37,8 +37,8 @@ Carried over from legacy: each faction has its own bot persona, and a neutral on
 | Bot | For | Tagline |
 | --- | --- | --- |
 | **PYRE** | Myria | Discipline is the flame that never dies. |
-| **ECHO** | Aetheron | (legacy tagline to carry over) |
-| **JINX** | Glint | (legacy tagline to carry over) |
+| **ECHO** | Aetheron | The pattern persists. |
+| **JINX** | Glint | Fortune favors the bold. And the lucky. Mostly the lucky. |
 | **VOLK** | Neutral (no faction, or the streamer prefers it) | The grey wolf watches. |
 
 - A channel gets its owner's faction bot by default; a streamer can switch to VOLK or to another faction's bot.
