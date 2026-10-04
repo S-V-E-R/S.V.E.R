@@ -50,6 +50,7 @@ Each module is closed before the next starts:
    - then Multistream (`docs/LINKED_CHAT.md`): restreaming to other platforms from one OBS output, plus Linked chat merging their chat into S.V.E.R chat, built right after Live streams closes
    - then the small steps in `docs/COMMUNITY.md` placed after Live streams (data export, chat commands, GIFs, captions)
 4. Factions (full seasonal war at launch)
+   - then Guilds (`docs/GUILDS.md`): cross-faction stream teams, joined by application
 5. MAGNet
 6. Support (subscriptions, Valor, channel rewards, co-streams, payouts)
 7. CrowdSync (interactive boards, Skills, polls and predictions)
