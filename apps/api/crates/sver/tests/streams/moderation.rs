@@ -309,7 +309,7 @@ pub async fn exercise(e: &Env) {
         json!({"broadcast_id":"mod-b","browser_id":"browser-banned-0000"}),
     )
     .await;
-    assert_eq!(beat["counted"], false);
+    assert_eq!(beat["recorded"], false);
     e.sql("DELETE FROM broadcasts WHERE id='mod-b'").await;
 
     // Chat rules: banned phrases (no exemption), links (moderators exempt), slow mode.

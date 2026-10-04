@@ -93,7 +93,7 @@ pub async fn live(
     Path(name): Path<String>,
 ) -> Res<Json<Value>> {
     let owner = owner_id(&app, &name).await?;
-    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,b.state,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now()) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
+    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,b.state,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
         .bind(&owner).fetch_optional(&app.db).await?;
     let Some(b) = current else {
         return Ok(Json(json!({"live":false})));
@@ -138,6 +138,15 @@ pub async fn live(
 pub struct Beat {
     broadcast_id: String,
     browser_id: String,
+    /// Whether the page was visible since the last beat.
+    #[serde(default)]
+    visible: bool,
+    /// The player's media time in seconds.
+    #[serde(default)]
+    media_time: Option<f64>,
+    /// A Turnstile token, sent once when the server asks for the security check.
+    #[serde(default)]
+    turnstile: Option<String>,
 }
 
 /// Sent every ten seconds by a player whose media is advancing. Signed-in viewers count once per
@@ -160,17 +169,49 @@ pub async fn beat(
     let owner = owner_id(&app, &name).await?;
     let viewer = profiles::viewer(&app, &jar).await?;
     let key = match &viewer {
-        Some(v) if v.id == owner => return Ok(Json(json!({"counted":false}))),
+        Some(v) if v.id == owner => return Ok(Json(json!({"recorded":false}))),
         Some(v) if crate::moderation::banned(&app, &owner, &v.id).await? => {
-            return Ok(Json(json!({"counted":false})));
+            return Ok(Json(json!({"recorded":false})));
         }
         Some(v) => format!("u:{}", v.id),
         None => format!("b:{}", sec::digest(id)),
     };
     sec::reserve(&app, vec![format!("playback-viewer:{key}")], 12, 60).await?;
-    let counted = sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at) SELECT id,$2,now()+interval '30 seconds' FROM broadcasts WHERE id=$1 AND owner_id=$3 AND state IN ('LIVE','RECONNECTING') ON CONFLICT(broadcast_id,viewer_key) DO UPDATE SET expires_at=EXCLUDED.expires_at")
-        .bind(&input.broadcast_id).bind(&key).bind(&owner).execute(&app.db).await?.rows_affected() == 1;
-    Ok(Json(json!({"counted":counted})))
+    let verified = match &viewer {
+        Some(v) => {
+            v.email_verified
+                && sqlx::query_scalar::<_, bool>(
+                    "SELECT coalesce((SELECT eligible FROM channel_users WHERE id=$1),false)",
+                )
+                .bind(&v.id)
+                .fetch_one(&app.db)
+                .await?
+        }
+        None => false,
+    };
+    let media_time = input.media_time.filter(|m| m.is_finite() && *m >= 0.0);
+    let report = crate::integrity::Report {
+        visible: input.visible,
+        media_time,
+        turnstile: input.turnstile.as_deref(),
+    };
+    let outcome = crate::integrity::record(
+        &app,
+        &input.broadcast_id,
+        &owner,
+        &key,
+        viewer.is_some(),
+        verified,
+        ip,
+        report,
+    )
+    .await?;
+    Ok(Json(match outcome {
+        None => json!({"recorded":false}),
+        Some((level, needs_turnstile)) => {
+            json!({"recorded":true,"level":level.name(),"needs_turnstile":needs_turnstile})
+        }
+    }))
 }
 
 pub fn routes() -> Router<App> {

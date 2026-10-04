@@ -8,6 +8,7 @@ type Settings = { title: string; category_id: string | null; revision: number };
 type Health = { video_codec?: string | null; audio_codec?: string | null; width?: number | null; height?: number | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean };
 type Stream = {
   configured: boolean; eligible: boolean; settings: Settings; disconnect_pending: boolean;
+  last_broadcast?: { ended_at: string; not_counted: number } | null;
   credential: { created_at: string; revoked: boolean } | null;
   broadcast: { state: string; started_at: string; reconnect_deadline: string | null; observed_at: string | null; end_reason?: string | null; health: Health } | null;
 };
@@ -127,6 +128,7 @@ export default function StreamStudio() {
     <Status state={status} />
     <Section title="On air">
       <p role="status"><strong>{state}</strong>{broadcast?.state === "RECONNECTING" && broadcast.reconnect_deadline && <> — reconnect OBS before {new Date(broadcast.reconnect_deadline).toLocaleTimeString()} to continue this broadcast.</>}</p>
+      {broadcast?.state !== "LIVE" && broadcast?.state !== "RECONNECTING" && data.last_broadcast && data.last_broadcast.not_counted > 0 && <p className="muted">Last stream: {data.last_broadcast.not_counted.toLocaleString()} {data.last_broadcast.not_counted === 1 ? "viewer was" : "viewers were"} not counted. Viewer counts only include people whose playback passes our checks; automated or suspicious traffic is left out and never counts against you.</p>}
       <p>Your stream starts when OBS connects. A dropped connection has 60 seconds to resume the same broadcast.</p>
       {staleSignal && <p role="status">Fresh media has not been confirmed. Check the OBS connection; the last measurements below may be out of date.</p>}
       {broadcast?.end_reason === "startup_timeout" && <p role="alert">Compatible media was not confirmed within 15 seconds. Check your OBS encoder settings and connection before trying again.</p>}

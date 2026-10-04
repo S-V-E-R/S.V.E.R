@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { ReportButton, TakeDownLink } from "./Report";
+import { Turnstile } from "./Turnstile";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Live =
@@ -75,6 +76,10 @@ export function LivePlayer({ username, focused = false, signedIn = false, childr
   const [phase, setPhase] = useState<Phase>("loading");
   const [attempt, setAttempt] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
+  // Guests pass a security check once per session before they count (viewer integrity).
+  const [sitekey, setSitekey] = useState<string | null>(null);
+  const token = useRef("");
+  const onToken = useCallback((value: string) => { token.current = value; }, []);
   const path = `/api/channels/${encodeURIComponent(username)}/live`;
 
   const load = useCallback(async () => {
@@ -139,7 +144,13 @@ export function LivePlayer({ username, focused = false, signedIn = false, childr
       const element = video.current;
       if (!element || element.paused || element.currentTime <= last) return;
       last = element.currentTime;
-      void send("POST", `${path}/beat`, { broadcast_id: broadcast, browser_id: browserId() });
+      const check = token.current;
+      token.current = "";
+      void send<{ recorded: boolean; needs_turnstile?: boolean }>("POST", `${path}/beat`, { broadcast_id: broadcast, browser_id: browserId(), visible: !document.hidden, media_time: element.currentTime, turnstile: check || undefined }).then(async result => {
+        if (!result.ok || !result.data.needs_turnstile) { setSitekey(null); return; }
+        const config = await send<{ turnstile_site_key: string }>("GET", "/api/auth/config");
+        if (config.ok) setSitekey(config.data.turnstile_site_key);
+      });
     }, 10000);
     return () => clearInterval(timer);
   }, [broadcast, isOwner, path]);
@@ -152,6 +163,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, childr
     {status && <p className="player-status" role="status">{status}</p>}
     {phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
+    {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} />}
     <p className="live-meta"><span className="live badge">Live</span> <strong>{live.title}</strong>{live.category && <span className="muted"> · {live.category}</span>} <span className="muted">· {live.viewers.toLocaleString()} watching</span> {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</p>
   </div>;
 }

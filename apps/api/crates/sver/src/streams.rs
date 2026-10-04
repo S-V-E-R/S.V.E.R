@@ -281,10 +281,13 @@ pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>>
             .bind(&user.id)
             .fetch_one(&mut *tx)
             .await?;
+    let last = crate::integrity::last_broadcast(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
     tx.commit().await?;
     Ok(Json(
         json!({"configured":app.config.streaming.is_some(),"eligible":allowed,"settings":metadata,
-        "credential":credential,"broadcast":broadcast,"disconnect_pending":pending}),
+        "credential":credential,"broadcast":broadcast,"disconnect_pending":pending,"last_broadcast":last}),
     ))
 }
 #[derive(Deserialize)]

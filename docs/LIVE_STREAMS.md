@@ -361,6 +361,19 @@ Extend `playback_leases` with level, risk score, flags, hashed network fields an
 
 Automated coverage adds: guest and signed-in level transitions, Turnstile failure, metronomic heartbeat detection, household and carrier networks not penalized, hosting-network risk, provisional window timing, raid and MAGNet bursts not flagged, recovery from exclusion, counts used by each consumer, no raw IP stored or returned anywhere, staff-only case actions, and retention deletion.
 
+### Implementation status — October 4, 2026
+
+Built (`integrity.rs`, migration `0017`, `tests/streams/integrity.rs` and unit tests):
+
+- Leases carry a level, risk, flags, keyed IP and /24-/48 network hashes (HMAC with the encryption key, re-keyed every 30 days; no raw IP anywhere), Welford heartbeat-interval statistics, visible watch time, media time and the Turnstile result. Heartbeats now send `visible`, `media_time` and, once when asked, a Turnstile token (action `playback`, skipped for verified accounts).
+- Levels follow the table above. Soft signals: metronomic heartbeat timing and network concentration above a household-sized limit. One soft signal only blocks Trusted; exclusion needs two. Hard evidence: media time running ahead of the wall clock on repeated beats, which excludes the session for the rest of the broadcast. The background pass (every jobs tick) rescores live leases, so sessions recover when signals clear.
+- Spikes: a burst of arrivals well above the recent rate gets a 5-minute provisional window. Bursts in a broadcast's first 10 minutes are treated as expected.
+- The public count is Counted + Trusted. `integrity::counts` exposes raw/counted/trusted/excluded/pending for later modules. Snapshots about every minute; a sustained excluded share (example: 3 windows of at least 10 sessions, half excluded) opens one case per broadcast per 6 hours with aggregate evidence only. Staff (step-up) dismiss or act, recording payout-hold and tier-pause flags for Module 6; strikes go through the user's standing page. Audited. Admin → Integrity.
+- Creator Studio shows, after a stream, how many viewers who watched a minute or more were never counted. The Privacy Policy describes the counting. Retention: leases 30 days after the broadcast ends (no longer deleted on expiry), snapshots 1 year, decided cases 1 year after decision. Account erasure removes the account's leases.
+- Weights and thresholds: `integrity::Tuning` defaults are the example values; production reads private values from `INTEGRITY_TUNING_FILE` (JSON).
+
+Not built yet, with hooks left for them: the IPinfo Lite network database (hosting/VPN risk; network signals are absent until it is installed), Bunny signed per-lease CDN URLs (with the CDN), SRS WebRTC connection matching, cohort detection beyond arrival rate, raids/MAGNet/go-live alerts explaining bursts, the optional spike chat-protection prompt (needs followers-only chat) and the Plays control gate below (with the Plays migration).
+
 ### S.V.E.R Plays
 
 S.V.E.R Plays moves from the legacy backend to this API as soon as Module 3 closes, and becomes the dedicated always-on stream used to monitor live delivery and integrity. Plays stays its own project; it talks to this API only through the internal interface below.
