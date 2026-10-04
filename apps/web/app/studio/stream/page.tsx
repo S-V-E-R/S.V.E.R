@@ -5,7 +5,7 @@ import { Section, Status, type SaveState } from "../../../components/Form";
 import { send } from "../../../lib/client-api";
 
 type Settings = { title: string; category_id: string | null; revision: number };
-type Health = { video_codec?: string | null; audio_codec?: string | null; width?: number | null; height?: number | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean };
+type Health = { video_codec?: string | null; audio_codec?: string | null; width?: number | null; height?: number | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean; keyframe_seconds?: number | null; keyframe_warning?: boolean; b_frames?: boolean | null };
 type Stream = {
   configured: boolean; eligible: boolean; settings: Settings; disconnect_pending: boolean;
   last_broadcast?: { ended_at: string; not_counted: number } | null;
@@ -161,9 +161,11 @@ export default function StreamStudio() {
         <div><dt>Video / audio</dt><dd>{health.video_codec ?? "Not measured"} / {health.audio_codec ?? "Not measured"}</dd></div>
         <div><dt>Resolution</dt><dd>{health.width && health.height ? health.width + " × " + health.height : "Not measured"}</dd></div>
         <div><dt>Incoming bitrate</dt><dd>{health.input_kbps != null ? Math.round(health.input_kbps) + " Kbps" : "Not measured"}</dd></div>
-        <div><dt>Keyframe interval</dt><dd>Not measured</dd></div><div><dt>B-frames</dt><dd>Not measured</dd></div>
+        <div><dt>Keyframe interval</dt><dd>{health.keyframe_seconds != null ? (health.keyframe_seconds <= 1 ? "1 second or less" : `About ${health.keyframe_seconds} seconds`) : "Not measured"}</dd></div><div><dt>B-frames</dt><dd>{health.b_frames == null ? "Not measured" : health.b_frames ? "On" : "Off"}</dd></div>
       </dl>
       {health.codec_warning && <p role="alert">The incoming codecs do not match H.264 and AAC. Check your OBS encoder settings.</p>}
+      {health.keyframe_warning && <p role="alert">Keyframes are about {health.keyframe_seconds} seconds apart. In OBS, set Keyframe Interval to 1 s; longer intervals slow joining and recovery.</p>}
+      {health.b_frames && <p role="alert">B-frames are on. In OBS, set B-frames to 0; low-latency playback can stutter with them.</p>}
       {health.bitrate_warning && <p role="alert">Incoming bitrate exceeds the provisional 8 Mbps warning level. Reduce it if playback is unstable.</p>}
       {broadcast?.observed_at && <p className="small-print">Last media observation: {new Date(broadcast.observed_at).toLocaleTimeString()}. Measurements update while OBS sends media.</p>}
     </Section>
