@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { send } from "../lib/client-api";
 import type { Viewer } from "../lib/types";
+import { AlertBell } from "./Notifications";
 import { ReportForm, TakeDownLink } from "./Report";
 import { ShareButton } from "./ShareButton";
 
@@ -28,6 +29,7 @@ export function ChannelActions({ username, displayName, viewer, path }: { userna
   }
   return <div className="channel-actions">
     {!blocked && !viewer.interaction_blocked && <button type="button" className={following ? "small quiet" : "small"} aria-pressed={following} onClick={follow}>{following ? "Following" : "Follow"}</button>}
+    {following && !blocked && <AlertBell username={username} initial={viewer.following ? viewer.alerts !== false : true} />}
     <ShareButton username={username} displayName={displayName} />
     <div className="menu">
       <button type="button" className="small quiet" aria-haspopup="true" aria-expanded={menu} onClick={() => setMenu(!menu)}>More <span aria-hidden="true">▾</span></button>

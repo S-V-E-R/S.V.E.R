@@ -11,6 +11,7 @@ use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{sync::Arc, time::Duration};
 pub mod activity;
+pub mod alerts;
 pub mod auth;
 pub mod bans;
 pub mod chat;
@@ -260,7 +261,11 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
     } else if !matches!(
         *req.method(),
         axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
-    ) && req.headers().get("origin").and_then(|v| v.to_str().ok())
+    )
+        // The one-click email unsubscribe (RFC 8058) is posted by mail providers without an
+        // Origin; its encrypted token is the only authority and it only turns go-live email off.
+        && req.uri().path() != "/api/notifications/unsubscribe"
+        && req.headers().get("origin").and_then(|v| v.to_str().ok())
         != Some(&app.config.origin)
     {
         return Error::denied("Invalid request origin.").into_response();
@@ -357,6 +362,7 @@ pub fn router(app: App) -> Router {
         .merge(playback::routes())
         .merge(chat::routes())
         .merge(emotes::routes())
+        .merge(alerts::routes())
         .merge(moderation::routes())
         .merge(bans::routes())
         .merge(integrity::routes())

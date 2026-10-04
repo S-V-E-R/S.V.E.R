@@ -171,3 +171,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .chat-emote { display: inline-block; width: 28px; height: 28px; vertical-align: middle; object-fit: contain; }
 .chat-emotes { border-top: 1px solid var(--line); padding: .5rem 0; }
 .chat-emotes li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+
+/* Notifications list (go-live alerts). */
+.notifications li { gap: 12px; align-items: center; justify-content: flex-start; }
+.notifications li.unread { border-left: 3px solid var(--accent); padding-left: 9px; }
