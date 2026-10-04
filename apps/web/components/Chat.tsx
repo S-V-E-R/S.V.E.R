@@ -9,7 +9,7 @@ import { EmoteImage, type ChannelEmote } from "./Emote";
 type Reply = { id: string; username: string | null; body: string | null };
 type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null };
 type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[] };
-type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string };
+type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string };
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
@@ -46,6 +46,7 @@ export function Chat({ username, account }: { username: string; account: string 
   const [emotes, setEmotes] = useState<ChannelEmote[]>([]);
   const [reply, setReply] = useState<Reply | null>(null);
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
   const canPin = role === "owner" || role === "moderator";
   const socket = useRef<WebSocket | null>(null);
   const list = useRef<HTMLOListElement>(null);
@@ -100,6 +101,9 @@ export function Chat({ username, account }: { username: string; account: string 
         else if (data.type === "pin") setPinned(data.pinned);
         else if (data.type === "message" || data.type === "ack") merge([data.message]);
         else if (data.type === "delete") remove(data.id);
+        // The player on this page runs the raid countdown (LivePlayer listens for this).
+        else if (data.type === "raid" || data.type === "raid_cancelled") window.dispatchEvent(new CustomEvent("sver:raid", { detail: { channel: username.toLowerCase(), raid: data.type === "raid" ? data.raid : null } }));
+        else if (data.type === "system") setNotice(data.text);
         else setError(data.message);
       };
       ws.onclose = () => {
@@ -148,8 +152,16 @@ export function Chat({ username, account }: { username: string; account: string 
     if (!body || busy) return;
     const reason = pinDraft ? window.prompt("Reason for pinning this message (required)")?.trim() : undefined;
     if (pinDraft && !reason) return;
-    const command = { id: crypto.randomUUID(), body, reply_to: reply?.id };
     setError("");
+    // Owner commands: /raid username starts a raid, /unraid cancels it during the countdown.
+    const raid = /^\/(raid|unraid)(?:\s+@?([A-Za-z0-9_]{3,25}))?$/i.exec(body);
+    if (raid && !pinDraft) {
+      if (raid[1].toLowerCase() === "raid" && !raid[2]) { setError("Use /raid username."); return; }
+      const result = raid[1].toLowerCase() === "raid" ? await send("POST", "/api/me/raids", { username: raid[2] }) : await send("DELETE", "/api/me/raids");
+      if (result.ok) setDraft(""); else setError(result.error);
+      return;
+    }
+    const command = { id: crypto.randomUUID(), body, reply_to: reply?.id };
     if (!pinDraft && socket.current?.readyState === WebSocket.OPEN) {
       socket.current.send(JSON.stringify(command));
       setDraft(""); setReply(null);
@@ -170,6 +182,7 @@ export function Chat({ username, account }: { username: string; account: string 
       <strong>Pinned message</strong><div className="chat-pin-content"><strong>{pinned.author.display_name}: </strong><MessageBody message={pinned} account={account} emotes={emotes} /></div>
       {canPin && <button type="button" className="small quiet" onClick={() => changePin(null)}>Unpin</button>}
     </aside>}
+    {notice && <p className="chat-system" role="status">{notice}</p>}
     <ol className="chat-messages" ref={list} aria-live="polite">
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
       {messages.map(m => <li key={m.id}>

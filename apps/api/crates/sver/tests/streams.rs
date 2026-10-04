@@ -32,6 +32,8 @@ mod integrity;
 mod moderation;
 #[path = "streams/playback.rs"]
 mod playback;
+#[path = "streams/raids.rs"]
+mod raids;
 #[path = "streams/real_media.rs"]
 mod real_media;
 #[path = "streams/reports.rs"]
@@ -320,6 +322,7 @@ async fn exercise(e: &Env) {
     integrity::exercise(e).await;
     staff_window::exercise(e).await;
     alerts::exercise(e).await;
+    raids::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")

@@ -70,6 +70,9 @@ async fn main() -> Result<(), String> {
             if sver::streams::tick(&media_jobs).await.is_err() {
                 eprintln!("Stream maintenance will retry.");
             }
+            if sver::raids::tick(&media_jobs).await.is_err() {
+                eprintln!("raids_event=maintenance outcome=retry");
+            }
         }
     });
     let bind = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8080".into());
