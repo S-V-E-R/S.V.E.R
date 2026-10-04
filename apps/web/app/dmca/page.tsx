@@ -28,7 +28,7 @@ export default function DmcaPage() {
       <p>We may forward a valid counter-notification to the original claimant. Restoration generally follows the statutory 10–14 business-day process unless we receive notice of a court action seeking to restrain infringement. Other Platform rules can independently prevent restoration.</p>
     </> },
     { title: "Copyright contact", content: <>
-      <p>Email <a href="mailto:dmca@sver.tv">dmca@sver.tv</a> for notices and counter-notices. For formal service or agent contact details, contact <a href="mailto:legal@sver.tv">legal@sver.tv</a>. The <a href="https://www.copyright.gov/dmca-directory/">Copyright Office directory</a> is the source for registered agent designations.</p>
+      <p>Email <a href="mailto:dmca@sver.tv">dmca@sver.tv</a> for notices and counter-notices. For formal service or agent contact details, contact <a href="mailto:legal@sver.tv">legal@sver.tv</a>. SVER LLC’s designated agent is registered in the <a href="https://www.copyright.gov/dmca-directory/">Copyright Office directory</a> under registration number DMCA-1081854.</p>
       <p>For safety concerns unrelated to copyright, email <a href="mailto:safety@sver.tv">safety@sver.tv</a>.</p>
     </> },
   ]} />;

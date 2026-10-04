@@ -65,7 +65,7 @@ Live streams are recorded so people can catch up. Streamers keep their best mome
 
 - **Take It Down** ([TAKE_IT_DOWN.md](TAKE_IT_DOWN.md)) covers VODs, Highlights and clips. A valid request removes the media and every clip and Beacon made from it, and purges the CDN, within 48 hours.
 - **Reports** extend Module 2 reports with VOD, HIGHLIGHT and CLIP targets. A reported item is kept, hidden from the public, past its expiry until the case closes; then normal retention resumes.
-- **Copyright:** this module adds a copyright removal form, a counter-notice process, and a repeat-infringer policy (accounts with repeated valid claims lose recording and clipping, then their account). S.V.E.R must register a designated copyright agent with the U.S. Copyright Office before VODs launch.
+- **Copyright:** this module adds a copyright removal form, a counter-notice process, and a repeat-infringer policy (accounts with repeated valid claims lose recording and clipping, then their account). SVER LLC's designated copyright agent is registered with the U.S. Copyright Office (DMCA-1081854, filed October 4, 2026). A designation lapses after 3 years, so it must be renewed by October 4, 2029; the admin tools show a reminder 60 days before. The agent's name, mailing address, phone and email must match the filing and appear on `/dmca`.
 - Recordings of streams marked 18+ keep the 18+ gate.
 
 ## Channel page
