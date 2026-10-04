@@ -96,7 +96,11 @@ pub async fn live(
     let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,b.state,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
         .bind(&owner).fetch_optional(&app.db).await?;
     let Some(b) = current else {
-        return Ok(Json(json!({"live":false})));
+        // An offline channel may host a live one; its page shows that stream.
+        return Ok(Json(match crate::raids::hosting(&app, &owner).await? {
+            Some(hosting) => json!({"live": false, "hosting": hosting}),
+            None => json!({"live": false}),
+        }));
     };
     let viewer = profiles::viewer(&app, &jar).await?;
     // A channel ban refuses signed-in playback (logged-out viewing cannot be prevented).
@@ -129,8 +133,9 @@ pub async fn live(
     Ok(Json(json!({
         "live": true, "broadcast_id": b.id, "state": b.state, "title": b.title,
         "category": b.category, "started_at": b.started_at, "viewers": b.viewers,
-        "is_owner": viewer.is_some_and(|v| v.id == owner),
+        "is_owner": viewer.as_ref().is_some_and(|v| v.id == owner),
         "playback": {"webrtc": webrtc, "hls": hls, "preferred": preferred},
+        "raid": crate::raids::for_viewers(&app, &b.id, viewer.as_ref().map(|v| v.id.as_str())).await?,
     })))
 }
 
@@ -147,6 +152,9 @@ pub struct Beat {
     /// A Turnstile token, sent once when the server asks for the security check.
     #[serde(default)]
     turnstile: Option<String>,
+    /// The raid that brought this viewer, from the raid link; counted only within 60 seconds.
+    #[serde(default)]
+    raid: Option<String>,
 }
 
 /// Sent every ten seconds by a player whose media is advancing. Signed-in viewers count once per
@@ -206,6 +214,9 @@ pub async fn beat(
         report,
     )
     .await?;
+    if let (Some(_), Some(raid)) = (&outcome, &input.raid) {
+        crate::raids::arrived(&app, &input.broadcast_id, &key, raid).await?;
+    }
     Ok(Json(match outcome {
         None => json!({"recorded":false}),
         Some((level, needs_turnstile)) => {

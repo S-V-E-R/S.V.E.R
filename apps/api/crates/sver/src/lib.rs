@@ -26,6 +26,7 @@ pub mod playback;
 pub mod profile_import;
 pub mod profile_jobs;
 pub mod profiles;
+pub mod raids;
 pub mod rename;
 pub mod reserved;
 pub mod roadmap;
@@ -363,6 +364,7 @@ pub fn router(app: App) -> Router {
         .merge(chat::routes())
         .merge(emotes::routes())
         .merge(alerts::routes())
+        .merge(raids::routes())
         .merge(moderation::routes())
         .merge(bans::routes())
         .merge(integrity::routes())

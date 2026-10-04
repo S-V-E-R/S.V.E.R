@@ -175,3 +175,8 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 /* Notifications list (go-live alerts). */
 .notifications li { gap: 12px; align-items: center; justify-content: flex-start; }
 .notifications li.unread { border-left: 3px solid var(--accent); padding-left: 9px; }
+
+/* Raids and hosting. */
+.raid-countdown{position:absolute;left:50%;bottom:64px;transform:translateX(-50%);margin:0;padding:8px 14px;background:var(--surface);border:1px solid var(--accent);text-align:center;display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center;max-width:calc(100% - 32px)}
+.hosting-bar{margin:0;padding:6px 12px;background:var(--surface);border-bottom:1px solid var(--line)}
+.chat-system{margin:0 0 8px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--surface)}

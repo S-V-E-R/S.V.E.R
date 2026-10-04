@@ -351,8 +351,10 @@ pub async fn tick(app: &App) -> Res<()> {
         let mut tx = app.db.begin().await?;
         // A burst of arrivals not explained by the stream just starting gets a provisional window.
         // Go-live alerts go out as the stream starts, inside this grace window.
-        // ponytail: raids and MAGNet handoffs will also explain bursts once built.
-        if running >= t.spike_grace_seconds as f64 {
+        // A raid explains its burst. ponytail: MAGNet handoffs will too, once built.
+        if running >= t.spike_grace_seconds as f64
+            && !crate::raids::explains_burst(&mut tx, &broadcast).await?
+        {
             let (arrivals, baseline): (i64, i64) = sqlx::query_as("SELECT count(*) FILTER (WHERE created_at>now()-interval '60 seconds' AND provisional_until IS NULL), count(*) FILTER (WHERE created_at<=now()-interval '60 seconds' AND created_at>now()-interval '6 minutes') FROM playback_leases WHERE broadcast_id=$1")
                 .bind(&broadcast).fetch_one(&mut *tx).await?;
             let per_minute = (baseline as f64 / 5.0).max(1.0);

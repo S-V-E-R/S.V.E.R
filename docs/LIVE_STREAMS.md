@@ -406,7 +406,7 @@ The chat interface supports Reply/Cancel reply, Pin/Unpin and Send and pin, with
 
 Deployed October 4 after a verified backup and a restore rehearsal that preserved all account rows. Migration 19 and a compatible rollback API passed on the restored database. Rust formatting, Clippy, the full standard Cargo suite, the development acceptance script, web typecheck/lint/build, the chat component checks and the secret scan passed (lint retains existing warnings outside chat). Synthetic desktop/phone browser checks covered the populated interface; public browser checks confirmed guest WebSocket snapshots, no uncaught errors and no horizontal overflow. Signed-in production chat actions have not been exercised. The opt-in real-media test was not rerun for this chat-only release.
 
-Remaining in this module: raids/hosting, the staff operations pages, the remaining integrity integrations, and measured live-media acceptance. Custom emotes and go-live alerts are implemented below. No module closure is claimed.
+Remaining in this module: the staff operations pages, the remaining integrity integrations, and measured live-media acceptance. Custom emotes, go-live alerts, raids and hosting are implemented below. No module closure is claimed.
 
 ### Custom emotes
 
@@ -454,6 +454,14 @@ Automated coverage: `tests/streams/alerts.rs` (fan-out once, reconnect, throttle
 - Hosting stops when the host goes live or the target goes offline; auto-host then moves to the next live channel on the list. When a raider ends their broadcast after a raid, their channel hosts the raid target.
 - Targets can opt out of being hosted; the same block and ban rules as raids apply.
 - Hosted viewers are counted for the target because they are real playback sessions on the target's broadcast; the host shows no count of its own.
+
+Implementation of raids and hosting (October 4; migration `0022_raids_hosting.sql`, `raids.rs`, Creator Studio → Raids & hosting):
+
+- Who may send viewers to whom is defined once, in the SQL function `viewer_send_refusal`: not yourself, both channels eligible, the target accepting raids/hosts, and no raid block, block in either direction or channel ban. Raid starts, raid execution, manual hosting, auto-host and the host stop check all call it. A refusal for a block or ban reads the same, so the sender can't tell which applies.
+- A raid needs the raider LIVE and the target LIVE or RECONNECTING. One countdown per broadcast (unique index), and one raid per broadcast every 10 minutes, where a cancelled countdown doesn't count. The countdown reaches viewers instantly over the raider's chat socket and also through the player's regular poll. At zero, each player asks `/api/raids/{id}`, which executes the raid once (rechecking the rules) and answers moved or failed. Signed-in viewers banned from the target never see it, and any viewer can choose Stay here. The 5-second stream worker also executes overdue raids.
+- Arrivals: a viewer arriving through the raid link sends the raid ID with its playback beats, and only a lease that started on the target between 15 seconds before and 60 seconds after the move is tagged. Sixty seconds after the move, the worker counts tagged leases, stores the count (the raid row is the audit: raider, target, time, arrivals) and posts "name is raiding with n" to the target's open chats. That line isn't stored in chat history. A raid explains a burst in viewer integrity for two minutes.
+- Hosting: an offline channel's live endpoint returns the hosted channel, and its player shows the target's stream under a "Hosting name" bar, so viewers count for the target. Every 5 seconds the worker stops hosts whose host went live, whose target went offline or whose rules no longer allow it. It then starts the raid host (once per raid, within a day, after the raider's broadcast ends) and auto-host (the first live, allowed channel in list order). While auto-host is on, stopping a host lets it pick again; the owner turns auto-host off to stop it.
+- Coverage: `tests/streams/raids.rs` (eligibility, opt-outs, blocks, bans, countdown/cancel, 10-minute rule, banned viewers, arrival counting that excludes earlier viewers, raid-to-host once, manual hosting, auto-host order and every stop condition). The chat component check still passes with the new commands and events. Not yet exercised with two real broadcasts and browsers.
 
 ### Storage and API outline
 
