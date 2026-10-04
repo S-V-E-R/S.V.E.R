@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { Section, Status, type SaveState } from "./Form";
@@ -99,4 +100,24 @@ export function BanQueue() {
       <button type="button" className="small quiet" onClick={() => lift(b.id)}>Lift</button>
     </li>)}</ul>}</Section>
   </>;
+}
+
+/** Staff: replace an impersonating username with a neutral one. The page moves to the new name. */
+export function UsernameResetForm({ username }: { username: string }) {
+  const router = useRouter();
+  const [state, setState] = useState<SaveState>({});
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const reason = new FormData(event.currentTarget).get("reason");
+    if (!window.confirm(`Reset @${username}'s username? They get a neutral name, and @${username} is held for 90 days with no redirect.`)) return;
+    const r = await send<{ username: string }>("POST", `/api/admin/users/${encodeURIComponent(username)}/username-reset`, { reason });
+    if (r.ok) router.push(`/admin/users/${r.data.username}`);
+    else setState(r.status === 403 ? { error: STEP_UP } : r);
+  }
+  return <Section title="Reset username" intro="For impersonation. The account keeps its followers, content and sessions; the old name stops working and can't be claimed for 90 days. The reason is shown to the user.">
+    <form onSubmit={submit}>
+      <label className="field"><span>Reason (shown to the user)</span><input name="reason" required maxLength={500} /></label>
+      <button type="submit" className="small">Reset username</button><Status state={state} />
+    </form>
+  </Section>;
 }

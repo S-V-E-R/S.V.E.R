@@ -2,7 +2,7 @@
 import { FormEvent, useCallback, useState } from "react";
 import { Section, Status, type SaveState } from "../../../../components/Form";
 import { send, useLoad } from "../../../../lib/client-api";
-import { BanForm } from "../../../../components/Bans";
+import { BanForm, UsernameResetForm } from "../../../../components/Bans";
 import { StrikeFields, strikeFrom } from "../../reports/queue";
 
 type Strike = { id: string; reason: string; severity: string; penalty: string; level: number; issued_at: string; issued_by: string | null; status: string; penalty_until: string | null; staff_note: string };
@@ -42,6 +42,7 @@ export default function UserStanding({ username }: { username: string }) {
     </Section>
     {!data.internal && <>
       <BanForm username={data.username} onDone={load} />
+      <UsernameResetForm username={data.username} />
       <Section title="Issue a strike"><form onSubmit={strike}><StrikeFields /><label className="field"><span>Moderator note (required)</span><textarea name="note" required maxLength={500} rows={2} /></label><button type="submit" className="small">Issue strike</button></form></Section>
       <Section title="Interim restriction" intro="Hides the channel for up to 24 hours while a report is reviewed. It needs no strike and never stacks with the strike it becomes."><form onSubmit={interim} className="row wrap"><label className="field narrow"><span>Hours</span><input name="hours" type="number" min={1} max={24} defaultValue={24} required /></label><label className="field grow"><span>Note (required)</span><input name="note" required maxLength={500} /></label><button type="submit" className="small">Restrict</button></form></Section>
     </>}

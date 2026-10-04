@@ -6,7 +6,7 @@ import { send, useLoad } from "../../../lib/client-api";
 import { reasons } from "../../../lib/types";
 
 type Strike = { id: string; reason: string; severity: string; content: { field: string | null; value: unknown }; penalty: string; penalty_until: string | null; level: number; message_to_user: string; issued_at: string; expires_at: string; status: "active" | "expired" | "overturned"; acknowledged: boolean; appeal_closes_at: string; can_appeal: boolean; note?: string; appeal: null | { status: string; created_at: string; body: string; message_to_user: string | null; signed: string | null } };
-type Standing = { level: number; restriction: null | { until: string | null; indefinite: boolean }; strikes: Strike[] };
+type Standing = { level: number; restriction: null | { until: string | null; indefinite: boolean }; strikes: Strike[]; username_resets?: { old_username: string; new_username: string; reason: string; changed_at: string }[] };
 const penalties: Record<string, string> = { WARNING: "Warning", RESTRICT_72H: "72-hour restriction", RESTRICT_INDEFINITE: "Restriction until further review" };
 const LEVEL2 = "This restriction lasts 72 hours. Appeals are usually decided after it ends. If your appeal succeeds, the strike is removed from your record and no longer counts toward future penalties.";
 const date = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
@@ -55,6 +55,13 @@ export default function StandingPage() {
       <p className="muted small-print">Strikes stop counting after 90 days (365 days for severe violations). A first strike is a warning, a second is a 72-hour restriction and a third is a restriction until further review.</p>
     </Section>
     <MyBans />
+    {data.username_resets && data.username_resets.length > 0 && <Section title="Username resets">
+      <ul className="list">{data.username_resets.map(r => <li key={r.changed_at}>
+        <p><strong>@{r.old_username} was changed to @{r.new_username}</strong> on {date(r.changed_at)}.</p>
+        <p>{r.reason}</p>
+        <p className="muted">You can choose a new username in Settings → Profile. If a strike came with this, you can appeal it below.</p>
+      </li>)}</ul>
+    </Section>}
     <Section title="Strikes">
       {data.strikes.length === 0 ? <p className="muted">No strikes.</p> : <ul className="list">{data.strikes.map(s => <li key={s.id} className="strike">
         <div className="row between"><strong>{penalties[s.penalty] || s.penalty} · {reasons.find(r => r[0] === s.reason)?.[1] || s.reason}</strong><span className="badge">{s.status === "active" ? "Active" : s.status === "expired" ? "Expired" : "Overturned"}</span></div>
