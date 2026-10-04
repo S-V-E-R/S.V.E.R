@@ -27,7 +27,11 @@ Beacons are short vertical videos that lead people to creators and their live st
   - If the source isn't 9:16, it's framed by the creator's crop.
   - Uploads are padded rather than stretched.
 - **Metadata is stripped.** Location, device and editing data are removed from every output.
-- **Watermark (proposed):** the public copies carry a small "@username · sver.tv" mark, so a Beacon reposted to another app still points back to the creator. The creator can download a clean copy. Since Beacons are re-encoded anyway, the watermark costs nothing extra.
+- **Watermark:** the public copies carry a small "@username · sver.tv" mark that moves from corner to corner every few seconds, so cropping or blurring one spot can't remove it and a Beacon reposted elsewhere still points back to the creator.
+  - The order of corners and the exact timing vary per Beacon (exact values live in the private tuning config), so there's no fixed pattern to mask.
+  - The mark sits inside the safe area, clear of the feed's rail and captions, at low opacity.
+  - The creator can download a clean copy of their own Beacon from private storage. It's never served publicly.
+  - The watermark is applied in the re-encode Beacons already need, so it costs nothing extra.
 - Before publishing, every upload is checked against the Take It Down blocklist of removed images ([TAKE_IT_DOWN.md](TAKE_IT_DOWN.md)). The same check runs on clip sources.
 - A Beacon moves through the statuses Draft, Processing, Ready, Published and Removed. If processing fails, the creator gets the reason and can retry.
 
@@ -77,6 +81,7 @@ Beacons are short vertical videos that lead people to creators and their live st
 
 - **Platform content rule:** play, build or make. No reaction videos, gambling or just chatting.
 - **Reports:** any signed-in user can report a Beacon. Reports go to the admin review queue (Module 2 reports, target type BEACON), where staff can remove it. A Beacon with an open report keeps playing unless staff hide it.
+- **Known-abuse matching (before uploads open):** uploads and clip sources are checked against a known child sexual abuse material hash list through an outside matching service, with matches blocked and reported to NCMEC as [TAKE_IT_DOWN.md](TAKE_IT_DOWN.md) describes. Joe picks the service; clip Beacons can launch first, but uploads stay off until it's live.
 - **Take It Down:** a valid request removes the Beacon, everything it was made from and every copy within 48 hours, and purges the CDN.
 - **Copyright:** claims go through the copyright process in [VODS_CLIPS.md](VODS_CLIPS.md), and repeat infringers lose posting.
 - **18+ streams:** a Beacon from an 18+ stream keeps the 18+ gate and only appears in feeds for viewers who have passed it.
@@ -101,12 +106,12 @@ Beacons are short vertical videos that lead people to creators and their live st
 | No way to report a Beacon | Reports go to the admin queue. |
 | Media worker authenticated with the stream webhook secret | Each worker has its own credential. |
 | "Beacon" also named the Shine boost and the viewer heartbeat | "Beacon" means only these videos. The heartbeat is called the viewer lease. |
-| Kept: approved clips only, the Live now rail, Watch live on every video, counting only visible playback (complete at 90%), the direct-to-storage upload flow, the fairness lane, the watermark with a clean master | Carried over as above. |
+| Kept: approved clips only, the Live now rail, Watch live on every video, counting only visible playback (complete at 90%), the direct-to-storage upload flow, the fairness lane, the watermark with a clean master (now moving corner to corner) | Carried over as above. |
 
 ## Done when
 
 1. An eligible creator turns an approved clip into a 9:16 Beacon with a chosen crop, and uploads a video that the server probes, re-encodes and strips of metadata.
-2. A file that isn't a real video, is too long or is too big is rejected. A match against the Take It Down blocklist never publishes.
+2. A file that isn't a real video, is too long or is too big is rejected. A match against the Take It Down blocklist never publishes. Every public copy carries the moving watermark, and the clean copy is reachable only by its creator.
 3. The feed mixes followed, faction and fair-rotation Beacons, plays muted until tapped, and works with swipe and arrow keys.
 4. Ordering never reads money, views or likes.
 5. Views count only after 3 seconds of visible, advancing playback from counted sessions. Likes are one per account. Every counter rejects requests without a session and requests over the rate limit.
