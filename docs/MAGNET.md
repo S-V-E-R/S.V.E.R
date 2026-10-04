@@ -11,7 +11,7 @@ It follows the closure rule: specify, build, then test against "Done when". All 
 ## Rules that apply everywhere
 
 - **Never by size.** No list, rotation or score uses viewer count, follower count or "viewers gained". Signals are measured against each stream's own normal level, so a 3-viewer stream can spike as easily as a 3,000-viewer one.
-- **No money.** Subscriptions, cheers, gifts or any payment never raise a stream's chances. There are no paid votes or paid boosts.
+- **No money.** Subscriptions, tributes, gifts or any payment never raise a stream's chances. There are no paid votes or paid boosts.
 - **Only real people count.** Every signal comes from Counted or Trusted sessions and verified accounts (Module 3 viewer integrity).
 - **Every turn is explained.** Viewers see one line on why a stream is showing; streamers see more detail in Creator Studio.
 - **Light pages.** One video player at a time; previews are still images, never a second player.
