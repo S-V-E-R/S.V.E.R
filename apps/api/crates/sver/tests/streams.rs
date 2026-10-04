@@ -22,6 +22,8 @@ use tower::ServiceExt;
 mod bans;
 #[path = "streams/chat.rs"]
 mod chat;
+#[path = "streams/chat_social.rs"]
+mod chat_social;
 #[path = "streams/integrity.rs"]
 mod integrity;
 #[path = "streams/moderation.rs"]
@@ -309,6 +311,7 @@ async fn exercise(e: &Env) {
     playback::exercise(e).await;
     chat::exercise(e).await;
     moderation::exercise(e).await;
+    chat_social::exercise(e).await;
     reports::exercise(e).await;
     bans::exercise(e).await;
     resets::exercise(e).await;

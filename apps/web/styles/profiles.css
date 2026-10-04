@@ -102,15 +102,24 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .live-meta{margin:0;padding:10px 14px;background:var(--surface);border-top:1px solid var(--line)}
 .live.badge{border-color:var(--live);background:var(--live);color:#fff}
 .watch{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
-@media(max-width:900px){.watch{grid-template-columns:1fr}}
-.chat{display:flex;flex-direction:column;gap:8px}
+@media(max-width:900px){.watch{grid-template-columns:minmax(0,1fr)}}
+.chat{display:flex;flex-direction:column;gap:8px;min-width:0}
 .chat h2{margin:0;font-size:16px}
 .chat-messages{list-style:none;margin:0;padding:0;max-height:60vh;min-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
 .chat-body{white-space:pre-wrap;overflow-wrap:anywhere}
-.chat-form{display:grid;grid-template-columns:1fr auto;gap:8px}
-.chat-form textarea{resize:vertical}
+.chat-quote{margin:4px 0;padding:4px 8px;border-left:2px solid var(--line);color:var(--ink-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.9em}
+.chat-pin{border:1px solid var(--line);background:var(--tint);padding:10px;overflow-wrap:anywhere}
+.chat-pin-content{margin:6px 0}
+.chat-mention{background:var(--tint);color:var(--accent-light);outline:1px solid var(--line)}
+.chat-reply-draft{grid-column:1/-1;display:flex;gap:8px;align-items:center;min-width:0}
+.chat-reply-draft span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.chat-form textarea{resize:vertical;min-width:0;width:100%}
 .chat-form .error{grid-column:1/-1;margin:0}
-.chat-actions{display:inline-flex;gap:4px;margin-left:6px}
+.chat-actions{display:inline-flex;flex-wrap:wrap;gap:4px}
+.chat-message-actions{font-size:.85em}
+.chat-message-actions summary{cursor:pointer;color:var(--ink-muted);width:fit-content;padding:4px 0}
+.chat-message-controls{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:4px 0}
 /* Parity additions P1-P9 (docs/PROFILES.md). Tags are square, uppercase Barlow; no fills, gradients or glows. */
 .page-label{display:inline-block;border:1px solid var(--line);color:var(--steel);font:700 11px/1.4 var(--font-label),sans-serif;letter-spacing:.16em;text-transform:uppercase;padding:2px 8px;margin:0 0 6px}
 .welcome-line{color:var(--muted);margin:4px 0 0}
@@ -158,3 +167,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .part-review{margin-top:8px}
 .step-up{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.6)}
 .step-up .panel{width:min(440px,100%)}
+
+.chat-emote { display: inline-block; width: 28px; height: 28px; vertical-align: middle; object-fit: contain; }
+.chat-emotes { border-top: 1px solid var(--line); padding: .5rem 0; }
+.chat-emotes li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }

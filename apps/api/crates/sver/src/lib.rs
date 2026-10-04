@@ -14,6 +14,7 @@ pub mod activity;
 pub mod auth;
 pub mod bans;
 pub mod chat;
+pub mod emotes;
 pub mod integrity;
 pub mod jobs;
 pub mod media;
@@ -355,6 +356,7 @@ pub fn router(app: App) -> Router {
         .merge(streams::routes())
         .merge(playback::routes())
         .merge(chat::routes())
+        .merge(emotes::routes())
         .merge(moderation::routes())
         .merge(bans::routes())
         .merge(integrity::routes())

@@ -1,6 +1,6 @@
 # Module 3: Live streams and chat
 
-Started October 3, 2026 at the user's direction. **Status: stream backend and Creator Studio implemented locally; integrated Rust/Postgres/SRS ingest now passes with real synthetic media. Player/accounting, chat/moderation, OBS/browser/CDN and live media acceptance remain open.** Module 1 is closed by user acceptance. Module 2 continues independently; starting this module does not declare Profiles complete.
+Started October 3, 2026 at the user's direction. **Status: stream backend, Creator Studio, player/accounting, chat/moderation, Take It Down, staff username resets and the initial viewer-integrity system are deployed. Chat mentions, replies, pins, role badges and custom emotes are implemented; deployment verification is recorded below. The remaining social features, staff operations and OBS/browser/CDN acceptance are open.** Modules 1 and 2 are closed by user acceptance.
 
 This document expands Module 3 of [PLATFORM_PLAN.md](PLATFORM_PLAN.md), the security contract in [LOGIN.md](LOGIN.md), and the approved profile/moderation rules in [PROFILES.md](PROFILES.md). Existing plan requirements are identified below. Details marked **Proposed** are implementation defaults for review, not recorded user decisions. Engineering measurements remain open even if the product defaults are accepted.
 
@@ -396,6 +396,18 @@ These were added to Module 3 after the core spec. They reuse the chat, moderatio
 - **Pinned message:** the owner or a moderator pins one message (an existing visible message or new text up to 500 characters). It stays until unpinned or replaced, survives reconnects, and is cleared if the pinned message is deleted. Pinning is audited like other moderator actions.
 - **Badges:** Broadcaster, Moderator and Staff, decided on the server per message. Subscriber and Founder badges arrive with Support and the founders program. The sender's faction crest is separate (Module 4).
 
+#### Chat additions implementation — October 4, 2026
+
+Migration `0019_chat_social.sql` adds reply references, matched mention identities, the sender's role at send time, and one pin row per channel. HTTP and WebSocket sends use the same validation. Whole `@username` tokens resolve to eligible accounts on the server; email addresses, unknown names and client-supplied badges do not create mentions or roles. Mentions highlight only inside chat.
+
+Replies join the current original message and expose at most 80 characters on one line. Deleted, expired and blocked originals never supply a quote body; retries and live delivery use those same rules. A removed message clears its pin in the same database operation, including platform moderation and Take It Down. Active pins are retained until unpinned, replaced or removed; ordinary messages still expire after seven days. Owner/moderator pin changes require a reason and write the channel moderation log. Staff membership alone does not grant channel pin privileges.
+
+The chat interface supports Reply/Cancel reply, Pin/Unpin and Send and pin, with persistent pins in socket snapshots and the HTTP fallback. Role labels are Broadcaster, Moderator and Staff. Integration coverage is in `tests/streams/chat_social.rs`; `node scripts/check-chat.cjs <path-to-jsdom>` checks rendering, safe text, composition, deletion and reconnect/fallback using synthetic events.
+
+Deployed October 4 after a verified backup and a restore rehearsal that preserved all account rows. Migration 19 and a compatible rollback API passed on the restored database. Rust formatting, Clippy, the full standard Cargo suite, the development acceptance script, web typecheck/lint/build, the chat component checks and the secret scan passed (lint retains existing warnings outside chat). Synthetic desktop/phone browser checks covered the populated interface; public browser checks confirmed guest WebSocket snapshots, no uncaught errors and no horizontal overflow. Signed-in production chat actions have not been exercised. The opt-in real-media test was not rerun for this chat-only release.
+
+Remaining in this module: notifications/go-live alerts, raids/hosting, the staff operations pages, the remaining integrity integrations, and measured live-media acceptance. Custom emotes are implemented below. No module closure is claimed.
+
 ### Custom emotes
 
 - Any channel owner can upload up to **10** emotes usable by anyone in that channel's chat. Subscriber-only emote slots come with Support.
@@ -403,6 +415,14 @@ These were added to Module 3 after the core spec. They reuse the chat, moderatio
 - Code: 3 to 20 ASCII letters and digits, case-sensitive, unique within the channel. A message token that exactly matches a code of the current channel renders as that emote; everything else stays text. No cross-channel use in this module.
 - Emotes publish immediately. They can be reported (new report target EMOTE); staff can remove one, and removal is audited and can lead to a strike under the Profiles rules. Deleting an emote removes it from future rendering only.
 - Banned-word and link rules apply to codes.
+
+Implementation (October 4): `/studio/emotes` manages the owner's ten slots; `/admin/media` reviews published emotes through the existing audited report/strike action. Uploads use the shared bounded image decoder, first-frame conversion, metadata stripping, 28/56/112 WebP variants, media storage and exact-copy removal checks. Removed slots remain visible to their owner until deleted, so appeals can restore the original content without exceeding the quota. Deleting a slot never rewrites chat message text.
+
+Chat uses the current channel catalog and case-sensitive, whitespace-delimited tokens. The picker is keyboard accessible; each emote has reporting and anonymous Take It Down access. Catalogs arrive with HTTP/socket history and refresh on upload/removal. Open sockets also check every five seconds for worker quarantine, appeal restoration and account deletion. An already delivered image cannot be recalled from a viewer's device.
+
+Acceptance covers malformed/oversized images, minimum square dimensions, static variants/transparency/first-frame conversion, exact token matching and escaping, channel isolation, concurrent slot limits, owner/staff permissions, reports and strikes, restoration, shared-image deletion, account erasure, anonymous quarantine/dismissal/permanent removal and blocked reuploads. Synthetic desktop/phone browser checks cover Studio, chat insertion and the staff queue. This does not establish live provider delivery or close Module 3.
+
+Deployment verification (October 4): migration 20 was rehearsed on an isolated restored backup before activation; existing user rows and earlier migration checksums were preserved. The release and fallback both passed Linux API checks, including emote moderation after fallback. Public desktop/phone browsers received emote catalogs over WebSocket with no uncaught errors or horizontal overflow. Signed-in production uploads and a live CDN removal were not exercised; upload/removal mutations were tested with isolated synthetic accounts. Rust checks, `scripts/dev.ps1 test`, web typecheck/lint/build, component checks and the secret scan passed. The existing nine web lint warnings remain; the opt-in real-SRS test was not rerun for this image/chat change.
 
 ### Go-live alerts
 

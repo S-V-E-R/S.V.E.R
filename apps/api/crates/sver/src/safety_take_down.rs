@@ -46,7 +46,7 @@ pub async fn locate(
                 .ok_or_else(Fail::internal)?
                 .into(),
         ],
-        "setup_photo" => vec![
+        "setup_photo" | "emote" => vec![
             media::removal::root_of_key(
                 t.snapshot["value"]["image"]
                     .as_str()
@@ -68,7 +68,7 @@ pub async fn locate(
 pub async fn hide(db: &mut PgConnection, target: &Located) -> Res<Value> {
     if matches!(
         target.kind.as_str(),
-        "profile" | "fan_art" | "setup_photo" | "live_stream"
+        "profile" | "fan_art" | "setup_photo" | "live_stream" | "emote"
     ) {
         return Ok(Value::Null);
     }
@@ -136,8 +136,11 @@ pub async fn remove(db: &mut PgConnection, kind: &str, id: &str) -> Res<()> {
 
 /// Remove every current reference to the stored image, including other uploaders' copies.
 pub async fn remove_media(db: &mut PgConnection, root: &str) -> Res<Vec<String>> {
-    let owners: Vec<String> = sqlx::query_scalar("SELECT user_id FROM profiles WHERE split_part(avatar_key,'@',1)=$1 OR split_part(banner_key,'@',1)=$1 OR song_thumb_key=$1 UNION SELECT user_id FROM sponsors WHERE logo_key=$1 UNION SELECT user_id FROM setup_photos WHERE image_key=$1 UNION SELECT submitter_id FROM fan_art WHERE image_key=$1")
+    let mut owners: Vec<String> = sqlx::query_scalar("SELECT user_id FROM profiles WHERE split_part(avatar_key,'@',1)=$1 OR split_part(banner_key,'@',1)=$1 OR song_thumb_key=$1 UNION SELECT user_id FROM sponsors WHERE logo_key=$1 UNION SELECT user_id FROM setup_photos WHERE image_key=$1 UNION SELECT submitter_id FROM fan_art WHERE image_key=$1")
         .bind(root).fetch_all(&mut *db).await?;
+    owners.extend(crate::emotes::remove_media(db, root).await?);
+    owners.sort();
+    owners.dedup();
     sqlx::query("UPDATE profiles SET avatar_key=CASE WHEN avatar_key=$1 THEN NULL ELSE avatar_key END,banner_key=CASE WHEN split_part(banner_key,'@',1)=$1 THEN NULL ELSE banner_key END,song_thumb_key=CASE WHEN song_thumb_key=$1 THEN NULL ELSE song_thumb_key END WHERE avatar_key=$1 OR split_part(banner_key,'@',1)=$1 OR song_thumb_key=$1")
         .bind(root).execute(&mut *db).await?;
     sqlx::query("UPDATE sponsors SET logo_key=NULL WHERE logo_key=$1")

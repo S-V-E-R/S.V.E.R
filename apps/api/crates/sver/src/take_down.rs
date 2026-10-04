@@ -207,6 +207,7 @@ async fn locate(
     let name = url.path().trim_matches('/').split('/').next().unwrap_or("");
     let kind = query.get("report").map(String::as_str).unwrap_or("profile");
     if ![
+        "emote",
         "profile",
         "wall_post",
         "wall_reply",

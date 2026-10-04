@@ -1,7 +1,7 @@
 //! Module 3 chat: persisted channel messages, one in-process fanout hub, HTTP and WebSocket.
 //! HTTP sends and socket commands share `send`, so validation and permissions are identical.
 use crate::{
-    App,
+    App, moderation,
     profiles::{self, Fail, Res},
     security as sec,
 };
@@ -13,7 +13,7 @@ use axum::{
     },
     http::HeaderMap,
     response::Response,
-    routing::get,
+    routing::{get, put},
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Utc};
@@ -79,18 +79,97 @@ struct Row {
     created_at: DateTime<Utc>,
     author: Value,
     role: Option<String>,
+    mentions: Vec<String>,
+    reply: Option<Value>,
 }
 impl Row {
     fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply})
     }
 }
 fn select() -> String {
     format!(
-        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} AS author,CASE WHEN m.author_id=m.channel_id THEN 'owner' WHEN EXISTS(SELECT 1 FROM channel_moderators cm WHERE cm.channel_id=m.channel_id AND cm.user_id=m.author_id) THEN 'moderator' END AS role FROM chat_messages m JOIN channel_users a ON a.id=m.author_id",
+        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} AS author,m.role,
+        ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
+        CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
+            'author_id',r.author_id,'username',ra.username,
+            'body',left(regexp_replace(r.body,E'[\\n\\r]+',' ','g'),80)) END AS reply
+        FROM chat_messages m JOIN channel_users a ON a.id=m.author_id
+        LEFT JOIN chat_messages r ON r.id=m.reply_to AND r.channel_id=m.channel_id
+            AND r.deleted_at IS NULL AND (r.expires_at>now() OR EXISTS(SELECT 1 FROM chat_pins WHERE message_id=r.id))
+        LEFT JOIN channel_users ra ON ra.id=r.author_id",
         profiles::chip_sql("a")
     )
+}
+
+// Apply the same block rule to a quote as to its original message; never expose its internal ID.
+fn visible_message(mut message: Value, hidden: &HashSet<String>) -> Value {
+    if let Some(reply) = message["reply"].as_object_mut() {
+        let blocked = reply
+            .remove("author_id")
+            .and_then(|v| v.as_str().map(|id| hidden.contains(id)))
+            .unwrap_or(false);
+        if blocked {
+            reply.insert("body".into(), Value::Null);
+            reply.insert("username".into(), Value::Null);
+        }
+    }
+    message
+}
+
+const VISIBLE: &str = "m.deleted_at IS NULL AND (m.expires_at>now() OR EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id))";
+
+async fn pinned(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Value> {
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{} JOIN chat_pins p ON p.message_id=m.id AND p.channel_id=m.channel_id WHERE m.channel_id=$1 AND {VISIBLE}", select()
+    ))).bind(channel).fetch_optional(&app.db).await?;
+    Ok(row
+        .filter(|r| !hidden.contains(&r.author_id))
+        .map(|r| visible_message(r.json(app), hidden))
+        .unwrap_or(Value::Null))
+}
+
+/// An active pin is retained until removed; ordinary chat still expires after seven days.
+pub async fn expire(app: &App) -> crate::Result<()> {
+    let mut tx = app.db.begin().await?;
+    // Lock candidates, then recheck pins in a fresh statement snapshot. A pin committed while
+    // cleanup was waiting on a message must not disappear with that message's ordinary expiry.
+    let ids: Vec<String> = sqlx::query_scalar("SELECT m.id FROM chat_messages m WHERE expires_at<=now() AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED")
+        .fetch_all(&mut *tx).await?;
+    let removed: Vec<(String, String)> = sqlx::query_as("DELETE FROM chat_messages m WHERE id=ANY($1) AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) RETURNING channel_id,id")
+        .bind(ids).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    for (channel, id) in removed {
+        app.chat
+            .publish(&channel, None, 0, json!({"type":"delete","id":id}));
+    }
+    Ok(())
+}
+
+/// Whole ASCII usernames only: no email addresses, partial long names or HTML parsing.
+fn mention_names(body: &str) -> Vec<String> {
+    let chars: Vec<char> = body.chars().collect();
+    let mut names = HashSet::new();
+    for (i, c) in chars.iter().enumerate() {
+        if *c != '@'
+            || (i > 0 && (chars[i - 1].is_alphanumeric() || matches!(chars[i - 1], '_' | '@')))
+        {
+            continue;
+        }
+        let name: String = chars[i + 1..]
+            .iter()
+            .take_while(|c| c.is_ascii_alphanumeric() || **c == '_')
+            .collect();
+        if (3..=25).contains(&name.len())
+            && !chars
+                .get(i + 1 + name.len())
+                .is_some_and(|c| c.is_alphanumeric() || *c == '_')
+        {
+            names.insert(name.to_ascii_lowercase());
+        }
+    }
+    names.into_iter().collect()
 }
 
 /// Refresh a moderation change for already-connected viewers after its database commit.
@@ -108,7 +187,7 @@ pub async fn notify_changed(app: &App, id: &str) -> Res<()> {
             .publish(&channel, None, 0, json!({"type":"delete","id":id}));
     } else {
         let message: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "{} WHERE m.id=$1 AND m.deleted_at IS NULL AND m.expires_at>now()",
+            "{} WHERE m.id=$1 AND {VISIBLE}",
             select()
         )))
         .bind(id)
@@ -147,7 +226,7 @@ async fn hidden(app: &App, viewer: Option<&str>) -> Res<HashSet<String>> {
 async fn history(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Vec<Value>> {
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{} WHERE m.channel_id=$1 AND m.deleted_at IS NULL ORDER BY m.seq DESC LIMIT $2",
+        "{} WHERE m.channel_id=$1 AND {VISIBLE} ORDER BY m.seq DESC LIMIT $2",
         select()
     )))
     .bind(channel)
@@ -158,7 +237,7 @@ async fn history(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Vec<
         .into_iter()
         .rev()
         .filter(|r| !hidden.contains(&r.author_id))
-        .map(|r| r.json(app))
+        .map(|r| visible_message(r.json(app), hidden))
         .collect())
 }
 
@@ -166,6 +245,7 @@ async fn history(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Vec<
 pub struct Send {
     id: String,
     body: String,
+    reply_to: Option<String>,
 }
 
 /// Persists one message and fans it out. Acknowledged only after the insert commits.
@@ -188,13 +268,17 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
     }
     let existing: Option<Row> =
         // select() contains only fixed SQL and a literal chip alias; message values are bound.
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND m.author_id=$2", select())))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND m.author_id=$2 AND m.channel_id=$3 AND {VISIBLE}", select())))
             .bind(&input.id)
             .bind(&user.id)
+            .bind(channel)
             .fetch_optional(&app.db)
             .await?;
     if let Some(row) = existing {
-        return Ok(row.json(app));
+        return Ok(visible_message(
+            row.json(app),
+            &hidden(app, Some(&user.id)).await?,
+        ));
     }
     let standing: Option<(bool, bool)> =
         sqlx::query_as("SELECT email_verified, eligible FROM channel_users WHERE id=$1")
@@ -214,11 +298,34 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
     crate::moderation::check_send(app, channel, &user, body).await?;
     sec::reserve(app, vec![format!("chat-second:{}", user.id)], 2, 1).await?;
     sec::reserve(app, vec![format!("chat-ten:{}", user.id)], 20, 10).await?;
-    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING")
-        .bind(&input.id).bind(channel).bind(&user.id).bind(body).execute(&app.db).await?.rows_affected();
+    let hidden = hidden(app, Some(&user.id)).await?;
+    let role = moderation::role_of(app, channel, &user)
+        .await?
+        .map(|r| r.name());
+    let mut tx = app.db.begin().await?;
+    if let Some(reply) = &input.reply_to {
+        // Lock against deletion while accepting the reply. Later reads always join the current body.
+        let author: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT m.author_id FROM chat_messages m WHERE m.id=$1 AND m.channel_id=$2 AND {VISIBLE} FOR SHARE")))
+            .bind(reply).bind(channel).fetch_optional(&mut *tx).await?;
+        if author.is_none_or(|a| hidden.contains(&a)) {
+            return Err(Fail::field(
+                "reply_to",
+                "Reply to a visible message in this channel.",
+            ));
+        }
+    }
+    let mentions: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM channel_users WHERE lower(username)=ANY($1) AND eligible",
+    )
+    .bind(mention_names(body))
+    .fetch_all(&mut *tx)
+    .await?;
+    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING")
+        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
+    tx.commit().await?;
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1", select())))
         .bind(&input.id)
@@ -232,7 +339,7 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
         seq,
         json!({"type":"message","message":message}),
     );
-    Ok(message)
+    Ok(visible_message(message, &hidden))
 }
 
 pub async fn read(
@@ -244,7 +351,7 @@ pub async fn read(
     let viewer = profiles::viewer(&app, &jar).await?;
     let hidden = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await?;
     Ok(Json(
-        json!({"messages": history(&app, &channel, &hidden).await?}),
+        json!({"messages": history(&app, &channel, &hidden).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?}),
     ))
 }
 pub async fn post(
@@ -256,6 +363,67 @@ pub async fn post(
     let channel = channel(&app, &name).await?;
     Ok(Json(
         json!({"message": send(&app, &jar, &channel, input).await?}),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct Pin {
+    message_id: Option<String>,
+    reason: String,
+}
+/// A null message unpins. An upsert makes concurrent replacements leave exactly one pin.
+pub async fn pin(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Json(input): Json<Pin>,
+) -> Res<Json<Value>> {
+    let channel = channel(&app, &name).await?;
+    let (user, role) = moderation::actor(&app, &jar, &channel).await?;
+    if !matches!(role, moderation::Role::Owner | moderation::Role::Moderator) {
+        return Err(Fail::denied(
+            "Only the channel owner or an appointed moderator can pin messages.",
+        ));
+    }
+    let reason = moderation::reason(&input.reason)?;
+    let hidden = hidden(&app, Some(&user.id)).await?;
+    let mut tx = app.db.begin().await?;
+    if let Some(id) = &input.message_id {
+        let author: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT m.author_id FROM chat_messages m WHERE m.id=$1 AND m.channel_id=$2 AND {VISIBLE} FOR UPDATE"
+        ))).bind(id).bind(&channel).fetch_optional(&mut *tx).await?;
+        if author.is_none_or(|a| hidden.contains(&a)) {
+            return Err(Fail::missing());
+        }
+        sqlx::query("INSERT INTO chat_pins(channel_id,message_id) VALUES($1,$2) ON CONFLICT(channel_id) DO UPDATE SET message_id=EXCLUDED.message_id")
+            .bind(&channel).bind(id).execute(&mut *tx).await?;
+    } else {
+        sqlx::query("DELETE FROM chat_pins WHERE channel_id=$1")
+            .bind(&channel)
+            .execute(&mut *tx)
+            .await?;
+    }
+    moderation::log(
+        &mut tx,
+        &channel,
+        &user.id,
+        role,
+        if input.message_id.is_some() {
+            "pin_message"
+        } else {
+            "unpin_message"
+        },
+        None,
+        input.message_id.as_deref(),
+        json!({}),
+        &reason,
+    )
+    .await?;
+    tx.commit().await?;
+    // Read current state at delivery, so concurrent replacements cannot publish stale pins.
+    app.chat.publish(&channel, None, 0, json!({"type":"pin"}));
+    Ok(Json(
+        json!({"pinned":pinned(&app, &channel, &hidden).await?}),
     ))
 }
 
@@ -300,17 +468,57 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
         return;
     };
     let cursor = snapshot.last().and_then(|m| m["seq"].as_i64()).unwrap_or(0);
-    let first = json!({"type":"snapshot","messages":snapshot}).to_string();
+    let Ok(pin) = pinned(&app, &channel, &hidden).await else {
+        return;
+    };
+    let Ok(mut emotes) = crate::emotes::catalog(&app, &channel).await else {
+        return;
+    };
+    let first =
+        json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes}).to_string();
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
     }
+    // Also catches quarantine, appeals and account removals performed by the worker.
+    // ponytail: one small catalog query per socket every five seconds; share invalidations
+    // across sockets if measured viewer load makes this polling significant.
+    let mut refresh = tokio::time::interval(std::time::Duration::from_secs(5));
+    refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
+            _ = refresh.tick() => {
+                let Ok(current) = crate::emotes::catalog(&app, &channel).await else { return; };
+                if current != emotes {
+                    emotes = current;
+                    if ws.send(Message::Text(json!({"type":"emotes","emotes":emotes}).to_string().into())).await.is_err() { return; }
+                }
+            }
             event = events.recv() => match event {
                 Ok(e) if e.channel == channel
-                    && !e.author.as_ref().is_some_and(|a| hidden.contains(a))
                     && (e.seq == 0 || e.seq > cursor) => {
-                    if ws.send(Message::Text(e.payload.to_string().into())).await.is_err() {
+                    let Ok(hidden) = crate::chat::hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await else { return; };
+                    if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
+                    let mut payload = e.payload.clone();
+                    if payload["type"] == "emotes" {
+                        let Ok(current) = crate::emotes::catalog(&app, &channel).await else { return; };
+                        emotes = current;
+                        payload["emotes"] = json!(emotes);
+                    } else if payload["type"] == "pin" {
+                        let Ok(pin) = pinned(&app, &channel, &hidden).await else { return; };
+                        payload["pinned"] = pin;
+                    } else if payload["type"] == "message" {
+                        // Re-read after queueing: deletion or a new block must not leak a stale quote.
+                        // ponytail: one indexed read per recipient/event; batch fanout if measured chat load requires it.
+                        let row = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND {VISIBLE}", select())))
+                            .bind(payload["message"]["id"].as_str().unwrap_or(""))
+                            .fetch_optional(&app.db).await;
+                        let Ok(Some(row)) = row else {
+                            if row.is_err() { return; }
+                            continue;
+                        };
+                        payload["message"] = visible_message(row.json(&app), &hidden);
+                    }
+                    if ws.send(Message::Text(payload.to_string().into())).await.is_err() {
                         return;
                     }
                 }
@@ -348,5 +556,18 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/channels/{username}/chat", get(read).post(post))
+        .route("/api/channels/{username}/chat/pin", put(pin))
         .route("/api/chat/ws", get(socket))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mentions_are_whole_usernames_not_email_or_markup() {
+        let mut names = super::mention_names(
+            "@Real_User, (@SECOND) @real_user hello@Mailbox.test @@double @ab @abcdefghijklmnopqrstuvwxyz @nameé <img src=x onerror=alert(1)>",
+        );
+        names.sort();
+        assert_eq!(names, ["real_user", "second"]);
+    }
 }

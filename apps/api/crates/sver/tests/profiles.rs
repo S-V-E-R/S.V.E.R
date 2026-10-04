@@ -17,6 +17,8 @@ use sqlx::postgres::PgPoolOptions;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use sver::{App, Config, media, profile_import, security as sec, studio};
 use tower::ServiceExt;
+#[path = "profiles/emotes.rs"]
+mod emotes;
 #[path = "profiles/take_down.rs"]
 mod take_down;
 
@@ -336,6 +338,7 @@ async fn profiles_acceptance() {
             renames(&env).await;
             safety(&env).await;
             erasure(&env).await;
+            emotes::exercise(&env, &media_dir).await;
             legacy_import(&env, &media_dir).await;
             legacy_import_cli().await;
         }
