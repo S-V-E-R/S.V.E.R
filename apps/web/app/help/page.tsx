@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 };
 
 export default function HelpPage() {
-  return <SitePage path="/help" title="Help & FAQ" intro="Find your way around accounts, channels and streaming.">
+  return <SitePage path="/help" title="Help & FAQ" intro="Answers that get you unstuck: accounts, channels, streaming and support.">
     <p className="notice">Accounts, channel profiles and profile uploads are available. Live delivery is still being prepared. Creator Studio shows whether streaming is available for your account.</p>
     <nav className="site-links" aria-label="Help topics">
       <a href="#accounts">Accounts</a><a href="#channels">Channels & watching</a><a href="#streaming">Streaming</a><a href="#safety">Safety & support</a>

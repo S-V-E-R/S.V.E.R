@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 };
 
 export default function ContactPage() {
-  return <SitePage path="/contact" title="Contact S.V.E.R" intro="Choose the right contact for your question. You do not need an account to email us.">
+  return <SitePage path="/contact" title="Contact S.V.E.R" intro="We read everything. Choose the right contact for your question; you do not need an account to email us.">
     <section>
       <h2>Account and technical help</h2>
       <p><a href="mailto:support@sver.tv">support@sver.tv</a></p>

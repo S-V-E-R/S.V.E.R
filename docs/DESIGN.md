@@ -130,7 +130,7 @@ Every page uses the same shell (top bar, sidebar, main column) unless noted. Uti
 
 **Legal pages (Terms, Privacy, Guidelines, DMCA, Take It Down).** Same top bar, tabs across the top to switch policy. Each policy: title, "Last updated · Effective" dates, a framed "The short version" box with 3 to 5 plain bullets and a note that the full text is what applies, then a sticky "On this page" list on the left and numbered sections on the right. The Take It Down tab is a request page instead: plain-language explanation, a framed "What happens next" list (confirmation, removal of the content and identical copies within 48 hours, follow-up), and a framed request form that works without an account.
 
-**Footer (every page).** Logo, "For streamers who play, build, and make.", links to About, Factions, Roadmap, Help, Terms, Privacy, Guidelines, DMCA, **Take It Down requests** (required to be clearly visible from the homepage) and Contact, and "© SVER LLC".
+**Footer (every page).** Logo, the footer tagline from [COPY.md](COPY.md), links to About, Factions, Roadmap, Help, Terms, Privacy, Guidelines, DMCA, **Take It Down requests** (required to be clearly visible from the homepage) and Contact, and "© SVER LLC".
 
 While pages are being restored, navigation includes only working destinations. The information-page top bar offers Home, Factions, Roadmap, About and Help; Contact stays in the footer. Add Browse when it exists. Contact uses the information-page layout. Before Module 4, faction cards link to an explanation of the planned joining rules; signup does not select or reserve a faction. The information page uses 150 px crests as specified above, while marks elsewhere keep their smaller sizes. Faction cards use their own theme tokens without changing the surrounding site theme, and stack in one column below 960 px. Roadmap status is always written in text as well as distinguished by styling. This does not close the outstanding Take It Down request page and removal-process requirement. Legal contents lists become a normal list above the text below 960 px; keep the short summary and full policy available at every screen size.
 
@@ -141,7 +141,7 @@ While pages are being restored, navigation includes only working destinations. T
 ## Copy
 
 - Short, direct, specific. Say what something does ("Every live stream gets a turn here, whether it has 3 viewers or 3,000"), not slogans.
-- No filler taglines or mood lines in the chrome ("A new chapter begins", "Stream • Connect • Belong").
+- No generic filler taglines or mood lines in the chrome ("A new chapter begins", "Stream • Connect • Belong"). S.V.E.R's own taglines in [COPY.md](COPY.md) are the exception and are used where that file says.
 - Never compare S.V.E.R to other platforms.
 - Game vocabulary where it fits the war (Enlist, territory, orders, ally), plain words everywhere else.
 

@@ -18,3 +18,12 @@
 .site-footer .copyright{width:100%;margin:0;font-size:13px;color:var(--ink-dim)}
 @media(max-width:959px){.site-shell .sidebar{display:none}.site-shell .topbar{padding:16px 24px;gap:12px 24px}.site-shell .topbar .public-navigation{order:3;width:100%;flex-wrap:wrap}.site-shell .account-navigation{margin-left:auto}.site-shell .mobile-navigation{display:block;width:100%;order:4}.mobile-navigation summary{cursor:pointer;min-height:44px;padding:10px 0;font:700 16px/1.5 var(--font-label),sans-serif}.site-shell .mobile-navigation nav{display:block;border:1px solid var(--line);padding:12px;background:var(--surface)}.site-shell .site-footer{padding:28px 24px}.site-footer .site-links{justify-content:flex-start;margin-left:0}}
 @media(max-width:650px){.site-shell .topbar{padding:12px 20px}.site-shell .brand{font-size:28px}.site-shell .topbar .button{display:inline-flex}.site-shell .topbar nav{gap:12px 18px}.site-shell .account-navigation{flex-wrap:wrap}.site-shell .account-name{max-width:140px}.site-shell .site-footer{padding:28px 20px;align-items:flex-start;flex-direction:column}.site-footer .site-links{flex:auto}.site-footer .copyright{width:auto}}
+/* Info-page top bar (DESIGN.md "Info pages"): spaced nav, current page underlined in --accent. */
+.site-shell .topbar .public-navigation,.site-shell .topbar .account-navigation{display:flex;align-items:center;gap:4px 22px}
+.site-shell .topbar .public-navigation{margin-left:32px}
+.site-shell .topbar .public-navigation a{font:700 15px/1 var(--font-label);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-muted,#C8CAD0);text-decoration:none;padding:12px 2px}
+.site-shell .topbar .public-navigation a[aria-current="page"]{color:var(--accent-light);box-shadow:inset 0 -2px 0 var(--accent)}
+.site-shell .topbar .account-navigation a:not(.button){font:700 15px/1 var(--font-label);letter-spacing:.12em;text-transform:uppercase;text-decoration:none;color:var(--ink,#F2F0EA);padding:12px 2px}
+@media(max-width:959px){.site-shell .topbar .public-navigation{margin-left:0}}
+/* Joe's verse, shown small like a reference on a cup: findable, never loud. */
+.verse{margin-left:14px;font:600 11px/1 var(--font-label);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-dim,#8E929B);opacity:.7}
