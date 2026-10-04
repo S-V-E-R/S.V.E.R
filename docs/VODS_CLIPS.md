@@ -41,11 +41,12 @@ Live streams are recorded so people can catch up. Streamers keep their best mome
 - **Length:** 5–60 seconds; the default is the last 30 seconds. The clip editor lets the viewer drag the start and end within the last 2 minutes of the live stream, or anywhere in a VOD or Highlight.
 - **Clipping still works with recording off.** The worker keeps a rolling 2-minute window of segments for clipping only, and deletes them as they age out.
 - **Rate limits:** per viewer per hour and per channel. Exact numbers live in the private tuning config.
-- **Titles** go through the same automod as chat.
+- **Processing:** a background job joins the clip's segments into one MP4 with no re-encode (the 1-second keyframe interval keeps cuts clean) and takes a thumbnail. A single file is what link previews and embeds need.
+- **Titles** are up to 100 characters and go through the same automod as chat.
 - **Optional approval:** streamers can require approval before clips go public. Clips by the streamer and their mods skip the queue. Every approval and rejection is logged.
 - **Clips never expire.** They're short, and they're how channels get found. The streamer can delete any clip of their channel, and the clipper can delete their own.
 - **Each clip keeps** its channel, broadcast, category, faction, clipper, and the chat messages from its time window (copied at creation, since chat bodies expire after 7 days).
-- **Sharing:** every clip has its own page, an embed player and oEmbed. The player shows the channel name and a link to the live channel. Clips aren't watermarked, because that would need a re-encode.
+- **Sharing:** every clip has its own page, an embed player, oEmbed, and preview tags so a link posted to Discord, X or Reddit shows the video, image and title. The player shows the channel name and a link to the live channel. Clips aren't watermarked, because that would need a re-encode.
 - **Beacons:** a clip can be turned into a Beacon in Module 9, which makes the 9:16 version. Only clips the streamer approves can become Beacons.
 
 ## Chat replay
@@ -101,7 +102,7 @@ The Videos tab placeholder from [PROFILES.md](PROFILES.md) becomes a real tab wi
 3. Visibility (Public, Subscribers, Private) is enforced on every playlist and segment URL. A signed URL stops working after it expires.
 4. Chapters appear from category changes, MAGNet moments and `!marker`, and the streamer can edit them.
 5. A streamer saves a Highlight that still plays after its VOD expires and counts against the tier cap.
-6. Viewers clip live (including with recording off) and from VODs, within permissions and rate limits. Approval works, and deleting removes every file.
+6. Viewers clip live (including with recording off) and from VODs, within permissions and rate limits. Approval works, and deleting removes every file. A clip link posted to Discord shows a playable preview.
 7. Chat replay works on VODs, Highlights and clips, without deleted or moderated messages.
 8. Take It Down, reports and copyright removal remove or hold media as described.
 9. No media job re-encodes video, and none blocks a request.
