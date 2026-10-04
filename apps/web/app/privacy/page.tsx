@@ -21,6 +21,7 @@ export default function PrivacyPage() {
         <li><strong>Account information:</strong> email, username, date of birth, password hash, verification status, linked sign-in accounts and account security settings. Passwords are stored as hashes, not readable passwords.</li>
         <li><strong>Channel information:</strong> display name, bio, images, links, follows, Wall posts, fan art, schedule and other details you choose to publish.</li>
         <li><strong>Streaming and chat:</strong> stream titles and categories, broadcast sessions, playback activity needed to count viewers, and chat messages.</li>
+        <li><strong>Viewer counting:</strong> while you watch a live stream, your player tells us every few seconds that it is still playing and whether the page is visible. To keep automated traffic out of viewer counts, we keep only scrambled forms of your IP address and network, re-scrambled every 30 days so they can&apos;t be reversed or linked over time. We never store or show your actual IP address, and streamers never see who was or wasn&apos;t counted. These session records are deleted 30 days after the stream ends.</li>
         <li><strong>Safety and support:</strong> reports, reported-content snapshots, moderation actions, appeals and messages you send us.</li>
         <li><strong>Technical information:</strong> IP addresses, browser and device information, session records and service logs used for operation, security and troubleshooting.</li>
       </ul>

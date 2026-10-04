@@ -14,6 +14,7 @@ pub mod activity;
 pub mod auth;
 pub mod bans;
 pub mod chat;
+pub mod integrity;
 pub mod jobs;
 pub mod media;
 pub mod moderation;
@@ -56,6 +57,7 @@ pub struct Config {
     pub thumbnail_hosts: Vec<String>,
     pub streaming: Option<streams::Config>,
     pub playback: playback::Config,
+    pub integrity: integrity::Tuning,
     pub take_down: take_down::Config,
     pub staff_push: staff_push::Config,
 }
@@ -119,6 +121,7 @@ impl Config {
             media,
             streaming: streams::Config::from_env()?,
             playback: playback::Config::from_env(production)?,
+            integrity: integrity::Tuning::from_env()?,
             take_down: take_down::Config::from_env(),
             staff_push: staff_push::Config::from_env(),
             youtube_oembed_url: "https://www.youtube.com/oembed".into(),
@@ -354,6 +357,7 @@ pub fn router(app: App) -> Router {
         .merge(chat::routes())
         .merge(moderation::routes())
         .merge(bans::routes())
+        .merge(integrity::routes())
         .merge(take_down::routes())
         .merge(staff_push::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))

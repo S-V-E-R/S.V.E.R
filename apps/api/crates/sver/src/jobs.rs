@@ -60,6 +60,9 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::take_down::tick(app).await.is_err() {
         eprintln!("take_down_event=maintenance outcome=retry");
     }
+    if crate::integrity::tick(app).await.is_err() {
+        eprintln!("integrity_event=maintenance outcome=retry");
+    }
     // Only this rebuild database is touched. Future modules extend the user FK erasure policy.
     // Module 2 erasure steps run first so holds, report closures and counts are kept consistent.
     crate::profile_jobs::tick(app).await?;
@@ -83,7 +86,6 @@ pub async fn tick(app: &App) -> Result<()> {
         "oauth_signups",
         "sessions",
         "rate_limits",
-        "playback_leases",
         "chat_messages",
     ] {
         // The table comes from the fixed maintenance list above.

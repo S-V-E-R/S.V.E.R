@@ -13,11 +13,12 @@ async fn guest(e: &Env, method: &str, path: &str, body: Value) -> (StatusCode, V
     e.request(method, path, body, false, true, false).await
 }
 async fn beat(e: &Env, browser: &str) -> (StatusCode, Value) {
+    // Guests pass the (synthetic) security check; integrity.rs covers failing it.
     guest(
         e,
         "POST",
         "/api/channels/streamer/live/beat",
-        json!({"broadcast_id":"play-1","browser_id":browser}),
+        json!({"broadcast_id":"play-1","browser_id":browser,"visible":true,"turnstile":"pass"}),
     )
     .await
 }
@@ -36,7 +37,7 @@ pub async fn exercise(e: &Env) {
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('play-1','stream-owner','pub-play',1,'STARTING','s','v','c',now(),now(),now()+interval '15 seconds')").await;
     let (_, starting) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(starting["live"], false, "STARTING is not public");
-    assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["counted"], false);
+    assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["recorded"], false);
 
     e.sql("UPDATE broadcasts SET state='LIVE' WHERE id='play-1'")
         .await;
@@ -56,9 +57,9 @@ pub async fn exercise(e: &Env) {
     assert_eq!(card["live"], true, "user card shows live");
 
     // Guests count once per browser; repeats renew rather than add.
-    assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["counted"], true);
-    assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["counted"], true);
-    assert_eq!(beat(e, "browser-bbbbbbbbbbbb").await.1["counted"], true);
+    assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["recorded"], true);
+    assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["recorded"], true);
+    assert_eq!(beat(e, "browser-bbbbbbbbbbbb").await.1["recorded"], true);
     assert_eq!(beat(e, "short").await.0, StatusCode::BAD_REQUEST);
     assert_eq!(
         beat(e, "browser-<script>-xxxxxx").await.0,
@@ -72,7 +73,7 @@ pub async fn exercise(e: &Env) {
         json!({"broadcast_id":"someone-else","browser_id":"browser-cccccccccccc"}),
     )
     .await;
-    assert_eq!(other["counted"], false);
+    assert_eq!(other["recorded"], false);
     // The owner's own preview never counts.
     let owner = e
         .call(
@@ -81,12 +82,18 @@ pub async fn exercise(e: &Env) {
             json!({"broadcast_id":"play-1","browser_id":"browser-dddddddddddd"}),
         )
         .await;
-    assert_eq!(owner["counted"], false);
+    assert_eq!(owner["recorded"], false);
     assert_eq!(
         e.call("GET", "/api/channels/streamer/live", Value::Null)
             .await["is_owner"],
         true
     );
+    // New sessions are pending for their first minute, then count.
+    let (_, pending) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
+    assert_eq!(pending["viewers"], 0);
+    e.sql("UPDATE playback_leases SET created_at=created_at-interval '61 seconds'")
+        .await;
+    sver::integrity::tick(&e.app).await.unwrap();
     let (_, counted) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(counted["viewers"], 2);
 
@@ -98,7 +105,7 @@ pub async fn exercise(e: &Env) {
     assert_eq!(reconnecting["viewers"], 1);
 
     e.sql("UPDATE broadcasts SET state='ENDED',reconnect_deadline=NULL,ended_at=now(),end_reason='test' WHERE id='play-1'").await;
-    assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["counted"], false);
+    assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["recorded"], false);
     let (_, ended) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(ended, json!({"live":false}));
     let (_, card) = guest(e, "GET", "/api/users/streamer/card", Value::Null).await;

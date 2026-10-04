@@ -3,7 +3,7 @@ use axum::{
     body::Body,
     extract::{ConnectInfo, Path, State},
     http::{Request, StatusCode},
-    routing::{delete, get},
+    routing::{delete, get, post},
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -22,6 +22,8 @@ use tower::ServiceExt;
 mod bans;
 #[path = "streams/chat.rs"]
 mod chat;
+#[path = "streams/integrity.rs"]
+mod integrity;
 #[path = "streams/moderation.rs"]
 mod moderation;
 #[path = "streams/playback.rs"]
@@ -261,6 +263,13 @@ async fn streaming_lifecycle_and_security() {
             "/range/{prefix}",
             get(|| async { "00000000000000000000000000000000000:0" }),
         )
+        // Synthetic Turnstile: the token "pass" succeeds, anything else fails.
+        .route(
+            "/turnstile",
+            post(|body: String| async move {
+                Json(json!({"success": body.split('&').any(|kv| kv == "response=pass")}))
+            }),
+        )
         .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -268,6 +277,7 @@ async fn streaming_lifecycle_and_security() {
     let mut config = Config::from_env().unwrap();
     config.resend_key.clear();
     config.breach_url = format!("http://{address}/range/");
+    config.turnstile_url = format!("http://{address}/turnstile");
     config.streaming = Some(streams::Config {
         api_url: format!("http://{address}"),
         ingest_url: "rtmp://127.0.0.1:1935/rebuild".into(),
@@ -300,6 +310,7 @@ async fn exercise(e: &Env) {
     reports::exercise(e).await;
     bans::exercise(e).await;
     resets::exercise(e).await;
+    integrity::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")
