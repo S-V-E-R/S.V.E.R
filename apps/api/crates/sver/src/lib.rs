@@ -523,6 +523,7 @@ fn profile_routes() -> Router<App> {
             "/api/admin/users/{username}/restriction/lift",
             post(sa::admin_lift),
         )
+        .route("/api/admin/confirm", post(sa::staff_confirm))
         .route("/api/admin/appeals", get(sa::admin_appeals))
         .route("/api/admin/parts", get(parts::admin_queue))
         .route("/api/admin/parts/{id}/decision", post(parts::admin_decide))

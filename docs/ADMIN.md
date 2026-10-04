@@ -7,7 +7,7 @@ Specified October 4, 2026. This is the map of the staff console at `/admin`. Mos
 These carry over from [PROFILES.md](PROFILES.md), "Staff roles and the review queue":
 
 - **Access:** a staff role and MFA are needed to see anything. Everyone else gets 404, for pages and the API alike.
-- **Step-up:** any change needs a fresh step-up, within the last 5 minutes.
+- **Step-up:** changes need an MFA-verified session inside the staff window: unlocked for 15 minutes after a sign-in, password confirmation or authenticator/recovery-code confirmation; each staff action extends it by 15 more, up to 8 hours from the confirmation. Confirming with a code unlocks staff tools only, never account-security changes, which keep their own 5-minute rule (Joe, October 4, 2026; migration 0018). A lapsed window shows one prompt on any admin page and the refused change then finishes on its own.
 - **Roles are granted only from the server**, with `sver-admin role grant|revoke`, never through the web. Channel roles (owner, channel moderator) never grant `/admin`.
 - **Every change** needs a short note and writes a `moderation_actions` row in the same transaction. Logs carry fixed fields only, with no names, content or notes.
 - **Least exposure:**

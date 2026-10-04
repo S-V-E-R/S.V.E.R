@@ -2,7 +2,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
 import { EnableStaffPush } from "../../../components/StaffRemovalAlerts";
-import { StepUp, needsStepUp } from "../../../components/StepUp";
 
 type Request = { number: string; status: string; received_at: string; deadline: string; resolved_at: string | null; reason: string; media_pending: number; target_count: number };
 type Queue = { requests: Request[]; monthly: { received: number; removed: number; overdue: number; median_hours: number | null; longest_hours: number | null } };
@@ -13,14 +12,10 @@ function Review({ item, refresh }: { item: Request; refresh: () => Promise<void>
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  // An action refused for an old sign-in waits here until the staff member confirms, then reruns.
-  const [retry, setRetry] = useState<null | (() => Promise<void>)>(null);
   async function submit(path: string, body: Record<string, unknown>) {
     setBusy(true); setError("");
     const response = await send("POST", path, body);
     setBusy(false);
-    if (needsStepUp(response)) { setRetry(() => () => submit(path, body)); return; }
-    setRetry(null);
     if (response.ok) { await refresh(); await open(); } else setError(response.error);
   }
   async function open() {
@@ -53,10 +48,9 @@ function Review({ item, refresh }: { item: Request; refresh: () => Promise<void>
         <label className="field"><span>Explanation to requester</span><textarea name="reason" required maxLength={1000} rows={3} /></label>
         <label className="check"><input type="checkbox" name="minor" key={String(detail.minor)} defaultChecked={detail.minor} disabled={detail.minor} /> The person shown was under 18 — preserve evidence</label>
         <label className="field"><span>CyberTipline report or legal preservation reference (required for a minor)</span><input name="preservation_reference" key={detail.preservation_reference} defaultValue={detail.preservation_reference} maxLength={300} /></label>
-        <p className="muted">Valid removals are permanent. The uploader receives a severe strike and an account-ban review. If you&apos;re asked to confirm it&apos;s you, enter your password and the action continues.</p>
+        <p className="muted">Valid removals are permanent. The uploader receives a severe strike and an account-ban review. If you&apos;re asked to confirm it&apos;s you, the action continues once you do.</p>
         <button type="submit" disabled={busy}>{busy ? "Applying…" : "Apply review action"}</button>
       </form>}
-      {retry && <StepUp onConfirmed={() => { const run = retry; setRetry(null); void run(); }} />}
       <button type="button" className="small quiet" onClick={open} disabled={busy}>Refresh case record</button>
       <h3>Notifications</h3><p className="muted">Latest 200 notices. Service acceptance does not confirm that the recipient has read an alert.</p>
       <ul>{detail.notices.map((notice,i) => <li key={i}>

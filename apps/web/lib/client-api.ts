@@ -2,8 +2,19 @@
 import { useEffect } from "react";
 export type Result<T> = { ok: true; data: T } | { ok: false; status: number; error: string; field?: string };
 
+// Staff pages register a prompt here (components/StepUp.tsx). When a request is refused because the
+// staff window has lapsed, the prompt asks for a code or password and the request retries once.
+let stepUpHandler: (() => Promise<boolean>) | null = null;
+export function setStepUpHandler(handler: (() => Promise<boolean>) | null) { stepUpHandler = handler; }
+const isStepUp = (result: Result<unknown>) => !result.ok && result.status === 403 && /confirm your sign-in/i.test(result.error);
+
 /** Browser API call: same-origin, never cached, field-level errors passed through. */
 export async function send<T = Record<string, unknown>>(method: string, path: string, body?: unknown): Promise<Result<T>> {
+  const result = await request<T>(method, path, body);
+  if (stepUpHandler && isStepUp(result) && await stepUpHandler()) return request<T>(method, path, body);
+  return result;
+}
+async function request<T>(method: string, path: string, body?: unknown): Promise<Result<T>> {
   try {
     const form = typeof FormData !== "undefined" && body instanceof FormData;
     const response = await fetch(path, { method, credentials: "same-origin", cache: "no-store", headers: body === undefined || form ? {} : { "Content-Type": "application/json" }, body: body === undefined ? undefined : form ? (body as FormData) : JSON.stringify(body) });

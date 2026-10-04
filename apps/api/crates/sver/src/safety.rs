@@ -527,19 +527,58 @@ pub async fn is_staff(db: &mut PgConnection, user_id: &str) -> Res<bool> {
     .fetch_one(&mut *db)
     .await?)
 }
-/// Staff for admin mutations: also an MFA-verified session with primary sign-in or re-auth
-/// within five minutes (Login's step-up window).
+/// Staff for admin mutations: an MFA-verified session inside the staff window. A sign-in,
+/// password confirmation or authenticator confirmation unlocks it for 15 minutes; each staff
+/// action extends it by 15 more, up to 8 hours from that confirmation (Joe, October 4, 2026).
 pub async fn staff_write(app: &App, jar: &CookieJar) -> Res<User> {
     let user = staff(app, jar).await?;
-    let (tx, _, session) = auth::session(app, jar, false).await?;
-    tx.commit().await?;
-    if !session.mfa_verified || auth::recent(&session).is_err() {
+    let (mut tx, _, session) = auth::session(app, jar, false).await?;
+    let unlocked: bool = sqlx::query_scalar("SELECT mfa_verified AND greatest(authenticated_at, staff_confirmed_at) > now()-interval '8 hours' AND (greatest(authenticated_at, staff_confirmed_at) > now()-interval '15 minutes' OR coalesce(staff_active_at > now()-interval '15 minutes', false)) FROM sessions WHERE id=$1")
+        .bind(&session.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !unlocked {
+        tx.commit().await?;
         log("admin_step_up", "denied");
         return Err(Fail::denied(
             "Confirm your sign-in method again before using admin tools.",
         ));
     }
+    sqlx::query("UPDATE sessions SET staff_active_at=now() WHERE id=$1")
+        .bind(&session.id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(user)
+}
+
+#[derive(Deserialize)]
+pub struct StaffConfirm {
+    code: String,
+}
+/// POST /api/admin/confirm: staff unlock admin tools with an authenticator or recovery code. This
+/// never counts as a fresh primary sign-in for account-security changes.
+pub async fn staff_confirm(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<StaffConfirm>,
+) -> Res<Json<Value>> {
+    let user = staff(&app, &jar).await?;
+    let (mut tx, _, session) = auth::session(&app, &jar, false).await?;
+    if !session.mfa_verified {
+        return Err(Fail::denied("Sign in with your authenticator first."));
+    }
+    let permits =
+        crate::security::reserve(&app, vec![format!("staff-confirm:{}", user.id)], 5, 900).await?;
+    crate::security::prove_mfa(&app, &mut tx, &user, input.code.trim()).await?;
+    crate::security::release(&app, permits).await?;
+    sqlx::query("UPDATE sessions SET staff_confirmed_at=now(), staff_active_at=now() WHERE id=$1")
+        .bind(&session.id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    log("admin_step_up", "confirmed");
+    Ok(Json(json!({"confirmed": true})))
 }
 
 #[derive(Deserialize, Clone)]

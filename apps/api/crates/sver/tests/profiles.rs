@@ -3254,10 +3254,10 @@ async fn staff(env: &Env, name: &str) -> (String, Client, Client) {
         .await
         .unwrap();
     let _ = plain;
-    // A verified session whose primary sign-in is older than the 5-minute step-up window.
+    // A verified session whose sign-in is older than the 15-minute staff window.
     let stale = env.session(&id, true).await;
     sqlx::query(
-        "UPDATE sessions SET authenticated_at=now()-interval '10 minutes' WHERE token_hash=$1",
+        "UPDATE sessions SET authenticated_at=now()-interval '20 minutes' WHERE token_hash=$1",
     )
     .bind(sec::digest(stale.cookie.as_ref().unwrap()))
     .execute(&env.app.db)

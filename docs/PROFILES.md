@@ -556,7 +556,7 @@ All profile text is NFC-normalized and trimmed. Control characters, bidi overrid
   - A `staff_roles(user_id, role)` table with role `admin`.
   - Granted or revoked only by an operator CLI command run on the server (`sver-admin role grant|revoke`), never through the web. Each change is recorded in `moderation_actions`.
   - Legacy ADMIN roles are not imported automatically. The operator grants the user's own account after the deploy.
-- **Staff requirements:** staff must have MFA enabled to use any admin route. Admin mutations require step-up within the last five minutes (Login's sensitive-change rule). Non-staff get 404 on `/admin/*` and its API.
+- **Staff requirements:** staff must have MFA enabled to use any admin route. Admin mutations require an MFA-verified session inside the staff window: unlocked for 15 minutes after a sign-in, password confirmation or authenticator/recovery-code confirmation; each staff action extends it by 15 more, up to 8 hours from the confirmation. Confirming with a code unlocks staff tools only, never account-security changes, which keep their own 5-minute rule (Joe, October 4, 2026; migration 0018). Non-staff get 404 on `/admin/*` and its API.
 - **Queue page:** `/admin/reports`.
   - Open reports are grouped by target, oldest first.
   - Each group shows report count, reasons, the reporters' notes, the snapshot, the current content and the target's recent moderation history.

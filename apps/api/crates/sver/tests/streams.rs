@@ -34,6 +34,8 @@ mod real_media;
 mod reports;
 #[path = "streams/resets.rs"]
 mod resets;
+#[path = "streams/staff_window.rs"]
+mod staff_window;
 
 #[derive(Default)]
 struct Media {
@@ -311,6 +313,7 @@ async fn exercise(e: &Env) {
     bans::exercise(e).await;
     resets::exercise(e).await;
     integrity::exercise(e).await;
+    staff_window::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")
