@@ -49,6 +49,6 @@ function SiteFooter() {
       <div><Link href="/" className="brand logo small" aria-label="S.V.E.R home">S.V.E.R</Link><p>Your people are here. Your destiny is yours to forge. Choose your faction.</p></div>
       <nav className="site-links" aria-label="Site information">{siteLinks.map(([href, label]) =>
         <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{label}</Link>)}</nav>
-      <p className="copyright">© {new Date().getFullYear()} SVER LLC</p>
+      <p className="copyright">© {new Date().getFullYear()} SVER LLC <span className="verse">Matthew 5:16</span></p>
     </footer>;
 }

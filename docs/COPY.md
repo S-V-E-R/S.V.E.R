@@ -15,6 +15,7 @@ Taglines and descriptions carried over from the legacy site on October 3, 2026, 
 | Factions, shared truth | Every type of creator belongs here. Your faction is not about what you stream. It is about how you show up. / No faction is better than another. Each is a different expression of the same drive to compete, grow, and build something that matters. / Myria grinds. Aetheron studies. Glint connects. None of them are wrong. All of them are necessary. |
 | Help | Answers that get you unstuck. |
 | Contact | We read everything. |
+| Footer, beside the copyright | Matthew 5:16 (Joe's favorite verse; the reference only, small and dim, like the verse printed on a cup: discreet but easy to find) |
 
 ## Factions (in use)
 
