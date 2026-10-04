@@ -6,6 +6,10 @@ CrowdSync is how viewers change what happens on stream. It brings back the idea 
 
 It follows the closure rule: specify, build, then test against "Done when". Numbers marked **Proposed** are defaults Joe can change.
 
+## The first board
+
+The S.V.E.R Plays controller is the first CrowdSync board. It is built when Plays moves to the new API (right after Live streams), in this module's board format, with buttons, live vote shares and the control status bar ([PLAYS.md](PLAYS.md)). This module generalizes it: the builder, templates, Engagement Valor costs and outputs for every streamer.
+
 ## Parts
 
 1. **Boards:** streamer-built panels of controls under the player. Presses cost the channel's Engagement Valor (or are free) and trigger on-stream effects.
