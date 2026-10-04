@@ -70,9 +70,14 @@ Carried over from legacy: each faction has its own bot persona, and a neutral on
 - Text DMs between people who **follow each other**. A user can also allow DMs from anyone they follow, or from nobody.
 - **Under-18 accounts:** adults can message them only with a mutual follow **and** the minor's DM setting allowing it; it is off by default for under-18s.
 - Block, report and mute in every conversation; blocking ends the conversation for both. Staff can review reported messages only.
-- Text only at first (no images or files), up to 1,000 characters, with link warnings. Message history is kept until either person deletes their account; each person can delete a conversation from their own view.
+- Text only at first (no images or files), up to 1,000 characters, with link warnings. Each person can delete a conversation from their own view.
+- **Privacy (decided October 4, 2026):** DMs are not end-to-end encrypted at launch, because S.V.E.R must be able to act on reports, protect under-18 accounts and meet Take It Down. Instead:
+  - Message bodies are encrypted in Postgres with a DM-only key held outside the database (Login's cryptography, its own purpose binding), so a database copy or backup alone reveals nothing. Everything travels over HTTPS.
+  - Staff can read only the conversation named in a report, through the report case. Every access is logged, and the reporter sees when their report was reviewed.
+  - Messages are deleted automatically 12 months after they're sent (proposed), or sooner when either person deletes their account. Messages attached to an open report or Take It Down request are held until it closes.
+  - Later, as its own step after launch: an opt-in "Private" mode for DMs between two adults, using an established protocol (MLS) rather than a home-made one.
 - DM notifications follow the notification settings.
-- **Done when:** mutual followers exchange messages in real time; non-mutuals and blocked users can't; the under-18 rules hold; reports reach staff.
+- **Done when:** mutual followers exchange messages in real time; non-mutuals and blocked users can't; the under-18 rules hold; reports reach staff; message bodies are unreadable in a database dump without the DM key; staff reads outside a report are impossible and every report read is logged; expired messages are deleted.
 
 ## Discord bot
 
