@@ -140,7 +140,7 @@ Chat messages gain an origin (channel or Hype channel) so merged messages can be
 
 - Computer vision and game-API detectors, CrowdSync signals, faction Hype channels (later).
 - Surge (a collective hype event funded by support) belongs with Support or later, and never feeds MAGNet.
-- Auto-clips of featured moments belong to Module 7.
+- Auto-clips of featured moments belong to Module 8 (VODs and clips).
 - Personalization from watch history.
 
 ## Legacy notes

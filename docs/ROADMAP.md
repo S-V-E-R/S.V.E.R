@@ -11,12 +11,13 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | 4 | Factions | Myria, Aetheron, Glint; the seasonal war over categories; the faction hub | Planned |
 | 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff | Planned |
 | 6 | Support | Subscriptions, Valor and tributes, channel rewards, co-streams, payouts | Planned |
-| 7 | VODs and clips | Past broadcasts and clipping | Planned |
-| 8 | Beacons | Short vertical videos that lead to live streams | Planned |
+| 7 | CrowdSync | Interactive boards, Skills, polls and predictions, faction rallies | Planned |
+| 8 | VODs and clips | Past broadcasts and clipping | Planned |
+| 9 | Beacons | Short vertical videos that lead to live streams | Planned |
 
-Modules 1 to 5 make the site usable. After all eight: Progression (levels, XP, daily orders) and the remaining anti-abuse systems.
+Modules 1 to 5 make the site usable. After all nine: Progression (levels, XP, daily orders) and the remaining anti-abuse systems.
 
-The numbered table is also the public roadmap feed. The API embeds it at build time and serves it at `GET /api/roadmap` with `no-store`; the website server-renders it and refreshes every 30 seconds while visible. Update this table when a module starts or passes acceptance, then deploy the API. The page follows that release without a frontend rebuild. Unreleased local edits never appear as live progress. Keep rows 0–8 in order and statuses `Done`, `In progress`, `Started` or `Planned`; the backend tests reject an incomplete or malformed table.
+The numbered table is also the public roadmap feed. The API embeds it at build time and serves it at `GET /api/roadmap` with `no-store`; the website server-renders it and refreshes every 30 seconds while visible. Update this table when a module starts or passes acceptance, then deploy the API. The page follows that release without a frontend rebuild. Unreleased local edits never appear as live progress. Keep rows 0–9 in order and statuses `Done`, `In progress`, `Started` or `Planned`; the backend tests reject an incomplete or malformed table.
 
 ## Site pages
 

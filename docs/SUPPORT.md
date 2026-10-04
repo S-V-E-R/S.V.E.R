@@ -44,7 +44,7 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 | Days active | 0 | 10 | 40 | 120 |
 | **Subscription split to the streamer** | 65% | 70% | 75% | 80% |
 | **Ad split: streamer / S.V.E.R / viewers (Phase 4)** | 65 / 30 / 5 | 70 / 25 / 5 | 75 / 20 / 5 | 80 / 15 / 5 |
-| **VOD retention (Module 7)** | 24 hours | 48 hours | 72 hours | 7 days |
+| **VOD retention (Module 8)** | 24 hours | 48 hours | 72 hours | 7 days |
 
 - A streamer moves up when they meet every requirement for the next tier. Checked weekly, Monday 00:01 Eastern. Tiers never go down.
 - Each tier has a badge shown on the channel and in chat.
