@@ -1004,9 +1004,11 @@ pub async fn admin_reports(
     let interim: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',i.id,'username',u.username,'starts_at',i.starts_at,'until',i.until,'overdue',i.until<=now(),'note',i.note) FROM interim_restrictions i JOIN users u ON u.id=i.user_id WHERE i.resolution='OPEN' ORDER BY i.until")
         .fetch_all(&mut *db)
         .await?;
-    let appeals: i64 = sqlx::query_scalar("SELECT count(*) FROM appeals WHERE status='PENDING'")
-        .fetch_one(&mut *db)
-        .await?;
+    let appeals: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM appeals WHERE status='PENDING' AND strike_id IS NOT NULL",
+    )
+    .fetch_one(&mut *db)
+    .await?;
     log("admin_queue_read", "ok");
     Ok(Json(
         json!({"groups": out, "next_cursor": next, "interim_restrictions": interim, "pending_appeals": appeals}),
