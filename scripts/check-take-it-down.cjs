@@ -94,6 +94,7 @@ async function submit(node) { await act(async () => node.dispatchEvent(new Event
     const { default: Queue } = compile("apps/web/app/admin/take-it-down/page.tsx", {
       "../../../lib/client-api": client,
       "../../../components/StaffRemovalAlerts": { EnableStaffPush: () => null },
+      "../../../components/StepUp": compile("apps/web/components/StepUp.tsx", { "../lib/client-api": client, "next/link": { __esModule: true, default: ({ href, children }) => React.createElement("a", { href }, children) } }),
     });
     const now = new Date().toISOString();
     const item = { number: "TID-2026-000123", status: "under_review", received_at: now, deadline: now, resolved_at: null, reason: "", media_pending: 0, target_count: 1 };
@@ -120,6 +121,25 @@ async function submit(node) { await act(async () => node.dispatchEvent(new Event
     await act(async () => button("Refresh case record").click());
     assert.match(document.body.textContent,/Accepted by email service/);
     assert.doesNotMatch(document.body.textContent,/Contact the recipient through an available channel/);
+    // An action refused for an old sign-in asks for the password inline, then reruns the action.
+    let stale = true;
+    global.fetch = async (url, options) => {
+      staffCalls.push({url,method:options.method,body:options.body && JSON.parse(options.body)});
+      if (url === "/api/auth/reauth") { stale = false; return { ok: true, status: 200, json: async () => ({}) }; }
+      if (options.method === "POST" && stale) return { ok: false, status: 403, json: async () => ({ error: "Confirm your sign-in method again before using admin tools." }) };
+      return { ok: true, status: 200, json: async () => options.method === "POST" ? {saved:true} : url.endsWith(item.number) ? detail : {requests:[item],monthly:{received:1,removed:0,overdue:0,median_hours:null,longest_hours:null}} };
+    };
+    reviewForm.elements.reason.value = "Synthetic dismissal";
+    await submit(reviewForm);
+    const password = document.querySelector('input[name="password"]');
+    assert.ok(password, "step-up form shown");
+    password.value = "synthetic-password";
+    const before = staffCalls.length;
+    await submit(password.form);
+    const rerun = staffCalls.slice(before).filter(call => call.method === "POST" && call.url.endsWith(item.number));
+    assert.equal(rerun.length, 1, "action reruns once after confirming");
+    assert.equal(rerun[0].body.reason, "Synthetic dismissal");
+    assert.equal(document.querySelector('input[name="password"]'), null, "step-up form closes");
     console.log("Take It Down form checks passed: anonymous required fields, location prefill, independent challenges, error recovery, receipt and private status lookup.");
     console.log("Staff removal checks passed: saved minor flag and preservation reference, safe audit text, notice failures and refreshed provider acceptance.");
   } finally {

@@ -80,15 +80,27 @@ impl Submission {
             return Err(Fail::bad("Give between 1 and 20 S.V.E.R links."));
         }
         for location in &mut self.locations {
-            *location = location.trim().to_string();
+            *location = normalize_location(&app.config.origin, location);
             parse_location(app, location)?;
         }
         Ok(())
     }
 }
+/// Accepts the forms people paste: a full link, `sver.tv/...` or `www.`/`media.` without a scheme,
+/// or a path on this site (`/username/live`).
+fn normalize_location(origin: &str, location: &str) -> String {
+    let location = location.trim();
+    if location.starts_with('/') && !location.starts_with("//") {
+        format!("{}{location}", origin.trim_end_matches('/'))
+    } else if !location.contains("://") && !location.is_empty() {
+        format!("https://{}", location.trim_start_matches('/'))
+    } else {
+        location.to_string()
+    }
+}
 fn parse_location(app: &App, location: &str) -> Res<url::Url> {
     let url = url::Url::parse(location)
-        .map_err(|_| Fail::bad("Use a complete S.V.E.R link, starting with https://."))?;
+        .map_err(|_| Fail::bad("Use a S.V.E.R link, like sver.tv/username."))?;
     let origin = url::Url::parse(&app.config.origin).map_err(|_| Fail::internal())?;
     let media = url::Url::parse(&app.config.media.public_base).map_err(|_| Fail::internal())?;
     if location.len() > 2048
@@ -753,9 +765,10 @@ async fn add_location(
     State(app): State<App>,
     jar: CookieJar,
     Path(number): Path<String>,
-    Json(input): Json<AddLocation>,
+    Json(mut input): Json<AddLocation>,
 ) -> Res<Json<Value>> {
     let actor = safety::staff_write(&app, &jar).await?;
+    input.location = normalize_location(&app.config.origin, &input.location);
     parse_location(&app, &input.location)?;
     let mut guard = app.db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(1414087746)")
@@ -810,4 +823,23 @@ async fn evidence(
         bytes,
     )
         .into_response())
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::normalize_location;
+
+    #[test]
+    fn pasted_forms_become_full_links() {
+        let n = |raw: &str| normalize_location("https://sver.tv", raw);
+        assert_eq!(n(" sver.tv/joe "), "https://sver.tv/joe");
+        assert_eq!(n("www.sver.tv/joe/live"), "https://www.sver.tv/joe/live");
+        assert_eq!(n("/joe/fan-art"), "https://sver.tv/joe/fan-art");
+        assert_eq!(
+            n("https://media.sver.tv/a.webp"),
+            "https://media.sver.tv/a.webp"
+        );
+        // Other hosts still get a scheme here and are then refused by parse_location.
+        assert_eq!(n("//evil.example/x"), "https://evil.example/x");
+    }
 }

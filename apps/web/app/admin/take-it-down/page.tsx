@@ -2,6 +2,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
 import { EnableStaffPush } from "../../../components/StaffRemovalAlerts";
+import { StepUp, needsStepUp } from "../../../components/StepUp";
 
 type Request = { number: string; status: string; received_at: string; deadline: string; resolved_at: string | null; reason: string; media_pending: number; target_count: number };
 type Queue = { requests: Request[]; monthly: { received: number; removed: number; overdue: number; median_hours: number | null; longest_hours: number | null } };
@@ -12,6 +13,16 @@ function Review({ item, refresh }: { item: Request; refresh: () => Promise<void>
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // An action refused for an old sign-in waits here until the staff member confirms, then reruns.
+  const [retry, setRetry] = useState<null | (() => Promise<void>)>(null);
+  async function submit(path: string, body: Record<string, unknown>) {
+    setBusy(true); setError("");
+    const response = await send("POST", path, body);
+    setBusy(false);
+    if (needsStepUp(response)) { setRetry(() => () => submit(path, body)); return; }
+    setRetry(null);
+    if (response.ok) { await refresh(); await open(); } else setError(response.error);
+  }
   async function open() {
     const response = await send<Detail>("GET", `/api/admin/take-it-down/${item.number}`);
     if (response.ok) { setDetail(response.data); setError(""); } else setError(response.error);
@@ -20,19 +31,12 @@ function Review({ item, refresh }: { item: Request; refresh: () => Promise<void>
     event.preventDefault();
     if (busy) return;
     const form = new FormData(event.currentTarget);
-    setBusy(true); setError("");
-    const response = await send("POST", `/api/admin/take-it-down/${item.number}`, { action: form.get("action"), reason: form.get("reason"), minor: form.get("minor") === "on", preservation_reference: form.get("preservation_reference") });
-    setBusy(false);
-    if (response.ok) { await refresh(); await open(); } else setError(response.error);
+    await submit(`/api/admin/take-it-down/${item.number}`, { action: form.get("action"), reason: form.get("reason"), minor: form.get("minor") === "on", preservation_reference: form.get("preservation_reference") });
   }
   async function locate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if(busy) return;
-    const form=new FormData(event.currentTarget);
-    setBusy(true); setError("");
-    const response=await send("POST",`/api/admin/take-it-down/${item.number}/locations`,{location:form.get("location")});
-    setBusy(false);
-    if(response.ok) { await refresh(); await open(); } else setError(response.error);
+    if (busy) return;
+    await submit(`/api/admin/take-it-down/${item.number}/locations`, { location: new FormData(event.currentTarget).get("location") });
   }
   return <>
     {!detail ? <button type="button" className="small quiet" onClick={open}>Review {item.number}</button> : <div>
@@ -43,15 +47,16 @@ function Review({ item, refresh }: { item: Request; refresh: () => Promise<void>
       {detail.preservation_reference && <p>Preservation reference: {detail.preservation_reference}</p>}
       <p>{detail.targets.length} located content item(s); {item.media_pending} image group(s) still awaiting storage/cache hiding.</p>
       {detail.evidence.length>0 && <details><summary>Quarantined media — restricted staff access</summary><p>Viewing requires a recent sign-in and is recorded. Open only the evidence needed for this review.</p><ul>{detail.evidence.map((key,i)=><li key={key}><a href={`/api/admin/take-it-down/${item.number}/media/${key}`} target="_blank" rel="noreferrer">Review stored image {i+1}</a></li>)}</ul></details>}
-      {!item.resolved_at && <form className="editor" onSubmit={locate}><label className="field"><span>Add a precise content location from your review</span><input name="location" type="url" required maxLength={2048} /></label><button type="submit" className="small quiet" disabled={busy}>Locate and hide</button></form>}
+      {!item.resolved_at && <form className="editor" onSubmit={locate}><label className="field"><span>Add a precise content location from your review</span><input name="location" type="text" inputMode="url" placeholder="sver.tv/username or a full link" required maxLength={2048} /></label><button type="submit" className="small quiet" disabled={busy}>Locate and hide</button></form>}
       {!item.resolved_at && <form className="editor" onSubmit={act}>
         <label className="field"><span>Action</span><select name="action"><option value="review">Under review — stop named live streams</option><option value="remove">Valid request — permanently remove</option><option value="dismiss">Not valid — restore content</option></select></label>
         <label className="field"><span>Explanation to requester</span><textarea name="reason" required maxLength={1000} rows={3} /></label>
         <label className="check"><input type="checkbox" name="minor" key={String(detail.minor)} defaultChecked={detail.minor} disabled={detail.minor} /> The person shown was under 18 — preserve evidence</label>
         <label className="field"><span>CyberTipline report or legal preservation reference (required for a minor)</span><input name="preservation_reference" key={detail.preservation_reference} defaultValue={detail.preservation_reference} maxLength={300} /></label>
-        <p className="muted">Valid removals are permanent. The uploader receives a severe strike and an account-ban review. Confirm your sign-in method on Account security if prompted.</p>
+        <p className="muted">Valid removals are permanent. The uploader receives a severe strike and an account-ban review. If you&apos;re asked to confirm it&apos;s you, enter your password and the action continues.</p>
         <button type="submit" disabled={busy}>{busy ? "Applying…" : "Apply review action"}</button>
       </form>}
+      {retry && <StepUp onConfirmed={() => { const run = retry; setRetry(null); void run(); }} />}
       <button type="button" className="small quiet" onClick={open} disabled={busy}>Refresh case record</button>
       <h3>Notifications</h3><p className="muted">Latest 200 notices. Service acceptance does not confirm that the recipient has read an alert.</p>
       <ul>{detail.notices.map((notice,i) => <li key={i}>
