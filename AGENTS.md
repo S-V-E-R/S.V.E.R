@@ -50,12 +50,12 @@ Each module is closed before the next starts:
    - **first, before the rest of Live streams:** the Take It Down removal process (`docs/TAKE_IT_DOWN.md`), legally required while sver.tv is public
    - then Multistream (`docs/LINKED_CHAT.md`): restreaming to other platforms from one OBS output, plus Linked chat merging their chat into S.V.E.R chat, built right after Live streams closes
    - then the small steps in `docs/COMMUNITY.md` placed after Live streams (data export, chat commands, GIFs, captions)
-4. Factions (full seasonal war at launch)
+4. Factions (full seasonal war at launch; `docs/FACTIONS.md`)
    - then Guilds (`docs/GUILDS.md`): cross-faction stream teams, joined by application
 5. MAGNet
 6. Support (subscriptions, Valor, channel rewards, co-streams, payouts)
 7. CrowdSync (interactive boards, Skills, polls and predictions)
-8. VODs and clips
+8. VODs and clips (`docs/VODS_CLIPS.md`)
 9. Beacons
 
 Modules 1 to 5 make the site functional. Phase 2 (Progression, Raven's Eye) starts only after all nine close.
