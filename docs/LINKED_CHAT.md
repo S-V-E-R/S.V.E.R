@@ -23,7 +23,9 @@ Launch platforms: Twitch, YouTube and Kick, each through its official API. More 
 
 ## Outside messages on S.V.E.R
 
-- Shown in the S.V.E.R chat with the platform's icon and the sender's display name on that platform. They have no S.V.E.R profile link.
+- **Every outside message carries its platform badge**, placed before the sender's name where S.V.E.R messages show the faction crest: the platform's official icon (Twitch, YouTube or Kick), used under each platform's brand guidelines, with an accessible label such as "From Twitch". The badge is always shown and can't be hidden or faked, so nobody can mistake an outside message for a S.V.E.R account or the reverse.
+- If the platform reports the sender's role there (broadcaster, moderator or subscriber), a small text marker shows it next to the badge, for example "Twitch mod". These roles give no permissions on S.V.E.R.
+- The sender's display name from that platform, with no S.V.E.R profile link. Hovering or tapping the name shows the platform and a link to their channel on it.
 - Plain text only, up to the S.V.E.R chat length; outside emotes appear as their text names.
 - Kept like S.V.E.R chat messages (latest 100 on join, 7-day expiry). Only the platform, the outside user's ID and display name, and the text are stored.
 - **They never count toward anything:** not viewer counts, Valor, faction influence, MAGNet chat bursts, viewer integrity, tiers or Plays votes. Outside users aren't S.V.E.R accounts.
@@ -57,4 +59,4 @@ Tables: linked platform accounts (encrypted tokens, scopes, enabled flag), outsi
 
 ## Done when
 
-A streamer links Twitch, YouTube and Kick; while they're live, messages from each appear in S.V.E.R chat within a few seconds with the platform's icon; the streamer replies to each platform from S.V.E.R and the reply appears there; moderators hide and mute outside users on S.V.E.R; disconnects and quota limits show a notice and recover; outside messages provably don't affect viewer counts, Valor, influence, MAGNet or integrity; unlinking deletes the tokens.
+A streamer links Twitch, YouTube and Kick; while they're live, messages from each appear in S.V.E.R chat within a few seconds, each with its platform badge; the streamer replies to each platform from S.V.E.R and the reply appears there; moderators hide and mute outside users on S.V.E.R; disconnects and quota limits show a notice and recover; outside messages provably don't affect viewer counts, Valor, influence, MAGNet or integrity; unlinking deletes the tokens.
