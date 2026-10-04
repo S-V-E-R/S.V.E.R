@@ -12,9 +12,10 @@ This module lets viewers support streamers with money and loyalty, and gets stre
 - Purchased Valor and tributes
 - Engagement Valor (per-channel loyalty points) and channel rewards
 - Co-streams as a squad view
+- Shine, part 1: charity streams and Good Works badges
 - Payouts
 
-Not in this module: Ad Valor and ad revenue sharing (Phase 4, with ads), Progression (Phase 2), alerts and overlays for tributes and subs (Phase 3), merch.
+Not in this module: Lights and Shine Moments (Phase 2, with Progression), Ad Valor and ad revenue sharing (Phase 4, with ads), Progression (Phase 2), alerts and overlays for tributes and subs (Phase 3), merch.
 
 ## Who can earn
 
@@ -103,6 +104,16 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - Anyone can leave at any time; the squad ends when its host leaves or goes offline. Blocks and bans between members prevent invites.
 - No video mixing or re-encoding: each stream is delivered exactly as in Module 3.
 
+## Shine: charity streams and Good Works badges
+
+Shine is S.V.E.R's recognition for doing good ("Let your light shine", Matthew 5:16). Part 1 ships in this module; Lights and Shine Moments come with Progression in Phase 2. Decided by Joe on October 3, 2026.
+
+- **Charity streams:** a streamer marks a broadcast as a charity stream in Creator Studio and adds the charity's name and the link to the charity's own donation page. Viewers see a Shine banner on the stream with a "Donate to *charity*" button that opens the charity's page. **S.V.E.R never collects or holds charity money** in this module, which avoids the legal and tax work of handling donations. Collecting donations on S.V.E.R can come later as its own decision.
+- **What a charity stream gets:** the Shine banner on the channel and watch page, a "Charity stream" label in browse and MAGNet reasons, and a short Shine entry on the channel's About tab after it ends. It does not change MAGNet's fair-turn rules or scoring.
+- **Good Works badges:** after a charity stream, the streamer can submit the amount raised with proof (the charity's receipt or fundraiser page). Staff verify it in `/admin` and award a Good Works badge on the channel, showing the charity's name and the amount. Badges are permanent and audited; staff can revoke one if proof turns out false.
+- **Rules:** only real registered charities (staff check during verification); the link must point to the charity or a recognized fundraising page for it; misleading charity claims are a Community Guidelines violation.
+- **Not included:** a single "Shine Score" ranking how good someone is. Legacy had one; it was dropped because it invites gaming.
+
 ## Payouts
 
 Decided by Joe on October 3, 2026.
@@ -126,4 +137,4 @@ Decided by Joe on October 3, 2026.
 
 ## Done when
 
-An eligible streamer finishes payout setup; a viewer subscribes at each tier by card and by Valor, gifts subs, buys Valor and pays tribute; every transaction balances in the ledger and survives webhook retries, refunds and chargebacks; a streamer creates rewards and fulfills redemptions; a squad of up to 4 streams plays together in both modes, and merged-mode revenue splits correctly; weekly tier checks promote streamers and change their split and VOD retention; a payday payout and a standard and instant Early Pay (capped at 75%, once a day) reach a Stripe test account, and a dispute after payout is recovered from later earnings.
+An eligible streamer finishes payout setup; a viewer subscribes at each tier by card and by Valor, gifts subs, buys Valor and pays tribute; every transaction balances in the ledger and survives webhook retries, refunds and chargebacks; a streamer creates rewards and fulfills redemptions; a charity stream shows its Shine banner and donate link, and staff verify a submitted amount into a Good Works badge; a squad of up to 4 streams plays together in both modes, and merged-mode revenue splits correctly; weekly tier checks promote streamers and change their split and VOD retention; a payday payout and a standard and instant Early Pay (capped at 75%, once a day) reach a Stripe test account, and a dispute after payout is recovered from later earnings.
