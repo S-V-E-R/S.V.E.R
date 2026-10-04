@@ -61,6 +61,19 @@ The S.V.E.R Plays controller is the first CrowdSync board. It is built when Play
 - **Faction Rally:** a free board control (and a chat command) that lets signed-in faction members rally for their faction. A rally meter on stream shows each faction's share for that stream.
 - **Emote combos:** when at least 5 distinct verified accounts send the same emote within 5 seconds, an emote shower plays over the stream (10-second cooldown). It counts distinct accounts, so a single person can't trigger it.
 
+## Surge
+
+Decided October 3, 2026: Surge comes back driven by **participation, not money**.
+
+- A channel event that fills a meter when many **distinct** eligible viewers take part within a short time: chatting, rallying, pressing board controls, paying tribute and subscribing each count as one participation per person per minute, never by amount.
+- It starts when enough distinct viewers participate within a minute (**Proposed:** 10, scaled down for small channels so a 5-viewer stream can still trigger one), lasts 5 minutes, and each new level adds time (capped at 10 minutes total).
+- Levels 1 to 5 unlock on-stream celebrations (through the overlay or page, synced to stream time) and award Engagement Valor to everyone who took part, capped per day.
+- Only Counted or Trusted sessions count, so bots can't start or fill a Surge. It never affects MAGNet. A 30-minute cooldown between Surges.
+
+## Counter widgets
+
+- Board widgets for trackers: a shiny counter (encounters, phase, odds), death counter, win/loss tally and a custom counter. The streamer or moderators update them from the board or a chat command; viewers see them on the board and the overlay.
+
 ## Game SDK (part 2)
 
 - Lets a game receive board input (button presses, joystick, text) and send state back to the board (labels, goal progress, button availability).
@@ -70,15 +83,14 @@ The S.V.E.R Plays controller is the first CrowdSync board. It is built when Play
 
 ## Not in this module
 
-- Surge (a collective hype event); its legacy version was money-driven and needs its own decision.
 - Quests, achievements, XP and levels (Progression, Phase 2).
 - Auto-highlights based on audio (it needs decoding).
 - Marketplace packs for boards, and mouse controls.
 
 ## Legacy notes
 
-Reviewed October 3, 2026. Kept: the board, screen and control model, templates, safe test mode, publish checklist, preview tokens, panic disable, overlay tokens, faction rally, emote combos and the command shape. Fixed: games and the bridge connected to the server's Redis directly; Favor charge and press weren't one transaction; guest tokens could press and count toward discovery; joystick input had no limit; effects ignored video delay and could appear twice; two separate poll systems; live boards were edited in place. Dropped: Valor-wagered predictions, paid poll weighting, money-driven Surge, spending leaderboards, and CrowdSync signals in MAGNet.
+Reviewed October 3, 2026. Kept: the board, screen and control model, templates, safe test mode, publish checklist, preview tokens, panic disable, overlay tokens, faction rally, emote combos and the command shape. Fixed: games and the bridge connected to the server's Redis directly; Favor charge and press weren't one transaction; guest tokens could press and count toward discovery; joystick input had no limit; effects ignored video delay and could appear twice; two separate poll systems; live boards were edited in place. Changed: Surge is now participation-driven. Dropped: Valor-wagered predictions, paid poll weighting, the money-driven Surge, spending leaderboards, and CrowdSync signals in MAGNet.
 
 ## Done when
 
-A streamer builds a board from a template, tests it safely and publishes it; a verified viewer presses controls that spend Engagement Valor and trigger effects in sync with the video for both WebRTC and CDN viewers; the OBS overlay and bridge work with scoped tokens; a webhook fires; guests, banned viewers and excluded sessions can't press; rate limits hold, including joystick; a crash test never charges without a press; a viewer buys and plays a Skill and the streamer is credited; polls, predictions (Engagement Valor only) and their stream-time windows work; a faction rally and an emote combo play; nothing here changes MAGNet selection. Part 2: an example game in each SDK receives presses and updates the board through the gateway.
+A streamer builds a board from a template, tests it safely and publishes it; a verified viewer presses controls that spend Engagement Valor and trigger effects in sync with the video for both WebRTC and CDN viewers; the OBS overlay and bridge work with scoped tokens; a webhook fires; guests, banned viewers and excluded sessions can't press; rate limits hold, including joystick; a crash test never charges without a press; a viewer buys and plays a Skill and the streamer is credited; polls, predictions (Engagement Valor only) and their stream-time windows work; a faction rally and an emote combo play; a Surge starts from distinct participants, levels up and awards capped Engagement Valor; counter widgets update from the board and chat; nothing here changes MAGNet selection. Part 2: an example game in each SDK receives presses and updates the board through the gateway.
