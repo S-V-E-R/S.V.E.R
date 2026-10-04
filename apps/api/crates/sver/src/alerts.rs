@@ -66,7 +66,10 @@ pub async fn fan_out(app: &App) -> Res<()> {
         for (id, _, _, _, email) in recipients.iter().filter(|r| r.3) {
             // The header is the RFC 8058 one-click POST; the visible link opens a confirm page.
             let token = encode(&sec::seal(app, "unsubscribe", id)?);
-            let link = format!("{}/api/notifications/unsubscribe?token={token}", app.config.origin);
+            let link = format!(
+                "{}/api/notifications/unsubscribe?token={token}",
+                app.config.origin
+            );
             let page = format!("{}/unsubscribe?token={token}", app.config.origin);
             let subject = format!("{display_name} is live on S.V.E.R");
             let text = format!(
