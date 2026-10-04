@@ -23,6 +23,7 @@ pub mod moderation;
 pub mod oauth;
 pub mod parts;
 pub mod playback;
+pub mod probe;
 pub mod profile_import;
 pub mod profile_jobs;
 pub mod profiles;
