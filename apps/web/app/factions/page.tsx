@@ -13,6 +13,7 @@ const factions = [
   {
     slug: "myria", name: "Myria", title: "The Vanguard",
     creed: "Earn everything. Accept nothing.",
+    belief: "We believe nothing is given. Everything is earned through discipline and conviction.",
     values: "Discipline · Conviction · Endurance",
     people: "Competitors, speedrunners, challenge hunters and makers who keep working at their craft, even when nobody is watching.",
     turf: ["FPS & battle royale", "Fighting", "Sports & racing", "Speedrunning", "Crafting & making"],
@@ -21,6 +22,7 @@ const factions = [
   {
     slug: "aetheron", name: "Aetheron", title: "The Arcane",
     creed: "Always learning. Never finished.",
+    belief: "We believe mastery comes from curiosity. Every answer is the start of a better question.",
     values: "Curiosity · Mastery · Discovery",
     people: "Strategists, artists, educators, developers and theorycrafters who learn by testing, asking better questions and sharing what they find.",
     turf: ["RTS & MOBA", "Strategy & 4X", "Card & board", "Puzzle & simulation", "Art", "Education & coding"],
@@ -29,6 +31,7 @@ const factions = [
   {
     slug: "glint", name: "Glint", title: "The Sovereign",
     creed: "All are welcome. None are forgotten.",
+    belief: "We believe the strongest force on any platform is a room where everyone belongs.",
     values: "Belonging · Trust · Momentum",
     people: "Musicians, co-op teams, cozy gamers and community builders who remember the newcomer and leave room for one more.",
     turf: ["Community events", "MMOs & RPGs", "Co-op & party", "Cozy & sandbox", "Music"],
@@ -37,7 +40,7 @@ const factions = [
 ] as const;
 
 export default function FactionsPage() {
-  return <SitePage path="/factions" title="Meet the factions" intro="Three ways to belong. One seasonal contest over the games, crafts and communities you care about." wide>
+  return <SitePage path="/factions" title="Three factions. One family." intro="S.V.E.R is built on a simple truth: people do not just want to watch. They want to belong." wide>
     <p className="notice">Faction enrollment and the seasonal war are planned for Module 4. You can create an account now; choosing your side will come later. <Link href="/roadmap#factions">Follow the roadmap</Link>.</p>
     <nav className="site-links" aria-label="Meet each faction">{factions.map(faction =>
       <a key={faction.slug} href={`#${faction.slug}`}>{faction.name}</a>)}</nav>
@@ -48,6 +51,7 @@ export default function FactionsPage() {
         <h2 id={`${faction.slug}-name`}>{faction.name}</h2>
         <p className="faction-creed">{faction.creed}</p>
         <p className="faction-values">{faction.values}</p>
+        <p>{faction.belief}</p>
         <h3>Who it speaks to</h3>
         <p>{faction.people}</p>
         <h3>Starting home turf</h3>
@@ -56,6 +60,12 @@ export default function FactionsPage() {
         <a href="#joining" className="button quiet" aria-label={`About joining ${faction.name}`}>About joining</a>
       </section>)}
     </div>
+    <section className="site-prose" id="shared-truth">
+      <h2>Shared truth</h2>
+      <p>Every type of creator belongs here. Your faction is not about what you stream. It is about how you show up.</p>
+      <p>No faction is better than another. Each is a different expression of the same drive to compete, grow, and build something that matters.</p>
+      <p><strong>Myria grinds. Aetheron studies. Glint connects.</strong> None of them are wrong. All of them are necessary.</p>
+    </section>
     <section className="site-prose" id="the-war">
       <h2>How the war will work</h2>
       <p>Each streaming category belongs to a genre. Factions begin with the home turf above, then compete over three-month seasons. At the end of a season, each genre goes to the faction with the most influence in it after balancing for active faction size.</p>

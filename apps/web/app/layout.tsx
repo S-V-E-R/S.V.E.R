@@ -18,7 +18,16 @@ const cinzel = Cinzel({ subsets: ["latin"], weight: ["700", "800"], variable: "-
 const barlow = Barlow({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-barlow", display: "swap" });
 const barlowCondensed = Barlow_Condensed({ subsets: ["latin"], weight: ["600", "700"], variable: "--font-barlow-condensed", display: "swap" });
 
-export const metadata: Metadata = { title: "S.V.E.R", description: "Live streaming for people who play, build, and make.", robots: { index: false, follow: false } };
+const SITE_DESCRIPTION = "A live streaming platform built on community. Choose your faction, grow with your people, and get discovered: every live stream gets a fair turn.";
+
+export const metadata: Metadata = {
+  title: "S.V.E.R — Find Your People. Forge Your Legacy.",
+  description: SITE_DESCRIPTION,
+  applicationName: "S.V.E.R",
+  openGraph: { siteName: "S.V.E.R", title: "S.V.E.R — Find Your People. Forge Your Legacy.", description: SITE_DESCRIPTION },
+  twitter: { title: "S.V.E.R — Find Your People. Forge Your Legacy.", description: SITE_DESCRIPTION },
+  robots: { index: false, follow: false },
+};
 
 /** Channels the viewer follows that are live now, from the first page of their follows. */
 async function followingLive() {

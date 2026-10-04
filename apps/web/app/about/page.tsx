@@ -11,6 +11,11 @@ export const metadata: Metadata = {
 export default function AboutPage() {
   return <SitePage path="/about" title="About S.V.E.R" intro="A live streaming home for people who play, build and make.">
     <section>
+      <h2>What we stand for</h2>
+      <blockquote><p>At S.V.E.R you forge your destiny, with those around you or on your own. You only go as far as you allow yourself.</p></blockquote>
+      <p>S.V.E.R is a home for people who want to create on their own terms, supported by a community that has their back. You don&apos;t need the biggest channel or the loudest voice. You just need to show up.</p>
+    </section>
+    <section>
       <h2>A place to find your people</h2>
       <p>Open a stream. Find someone doing something interesting. Stay to talk, learn, follow and come back. That is the experience S.V.E.R is being built around.</p>
       <p>Gaming, art, crafting and making, music, and education belong here. Creators can use the streaming software they already know, and multistreaming is welcome. Our <Link href="/guidelines">Community Guidelines</Link> explain what you can share.</p>
