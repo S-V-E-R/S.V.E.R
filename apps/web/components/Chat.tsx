@@ -8,8 +8,8 @@ import { EmoteImage, type ChannelEmote } from "./Emote";
 
 type Reply = { id: string; username: string | null; body: string | null };
 type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null };
-type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[] };
-type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string };
+type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null };
+type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null };
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
@@ -47,6 +47,9 @@ export function Chat({ username, account }: { username: string; account: string 
   const [reply, setReply] = useState<Reply | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  // Spike protection: followers-only chat with an end time; moderators get a one-click prompt.
+  const [followersOnly, setFollowersOnly] = useState<string | null>(null);
+  const [spike, setSpike] = useState(false);
   const canPin = role === "owner" || role === "moderator";
   const socket = useRef<WebSocket | null>(null);
   const list = useRef<HTMLOListElement>(null);
@@ -72,10 +75,25 @@ export function Chat({ username, account }: { username: string; account: string 
   // Owner, moderators and staff get per-message actions; the server enforces every permission.
   const loadRole = useCallback(async () => {
     if (!account) return;
-    const r = await send<{ role: string }>("GET", `${path}/moderation`);
-    if (r.ok) setRole(r.data.role);
+    const r = await send<{ role: string; spike?: boolean; followers_only_until?: string | null }>("GET", `${path}/moderation`);
+    if (r.ok) { setRole(r.data.role); setSpike(!!r.data.spike); setFollowersOnly(r.data.followers_only_until ?? null); }
   }, [account, path]);
   useLoad(loadRole);
+  useEffect(() => {
+    if (!role) return;
+    const timer = setInterval(() => { if (!document.hidden) void loadRole(); }, 15000);
+    return () => clearInterval(timer);
+  }, [role, loadRole]);
+  // Followers-only chat always ends by itself; clear the banner at its end time.
+  useEffect(() => {
+    if (!followersOnly) return;
+    const timer = setTimeout(() => setFollowersOnly(null), Math.max(0, Date.parse(followersOnly) - Date.now()));
+    return () => clearTimeout(timer);
+  }, [followersOnly]);
+  async function protect(on: boolean) {
+    const result = await send<{ followers_only_until: string | null }>("PUT", `${path}/protect`, { on });
+    if (result.ok) { setFollowersOnly(result.data.followers_only_until); setSpike(false); } else setError(result.error);
+  }
 
   useEffect(() => {
     let closed = false;
@@ -96,7 +114,8 @@ export function Chat({ username, account }: { username: string; account: string 
       ws.onmessage = event => {
         if (closed) return;
         const data = JSON.parse(event.data) as Event;
-        if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); }
+        if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); }
+        else if (data.type === "protect") setFollowersOnly(data.until);
         else if (data.type === "emotes") setEmotes(data.emotes);
         else if (data.type === "pin") setPinned(data.pinned);
         else if (data.type === "message" || data.type === "ack") merge([data.message]);
@@ -183,6 +202,8 @@ export function Chat({ username, account }: { username: string; account: string 
       {canPin && <button type="button" className="small quiet" onClick={() => changePin(null)}>Unpin</button>}
     </aside>}
     {notice && <p className="chat-system" role="status">{notice}</p>}
+    {followersOnly && <p className="chat-system" role="status">Followers-only chat until {time(followersOnly)} (followers of at least 10 minutes can chat).{canPin && <> <button type="button" className="small quiet" onClick={() => protect(false)}>End now</button></>}</p>}
+    {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Followers-only chat for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
     <ol className="chat-messages" ref={list} aria-live="polite">
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
       {messages.map(m => <li key={m.id}>

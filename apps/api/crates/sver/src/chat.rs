@@ -351,7 +351,7 @@ pub async fn read(
     let viewer = profiles::viewer(&app, &jar).await?;
     let hidden = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await?;
     Ok(Json(
-        json!({"messages": history(&app, &channel, &hidden).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?}),
+        json!({"messages": history(&app, &channel, &hidden).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?}),
     ))
 }
 pub async fn post(
@@ -474,8 +474,10 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
     let Ok(mut emotes) = crate::emotes::catalog(&app, &channel).await else {
         return;
     };
-    let first =
-        json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes}).to_string();
+    let Ok(followers_only) = crate::moderation::followers_only(&app, &channel).await else {
+        return;
+    };
+    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes,"followers_only_until":followers_only}).to_string();
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
     }

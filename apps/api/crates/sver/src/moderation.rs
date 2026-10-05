@@ -89,6 +89,56 @@ pub(crate) fn reason(text: &str) -> Res<String> {
     }
     Ok(text.to_string())
 }
+/// When spike protection's followers-only chat ends, if it's on now.
+pub async fn followers_only(app: &App, channel: &str) -> Res<Option<DateTime<Utc>>> {
+    Ok(sqlx::query_scalar("SELECT followers_only_until FROM chat_settings WHERE channel_id=$1 AND followers_only_until>now()")
+        .bind(channel)
+        .fetch_optional(&app.db)
+        .await?)
+}
+
+#[derive(Deserialize)]
+pub struct Protect {
+    on: bool,
+}
+/// PUT /api/channels/{username}/chat/protect: the one-click spike prompt. Owners and moderators
+/// turn on followers-only chat for 10 minutes (it always ends by itself) or end it early.
+pub async fn protect(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Json(input): Json<Protect>,
+) -> Res<Json<Value>> {
+    let channel = channel(&app, &name).await?;
+    let (user, role) = actor(&app, &jar, &channel).await?;
+    let mut tx = app.db.begin().await?;
+    let until: Option<DateTime<Utc>> = sqlx::query_scalar("INSERT INTO chat_settings(channel_id,followers_only_until) VALUES($1,CASE WHEN $2 THEN now()+interval '10 minutes' END) ON CONFLICT(channel_id) DO UPDATE SET followers_only_until=EXCLUDED.followers_only_until RETURNING followers_only_until")
+        .bind(&channel)
+        .bind(input.on)
+        .fetch_one(&mut *tx)
+        .await?;
+    log(
+        &mut tx,
+        &channel,
+        &user.id,
+        role,
+        if input.on {
+            "followers_only_on"
+        } else {
+            "followers_only_off"
+        },
+        None,
+        None,
+        json!({"until": until}),
+        "Spike protection",
+    )
+    .await?;
+    tx.commit().await?;
+    app.chat
+        .publish(&channel, None, 0, json!({"type":"protect","until":until}));
+    Ok(Json(json!({"followers_only_until": until})))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn log(
     db: &mut PgConnection,
@@ -174,6 +224,21 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
         }
         _ => {}
     }
+    // Spike protection: while followers-only chat is on, only people who followed at least 10
+    // minutes ago (and channel roles) can chat, so a burst of new accounts can't flood it.
+    if followers_only(app, channel).await?.is_some() && role_of(app, channel, user).await?.is_none()
+    {
+        let follower: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2 AND created_at<=now()-interval '10 minutes')")
+            .bind(&user.id)
+            .bind(channel)
+            .fetch_one(&app.db)
+            .await?;
+        if !follower {
+            return Err(Fail::denied(
+                "Chat is followers-only for a few minutes (followers of at least 10 minutes can chat).",
+            ));
+        }
+    }
     let settings: Option<(i32, bool, Vec<String>)> = sqlx::query_as(
         "SELECT slow_mode_seconds, block_links, banned_words FROM chat_settings WHERE channel_id=$1",
     )
@@ -239,8 +304,15 @@ pub async fn view(
         .for_each(|v| profiles::hydrate(&app, v));
     let log: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('action',l.action,'actor_role',l.actor_role,'actor',a.username,'target',t.username,'reason',l.reason,'detail',l.detail,'created_at',l.created_at) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 ORDER BY l.created_at DESC LIMIT 50")
         .bind(&channel).fetch_all(&app.db).await?;
+    // A provisional (spike) window on the live broadcast offers the followers-only prompt.
+    let spike: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING') AND l.provisional_until>now())")
+        .bind(&channel)
+        .fetch_one(&app.db)
+        .await?;
     Ok(Json(json!({
         "role": role.name(),
+        "spike": spike,
+        "followers_only_until": followers_only(&app, &channel).await?,
         "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words},
         "moderators": moderators, "restrictions": restrictions, "log": log,
     })))
@@ -545,6 +617,7 @@ pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/channels/{username}/chat/moderation", get(view))
         .route("/api/channels/{username}/chat/settings", put(save_settings))
+        .route("/api/channels/{username}/chat/protect", put(protect))
         .route(
             "/api/channels/{username}/chat/messages/{id}",
             delete(delete_message),
