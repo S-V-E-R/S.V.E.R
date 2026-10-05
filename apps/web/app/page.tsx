@@ -33,7 +33,7 @@ export default async function Home() {
       </div>
       {mine
         ? <Link href="/factions" className="button">Your side</Link>
-        : <Link href={account ? "/choose-side" : "/signup"} className="button">Pick a side</Link>}
+        : <Link href={account ? "/welcome" : "/signup"} className="button">Pick a side</Link>}
     </section>
 
     {live.now.length > 0 && <section aria-labelledby="rot-h" className="home-section">

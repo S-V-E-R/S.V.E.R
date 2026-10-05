@@ -17,6 +17,7 @@ pub const RESERVED: &[&str] = &[
     "verify",
     "mfa",
     "account",
+    "welcome",
     "api",
     "_next",
     // Planned module routes.

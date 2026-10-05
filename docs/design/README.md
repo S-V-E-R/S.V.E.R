@@ -5,7 +5,7 @@ These are the approved page designs from the S.V.E.R design canvas, rendered at 
 | Mockup | Route | Notes |
 | --- | --- | --- |
 | [main.webp](mockups/main.webp) (signed in, Aetheron) and [main-signed-out.webp](mockups/main-signed-out.webp) | `/` | Built: shell, front-line banner, rotation, Live now, Just went live. Each later module adds its section in this order: Beacons shelf (Module 9), Territories (Module 4), Latest clips (Module 8). The sidebar's level/XP and daily orders arrive with Progression (Phase 2). |
-| [signup.webp](mockups/signup.webp), [signup-choose-side.webp](mockups/signup-choose-side.webp) | `/signup`, `/choose-side` | Three steps: Account, Choose your side, Confirm email. |
+| [signup.webp](mockups/signup.webp), [signup-choose-side.webp](mockups/signup-choose-side.webp) | `/signup`, `/welcome` | The mockup's three steps grew into the onboarding wizard (legacy parity, approved October 4, 2026): Account, Your side (with each faction's story), the welcome to your faction, Profile, Follow, Ready. The email confirmation reminder is on Ready. Profile and Follow can be skipped; the side can't. |
 | [login.webp](mockups/login.webp) | `/login`, `/mfa` | Full-width provider buttons. |
 | [about.webp](mockups/about.webp) | `/about` | |
 | [factions.webp](mockups/factions.webp) | `/factions` | |
