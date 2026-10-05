@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { CloseIcon, MenuIcon, SearchIcon } from "./Icons";
 
 // Sign-in screens get no sidebar and a minimal top bar (docs/DESIGN.md "Pages": sign up, log in, …).
-const AUTH_ROUTES = new Set(["login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "choose-side"]);
+const AUTH_ROUTES = new Set(["login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "welcome"]);
 
 type Props = {
   /** Right side of the full top bar: notifications and player chip, or Log in and Enlist. */
@@ -51,7 +51,7 @@ export function Chrome({ actions, sidebar, footer, children }: Props) {
       <header className="topbar minimal">
         <Link href="/" className="logo">S.V.E.R</Link>
         <span className="topbar-space" />
-        {first === "choose-side" ? null : first === "login"
+        {first === "welcome" ? null : first === "login"
           ? <span className="topbar-note">New here? <Link href="/signup">Enlist</Link></span>
           : <span className="topbar-note">{first === "signup" ? "Already enlisted? " : ""}<Link href="/login">Log in</Link></span>}
       </header>

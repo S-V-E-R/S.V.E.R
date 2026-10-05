@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import SitePage from "../../components/SitePage";
+import { FACTIONS } from "../../lib/factions";
 
 export const metadata: Metadata = {
   title: "Factions | S.V.E.R",
@@ -9,35 +10,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "https://sver.tv/factions" },
 };
 
-const factions = [
-  {
-    slug: "myria", name: "Myria", title: "The Vanguard",
-    creed: "Earn everything. Accept nothing.",
-    belief: "We believe nothing is given. Everything is earned through discipline and conviction.",
-    values: "Discipline · Conviction · Endurance",
-    people: "Competitors, speedrunners, challenge hunters and makers who keep working at their craft, even when nobody is watching.",
-    turf: ["FPS & battle royale", "Fighting", "Sports & racing", "Speedrunning", "Crafting & making"],
-    lore: "Myria was not founded. It was forged by people who refused to quit. Where you started matters less than whether you show up when it gets hard. Your word is your bond; your progress is your proof.",
-  },
-  {
-    slug: "aetheron", name: "Aetheron", title: "The Arcane",
-    creed: "Always learning. Never finished.",
-    belief: "We believe mastery comes from curiosity. Every answer is the start of a better question.",
-    values: "Curiosity · Mastery · Discovery",
-    people: "Strategists, artists, educators, developers and theorycrafters who learn by testing, asking better questions and sharing what they find.",
-    turf: ["RTS & MOBA", "Strategy & 4X", "Card & board", "Puzzle & simulation", "Art", "Education & coding"],
-    lore: "Aetheron moves by knowledge. Its people study how systems work and how creators improve, then pass that understanding on. Mastery is the goal, discovery is the fuel, and there is always more to learn.",
-  },
-  {
-    slug: "glint", name: "Glint", title: "The Sovereign",
-    creed: "All are welcome. None are forgotten.",
-    belief: "We believe the strongest force on any platform is a room where everyone belongs.",
-    values: "Belonging · Trust · Momentum",
-    people: "Musicians, co-op teams, cozy gamers and community builders who remember the newcomer and leave room for one more.",
-    turf: ["Community events", "MMOs & RPGs", "Co-op & party", "Cozy & sandbox", "Music"],
-    lore: "Glint builds its strength wherever people gather. A room where everyone feels welcome can become a community that lasts. Trust connects its people, and lifting someone else helps the whole side move forward.",
-  },
-] as const;
+const factions = FACTIONS;
 
 export default function FactionsPage() {
   return <SitePage path="/factions" title="Three factions. One family." intro="S.V.E.R is built on a simple truth: people do not just want to watch. They want to belong." wide>
@@ -50,14 +23,14 @@ export default function FactionsPage() {
         <p className="eyebrow">{faction.title}</p>
         <h2 id={`${faction.slug}-name`}>{faction.name}</h2>
         <p className="faction-creed">{faction.creed}</p>
-        <p className="faction-values">{faction.values}</p>
+        <p className="faction-values">{faction.values.join(" · ")}</p>
         <p>{faction.belief}</p>
         <h3>Who it speaks to</h3>
         <p>{faction.people}</p>
         <h3>Starting home turf</h3>
         <ul>{faction.turf.map(genre => <li key={genre}>{genre}</li>)}</ul>
         <details><summary>The story of {faction.name}</summary><p>{faction.lore}</p></details>
-        <Link href="/choose-side" className="button quiet">Join {faction.name}</Link>
+        <Link href={`/welcome?pick=${faction.slug}`} className="button quiet">Join {faction.name}</Link>
       </section>)}
     </div>
     <section className="site-prose" id="shared-truth">

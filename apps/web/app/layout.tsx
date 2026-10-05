@@ -65,7 +65,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <Crest faction={account.faction} initial={initial ?? "?"} size={56} label={faction.name} />
         <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">{faction.title}</span></span>
       </Link>
-      : <Link href="/choose-side" className="player-card frame unchosen">
+      : <Link href="/welcome" className="player-card frame unchosen">
         <Crest faction={null} initial={initial ?? "?"} size={56} />
         <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side →</span></span>
       </Link>)}
