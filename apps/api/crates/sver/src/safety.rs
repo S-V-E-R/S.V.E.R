@@ -207,7 +207,7 @@ async fn target(
         "fan_art" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('image',f.image_key,'artist_name',f.artist_name,'artist_link',f.artist_link,'caption',f.caption) FROM fan_art f JOIN channel_users c ON c.id=f.submitter_id JOIN channel_users o ON o.id=f.channel_id WHERE f.id=$1 AND f.status='APPROVED' AND o.eligible AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
         "setup_photo" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('image',p.image_key||'/400.webp','alt',p.alt) FROM setup_photos p JOIN channel_users c ON c.id=p.user_id WHERE p.id=$1 AND p.status='VISIBLE' AND c.eligible").bind(id).fetch_optional(&mut *db).await?,
         // The snapshot keeps the body, so a chat report outlives the seven-day message expiry.
-        "chat_message" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',m.body,'channel',o.username,'sent_at',m.created_at) FROM chat_messages m JOIN channel_users c ON c.id=m.author_id JOIN channel_users o ON o.id=m.channel_id WHERE m.id=$1 AND m.deleted_at IS NULL AND o.eligible AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
+        "chat_message" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',m.body,'channel',coalesce(o.username,'MAGNet Hype'),'hype_lane',m.origin,'sent_at',m.created_at) FROM chat_messages m JOIN channel_users c ON c.id=m.author_id LEFT JOIN channel_users o ON o.id=m.channel_id WHERE m.id=$1 AND m.deleted_at IS NULL AND (m.channel_id IS NULL OR o.eligible) AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
         // Only a stream that is public now; no video is recorded as evidence.
         "live_stream" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('title',coalesce(s.title,c.username||'''s stream'),'category',k.name,'broadcast_id',b.id,'started_at',b.started_at,'reported_at',now()) FROM broadcasts b JOIN channel_users c ON c.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories k ON k.id=s.category_id WHERE b.id=$1 AND b.state IN ('LIVE','RECONNECTING') AND c.eligible").bind(id).fetch_optional(&mut *db).await?,
         _ => return Err(Fail::field("target_type", "Choose what you're reporting.")),
@@ -1194,14 +1194,13 @@ pub async fn admin_action(
         app.chat.publish(&owner, None, 0, json!({"type":"emotes"}));
     }
     if kind == "chat_message" && input.action == "remove_content" {
-        let channel: Option<String> =
-            sqlx::query_scalar("SELECT channel_id FROM chat_messages WHERE id=$1")
+        let place: Option<(Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT channel_id,origin FROM chat_messages WHERE id=$1")
                 .bind(&id)
                 .fetch_optional(&app.db)
                 .await?;
-        if let Some(channel) = channel {
-            app.chat
-                .publish(&channel, None, 0, json!({"type":"delete","id":id}));
+        if let Some((channel, origin)) = place {
+            crate::chat::publish_delete(&app, channel.as_deref(), origin.as_deref(), &id);
         }
     }
     log(&input.action, "ok");

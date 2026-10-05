@@ -3,7 +3,7 @@
 //! force/release/stop with audit and the decision log, Studio settings, flags and history.
 use super::Env;
 use super::bans::staff;
-use super::chat::{call, person};
+use super::chat::{call, id, person};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
@@ -153,6 +153,120 @@ pub async fn exercise(e: &Env) {
     let tagged: i64 = sqlx::query_scalar("SELECT count(*) FROM playback_leases WHERE broadcast_id='mg-b-small' AND magnet_lane='global'")
         .fetch_one(&e.app.db).await.unwrap();
     assert_eq!(tagged, 1);
+
+    // Hype chat, merged with the featured channel (MgSmall): the message lands in MgSmall's own
+    // chat with the MAGNet mark, under the channel's rules plus a 3-second Hype slow mode.
+    let hyper = person(e, "mg-hype", "MgHyper", true).await;
+    let say = |token: String, body: &'static str| async move {
+        call(
+            e,
+            "POST",
+            "/api/magnet/global/chat",
+            Some(&token),
+            json!({"id":id(),"body":body}),
+        )
+        .await
+    };
+    let (status, sent) = say(hyper.clone(), "hello from MAGNet").await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    assert_eq!(sent["message"]["origin"], "global");
+    let (_, channel_chat) = get(e, "/api/channels/MgSmall/chat", None).await;
+    assert!(
+        channel_chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["body"] == "hello from MAGNet" && m["origin"] == "global")
+    );
+    assert_eq!(
+        say(hyper.clone(), "too fast").await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    e.sql("INSERT INTO chat_settings(channel_id,banned_words) VALUES('mg-small','{forbidden}') ON CONFLICT(channel_id) DO UPDATE SET banned_words='{forbidden}'").await;
+    e.sql("DELETE FROM rate_limits WHERE key LIKE 'hype-slow:%'")
+        .await;
+    assert_eq!(
+        say(hyper.clone(), "a forbidden word").await.0,
+        StatusCode::BAD_REQUEST,
+        "the channel's rules apply"
+    );
+    e.sql("UPDATE chat_settings SET banned_words='{}' WHERE channel_id='mg-small'")
+        .await;
+    // A viewer banned from the featured channel reads Hype chat but can't send.
+    let (_, room) = get(e, "/api/magnet/global/chat", Some(&banned)).await;
+    assert_eq!(
+        (
+            &room["holding"],
+            &room["can_send"],
+            &room["merged_with"]["username"]
+        ),
+        (&json!(true), &json!(false), &json!("MgSmall"))
+    );
+    assert!(
+        room["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["body"] == "hello from MAGNet")
+    );
+    let (status, refused) = say(banned.clone(), "let me in").await;
+    assert_eq!(
+        (status, refused["error"].as_str().unwrap_or("")),
+        (StatusCode::FORBIDDEN, "Chat resumes when MAGNet moves on.")
+    );
+    // With chat merging off the room is its own; its messages can be reported and removed by staff.
+    e.sql("INSERT INTO magnet_settings(user_id,chat_merge) VALUES('mg-small',false)")
+        .await;
+    e.sql("DELETE FROM rate_limits WHERE key LIKE 'hype-slow:%'")
+        .await;
+    let (status, own) = say(hyper.clone(), "just the hype room").await;
+    assert_eq!(status, StatusCode::OK);
+    let own_id = own["message"]["id"].as_str().unwrap().to_string();
+    let channel_of: Option<String> =
+        sqlx::query_scalar("SELECT channel_id FROM chat_messages WHERE id=$1")
+            .bind(&own_id)
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(channel_of, None);
+    let (_, channel_chat) = get(e, "/api/channels/MgSmall/chat", None).await;
+    assert!(
+        !channel_chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["body"] == "just the hype room")
+    );
+    let (_, room) = get(e, "/api/magnet/global/chat", None).await;
+    assert_eq!(room["merged_with"], Value::Null);
+    assert!(
+        room["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["body"] == "just the hype room")
+    );
+    let (status, _) = call(e, "POST", "/api/reports", Some(&banned), json!({"target_type":"chat_message","target_id":own_id,"reason":"harassment","note":"synthetic"})).await;
+    assert_eq!(status, StatusCode::OK, "Hype room messages can be reported");
+    let (status, _) = call(
+        e,
+        "POST",
+        &format!("/api/admin/reports/chat_message/{own_id}/actions"),
+        Some(&admin),
+        json!({"action":"remove_content","note":"reviewed"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, room) = get(e, "/api/magnet/global/chat", None).await;
+    assert!(
+        !room["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["body"] == "just the hype room")
+    );
+    e.sql("DELETE FROM magnet_settings WHERE user_id='mg-small'")
+        .await;
 
     // Studio: featured now, history, settings and the flag cooldown.
     let (_, mine) = get(e, "/api/me/magnet", Some(&small)).await;

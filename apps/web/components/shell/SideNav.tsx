@@ -23,6 +23,7 @@ export function SideNav({ signedIn, faction }: { signedIn: boolean; faction: { n
       match: under("/factions")
     },
     { href: "/browse", label: "Browse", icon: <BrowseIcon />, match: under("/browse") },
+    { href: "/magnet", label: "MAGNet Hype", icon: <BrowseIcon />, match: under("/magnet") },
     { href: "/war-map", label: "War map", icon: <WarMapIcon />, match: under("/war-map") },
   ];
   const yours: Item[] = signedIn ? [

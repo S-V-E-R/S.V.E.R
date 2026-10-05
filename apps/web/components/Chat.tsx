@@ -8,7 +8,7 @@ import type { Chip } from "../lib/types";
 import { EmoteImage, type ChannelEmote } from "./Emote";
 
 type Reply = { id: string; username: string | null; body: string | null };
-type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null };
+type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null };
 type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null };
 type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null };
 
@@ -174,6 +174,11 @@ export function Chat({ username, account }: { username: string; account: string 
     if (pinDraft && !reason) return;
     setError("");
     // Owner commands: /raid username starts a raid, /unraid cancels it during the countdown.
+    if (/^\/flag$/i.test(body) && !pinDraft) {
+      const result = await send("POST", "/api/me/magnet/flag");
+      if (result.ok) setDraft(""); else setError(result.error);
+      return;
+    }
     const raid = /^\/(raid|unraid)(?:\s+@?([A-Za-z0-9_]{3,25}))?$/i.exec(body);
     if (raid && !pinDraft) {
       if (raid[1].toLowerCase() === "raid" && !raid[2]) { setError("Use /raid username."); return; }
@@ -211,6 +216,7 @@ export function Chat({ username, account }: { username: string; account: string 
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.username ? <Link className="faction-name" data-faction={m.author.faction} href={`/${m.author.username}`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
+        {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet Hype">MAGNet</span>}
         {m.role && <span className="badge">{{ owner: "Broadcaster", moderator: "Moderator", staff: "Staff" }[m.role]}</span>}: <MessageBody message={m} account={account} emotes={emotes} />
         <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.author.display_name}`}>Actions</summary><div className="chat-message-controls">
         {account && <button type="button" className="small quiet" aria-label={`Reply to ${m.author.display_name}`} onClick={() => { setReply({ id: m.id, username: m.author.username, body: Array.from(m.body.replace(/[\r\n]+/g, " ")).slice(0, 80).join("") }); input.current?.focus(); }}>Reply</button>}

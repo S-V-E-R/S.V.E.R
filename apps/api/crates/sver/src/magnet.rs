@@ -284,6 +284,7 @@ type SignalRow = (
     Option<String>,
     bool,
     Option<DateTime<Utc>>,
+    bool,
 );
 /// Eligible streams for a lane, with their signals. Eligible: live 60+ seconds and not
 /// reconnecting, an active category (the lane's genre for genre lanes), not opted out, an eligible
@@ -309,7 +310,8 @@ async fn candidates(
             / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(b.started_at,now()-interval '31 minutes'))::float8/60.0),
           (SELECT c.display_name FROM raids r JOIN channel_users c ON c.id=r.raider_id WHERE r.target_broadcast_id=b.id AND r.status='moved' AND r.execute_at>now()-interval '2 minutes' ORDER BY r.execute_at DESC LIMIT 1),
           EXISTS(SELECT 1 FROM magnet_flags g WHERE g.broadcast_id=b.id AND g.at>now()-interval '2 minutes'),
-          (SELECT max(coalesce(f.ended_at,now())) FROM magnet_features f WHERE f.lane=$1 AND f.owner_id=b.owner_id)
+          (SELECT max(coalesce(f.ended_at,now())) FROM magnet_features f WHERE f.lane=$1 AND f.owner_id=b.owner_id),
+          EXISTS(SELECT 1 FROM plays_runtime pr WHERE pr.enabled AND pr.channel_id=b.owner_id)
          FROM broadcasts b WHERE b.id=ANY($3)",
     )
     .bind(lane)
@@ -317,10 +319,23 @@ async fn candidates(
     .bind(streams.iter().map(|s| s.broadcast_id.clone()).collect::<Vec<_>>())
     .fetch_all(&mut *db)
     .await?;
+    // S.V.E.R Plays and other system channels are featured only when nothing else is live.
+    let others = rows.iter().any(|r| r.1 && !r.9);
     let mut out = Vec::new();
-    for (id, eligible, chatters, chat_base, follows, follow_base, raided_by, flagged, last) in rows
+    for (
+        id,
+        eligible,
+        chatters,
+        chat_base,
+        follows,
+        follow_base,
+        raided_by,
+        flagged,
+        last,
+        system,
+    ) in rows
     {
-        if !eligible {
+        if !eligible || (system && others) {
             continue;
         }
         let Some(stream) = streams.iter().find(|s| s.broadcast_id == id) else {

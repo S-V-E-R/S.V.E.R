@@ -193,3 +193,4 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .studio-nav a{padding:7px 10px}
 .studio-nav .studio-view{margin-top:4px;color:var(--accent-light)}
 @media(max-width:900px){.studio-nav{flex-direction:column}.studio-nav-group{flex-direction:row;flex-wrap:wrap;margin-bottom:6px}.studio-nav-label{width:100%}}
+.magnet-badge { border-color: var(--accent); color: var(--accent-light); }

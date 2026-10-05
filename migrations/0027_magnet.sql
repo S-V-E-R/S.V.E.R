@@ -61,3 +61,7 @@ ALTER TABLE playback_leases ADD COLUMN magnet_lane text;
 -- Hype chat (docs/MAGNET.md "Hype chat"): NULL is a channel's own chat; otherwise the Hype lane a
 -- message came from. Hype-side messages never count toward a stream's chat-burst signal.
 ALTER TABLE chat_messages ADD COLUMN origin text;
+-- A message in a Hype lane's own room belongs to no channel; every message belongs to one or the other.
+ALTER TABLE chat_messages ALTER COLUMN channel_id DROP NOT NULL;
+ALTER TABLE chat_messages ADD CONSTRAINT chat_messages_room CHECK (channel_id IS NOT NULL OR origin IS NOT NULL);
+CREATE INDEX chat_messages_hype_room ON chat_messages (origin, seq DESC) WHERE channel_id IS NULL AND deleted_at IS NULL;
