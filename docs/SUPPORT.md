@@ -1,6 +1,6 @@
 # Module 6: Support
 
-Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Not started.
+Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Started October 5, 2026: part 1 (below) is built.
 
 This module lets viewers support streamers with money and loyalty, and gets streamers paid. It follows the closure rule: specify, build, then test against "Done when". All open items were decided by Joe on October 3, 2026.
 
@@ -134,6 +134,22 @@ Decided by Joe on October 3, 2026.
 
 - Terms of Service and a refund policy for paid features, reviewed by a lawyer.
 - Stripe account in the company's name, with Connect enabled.
+
+## Built so far
+
+**Part 1: the ledger, payout setup, Purchased Valor and tributes.**
+
+- The ledger (`ledger_transactions`, `ledger_entries`) is append-only, and the database rejects a transaction that doesn't sum to zero in each unit (`valor`, and `usd` in tenths of a cent). Each transaction has a unique reference (the Checkout Session, refund amount, dispute or chat message), so nothing posts twice.
+- Creator Studio → Payouts creates a Stripe Connect Express account and sends the creator to Stripe-hosted onboarding (a guardian onboards for ages 13 to 17); once onboarding is finished the button opens the Express dashboard. A channel can receive tributes once the owner is verified, has authenticator 2FA and has finished onboarding.
+- `/wallet` (the "Valor" link) shows the balance and the seven packs. Buying opens Stripe Checkout (expires after 30 minutes). Valor is credited only by the webhook. Buyers aged 13 to 17 need a one-time guardian confirmation and are held to $50 a calendar month, counting checkouts still open.
+- Tributes: the chat's Tribute button attaches 10 or more Valor to a message. The message passes every chat rule (bans, blocks, timeouts, followers-only, banned words and links) before any Valor moves; the message and the ledger entries commit together. The streamer earns 0.8¢ per Valor.
+- Refunds reverse Valor in proportion to the cumulative amount refunded; a chargeback reverses the disputed Valor and a won dispute restores it. A negative balance locks spending.
+
+**Configuration** (private env, never in the repo): `STRIPE_SECRET_KEY` (test keys only outside production; the API refuses an `sk_live_` key in development), `STRIPE_WEBHOOK_SECRET` (comma-separated when the platform and Connect endpoints have separate secrets) and optionally `STRIPE_API_URL` for tests.
+
+**Webhook:** `POST /api/stripe/webhook`, signature-checked (5-minute tolerance). Events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed` on the platform endpoint, and `account.updated` on a Connect ("connected accounts") endpoint. Every event is stored before processing; a failed or early event returns 503 so Stripe retries it.
+
+**Still to build:** importing creators' legacy connected accounts at the live cutover (test mode can't see live accounts), subscriptions, Engagement Valor and rewards, creator tiers, co-streams, Shine, paydays and Early Pay.
 
 ## Done when
 
