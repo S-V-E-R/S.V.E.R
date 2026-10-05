@@ -55,8 +55,39 @@ async fn month_cents(db: &mut PgConnection, user: &str) -> Res<i64> {
         .bind(user).fetch_one(db).await?)
 }
 
+/// Credits the buyer's paid checkouts by asking Stripe directly, so a late or failed webhook
+/// never leaves a buyer waiting. Posting is idempotent by session, so this and the webhook can't
+/// both credit. Stripe errors are ignored here; the webhook remains the other path.
+async fn reconcile(app: &App, user: &str) -> Res<()> {
+    let open: Vec<String> = sqlx::query_scalar("SELECT id FROM checkout_sessions WHERE user_id=$1 AND status='open' AND created_at>now()-interval '1 day' ORDER BY created_at DESC LIMIT 5")
+        .bind(user).fetch_all(&app.db).await?;
+    for id in open {
+        let Ok(session) = stripe::get(
+            &app.http,
+            &app.config.stripe,
+            &format!("checkout/sessions/{id}"),
+        )
+        .await
+        else {
+            continue;
+        };
+        let mut tx = app.db.begin().await?;
+        match (
+            session["status"].as_str(),
+            session["payment_status"].as_str(),
+        ) {
+            (_, Some("paid")) => paid(&mut tx, &session).await?,
+            (Some("expired"), _) => process(&mut tx, "checkout.session.expired", &session).await?,
+            _ => continue,
+        }
+        tx.commit().await?;
+    }
+    Ok(())
+}
+
 pub async fn wallet(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
+    reconcile(&app, &user.id).await?;
     let mut db = app.db.acquire().await?;
     let valor = ledger::balance(&mut db, &format!("valor:{}", user.id), "valor").await?;
     let minor = age(&mut db, &user.id).await?.is_some_and(|a| a < 18);
