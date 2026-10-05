@@ -51,6 +51,8 @@ pub const FIELDS: &[&str] = &[
     "header",
 ];
 const TARGETS: &[&str] = &[
+    "guild",
+    "guild_emblem",
     "faction_post",
     "emote",
     "profile",
@@ -194,6 +196,7 @@ async fn target(
     reporter: &str,
 ) -> Res<Target> {
     let row: Option<(String, String, Value)> = match kind {
+        "guild" | "guild_emblem" => crate::guilds::target(db,id,reporter,kind=="guild_emblem").await?,
         "faction_post" => crate::factions::target(db,id,reporter).await?,
         "emote" => crate::emotes::target(db, id).await?,
         "profile" => {
@@ -861,6 +864,9 @@ async fn reset_field(
 }
 /// Hides a wall post, reply or fan art item; returns the reference used to restore it on overturn.
 async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Value> {
+    if matches!(kind, "guild" | "guild_emblem") {
+        return crate::guilds::remove(db, id, kind == "guild_emblem").await;
+    }
     if kind == "faction_post" {
         return crate::factions::remove(db, id).await;
     }
@@ -937,6 +943,7 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
 }
 async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
     let owner: Option<String> = match kind {
+        "guild" | "guild_emblem" => crate::guilds::owner(db, id).await?,
         "faction_post" => crate::factions::owner(db, id).await?,
         "emote" => crate::emotes::owner(db, id).await?,
         "profile" => {
@@ -1003,6 +1010,7 @@ async fn current_content(
     field: Option<&str>,
 ) -> Res<Value> {
     Ok(match kind {
+        "guild" | "guild_emblem" => crate::guilds::snapshot(db, id).await?,
         "emote" => crate::emotes::current(db, id).await?,
         "profile" => match profile_snapshot(db, id, field).await {
             Ok(v) => v,
@@ -1194,11 +1202,12 @@ pub async fn admin_action(
         app.chat.publish(&owner, None, 0, json!({"type":"emotes"}));
     }
     if kind == "chat_message" && input.action == "remove_content" {
-        let place: Option<(Option<String>, Option<String>)> =
-            sqlx::query_as("SELECT channel_id,origin FROM chat_messages WHERE id=$1")
-                .bind(&id)
-                .fetch_optional(&app.db)
-                .await?;
+        let place: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT coalesce(squad_id,channel_id),origin FROM chat_messages WHERE id=$1",
+        )
+        .bind(&id)
+        .fetch_optional(&app.db)
+        .await?;
         if let Some((channel, origin)) = place {
             crate::chat::publish_delete(&app, channel.as_deref(), origin.as_deref(), &id);
         }
@@ -1498,6 +1507,11 @@ pub async fn decide(
                 continue;
             };
             let table = match kind {
+                "guild" | "guild_emblem" => {
+                    crate::guilds::restore(&mut tx, item_id, previous, kind == "guild_emblem")
+                        .await?;
+                    continue;
+                }
                 "faction_post" => {
                     crate::factions::restore(&mut tx, item_id, previous).await?;
                     continue;

@@ -6,8 +6,10 @@ import type { Sizes } from "../lib/types";
 import { Avatar } from "./Avatar";
 import { Section } from "./Form";
 
-type Item = { id: string; kind: "live"; created_at: string; read: boolean; live: boolean; channel: { username: string; display_name: string; avatar: Sizes } };
-type Settings = { site: boolean; push: boolean; email: boolean; push_devices: number; push_key: string };
+type CommunityKind = "guild_application" | "guild_decision" | "guild_invite" | "squad_invite";
+const names: Record<CommunityKind, string> = { guild_application: "New guild applications", guild_decision: "Guild application decisions", guild_invite: "Invitations to apply to guilds", squad_invite: "Co-stream invitations" };
+type Item = { id: string; created_at: string; read: boolean } & ({ kind: "live"; live: boolean; channel: { username: string; display_name: string; avatar: Sizes } } | { kind: CommunityKind; payload: { title: string; body: string; url: string } });
+type Settings = { site: boolean; push: boolean; email: boolean; push_devices: number; push_key: string; community: { kind: CommunityKind; site: boolean; push: boolean }[] };
 
 /** The notifications list (go-live alerts, last 30 days). Opening it marks everything read. */
 export function NotificationList({ reports, strikes }: { reports: number; strikes: number }) {
@@ -25,10 +27,10 @@ export function NotificationList({ reports, strikes }: { reports: number; strike
     {strikes > 0 && <p className="panel inline-panel"><Link href="/settings/standing">There&apos;s a new notice about your account standing.</Link></p>}
     {error && <p role="alert" className="form-message error">{error}</p>}
     {!items ? <p className="loading">Loading…</p> : items.length === 0
-      ? <p className="muted">No notifications yet. Channels you follow show up here when they go live.</p>
+      ? <p className="muted">No notifications yet.</p>
       : <ul className="list notifications">{items.map(item => <li key={item.id} className={item.read ? "row" : "row unread"}>
-        <Avatar sizes={item.channel.avatar} name={item.channel.display_name} size={40} />
-        <span><Link href={`/${item.channel.username}`}><strong>{item.channel.display_name}</strong> {item.live ? "is live" : "went live"}</Link>
+        {item.kind === "live" && <Avatar sizes={item.channel.avatar} name={item.channel.display_name} size={40} />}
+        <span>{item.kind === "live" ? <Link href={`/${item.channel.username}`}><strong>{item.channel.display_name}</strong> {item.live ? "is live" : "went live"}</Link> : <Link href={item.payload.url}><strong>{item.payload.title}</strong> · {item.payload.body}</Link>}
           <br /><time className="muted" dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time></span>
         {!item.read && <span className="sr-only">New</span>}
       </li>)}</ul>}
@@ -68,7 +70,7 @@ export function NotificationSettings() {
   async function save(change: Partial<Settings>) {
     if (!settings) return;
     const next = { ...settings, ...change };
-    const result = await send<Settings>("PUT", "/api/me/notifications/settings", { site: next.site, push: next.push, email: next.email });
+    const result = await send<Settings>("PUT", "/api/me/notifications/settings", { site: next.site, push: next.push, email: next.email, community: next.community });
     if (result.ok) { setSettings(result.data); setMessage("Saved."); } else setMessage(result.error);
   }
   async function togglePush() {
@@ -93,8 +95,11 @@ export function NotificationSettings() {
       <label className="checkbox"><input type="checkbox" checked={settings.push} onChange={e => save({ push: e.target.checked })} /> Browser push notifications</label>
       <label className="checkbox"><input type="checkbox" checked={settings.email} onChange={e => save({ email: e.target.checked })} /> Email (every email has a one-click unsubscribe)</label>
     </Section>
+    <Section title="Guilds & co-streams" intro="Choose how each team event reaches you. You can also mute a guild from its page.">
+      {settings.community.map(t => <fieldset key={t.kind}><legend>{names[t.kind]}</legend>{(["site", "push"] as const).map(channel => <label key={channel} className="checkbox"><input type="checkbox" checked={t[channel]} onChange={e => save({ community: settings.community.map(c => c.kind === t.kind ? { ...c, [channel]: e.target.checked } : c) })} />{channel === "site" ? "In-site" : "Browser push"}</label>)}</fieldset>)}
+    </Section>
     <Section title="This browser" intro={`Push alerts are on for ${settings.push_devices} browser${settings.push_devices === 1 ? "" : "s"} on your account.`}>
-      <button type="button" className="small" disabled={busy || (!here && !settings.push)} onClick={togglePush}>{here ? "Turn off push on this browser" : "Turn on push on this browser"}</button>
+      <button type="button" className="small" disabled={busy || (!here && !settings.push && !settings.community.some(t => t.push))} onClick={togglePush}>{here ? "Turn off push on this browser" : "Turn on push on this browser"}</button>
     </Section>
     {message && <p role="status" className="form-message">{message}</p>}
   </>;

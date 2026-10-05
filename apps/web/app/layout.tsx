@@ -37,7 +37,7 @@ export const metadata: Metadata = {
 
 /** Channels the viewer follows that are live now, from the first page of their follows. */
 async function followingLive() {
-  const page = (await apiGet<PeoplePage>("/api/me/following")).data;
+  const page = (await apiGet<PeoplePage>("/api/me/following?live=true")).data;
   return (page?.items ?? []).map(item => item.user).filter(user => user.live && user.username);
 }
 

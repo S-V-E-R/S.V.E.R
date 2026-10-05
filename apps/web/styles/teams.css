@@ -1,0 +1,17 @@
+.teams-page,.guild-page{width:100%;max-width:1200px;margin:0 auto;padding:24px;min-width:0}
+.guild-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:16px;margin:20px 0}
+.guild-card{display:flex;align-items:flex-start;gap:16px;padding:20px;min-width:0}
+.guild-card h2{margin:0;font-size:1.25rem}.guild-card p{margin:8px 0}.guild-card>div{min-width:0;overflow-wrap:anywhere}
+.guild-emblem{flex-shrink:0;object-fit:contain;border:1px solid var(--line);background:var(--surface)}
+.guild-tag{display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-barlow-condensed),sans-serif;font-weight:700;color:var(--accent-light);font-size:.85rem}
+.guild-header{overflow:hidden;background:var(--surface)}.guild-banner{display:block;width:100%;aspect-ratio:16/4;object-fit:cover}
+.guild-identity{padding:24px;display:flex;gap:24px;align-items:center}.guild-identity h1{margin:6px 0}.guild-identity p{margin:8px 0}.guild-identity>div{min-width:0;overflow-wrap:anywhere}
+.guild-nav{padding:20px 0;border-bottom:1px solid var(--line);margin-bottom:20px}.guild-nav a[aria-current]{border-bottom:2px solid var(--accent)}
+.guild-member{padding:16px;min-width:0}.guild-member>.row{flex-wrap:wrap}.guild-member .badge{margin-left:10px}
+.guild-copy{white-space:pre-wrap;overflow-wrap:anywhere}.guild-application{padding:18px 0;border-top:1px solid var(--line)}
+.guild-page .section,.teams-page .section{margin-top:24px}.guild-page form{max-width:700px}.guild-page form+form{margin-top:24px}
+.guild-search{align-items:flex-end;margin:24px 0}.guild-search .field{flex:1;max-width:550px;margin:0}
+.guild-badge{display:inline-flex;vertical-align:middle;align-items:center;margin:0 3px;font-size:11px}.guild-badge img{object-fit:contain;width:18px;height:18px}.guild-badge span{border:1px solid var(--line);padding:0 2px}
+.squad-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}.squad-streams{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.squad-stream{min-width:0}.squad-stream .live-player{width:100%}.squad-stream .row{margin:10px 0}.squad-stream video{width:100%;aspect-ratio:16/9}.squad-chat{min-width:0;position:sticky;top:75px}.squad-chat select{width:100%;margin-bottom:12px}.squad-stream h2{font-size:1rem;overflow-wrap:anywhere}
+@media(max-width:1200px){.squad-layout{grid-template-columns:minmax(0,1fr)}.squad-chat{position:static}.squad-chat .chat-messages{max-height:400px}}
+@media(max-width:600px){.teams-page,.guild-page{padding:16px 8px}.guild-identity{padding:16px;gap:14px;align-items:flex-start}.guild-identity>.guild-emblem{width:64px;height:64px;min-height:64px!important}.guild-identity h1{font-size:1.45rem}.guild-card{padding:16px}.squad-streams{grid-template-columns:minmax(0,1fr)}}

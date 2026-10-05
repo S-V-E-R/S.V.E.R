@@ -13,6 +13,7 @@ export default async function Following({ searchParams }: { searchParams: Promis
   const page = (await apiGet<PeoplePage>(`/api/me/following${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`)).data;
   return <div className="settings-page single"><div className="settings-body">
     <h1>Following</h1>
+    <p><Link href="/guilds">Find a guild</Link> to follow its live members.</p>
     <section className="panel section">{cursor && <Link href="/following">Back to start</Link>}<FollowingList page={page} /></section>
   </div></div>;
 }

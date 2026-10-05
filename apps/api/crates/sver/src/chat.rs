@@ -87,6 +87,11 @@ pub(crate) struct Row {
     tribute: Option<i32>,
 }
 impl Row {
+    async fn hydrated(self, app: &App) -> Res<Value> {
+        let mut value = self.json(app);
+        crate::guilds::hydrate_badges(app, std::slice::from_mut(&mut value)).await?;
+        Ok(value)
+    }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
         json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute})
@@ -94,16 +99,17 @@ impl Row {
 }
 pub(crate) fn select() -> String {
     format!(
-        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} AS author,m.role,m.origin,m.tribute,
+        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
         CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
             'author_id',r.author_id,'username',ra.username,
             'body',left(regexp_replace(r.body,E'[\\n\\r]+',' ','g'),80)) END AS reply
         FROM chat_messages m JOIN channel_users a ON a.id=m.author_id
         LEFT JOIN chat_messages r ON r.id=m.reply_to AND r.channel_id=m.channel_id
+            AND r.squad_id IS NOT DISTINCT FROM m.squad_id
             AND r.deleted_at IS NULL AND (r.expires_at>now() OR EXISTS(SELECT 1 FROM chat_pins WHERE message_id=r.id))
         LEFT JOIN channel_users ra ON ra.id=r.author_id",
-        profiles::chip_sql("a")
+        profiles::chip_sql("a"), crate::guilds::badge_sql("a.id")
     )
 }
 
@@ -126,12 +132,14 @@ pub(crate) const VISIBLE: &str = "m.deleted_at IS NULL AND (m.expires_at>now() O
 
 async fn pinned(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Value> {
     let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{} JOIN chat_pins p ON p.message_id=m.id AND p.channel_id=m.channel_id WHERE m.channel_id=$1 AND {VISIBLE}", select()
+        "{} JOIN chat_pins p ON p.message_id=m.id AND p.channel_id=m.channel_id WHERE m.channel_id=$1 AND m.squad_id IS NULL AND {VISIBLE}", select()
     ))).bind(channel).fetch_optional(&app.db).await?;
-    Ok(row
+    let mut value = row
         .filter(|r| !hidden.contains(&r.author_id))
         .map(|r| visible_message(r.json(app), hidden))
-        .unwrap_or(Value::Null))
+        .unwrap_or(Value::Null);
+    crate::guilds::hydrate_badges(app, std::slice::from_mut(&mut value)).await?;
+    Ok(value)
 }
 
 /// Tells open chats (and the Hype room a message came from) that it is gone.
@@ -157,7 +165,7 @@ pub async fn expire(app: &App) -> crate::Result<()> {
     // cleanup was waiting on a message must not disappear with that message's ordinary expiry.
     let ids: Vec<String> = sqlx::query_scalar("SELECT m.id FROM chat_messages m WHERE expires_at<=now() AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED")
         .fetch_all(&mut *tx).await?;
-    let removed: Vec<(Option<String>, Option<String>, String)> = sqlx::query_as("DELETE FROM chat_messages m WHERE id=ANY($1) AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) RETURNING channel_id,origin,id")
+    let removed: Vec<(Option<String>, Option<String>, String)> = sqlx::query_as("DELETE FROM chat_messages m WHERE id=ANY($1) AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) RETURNING coalesce(squad_id,channel_id),origin,id")
         .bind(ids).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     for (channel, origin, id) in removed {
@@ -193,17 +201,16 @@ fn mention_names(body: &str) -> Vec<String> {
 
 /// Refresh a moderation change for already-connected viewers after its database commit.
 pub async fn notify_changed(app: &App, id: &str) -> Res<()> {
-    let row: Option<(String, bool)> =
-        sqlx::query_as("SELECT channel_id,deleted_at IS NOT NULL FROM chat_messages WHERE id=$1")
+    let row: Option<(Option<String>, Option<String>, bool)> =
+        sqlx::query_as("SELECT coalesce(squad_id,channel_id),origin,deleted_at IS NOT NULL FROM chat_messages WHERE id=$1")
             .bind(id)
             .fetch_optional(&app.db)
             .await?;
-    let Some((channel, hidden)) = row else {
+    let Some((channel, origin, hidden)) = row else {
         return Ok(());
     };
     if hidden {
-        app.chat
-            .publish(&channel, None, 0, json!({"type":"delete","id":id}));
+        publish_delete(app, channel.as_deref(), origin.as_deref(), id);
     } else {
         let message: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "{} WHERE m.id=$1 AND {VISIBLE}",
@@ -214,12 +221,14 @@ pub async fn notify_changed(app: &App, id: &str) -> Res<()> {
         .await?;
         if let Some(message) = message {
             let author = message.author_id.clone();
-            app.chat.publish(
-                &channel,
-                Some(&author),
-                0,
-                json!({"type":"message","message":message.json(app)}),
-            );
+            let event = json!({"type":"message","message":message.hydrated(app).await?});
+            if let Some(channel) = channel {
+                app.chat.publish(&channel, Some(&author), 0, event.clone());
+            }
+            if let Some(lane) = origin {
+                app.chat
+                    .publish(&format!("magnet:{lane}"), Some(&author), 0, event);
+            }
         }
     }
     Ok(())
@@ -242,22 +251,30 @@ pub(crate) async fn hidden(app: &App, viewer: Option<&str>) -> Res<HashSet<Strin
         .bind(viewer).fetch_all(&app.db).await?;
     Ok(ids.into_iter().collect())
 }
-async fn history(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Vec<Value>> {
+async fn history(
+    app: &App,
+    channel: &str,
+    hidden: &HashSet<String>,
+    squad: Option<&str>,
+) -> Res<Vec<Value>> {
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{} WHERE m.channel_id=$1 AND {VISIBLE} ORDER BY m.seq DESC LIMIT $2",
+        "{} WHERE m.channel_id=$1 AND m.squad_id IS NOT DISTINCT FROM $3 AND {VISIBLE} ORDER BY m.seq DESC LIMIT $2",
         select()
     )))
     .bind(channel)
     .bind(HISTORY)
+    .bind(squad)
     .fetch_all(&app.db)
     .await?;
-    Ok(rows
+    let mut messages: Vec<Value> = rows
         .into_iter()
         .rev()
         .filter(|r| !hidden.contains(&r.author_id))
         .map(|r| visible_message(r.json(app), hidden))
-        .collect())
+        .collect();
+    crate::guilds::hydrate_badges(app, &mut messages).await?;
+    Ok(messages)
 }
 
 #[derive(Deserialize)]
@@ -271,8 +288,14 @@ pub struct Send {
 }
 
 /// Persists one message to a channel's own chat and fans it out.
-async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Value> {
-    send_from(app, jar, Some(channel), input, None).await
+async fn send(
+    app: &App,
+    jar: &CookieJar,
+    channel: &str,
+    input: Send,
+    squad: Option<&str>,
+) -> Res<Value> {
+    send_from(app, jar, Some(channel), input, None, squad).await
 }
 
 /// Persists one message and fans it out. Acknowledged only after the insert commits. `origin` is
@@ -284,9 +307,19 @@ pub(crate) async fn send_from(
     channel: Option<&str>,
     input: Send,
     origin: Option<&str>,
+    squad: Option<&str>,
 ) -> Res<Value> {
     // Rechecked on every send, so a revoked session or new restriction takes effect at once.
     let user = profiles::signed_in(app, jar).await?;
+    let members = if let Some(id) = squad {
+        let members = crate::squads::chat_context(app, id, Some(&user.id)).await?;
+        if members.first().map(String::as_str) != channel {
+            return Err(Fail::conflict("This co-stream has ended."));
+        }
+        members
+    } else {
+        channel.into_iter().map(str::to_owned).collect()
+    };
     if uuid::Uuid::parse_str(&input.id).is_err() {
         return Err(Fail::bad("Invalid message ID."));
     }
@@ -303,15 +336,17 @@ pub(crate) async fn send_from(
     }
     let existing: Option<Row> =
         // select() contains only fixed SQL and a literal chip alias; message values are bound.
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND m.author_id=$2 AND m.channel_id IS NOT DISTINCT FROM $3 AND {VISIBLE}", select())))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND m.author_id=$2 AND m.channel_id IS NOT DISTINCT FROM $3 AND m.squad_id IS NOT DISTINCT FROM $4 AND m.origin IS NOT DISTINCT FROM $5 AND {VISIBLE}", select())))
             .bind(&input.id)
             .bind(&user.id)
             .bind(channel)
+            .bind(squad)
+            .bind(origin)
             .fetch_optional(&app.db)
             .await?;
     if let Some(row) = existing {
         return Ok(visible_message(
-            row.json(app),
+            row.hydrated(app).await?,
             &hidden(app, Some(&user.id)).await?,
         ));
     }
@@ -346,7 +381,8 @@ pub(crate) async fn send_from(
         None => None,
     };
     if let Some(valor) = input.tribute {
-        let Some(channel) = channel.filter(|_| origin.is_none()) else {
+        // Squad chat money (pooled splits) comes with co-streams; tributes stay in a channel's own chat.
+        let Some(channel) = channel.filter(|_| origin.is_none() && squad.is_none()) else {
             return Err(Fail::field(
                 "tribute",
                 "Tributes go to a channel's own chat.",
@@ -374,11 +410,24 @@ pub(crate) async fn send_from(
     sec::reserve(app, vec![format!("chat-second:{}", user.id)], 2, 1).await?;
     sec::reserve(app, vec![format!("chat-ten:{}", user.id)], 20, 10).await?;
     let hidden = hidden(app, Some(&user.id)).await?;
+    let role = if squad.is_some() {
+        for member in members.iter().skip(1) {
+            crate::moderation::check_send(app, member, &user, body).await?;
+        }
+        crate::squads::chat_role(app, &members, &user)
+            .await?
+            .map(|r| r.name())
+    } else {
+        role
+    };
     let mut tx = app.db.begin().await?;
+    if let Some(id) = squad {
+        crate::squads::lock_chat(&mut tx, id, &members).await?;
+    }
     if let (Some(reply), Some(channel)) = (&input.reply_to, channel) {
         // Lock against deletion while accepting the reply. Later reads always join the current body.
-        let author: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT m.author_id FROM chat_messages m WHERE m.id=$1 AND m.channel_id=$2 AND {VISIBLE} FOR SHARE")))
-            .bind(reply).bind(channel).fetch_optional(&mut *tx).await?;
+        let author: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT m.author_id FROM chat_messages m WHERE m.id=$1 AND m.channel_id=$2 AND m.squad_id IS NOT DISTINCT FROM $3 AND {VISIBLE} FOR SHARE")))
+            .bind(reply).bind(channel).bind(squad).fetch_optional(&mut *tx).await?;
         if author.is_none_or(|a| hidden.contains(&a)) {
             return Err(Fail::field(
                 "reply_to",
@@ -392,8 +441,8 @@ pub(crate) async fn send_from(
     .bind(mention_names(body))
     .fetch_all(&mut *tx)
     .await?;
-    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,tribute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO NOTHING")
-        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(input.tribute.map(|v| v as i32)).execute(&mut *tx).await?.rows_affected();
+    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO NOTHING")
+        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(input.tribute.map(|v| v as i32)).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
@@ -433,7 +482,9 @@ pub(crate) async fn send_from(
         )
         .await?;
     }
-    if let Some(channel) = channel {
+    if let Some(channel) = channel
+        && squad.is_none()
+    {
         crate::factions::chat(app, &mut tx, channel, &user.id, &input.id).await?;
         crate::plays::chat_vote(&mut tx, channel, &user, body).await?;
     }
@@ -444,9 +495,9 @@ pub(crate) async fn send_from(
         .fetch_one(&app.db)
         .await?;
     let (seq, author) = (row.seq, row.author_id.clone());
-    let message = row.json(app);
+    let message = row.hydrated(app).await?;
     let event = json!({"type":"message","message":message});
-    if let Some(channel) = channel {
+    if let Some(channel) = squad.or(channel) {
         app.chat.publish(channel, Some(&author), seq, event.clone());
     }
     if let Some(lane) = origin {
@@ -465,7 +516,7 @@ pub async fn read(
     let viewer = profiles::viewer(&app, &jar).await?;
     let hidden = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await?;
     Ok(Json(
-        json!({"messages": history(&app, &channel, &hidden).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?}),
+        json!({"messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?}),
     ))
 }
 pub async fn post(
@@ -476,8 +527,82 @@ pub async fn post(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     Ok(Json(
-        json!({"message": send(&app, &jar, &channel, input).await?}),
+        json!({"message": send(&app, &jar, &channel, input, None).await?}),
     ))
+}
+
+pub async fn squad_read(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Res<Json<Value>> {
+    let viewer = profiles::viewer(&app, &jar).await?;
+    let members =
+        crate::squads::chat_context(&app, &id, viewer.as_ref().map(|u| u.id.as_str())).await?;
+    let channel = members.first().ok_or_else(Fail::missing)?;
+    let hidden = hidden(&app, viewer.as_ref().map(|u| u.id.as_str())).await?;
+    Ok(Json(
+        json!({"messages":history(&app,channel,&hidden,Some(&id)).await?,"pinned":null,"emotes":crate::emotes::catalog(&app,channel).await?}),
+    ))
+}
+pub async fn squad_post(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Json(input): Json<Send>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let members = crate::squads::chat_context(&app, &id, Some(&user.id)).await?;
+    let channel = members.first().ok_or_else(Fail::missing)?;
+    Ok(Json(
+        json!({"message":send(&app,&jar,channel,input,Some(&id)).await?}),
+    ))
+}
+/// Called only after the squad module authorizes a current shared-chat moderator.
+pub async fn remove_shared(
+    app: &App,
+    squad: &str,
+    id: &str,
+    user: &crate::auth::User,
+    members: &[String],
+    reason: &str,
+) -> Res<()> {
+    let reason = moderation::reason(reason)?;
+    let author: String =
+        sqlx::query_scalar("SELECT author_id FROM chat_messages WHERE id=$1 AND squad_id=$2")
+            .bind(id)
+            .bind(squad)
+            .fetch_optional(&app.db)
+            .await?
+            .ok_or_else(Fail::missing)?;
+    if author != user.id {
+        for channel in members {
+            if moderation::protected(app, channel, &user.id, &author).await? {
+                return Err(Fail::denied("You can't delete this message."));
+            }
+        }
+    }
+    let mut tx = app.db.begin().await?;
+    crate::squads::lock_chat(&mut tx, squad, members).await?;
+    let changed=sqlx::query("UPDATE chat_messages SET deleted_at=now() WHERE id=$1 AND squad_id=$2 AND deleted_at IS NULL").bind(id).bind(squad).execute(&mut *tx).await?.rows_affected();
+    if changed > 0 {
+        crate::safety::audit(
+            &mut tx,
+            Some(&user.id),
+            "delete_message",
+            "squad",
+            squad,
+            &[],
+            &reason,
+            json!({"message":id}),
+            false,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    app.chat
+        .publish(squad, None, 0, json!({"type":"delete","id":id}));
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -504,7 +629,7 @@ pub async fn pin(
     let mut tx = app.db.begin().await?;
     if let Some(id) = &input.message_id {
         let author: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT m.author_id FROM chat_messages m WHERE m.id=$1 AND m.channel_id=$2 AND {VISIBLE} FOR UPDATE"
+            "SELECT m.author_id FROM chat_messages m WHERE m.id=$1 AND m.channel_id=$2 AND m.squad_id IS NULL AND {VISIBLE} FOR UPDATE"
         ))).bind(id).bind(&channel).fetch_optional(&mut *tx).await?;
         if author.is_none_or(|a| hidden.contains(&a)) {
             return Err(Fail::missing());
@@ -543,7 +668,9 @@ pub async fn pin(
 
 #[derive(Deserialize)]
 pub struct Join {
+    #[serde(default)]
     channel: String,
+    squad: Option<String>,
 }
 /// Same-origin socket on the session cookie (never a token in the URL); one channel per connection.
 pub async fn socket(
@@ -559,17 +686,33 @@ pub async fn socket(
     }
     let ip = sec::client_ip(&app, peer, &headers);
     sec::reserve(&app, vec![format!("chat-connect:{ip}")], 30, 60).await?;
-    let channel = channel(&app, &join.channel).await?;
+    let channel = if let Some(id) = &join.squad {
+        let viewer = profiles::viewer(&app, &jar).await?;
+        crate::squads::chat_context(&app, id, viewer.as_ref().map(|u| u.id.as_str()))
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(Fail::missing)?
+    } else {
+        channel(&app, &join.channel).await?
+    };
     if app.chat.sockets.load(Ordering::Relaxed) >= MAX_SOCKETS {
         return Err(Fail::unavailable("Chat is busy. Please try again shortly."));
     }
     Ok(upgrade
         .max_message_size(FRAME)
         .max_frame_size(FRAME)
-        .on_upgrade(move |ws| session(app, jar, channel, ws)))
+        .on_upgrade(move |ws| session(app, jar, channel, join.squad, ws)))
 }
 
-async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
+async fn session(
+    app: App,
+    jar: CookieJar,
+    channel: String,
+    squad: Option<String>,
+    mut ws: WebSocket,
+) {
+    let room = squad.as_deref().unwrap_or(&channel);
     app.chat.sockets.fetch_add(1, Ordering::Relaxed);
     let _slot = SocketSlot(app.chat.sockets.clone());
     // Subscribe before reading history so nothing posted in between is missed.
@@ -578,11 +721,11 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
     let Ok(hidden) = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await else {
         return;
     };
-    let Ok(snapshot) = history(&app, &channel, &hidden).await else {
+    let Ok(snapshot) = history(&app, &channel, &hidden, squad.as_deref()).await else {
         return;
     };
     let cursor = snapshot.last().and_then(|m| m["seq"].as_i64()).unwrap_or(0);
-    let Ok(pin) = pinned(&app, &channel, &hidden).await else {
+    let Ok(mut pin) = pinned(&app, &channel, &hidden).await else {
         return;
     };
     let Ok(mut emotes) = crate::emotes::catalog(&app, &channel).await else {
@@ -591,6 +734,9 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
     let Ok(followers_only) = crate::moderation::followers_only(&app, &channel).await else {
         return;
     };
+    if squad.is_some() {
+        pin = Value::Null;
+    }
     let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes,"followers_only_until":followers_only}).to_string();
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
@@ -603,6 +749,10 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
     loop {
         tokio::select! {
             _ = refresh.tick() => {
+                if let Some(id) = &squad {
+                    let viewer = match profiles::viewer(&app,&jar).await { Ok(v)=>v, Err(_)=>return };
+                    if crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
+                }
                 let Ok(current) = crate::emotes::catalog(&app, &channel).await else { return; };
                 if current != emotes {
                     emotes = current;
@@ -610,8 +760,10 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
                 }
             }
             event = events.recv() => match event {
-                Ok(e) if e.channel == channel
+                Ok(e) if e.channel == room
                     && (e.seq == 0 || e.seq > cursor) => {
+                    if let Some(id) = &squad
+                        && crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
                     let Ok(hidden) = crate::chat::hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut payload = e.payload.clone();
@@ -632,7 +784,8 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
                             if row.is_err() { return; }
                             continue;
                         };
-                        payload["message"] = visible_message(row.json(&app), &hidden);
+                        let Ok(message) = row.hydrated(&app).await else { return; };
+                        payload["message"] = visible_message(message, &hidden);
                     }
                     if ws.send(Message::Text(payload.to_string().into())).await.is_err() {
                         return;
@@ -651,7 +804,7 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
                     let reply = match serde_json::from_str::<Send>(&text) {
                         Ok(input) => {
                             let id = input.id.clone();
-                            match send(&app, &jar, &channel, input).await {
+                            match send(&app, &jar, &channel, input, squad.as_deref()).await {
                                 Ok(message) => json!({"type":"ack","id":id,"message":message}),
                                 Err(fail) => json!({"type":"error","id":id,"message":fail.message}),
                             }
@@ -700,7 +853,7 @@ async fn hype_snapshot(
     let hidden = hidden(app, viewer).await?;
     // select() contains only fixed SQL and a literal chip alias; values are bound.
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1) OR (m.channel_id=$2 AND m.created_at>=$3)) AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
+        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1) OR (m.channel_id=$2 AND m.created_at>=$3)) AND m.squad_id IS NULL AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
         select()
     )))
     .bind(lane)
@@ -709,12 +862,13 @@ async fn hype_snapshot(
     .bind(HISTORY)
     .fetch_all(&app.db)
     .await?;
-    let messages: Vec<Value> = rows
+    let mut messages: Vec<Value> = rows
         .into_iter()
         .rev()
         .filter(|r| !hidden.contains(&r.author_id))
         .map(|r| visible_message(r.json(app), &hidden))
         .collect();
+    crate::guilds::hydrate_badges(app, &mut messages).await?;
     let (merged_with, holding) = match &merge {
         Some((owner, _)) => {
             let mut db = app.db.acquire().await?;
@@ -763,9 +917,9 @@ async fn hype_post(
             if hype_holding(&app, &owner, &user.id).await? {
                 return Err(Fail::denied("Chat resumes when MAGNet moves on."));
             }
-            send_from(&app, &jar, Some(&owner), input, Some(&lane)).await?
+            send_from(&app, &jar, Some(&owner), input, Some(&lane), None).await?
         }
-        None => send_from(&app, &jar, None, input, Some(&lane)).await?,
+        None => send_from(&app, &jar, None, input, Some(&lane), None).await?,
     };
     Ok(Json(json!({"message": message})))
 }

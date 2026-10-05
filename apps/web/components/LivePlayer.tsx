@@ -74,7 +74,7 @@ function playingWithin(video: HTMLVideoElement, ms: number) {
  * WebRTC first when offered; on failure or an 8-second startup timeout it falls back to HLS.
  * Uses native controls for keyboard, fullscreen, volume and captions.
  */
-export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; children?: React.ReactNode }) {
+export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, muted, onUnmute, followRaids = true, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; muted?: boolean; onUnmute?: () => void; followRaids?: boolean; children?: React.ReactNode }) {
   const [live, setLive] = useState<Live | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [attempt, setAttempt] = useState(0);
@@ -124,8 +124,9 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   }, [live, isOwner]);
   const polled = live?.live ? live.raid ?? null : null;
   const raid = pushed === undefined ? polled : pushed;
-  const counting = raid && raid.status !== "cancelled" && raid.status !== "failed" && stayed !== raid.id ? raid : null;
+  const counting = followRaids && raid && raid.status !== "cancelled" && raid.status !== "failed" && stayed !== raid.id ? raid : null;
   const moving = useRef("");
+  useEffect(() => { if (video.current && muted !== undefined) video.current.muted = muted; }, [muted, broadcast]);
 
   // Countdown: at zero the player asks whether the raid went ahead, then moves to the target.
   useEffect(() => {
@@ -211,7 +212,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
   return <div className={focused ? "live-player focused" : "live-player"}>
-    <video ref={video} controls playsInline aria-label={`${live.title}, live`} />
+    <video ref={video} controls playsInline muted={muted} onVolumeChange={onUnmute ? event => { if (!event.currentTarget.muted) onUnmute(); } : undefined} aria-label={`${live.title}, live`} />
     {status && <p className="player-status" role="status">{status}</p>}
     {phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}

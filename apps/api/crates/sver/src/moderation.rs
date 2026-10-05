@@ -75,7 +75,7 @@ async fn user_id(app: &App, name: &str) -> Res<String> {
 }
 /// Nobody sanctions the owner, themselves, a current moderator or platform staff in chat.
 /// The owner removes a moderator before sanctioning them.
-async fn protected(app: &App, channel: &str, actor: &str, target: &str) -> Res<bool> {
+pub async fn protected(app: &App, channel: &str, actor: &str, target: &str) -> Res<bool> {
     if target == channel || target == actor {
         return Ok(true);
     }
@@ -331,13 +331,14 @@ pub async fn delete_message(
     let channel = channel(&app, &name).await?;
     let (user, role) = actor(&app, &jar, &channel).await?;
     let reason = reason(&input.reason)?;
-    let author: String =
-        sqlx::query_scalar("SELECT author_id FROM chat_messages WHERE id=$1 AND channel_id=$2")
-            .bind(&id)
-            .bind(&channel)
-            .fetch_optional(&app.db)
-            .await?
-            .ok_or_else(Fail::missing)?;
+    let author: String = sqlx::query_scalar(
+        "SELECT author_id FROM chat_messages WHERE id=$1 AND channel_id=$2 AND squad_id IS NULL",
+    )
+    .bind(&id)
+    .bind(&channel)
+    .fetch_optional(&app.db)
+    .await?
+    .ok_or_else(Fail::missing)?;
     if role == Role::Moderator
         && author != user.id
         && protected(&app, &channel, &user.id, &author).await?
