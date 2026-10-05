@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { CloseIcon, MenuIcon, SearchIcon } from "./Icons";
 
 // Sign-in screens get no sidebar and a minimal top bar (docs/DESIGN.md "Pages": sign up, log in, …).
-const AUTH_ROUTES = new Set(["login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa"]);
+const AUTH_ROUTES = new Set(["login", "signup", "choose-faction", "oauth-signup", "forgot", "reset", "verify", "mfa"]);
 
 type Props = {
   /** Right side of the full top bar: notifications and player chip, or Log in and Enlist. */

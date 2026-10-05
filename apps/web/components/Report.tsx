@@ -3,7 +3,7 @@ import { FormEvent, useState } from "react";
 import { send } from "../lib/client-api";
 import { reasons } from "../lib/types";
 
-export type ReportTarget = { target_type: "profile" | "wall_post" | "wall_reply" | "fan_art" | "setup_photo" | "chat_message" | "live_stream" | "emote"; target_id: string; field?: string };
+export type ReportTarget = { target_type: "profile" | "wall_post" | "wall_reply" | "fan_art" | "setup_photo" | "chat_message" | "live_stream" | "emote" | "faction_post"; target_id: string; field?: string };
 export function TakeDownLink({ target }: { target: ReportTarget }) {
   const query = new URLSearchParams({ report: target.target_type, id: target.target_id, ...(target.field ? { field: target.field } : {}) });
   const location = `https://sver.tv/${target.target_type === "profile" ? encodeURIComponent(target.target_id) : "take-it-down"}?${query}`;
@@ -25,7 +25,7 @@ export function ReportForm({ target, onDone }: { target: ReportTarget; onDone: (
     if (result.ok) setTimeout(onDone, 1500);
   }
   return <form className="report-form" onSubmit={submit}>
-    <p><TakeDownLink target={target} /></p>
+    {target.target_type !== "faction_post" && <p><TakeDownLink target={target} /></p>}
     {target.target_type === "profile" && <label className="field"><span>What are you reporting?</span><select name="field" required defaultValue="">{[<option key="" value="" disabled>Choose…</option>, ...fields.map(([v, l]) => <option key={v} value={v}>{l}</option>)]}</select></label>}
     <label className="field"><span>Reason</span><select name="reason" required defaultValue="">{[<option key="" value="" disabled>Choose…</option>, ...reasons.map(([v, l]) => <option key={v} value={v}>{l}</option>)]}</select></label>
     <label className="field"><span>Anything else? (optional)</span><textarea name="note" maxLength={500} rows={3} /></label>

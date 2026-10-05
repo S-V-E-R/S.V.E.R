@@ -2,6 +2,8 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Turnstile } from "../components/Turnstile";
+import { EnrollmentSteps } from "../components/FactionIdentity";
+import { isFaction } from "../lib/factions";
 import { Avatar } from "../components/Avatar";
 import type { Sizes } from "../lib/types";
 
@@ -83,6 +85,8 @@ export default function AuthScreen({ screen }: { screen: string }) {
     const params = new URLSearchParams(window.location.hash.slice(1));
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the link token is read from the URL hash, which only exists on the client
     setLinkToken(params.get("token") || "");
+    const preferred = new URLSearchParams(window.location.search).get("faction");
+    if (isFaction(preferred)) sessionStorage.setItem("preferred-faction", preferred);
     const providerError = new URLSearchParams(window.location.search).get("error");
     if (providerError) setError(providerError);
     if (window.location.hash || providerError) history.replaceState(null, "", window.location.pathname);
@@ -101,8 +105,8 @@ export default function AuthScreen({ screen }: { screen: string }) {
     await run(async () => {
       let result: Reply;
       switch (screen) {
-        case "signup": result = await request("signup", { ...values, turnstile_token: botToken }); window.location.assign("/account"); break;
-        case "oauth-signup": await request("oauth/signup", { ...values, turnstile_token: botToken }); window.location.assign("/account"); break;
+        case "signup": result = await request("signup", { ...values, turnstile_token: botToken }); window.location.assign("/choose-faction"); break;
+        case "oauth-signup": await request("oauth/signup", { ...values, turnstile_token: botToken }); window.location.assign("/choose-faction"); break;
         case "login": result = await request("login", values); window.location.assign(result.requires_mfa ? "/mfa" : "/account"); break;
         case "mfa": await request("mfa/login", values); window.location.assign("/account"); break;
         case "forgot": await request("password/forgot", { ...values, turnstile_token: botToken }); setMessage("If that account exists, a recovery email has been queued. Check your inbox and spam folder."); break;
@@ -166,7 +170,7 @@ export default function AuthScreen({ screen }: { screen: string }) {
   const isSignup = screen === "signup" || screen === "oauth-signup";
   const botRequired = isSignup || screen === "forgot";
   return <div className="entry-page">
-    <section className="auth-panel panel" aria-labelledby="auth-title"><h1 id="auth-title" className="auth-title">{titles[screen][0]}</h1><p className="intro">{titles[screen][1]}</p>{notice}
+    <section className="auth-panel panel" aria-labelledby="auth-title">{isSignup && <EnrollmentSteps step={1} />}<h1 id="auth-title" className="auth-title">{titles[screen][0]}</h1><p className="intro">{titles[screen][1]}</p>{notice}
       {isSignup && <p className="signup-policy">By creating an account, you agree to the <Link href="/terms">Terms of Service</Link> and <Link href="/guidelines">Community Guidelines</Link>. Read our <Link href="/privacy">Privacy Policy</Link> to learn how we handle your information.</p>}
       {screen === "oauth-signup" && !pendingSignup && <p className="small-text">{error ? <Link href="/signup">Start signup again</Link> : "Checking your provider sign-in…"}</p>}
       {(screen !== "oauth-signup" || pendingSignup) && <form ref={form} onSubmit={submit}>

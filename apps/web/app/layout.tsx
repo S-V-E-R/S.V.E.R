@@ -17,6 +17,9 @@ import "../styles/profiles.css";
 import "../styles/design.css";
 import "../styles/site-pages.css";
 import "../styles/discovery.css";
+import "../styles/factions.css";
+import { Crest } from "../components/FactionIdentity";
+import { factionInfo } from "../lib/factions";
 import type { StreamDirectory } from "../components/StreamShelf";
 
 // Type per docs/DESIGN.md "Type": self-hosted and subset by next/font.
@@ -66,7 +69,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     ? <>
       <StaffRemovalAlerts />
       <Link href="/notifications" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
-      <PlayerMenu username={account.username} avatar={avatar} />
+      <PlayerMenu username={account.username} avatar={avatar} faction={account.faction} />
     </>
     : <>
       <Link href="/login" className="topbar-link">Log in</Link>
@@ -75,10 +78,10 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   const sidebar = <>
     {account && <Link href={`/${account.username}`} className="player-card frame">
-      <Avatar sizes={avatar} name={displayName} size={48} />
-      <span className="player-card-text"><span className="player-card-name">{displayName}</span><span className="player-card-faction">No faction yet</span><span className="player-card-link">View your channel</span></span>
+      {account.faction ? <Crest faction={account.faction} size={48} /> : <Avatar sizes={avatar} name={displayName} size={48} />}
+      <span className="player-card-text"><span className="player-card-name">{displayName}</span><span className="player-card-faction">{account.faction ? `${factionInfo(account.faction).name} · ${factionInfo(account.faction).title}` : "No faction yet"}</span><span className="player-card-link">View your channel</span></span>
     </Link>}
-    <SideNav />
+    <SideNav faction={account?.faction ?? null} />
     <section className="daily-orders frame" aria-labelledby="daily-orders-title"><h2 id="daily-orders-title">Daily orders</h2><p>Watch, chat and help your faction.</p><p className="daily-orders-status">Coming with Progression</p><Link href="/roadmap">See the roadmap</Link></section>
     <section className="side-section" aria-labelledby="following-live">
       <div className="side-label"><span id="following-live">{account ? "Following · live" : "Picked for you"}</span><span className="magnet"><MagnetMark />MAGNet</span></div>

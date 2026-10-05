@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { joined, linkHost, platformNames, type Channel } from "../lib/types";
 import { PlatformIcon } from "./PlatformIcon";
+import { Crest } from "./FactionIdentity";
+import { factionInfo } from "../lib/factions";
 import { Avatar } from "./Avatar";
 import { ChannelActions } from "./ChannelActions";
 import { ChannelTabs } from "./ChannelTabs";
@@ -12,7 +14,7 @@ import "../styles/profiles.css";
 export function ChannelFrame({ data, path, children }: { data: Channel; path: string; children: React.ReactNode }) {
   const c = data.channel;
   const banner = c.banner ? Object.entries(c.banner) : [];
-  return <div className="channel">
+  return <div className="channel" data-theme={c.faction ?? "neutral"}>
     <section className="player-slot" aria-label="Stream">
       <LivePlayer username={c.username}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -21,20 +23,21 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
       </LivePlayer>
     </section>
     <section className="identity panel">
-      <Avatar sizes={c.avatar} name={c.display_name} size={112} />
+      <Avatar sizes={c.avatar} name={c.display_name} size={96} />{c.faction && <Crest faction={c.faction} size={32} />}
       <div className="identity-text">
         {data.header?.label && <span className="page-label">{data.header.label}</span>}
         <h1>{c.display_name}</h1>
         <p className="handle">@{c.username}</p>
         {data.header?.welcome && <p className="welcome-line">{data.header.welcome}</p>}
         {(c.mood_emoji || c.status_text) && <p className="status-line">{c.mood_emoji && <span aria-label="Mood">{c.mood_emoji}</span>} {c.status_text}</p>}
-        <span className="faction-slot" aria-hidden="true" />
+        {c.faction && <Link className="badge" href={`/factions/${c.faction}`}>{factionInfo(c.faction).name}</Link>}
         {c.bio && <p className="bio">{c.bio}</p>}
         {c.links.length > 0 && <ul className="links">{c.links.map(l => <li key={l.url}><a href={l.url} rel="nofollow noopener noreferrer ugc" target="_blank"><PlatformIcon platform={l.platform} /><span>{platformNames[l.platform] || l.platform}</span>{linkHost(l.url) && <small className="link-host">{linkHost(l.url)}</small>}</a></li>)}</ul>}
         <p className="counts"><Link href={`/${c.username}/followers`}><strong>{c.follower_count.toLocaleString()}</strong> followers</Link><Link href={`/${c.username}/following`}><strong>{c.following_count.toLocaleString()}</strong> following</Link><span className="muted">Joined {joined(c.joined_at)}</span>{data.header?.vibe && <span className="muted page-vibe">Vibe: <strong>{data.header.vibe}</strong></span>}</p>
       </div>
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={path} />
     </section>
+    {!!c.season_rewards?.length && <div className="season-banner" data-theme={c.season_rewards[0].faction}><Crest faction={c.season_rewards[0].faction} size={44} /><div><strong>Season {c.season_rewards[0].season} champion</strong><p>{factionInfo(c.season_rewards[0].faction).name} · {c.season_rewards.map(r => `Season ${r.season}`).join(" · ")}</p></div><span className="badge">Season victor</span></div>}
     {c.song && <SongPlayer song={c.song} />}
     {c.song_notice && data.viewer.is_owner && <p className="panel notice">Spotify links aren&apos;t supported. <Link href="/studio/channel/song">Add a YouTube or SoundCloud track</Link>.</p>}
     <ChannelTabs username={c.username} tabs={data.tabs} />

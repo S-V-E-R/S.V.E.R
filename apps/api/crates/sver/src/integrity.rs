@@ -192,6 +192,7 @@ pub struct Report<'a> {
 
 #[derive(sqlx::FromRow)]
 struct Lease {
+    level: String,
     created_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
     last_beat_at: Option<DateTime<Utc>>,
@@ -237,9 +238,10 @@ pub async fn record(
     let now: DateTime<Utc> = sqlx::query_scalar("SELECT now()")
         .fetch_one(&mut *tx)
         .await?;
-    let previous: Option<Lease> = sqlx::query_as("SELECT created_at,expires_at,last_beat_at,turnstile_ok,hard_excluded,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,provisional_until FROM playback_leases WHERE broadcast_id=$1 AND viewer_key=$2 FOR UPDATE")
+    let previous: Option<Lease> = sqlx::query_as("SELECT level,created_at,expires_at,last_beat_at,turnstile_ok,hard_excluded,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,provisional_until FROM playback_leases WHERE broadcast_id=$1 AND viewer_key=$2 FOR UPDATE")
         .bind(broadcast).bind(key).fetch_optional(&mut *tx).await?;
     let mut l = previous.unwrap_or(Lease {
+        level: "pending".into(),
         created_at: now,
         expires_at: now,
         last_beat_at: None,
@@ -300,6 +302,23 @@ pub async fn record(
     };
     let (level, risk, flags) = assess(t, &inputs);
     save_level(&mut tx, broadcast, key, level, risk, &flags).await?;
+    if level == Level::Trusted
+        && l.level == "trusted"
+        && l.expires_at > now
+        && report.visible
+        && let (Some(user), Some(last), Some(before), Some(after)) = (
+            key.strip_prefix("u:"),
+            l.last_beat_at,
+            l.last_media_time,
+            report.media_time,
+        )
+        && after > before
+    {
+        let elapsed = (now - last)
+            .num_milliseconds()
+            .min(((after - before) * 1000.0) as i64);
+        crate::factions::watch(app, &mut tx, broadcast, user, elapsed, now).await?;
+    }
     tx.commit().await?;
     Ok(Some((level, !exempt && !l.turnstile_ok)))
 }
@@ -316,6 +335,12 @@ async fn save_level(
         .bind(broadcast).bind(key).bind(level.name()).bind(risk).bind(flags)
         .execute(db).await?;
     Ok(())
+}
+
+/// Public Module 4 trust gate: owner previews never create leases, and expired leases never earn.
+pub async fn trusted(db: &mut PgConnection, broadcast: &str, user: Option<&str>) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM playback_leases WHERE broadcast_id=$1 AND level='trusted' AND signed_in AND verified AND expires_at>clock_timestamp() AND ($2::text IS NULL OR viewer_key='u:'||$2))")
+        .bind(broadcast).bind(user).fetch_one(db).await?)
 }
 
 /// (raw, counted, trusted, excluded, pending) for a broadcast's live leases. "Counted" is the

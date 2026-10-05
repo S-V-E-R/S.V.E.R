@@ -22,7 +22,10 @@ function compile(file, dependencies = {}) {
   vm.runInThisContext(`(function(require,module,exports){${source}\n})`, { filename: file })(name => {
     if (name === "next/link") return ({ href, children, ...props }) => React.createElement("a", { href, ...props }, children);
     if (name === "next/navigation") return { usePathname: () => pathname };
-    return dependencies[name] || webRequire(name);
+    if (name === "next/image") return ({ unoptimized, ...props }) => React.createElement("img", props);
+    if (dependencies[name]) return dependencies[name];
+    if (name.startsWith(".")) { const resolved=path.resolve(path.dirname(file),name); return compile(fs.existsSync(resolved+".tsx") ? resolved+".tsx" : resolved+".ts"); }
+    return webRequire(name);
   }, compiled, compiled.exports);
   return compiled.exports;
 }
@@ -53,7 +56,7 @@ async function render(route, signedIn = false) {
       assert.equal(document.querySelector('form[role="search"]'), null);
       assert.ok(document.querySelector(`nav a[href="${route}"][aria-current="page"]`));
     }
-    for (const route of ["/login", "/signup", "/oauth-signup", "/forgot", "/reset", "/verify", "/mfa"]) {
+    for (const route of ["/login", "/choose-faction", "/signup", "/oauth-signup", "/forgot", "/reset", "/verify", "/mfa"]) {
       await render(route);
       assert.ok(document.querySelector("header.minimal"));
       assert.equal(document.querySelector("aside"), null);
@@ -63,8 +66,8 @@ async function render(route, signedIn = false) {
     assert.ok(document.querySelector('.player-menu a[href="/settings/profile"][aria-current="page"]'));
     assert.equal(document.querySelector('aside a[href="/settings/profile"]'), null);
     const navLabels = [...document.querySelectorAll('aside .nav-item')].map(item => item.querySelector('span')?.textContent);
-    assert.deepEqual(navLabels, ['Home', 'Browse', 'Beacons', 'War map', 'Faction hub']);
-    assert.equal(document.querySelectorAll('aside [aria-disabled="true"]').length, 4);
+    assert.deepEqual(navLabels, ['Home', 'Browse', 'Beacons', 'War map', 'Choose your side']);
+    assert.equal(document.querySelectorAll('aside [aria-disabled="true"]').length, 2);
     const menu = document.querySelector('.player-menu');
     await act(async () => menu.querySelector('summary').click());
     assert.equal(menu.open, true);

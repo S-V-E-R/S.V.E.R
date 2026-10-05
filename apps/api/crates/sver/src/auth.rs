@@ -435,11 +435,14 @@ pub async fn me(State(app): State<App>, jar: CookieJar) -> Result<(CookieJar, Js
         .bind(&user.id)
         .fetch_one(&mut *tx)
         .await?;
+    let faction = crate::factions::membership(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
     tx.commit().await?;
     Ok((
         renew(&app, jar),
         Json(
-            json!({"id":user.id,"email":user.email,"username":user.username,"email_verified":user.email_verified,"mfa_enabled":user.mfa_enabled,"has_password":user.password_hash.is_some(),"providers":providers,"recovery_codes_remaining":remaining,"session_id":session.id,"reauthenticated":recent(&session).is_ok(),"deletion_due":user.deleted_at.map(|d|d+Duration::days(14))}),
+            json!({"id":user.id,"email":user.email,"username":user.username,"faction":faction,"email_verified":user.email_verified,"mfa_enabled":user.mfa_enabled,"has_password":user.password_hash.is_some(),"providers":providers,"recovery_codes_remaining":remaining,"session_id":session.id,"reauthenticated":recent(&session).is_ok(),"deletion_due":user.deleted_at.map(|d|d+Duration::days(14))}),
         ),
     ))
 }
@@ -869,4 +872,11 @@ pub async fn streaming_eligibility(State(app): State<App>, jar: CookieJar) -> Re
     }
     tx.commit().await?;
     Ok(Json(json!({"eligible":true})))
+}
+/// Minimal preserved membership projection for the one-time faction import. No credentials leave Auth.
+pub async fn legacy_factions(
+    db: &mut sqlx::PgConnection,
+) -> Result<Vec<(String, String, DateTime<Utc>)>> {
+    Ok(sqlx::query_as("SELECT d.user_id,d.account->>'factionId',coalesce((d.account->>'factionJoinedAt')::timestamptz,u.created_at) FROM legacy_account_data d JOIN users u ON u.id=d.user_id WHERE d.account->>'factionId' IS NOT NULL ORDER BY d.user_id")
+        .fetch_all(db).await?)
 }

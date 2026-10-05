@@ -266,6 +266,26 @@ async fn directory(
     Ok(Json(shelves))
 }
 
+/// A circular queue advances one place every 30 seconds. Every faction stream gets a turn;
+/// viewer counts only label the result. Module 5 can replace this with its full MAGNet scheduler.
+pub async fn faction_streams(
+    app: &App,
+    db: &mut PgConnection,
+    faction: &str,
+    at: DateTime<Utc>,
+) -> Res<Vec<Value>> {
+    let rows:Vec<DirectoryRow>=sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "WITH live AS (SELECT b.*,row_number() OVER(ORDER BY b.started_at,b.id)-1 AS pos,count(*) OVER() AS total FROM broadcasts b WHERE b.state='LIVE' AND {}=$1)
+         SELECT b.owner_id,b.started_at,coalesce(s.title,'Live stream'),c.name,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) FROM live b LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id ORDER BY (b.pos-$2%b.total+b.total)%b.total LIMIT 12",
+        crate::factions::membership_sql("b.owner_id"))))
+        .bind(faction).bind(at.timestamp().div_euclid(30)).fetch_all(&mut *db).await?;
+    let users =
+        profiles::public_channels(db, &rows.iter().map(|r| r.0.clone()).collect::<Vec<_>>())
+            .await?;
+    Ok(rows.into_iter().filter_map(|(id,started_at,title,category,viewers)| {
+        users.iter().find(|u|u.id==id).map(|u|json!({"user":profiles::chip(app,u),"banner":profiles::banner_json(app,u.banner_key.as_deref()),"started_at":started_at,"title":title,"category":category,"viewers":viewers,"live":true}))
+    }).take(6).collect())
+}
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/streams", get(directory))

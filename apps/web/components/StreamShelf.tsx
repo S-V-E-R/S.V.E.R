@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Crest } from "./FactionIdentity";
 import { Avatar } from "./Avatar";
 import type { Chip, Sizes } from "../lib/types";
 
@@ -20,7 +21,7 @@ export function StreamCard({ stream }: { stream: StreamCardData }) {
       <span className={stream.live ? "badge live" : "badge"}>{stream.live ? "Live" : "Offline"}</span>
       {stream.live && <span className="stream-viewers">{stream.viewers.toLocaleString()} watching</span>}
     </Link>
-    <div className="stream-card-info"><Avatar sizes={stream.user.avatar} name={stream.user.display_name} size={32} /><div>
+    <div className="stream-card-info">{stream.user.faction ? <Crest faction={stream.user.faction} size={32} /> : <Avatar sizes={stream.user.avatar} name={stream.user.display_name} size={32} />}<div>
       <h3><Link href={href}>{stream.title}</Link></h3><Link className="stream-creator" href={`/${stream.user.username}`}>{stream.user.display_name}</Link>
       {stream.category && <span className="category-chip">{stream.category}</span>}
     </div></div>

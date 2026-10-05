@@ -162,3 +162,9 @@ The focused watch page keeps a 16:9 player, the streamer identity and existing F
 - Rounded "soft" cards and pill buttons.
 - Large decorative images or AI-generated art in the interface.
 - Default framework palettes (Tailwind orange, stock blue).
+
+### Module 4 activation
+
+Faction membership supplies the site's server-rendered theme, player-card crest and hub navigation. The War map link is active; Browse and Beacons remain labeled with their planned modules. The front-line banner now uses real weekly ownership and a three-part season bar. Guest crest links preselect the signup choice, and signed-in members can review switching rules at `/choose-faction`. Channel content uses its owner's theme while the shell stays in the viewer's theme. No levels, XP or active daily orders are implied.
+
+The map is inline SVG grouped by home region and colored by current ownership; selected tiles show balanced scores. Keyboard users can select a hex with Enter or Space. Phones use the complete genre board with standing bars. Hub data and the map refresh every 30 seconds while visible. Winning season banners use a small crest and CSS frame alongside the channel's existing uploaded banner.

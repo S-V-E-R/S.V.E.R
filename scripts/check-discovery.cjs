@@ -20,8 +20,10 @@ function compile(file, deps = {}) {
   const mod = { exports: {} };
   vm.runInThisContext(`(function(require,module,exports){${source}\n})`, { filename: file })(name => {
     if (name === "next/link") return ({ children, ...props }) => React.createElement("a", props, children);
-    if (name === "next/image") return props => React.createElement("img", props);
-    return deps[name] || webRequire(name);
+    if (name === "next/image") return ({ unoptimized, ...props }) => React.createElement("img", props);
+    if (deps[name]) return deps[name];
+    if (name.startsWith(".")) { const resolved=path.resolve(path.dirname(file),name); return compile(fs.existsSync(resolved+".tsx") ? resolved+".tsx" : resolved+".ts"); }
+    return webRequire(name);
   }, mod, mod.exports);
   return mod.exports;
 }
@@ -32,7 +34,7 @@ const streams = ["First", "Second"].map(username => ({ user: { username, display
 let directory = { live: streams, recent: [], has_more: true, as_of: "2026-10-04T12:30:00Z" };
 let account = null;
 const { default: Home } = compile("apps/web/app/page.tsx", {
-  "../lib/server-api": { apiGet: async url => ({ data: url.startsWith("/api/streams") ? directory : url === "/api/me/following" ? { items: [{ user: streams[0].user }] } : { categories: [{ id: "art", name: "Art", genre: "art" }] } }) },
+  "../lib/server-api": { apiGet: async url => ({ data: url.startsWith("/api/streams") ? directory : url === "/api/factions/war" ? { season: null, week: null, genres: [], scoreboard: [], previous_winners: [] } : url === "/api/me/following" ? { items: [{ user: streams[0].user }] } : { categories: [{ id: "art", name: "Art", genre: "art" }] } }) },
   "../components/StreamShelf": shelf, "../components/LiveSpotlight": spotlight,
   "../components/shell/Icons": compile("apps/web/components/shell/Icons.tsx"),
   "./session": { currentAccount: async () => account },

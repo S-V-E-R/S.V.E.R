@@ -220,6 +220,8 @@ pub async fn rate(app: &App, key: String, limit: i32, seconds: i64) -> Res<()> {
 /// A row of the `channel_users` view.
 #[derive(FromRow, Clone)]
 pub struct ChannelUser {
+    #[sqlx(default)]
+    pub faction: Option<String>,
     pub id: String,
     pub username: String,
     pub created_at: DateTime<Utc>,
@@ -237,31 +239,45 @@ pub struct ChannelUser {
     pub eligible: bool,
 }
 pub async fn channel_user_by_id(db: &mut PgConnection, id: &str) -> Res<Option<ChannelUser>> {
-    Ok(sqlx::query_as("SELECT * FROM channel_users WHERE id=$1")
+    let user = sqlx::query_as("SELECT * FROM channel_users WHERE id=$1")
         .bind(id)
         .fetch_optional(&mut *db)
-        .await?)
+        .await?;
+    with_faction(db, user).await
+}
+async fn with_faction(
+    db: &mut PgConnection,
+    user: Option<ChannelUser>,
+) -> Res<Option<ChannelUser>> {
+    match user {
+        Some(mut user) => {
+            user.faction = crate::factions::membership(db, &user.id).await?;
+            Ok(Some(user))
+        }
+        None => Ok(None),
+    }
 }
 /// An eligible channel by case-insensitive username (reserved route names never resolve).
 pub async fn eligible_by_name(db: &mut PgConnection, name: &str) -> Res<Option<ChannelUser>> {
     if !reserved::is_username_shaped(name) || reserved::is_listed(name) {
         return Ok(None);
     }
-    Ok(
+    let user =
         sqlx::query_as("SELECT * FROM channel_users WHERE lower(username)=lower($1) AND eligible")
             .bind(name)
             .fetch_optional(&mut *db)
-            .await?,
-    )
+            .await?;
+    with_faction(db, user).await
 }
 /// Public profile projection for stream lists; hidden accounts never enter discovery.
 pub async fn public_channels(db: &mut PgConnection, ids: &[String]) -> Res<Vec<ChannelUser>> {
-    Ok(
-        sqlx::query_as("SELECT * FROM channel_users WHERE id=ANY($1) AND eligible")
-            .bind(ids)
-            .fetch_all(db)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT c.*,{} AS faction FROM channel_users c WHERE c.id=ANY($1) AND c.eligible",
+        crate::factions::membership_sql("c.id")
+    )))
+    .bind(ids)
+    .fetch_all(db)
+    .await?)
 }
 
 pub enum Resolved {
@@ -280,7 +296,7 @@ pub async fn resolve(db: &mut PgConnection, name: &str) -> Res<Resolved> {
             .bind(name)
             .fetch_optional(&mut *db)
             .await?;
-    if let Some(owner) = owner {
+    if let Some(owner) = with_faction(db, owner).await? {
         return Ok(if owner.eligible {
             Resolved::Found(Box::new(owner))
         } else {
@@ -342,13 +358,14 @@ pub fn chip(app: &App, user: &ChannelUser) -> Value {
     if !user.eligible {
         return json!({"username": user.username, "display_name": user.username, "avatar": null, "linked": false, "deleted": false});
     }
-    json!({"username": user.username, "display_name": user.display_name, "avatar": avatar_json(app, user.avatar_key.as_deref()), "linked": true, "deleted": false})
+    json!({"username": user.username, "display_name": user.display_name, "avatar": avatar_json(app, user.avatar_key.as_deref()), "linked": true, "deleted": false,"faction":user.faction})
 }
 pub fn chip_sql(alias: &'static str) -> String {
     // jsonb chip built in SQL for list queries; the web maps avatar keys through `media_base`.
     format!(
-        "jsonb_build_object('username',CASE WHEN {a}.deleted_at IS NULL THEN {a}.username END,'display_name',CASE WHEN {a}.deleted_at IS NOT NULL THEN 'Deleted user' WHEN {a}.eligible THEN {a}.display_name ELSE {a}.username END,'avatar_key',CASE WHEN {a}.eligible THEN {a}.avatar_key END,'linked',{a}.eligible,'deleted',{a}.deleted_at IS NOT NULL,'live',{a}.eligible AND {live})",
+        "jsonb_build_object('username',CASE WHEN {a}.deleted_at IS NULL THEN {a}.username END,'display_name',CASE WHEN {a}.deleted_at IS NOT NULL THEN 'Deleted user' WHEN {a}.eligible THEN {a}.display_name ELSE {a}.username END,'avatar_key',CASE WHEN {a}.eligible THEN {a}.avatar_key END,'linked',{a}.eligible,'deleted',{a}.deleted_at IS NOT NULL,'live',{a}.eligible AND {live},'faction',CASE WHEN {a}.eligible THEN {faction} END)",
         a = alias,
+        faction = crate::factions::membership_sql(&format!("{alias}.id")),
         live = crate::playback::live_sql(&format!("{alias}.id"))
     )
 }
@@ -476,7 +493,8 @@ pub async fn channel(
             "song": song,
             "song_notice": song_notice,
             "live": crate::playback::is_live(&mut db, &user.id).await?,
-            "faction": null,
+            "faction": user.faction,
+            "season_rewards":crate::factions::rewards(&mut db,&user.id).await?,
         },
         "tabs": {
             "wall": true,

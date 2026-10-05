@@ -13,14 +13,16 @@ type Category = { id: string; name: string; genre: string; active: boolean; chan
 const since = (iso: string) => { const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
 
 /** Staff → Live streams: what's on now (health, counts, reports), an audited stop, and the category catalog. */
-export default function LiveStreams() {
+export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boolean }) {
   const [streams, setStreams] = useState<Stream[] | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [genres, setGenres] = useState<{ id: string; name: string }[]>([]);
   const [message, setMessage] = useState("");
   const load = useCallback(async () => {
-    const [s, c] = await Promise.all([send<{ items: Stream[] }>("GET", "/api/admin/streams"), send<{ items: Category[] }>("GET", "/api/admin/categories")]);
+    const [s, c, g] = await Promise.all([send<{ items: Stream[] }>("GET", "/api/admin/streams"), send<{ items: Category[] }>("GET", "/api/admin/categories"), send<{ items: { id: string; name: string }[] }>("GET", "/api/admin/genres")]);
     if (s.ok) setStreams(s.data.items); else setMessage(s.error);
     if (c.ok) setCategories(c.data.items);
+    if (g.ok) setGenres(g.data.items);
   }, []);
   useLoad(load);
   async function stop(stream: Stream) {
@@ -34,17 +36,22 @@ export default function LiveStreams() {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    const result = await send<{ items: Category[] }>("POST", "/api/admin/categories", { name: data.get("name"), genre: data.get("genre") });
+    const result = await send<{ items: Category[] }>("POST", "/api/admin/categories", { name: data.get("name"), genre: data.get("genre"), note: data.get("note") });
     if (result.ok) { setCategories(result.data.items); form.reset(); setMessage("Category added."); } else setMessage(result.error);
   }
-  async function change(category: Category, body: { name?: string; active?: boolean }) {
-    const result = await send<{ items: Category[] }>("PATCH", `/api/admin/categories/${encodeURIComponent(category.id)}`, body);
+  async function change(category: Category, body: { name?: string; active?: boolean; genre?: string }) {
+    const note = window.prompt("Reason for this category change (required)")?.trim();
+    if (!note) return;
+    const result = await send<{ items: Category[] }>("PATCH", `/api/admin/categories/${encodeURIComponent(category.id)}`, { ...body, note });
     if (result.ok) setCategories(result.data.items); else setMessage(result.error);
   }
-  const genres = [...new Set(categories.map(c => c.genre))].sort();
-  return <><h1>Live streams</h1>
+  async function merge(category: Category, into: string, note: string) {
+    const r = await send("POST", `/api/admin/categories/${category.id}/merge`, { into, note });
+    setMessage(r.ok ? "Categories merged." : r.error); if (r.ok) await load();
+  }
+  return <><h1>{catalogOnly ? "Categories and genres" : "Live streams"}</h1>
     {message && <p role="status" className="form-message">{message}</p>}
-    <Section title="On now" intro="Every open broadcast. Public is the viewer count shown on the channel; excluded and pending sessions are explained on the Integrity page.">
+    {!catalogOnly && <Section title="On now" intro="Every open broadcast. Public is the viewer count shown on the channel; excluded and pending sessions are explained on the Integrity page.">
       <button type="button" className="small quiet" onClick={() => void load()}>Refresh</button>
       {!streams ? <p className="loading">Loading…</p> : streams.length === 0 ? <p className="muted">No one is live.</p> :
         <ul className="list">{streams.map(s => <li key={s.id} className="panel inline-panel">
@@ -56,12 +63,12 @@ export default function LiveStreams() {
           {(s.open_reports > 0 || s.followers_only_until) && <p>{s.open_reports > 0 && <Link href="/admin/reports">{s.open_reports} open report{s.open_reports === 1 ? "" : "s"}</Link>}{s.followers_only_until && <span className="muted"> Followers-only chat on</span>}</p>}
           <button type="button" className="small quiet danger-text" onClick={() => stop(s)}>Stop stream</button>
         </li>)}</ul>}
-    </Section>
-    <Section title="Categories" intro="Creators pick from active categories. Hiding one keeps it on channels that already use it until they change it. A category's genre can't change once created.">
+    </Section>}
+    <Section title="Categories" intro="Creators pick from active categories. Hiding one keeps it on channels that already use it until they change it. Genre changes and merges across genres are allowed only between seasons.">
       <form className="row" onSubmit={add}>
         <label className="field"><span>Name</span><input name="name" required maxLength={60} /></label>
-        <label className="field"><span>Genre</span><input name="genre" required maxLength={40} list="category-genres" pattern="[a-z_]{2,40}" title="Lowercase letters and underscores" /></label>
-        <datalist id="category-genres">{genres.map(g => <option key={g} value={g} />)}</datalist>
+        <label className="field"><span>Genre</span><select name="genre" required defaultValue=""><option value="" disabled>Choose a genre</option>{genres.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
+        <label className="field"><span>Reason</span><input name="note" required maxLength={500} /></label>
         <button type="submit" className="small">Add category</button>
       </form>
       <ul className="list">{categories.map(c => <li key={c.id} className="row between">
@@ -69,6 +76,7 @@ export default function LiveStreams() {
         <span className="row">
           <button type="button" className="small quiet" onClick={() => { const name = window.prompt("New name", c.name)?.trim(); if (name && name !== c.name) void change(c, { name }); }}>Rename</button>
           <button type="button" className="small quiet" onClick={() => change(c, { active: !c.active })}>{c.active ? "Hide" : "Show"}</button>
+        <details><summary>Move or merge</summary><form onSubmit={e => { e.preventDefault(); void change(c, { genre: String(new FormData(e.currentTarget).get("genre")) }); }}><label className="field"><span>Genre</span><select name="genre" defaultValue={c.genre}>{genres.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label><button className="small quiet">Move category</button></form><form onSubmit={e => { e.preventDefault(); const d = new FormData(e.currentTarget); if (window.confirm(`Merge ${c.name} into the selected category? Existing channels will move to it.`)) void merge(c, String(d.get("into")), String(d.get("note"))); }}><label className="field"><span>Merge into</span><select name="into" required defaultValue=""><option value="" disabled>Choose a category</option>{categories.filter(d => d.id !== c.id && d.active).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label><label className="field"><span>Reason</span><input name="note" required maxLength={500} /></label><button className="small quiet">Merge category</button></form></details>
         </span>
       </li>)}</ul>
     </Section>

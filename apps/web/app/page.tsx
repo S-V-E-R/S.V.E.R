@@ -1,5 +1,8 @@
 import Link from "next/link";
-import Image from "next/image";
+import { Crest } from "../components/FactionIdentity";
+import { FrontLine } from "../components/WarStanding";
+import type { War } from "../lib/war";
+import { factionInfo } from "../lib/factions";
 import { apiGet } from "../lib/server-api";
 import { ShelfHeading, StreamShelf, type StreamDirectory } from "../components/StreamShelf";
 import { LiveSpotlight } from "../components/LiveSpotlight";
@@ -12,9 +15,9 @@ export const metadata = { title: "Live streams · S.V.E.R" };
 export default async function Home({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
   const params = await searchParams;
   const page = /^\d{1,6}$/.test(params.page ?? "") ? Math.min(Number(params.page), 100_000) : 0;
-  const [account, result, catalog] = await Promise.all([
+  const [account, result, catalog, standings] = await Promise.all([
     currentAccount(), apiGet<StreamDirectory>(`/api/streams?page=${page}`),
-    apiGet<{ categories: { id: string; name: string; genre: string }[] }>("/api/categories"),
+    apiGet<{ categories: { id: string; name: string; genre: string }[] }>("/api/categories"), apiGet<War>("/api/factions/war"),
   ]);
   const directory = result.data;
   const live = directory?.live ?? [];
@@ -24,11 +27,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
   const followingLive = live.filter(stream => followed.has(stream.user.username));
   return <div className="home-page">
     <h1 className="sr-only">Live streams on S.V.E.R</h1>
-    <section className="front-line frame" aria-labelledby="front-line-title">
-      <div className="front-line-crests">{["myria", "aetheron", "glint"].map(faction => <Link href={`/factions#${faction}`} key={faction} aria-label={`Meet ${faction}`}><Image src={`/factions/${faction}.webp`} width={44} height={44} alt="" /></Link>)}</div>
-      <div><h2 id="front-line-title">Three factions. Pick your side.</h2><p>Meet Myria, Aetheron and Glint. The territory war is coming.</p></div>
-      <Link className="button quiet" href="/factions">Meet the factions</Link>{!account && <Link className="button" href="/signup">Enlist</Link>}
-    </section>
+    <FrontLine war={standings.data} faction={account?.faction ?? null} signedIn={!!account} />
     <section aria-labelledby="spotlight-title">
       <ShelfHeading id="spotlight-title" title="Live spotlight" description="Find someone playing, building or making." />
       {live.length ? <LiveSpotlight streams={live} /> : <div className="spotlight frame"><div className="shelf-empty"><h2>{directory ? "Nothing live right now." : "Streams couldn’t be loaded."}</h2><p>{directory ? "Visit a recent channel below, or get ready for your own stream." : "Please try again in a moment."}</p><Link className="button quiet" href={directory ? "/help" : "/"}>{directory ? "Streaming help" : "Try again"}</Link></div></div>}
@@ -44,9 +43,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ p
       {justStarted.length ? <StreamShelf streams={justStarted} /> : <p className="shelf-empty frame">{directory ? "No streams started in the last hour." : "Recent starts are temporarily unavailable."}</p>}
     </section>
     {directory && !live.length && directory.recent.length > 0 && <section aria-labelledby="recent-channels"><ShelfHeading id="recent-channels" title="Recently live" description="Visit a channel and follow for the next stream." /><StreamShelf streams={directory.recent.slice(0, 8)} /></section>}
-    <section aria-labelledby="territories-title"><ShelfHeading id="territories-title" title="Territories" description="Categories for people who play, build and make." href="/factions" link="How the war works" />
-      <div className="territory-grid">{catalog.data?.categories.slice(0, 8).map(category => <div className="territory-tile" key={category.id}><span className="eyebrow">{category.genre.replaceAll("_", " ")}</span><h3>{category.name}</h3><span>Control opens with Factions</span></div>)}</div>
-      {!catalog.data?.categories.length && <p className="shelf-empty frame">Category territories open with Factions. <Link href="/factions">Meet the three sides</Link></p>}
+    <section aria-labelledby="territories-title"><ShelfHeading id="territories-title" title="Territories" description="Categories for people who play, build and make." href="/war-map" link="View the map" />
+      <div className="territory-grid">{catalog.data?.categories.slice(0, 8).map(category => { const holder = standings.data?.genres.find(g => g.id === category.genre)?.holder; return <Link className="territory-tile" href={`/war-map#genre-${category.genre}`} key={category.id} data-theme={holder ?? "neutral"}>{holder && <Crest faction={holder} size={32} />}<span className="eyebrow">{category.genre.replaceAll("_", " ")}</span><h3>{category.name}</h3><span>{holder ? `Held by ${factionInfo(holder).name}` : "Neutral territory"}</span></Link>; })}</div>
+      {!catalog.data?.categories.length && <p className="shelf-empty frame">The category catalog is unavailable. <Link href="/war-map">View the war map</Link></p>}
     </section>
     <section aria-labelledby="clips-title"><ShelfHeading id="clips-title" title="Latest clips" description="Moments from the community." href="/roadmap" link="On the roadmap" /><p className="shelf-empty frame">Clips will appear here when clipping is available.</p></section>
   </div>;
