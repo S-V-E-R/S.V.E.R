@@ -20,6 +20,7 @@ pub mod emotes;
 pub mod factions;
 pub mod integrity;
 pub mod jobs;
+pub mod ledger;
 pub mod magnet;
 pub mod media;
 pub mod moderation;
@@ -41,7 +42,9 @@ pub mod social;
 pub mod staff_push;
 pub mod staff_streams;
 pub mod streams;
+pub mod stripe;
 pub mod studio;
+pub mod support;
 pub mod take_down;
 pub mod text;
 pub mod wall;
@@ -71,6 +74,7 @@ pub struct Config {
     pub factions: factions::Tuning,
     pub take_down: take_down::Config,
     pub staff_push: staff_push::Config,
+    pub stripe: stripe::Config,
 }
 impl Config {
     pub fn from_env() -> std::result::Result<Self, String> {
@@ -137,6 +141,7 @@ impl Config {
             factions: factions::Tuning::from_env(production)?,
             take_down: take_down::Config::from_env(),
             staff_push: staff_push::Config::from_env(),
+            stripe: stripe::Config::from_env(production)?,
             youtube_oembed_url: "https://www.youtube.com/oembed".into(),
             soundcloud_oembed_url: "https://soundcloud.com/oembed".into(),
             thumbnail_hosts: vec!["ytimg.com".into(), "sndcdn.com".into()],
@@ -276,6 +281,8 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         // The one-click email unsubscribe (RFC 8058) is posted by mail providers without an
         // Origin; its encrypted token is the only authority and it only turns go-live email off.
         && req.uri().path() != "/api/notifications/unsubscribe"
+        // Stripe posts webhooks without an Origin; the signature is checked in support::webhook.
+        && req.uri().path() != "/api/stripe/webhook"
         && req.headers().get("origin").and_then(|v| v.to_str().ok())
         != Some(&app.config.origin)
     {
@@ -385,6 +392,7 @@ pub fn router(app: App) -> Router {
         .merge(integrity::routes())
         .merge(take_down::routes())
         .merge(staff_push::routes())
+        .merge(support::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

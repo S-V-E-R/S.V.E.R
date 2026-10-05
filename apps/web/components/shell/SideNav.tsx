@@ -2,7 +2,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BrowseIcon, FollowingIcon, HomeIcon, SettingsIcon, ShieldIcon, StudioIcon, WarMapIcon } from "./Icons";
+import { BrowseIcon, FollowingIcon, HomeIcon, SettingsIcon, ShieldIcon, StudioIcon, WalletIcon, WarMapIcon } from "./Icons";
 
 type Item = { href: string; label: string; icon: React.ReactNode; match: (path: string) => boolean };
 const under = (base: string) => (path: string) => path === base || path.startsWith(`${base}/`);
@@ -28,6 +28,7 @@ export function SideNav({ signedIn, faction }: { signedIn: boolean; faction: { n
   ];
   const yours: Item[] = signedIn ? [
     { href: "/studio/channel", label: "Creator Studio", icon: <StudioIcon />, match: under("/studio") },
+    { href: "/wallet", label: "Valor", icon: <WalletIcon />, match: under("/wallet") },
     { href: "/settings/profile", label: "Settings", icon: <SettingsIcon />, match: under("/settings") },
     { href: "/account", label: "Account security", icon: <ShieldIcon />, match: under("/account") },
   ] : [];

@@ -50,6 +50,8 @@ mod resets;
 mod staff_streams;
 #[path = "streams/staff_window.rs"]
 mod staff_window;
+#[path = "streams/support.rs"]
+mod support;
 
 #[derive(Default)]
 struct Media {
@@ -58,6 +60,9 @@ struct Media {
     failed: bool,
     acknowledge_only: bool,
     kicked: Vec<String>,
+    /// Synthetic Stripe: every API call (path, form body), and the Connect account GET returns.
+    stripe: Vec<(String, String)>,
+    account: Value,
 }
 type Fake = Arc<Mutex<Media>>;
 async fn versions(State(fake): State<Fake>) -> (StatusCode, Json<Value>) {
@@ -95,6 +100,21 @@ async fn kick(State(fake): State<Fake>, Path(client): Path<String>) -> (StatusCo
         StatusCode::OK,
         Json(json!({"code":0,"server":"test-server","service":m.service})),
     )
+}
+async fn stripe(State(fake): State<Fake>, uri: axum::http::Uri, body: String) -> Json<Value> {
+    let mut m = fake.lock().unwrap();
+    let path = uri.path().to_string();
+    m.stripe.push((path.clone(), body));
+    let n = m.stripe.len();
+    Json(match path.as_str() {
+        "/v1/checkout/sessions" => {
+            json!({"id": format!("cs_test_{n}"), "url": format!("https://checkout.stripe.test/{n}")})
+        }
+        "/v1/accounts" => json!({"id": "acct_test_owner"}),
+        "/v1/account_links" => json!({"url": "https://connect.stripe.test/onboarding"}),
+        p if p.ends_with("/login_links") => json!({"url": "https://connect.stripe.test/express"}),
+        _ => m.account.clone(),
+    })
 }
 struct Env {
     app: App,
@@ -286,6 +306,11 @@ async fn streaming_lifecycle_and_security() {
                 Json(json!({"success": body.split('&').any(|kv| kv == "response=pass")}))
             }),
         )
+        .route("/v1/checkout/sessions", post(stripe))
+        .route("/v1/accounts", post(stripe))
+        .route("/v1/account_links", post(stripe))
+        .route("/v1/accounts/{id}", get(stripe))
+        .route("/v1/accounts/{id}/login_links", post(stripe))
         .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -302,6 +327,11 @@ async fn streaming_lifecycle_and_security() {
         vhost: "__defaultVhost__".into(),
         app: "rebuild".into(),
     });
+    config.stripe = sver::stripe::Config {
+        secret_key: "sk_test_synthetic".into(),
+        webhook_secret: "whsec_synthetic".into(),
+        api_url: format!("http://{address}"),
+    };
     config.playback = sver::playback::Config {
         hls_url: Some("https://media.example/rebuild".into()),
         whep_url: Some("https://media.example/rtc/v1/whep".into()),
@@ -322,6 +352,7 @@ async fn streaming_lifecycle_and_security() {
 async fn exercise(e: &Env) {
     playback::exercise(e).await;
     chat::exercise(e).await;
+    support::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;
     reports::exercise(e).await;
@@ -527,17 +558,17 @@ async fn exercise(e: &Env) {
         StatusCode::FORBIDDEN
     );
     for update in [
-        "UPDATE users SET email_verified=false",
-        "UPDATE users SET mfa_enabled=false",
-        "UPDATE users SET deleted_at=now()",
-        "UPDATE users SET legacy_deletion_hold=true,deleted_at=now()",
+        "UPDATE users SET email_verified=false WHERE id='stream-owner'",
+        "UPDATE users SET mfa_enabled=false WHERE id='stream-owner'",
+        "UPDATE users SET deleted_at=now() WHERE id='stream-owner'",
+        "UPDATE users SET legacy_deletion_hold=true,deleted_at=now() WHERE id='stream-owner'",
     ] {
         e.sql(update).await;
         assert_eq!(
             e.hook(&key, "first", "publish").await,
             StatusCode::FORBIDDEN
         );
-        e.sql("UPDATE users SET email_verified=true,mfa_enabled=true,deleted_at=NULL,legacy_deletion_hold=false").await;
+        e.sql("UPDATE users SET email_verified=true,mfa_enabled=true,deleted_at=NULL,legacy_deletion_hold=false WHERE id='stream-owner'").await;
     }
     assert_eq!(
         e.hook(&key, "out-of-order", "unpublish").await,
