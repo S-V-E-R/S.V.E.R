@@ -1,0 +1,22 @@
+[Unit]
+Description=SVER Plays control bridge
+After=network-online.target sver-plays.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Install an ExecStart drop-in pointing at the game project's existing Python environment.
+LoadCredential=config.json:/etc/sver/plays-bridge.json
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

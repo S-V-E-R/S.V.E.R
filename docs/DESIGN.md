@@ -168,3 +168,8 @@ The focused watch page keeps a 16:9 player, the streamer identity and existing F
 Faction membership supplies the site's server-rendered theme, player-card crest and hub navigation. The War map link is active; Browse and Beacons remain labeled with their planned modules. The front-line banner now uses real weekly ownership and a three-part season bar. Guest crest links preselect the signup choice, and signed-in members can review switching rules at `/choose-faction`. Channel content uses its owner's theme while the shell stays in the viewer's theme. No levels, XP or active daily orders are implied.
 
 The map is inline SVG grouped by home region and colored by current ownership; selected tiles show balanced scores. Keyboard users can select a hex with Enter or Space. Phones use the complete genre board with standing bars. Hub data and the map refresh every 30 seconds while visible. Winning season banners use a small crest and CSS frame alongside the channel's existing uploaded banner.
+
+
+### Dedicated Plays channel
+
+The dedicated game channel adds a framed Play together panel below its streamer bar, with a keyboard-accessible directional pad, A/B/Start/Select buttons, live aggregate votes and a five-second countdown. Guests can watch; verified members can vote. Disconnected controls disable immediately. On phones, the pad and round status stack without shrinking the buttons. Its profile has a Watch and play link. This is the requested Plays restoration; the general CrowdSync controls remain separate.

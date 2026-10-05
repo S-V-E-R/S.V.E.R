@@ -25,6 +25,7 @@ pub mod moderation;
 pub mod oauth;
 pub mod parts;
 pub mod playback;
+pub mod plays;
 pub mod probe;
 pub mod profile_import;
 pub mod profile_jobs;
@@ -367,6 +368,7 @@ pub fn router(app: App) -> Router {
         .merge(profile_routes())
         .merge(streams::routes())
         .merge(playback::routes())
+        .merge(plays::routes())
         .merge(chat::routes())
         .merge(emotes::routes())
         .merge(alerts::routes())
