@@ -108,3 +108,11 @@
 .search-results a { display: flex; gap: 10px; align-items: center; }
 .up-next { margin: 8px 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .up-next p { margin: 0; }
+
+/* MAGNet Hype. */
+.magnet-why { margin: 8px 0; }
+.magnet-mark-inline { font-size: .7rem; letter-spacing: .08em; padding: 1px 6px; border: 1px solid var(--accent); color: var(--accent-light); }
+.magnet-countdown { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.magnet-countdown img { object-fit: cover; }
+.magnet-holding { padding: 16px; }
+.magnet-badge { border-color: var(--accent); color: var(--accent-light); }

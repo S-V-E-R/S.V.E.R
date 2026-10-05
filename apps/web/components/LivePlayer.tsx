@@ -74,7 +74,7 @@ function playingWithin(video: HTMLVideoElement, ms: number) {
  * WebRTC first when offered; on failure or an 8-second startup timeout it falls back to HLS.
  * Uses native controls for keyboard, fullscreen, volume and captions.
  */
-export function LivePlayer({ username, focused = false, signedIn = false, nested = false, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; children?: React.ReactNode }) {
+export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; children?: React.ReactNode }) {
   const [live, setLive] = useState<Live | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [attempt, setAttempt] = useState(0);
@@ -191,14 +191,14 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       last = element.currentTime;
       const check = token.current;
       token.current = "";
-      void send<{ recorded: boolean; needs_turnstile?: boolean }>("POST", `${path}/beat`, { broadcast_id: broadcast, browser_id: browserId(), visible: !document.hidden, media_time: element.currentTime, turnstile: check || undefined, raid: arrivedFrom.current || undefined }).then(async result => {
+      void send<{ recorded: boolean; needs_turnstile?: boolean }>("POST", `${path}/beat`, { broadcast_id: broadcast, browser_id: browserId(), visible: !document.hidden, media_time: element.currentTime, turnstile: check || undefined, raid: arrivedFrom.current || undefined, magnet: magnetLane }).then(async result => {
         if (!result.ok || !result.data.needs_turnstile) { setSitekey(null); return; }
         const config = await send<{ turnstile_site_key: string }>("GET", "/api/auth/config");
         if (config.ok) setSitekey(config.data.turnstile_site_key);
       });
     }, 10000);
     return () => clearInterval(timer);
-  }, [broadcast, isOwner, path]);
+  }, [broadcast, isOwner, path, magnetLane]);
 
   if (!live?.live) {
     // An offline channel hosting a live one shows that stream; its viewers count for the target.

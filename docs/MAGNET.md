@@ -1,6 +1,6 @@
 # Module 5: MAGNet
 
-Expanded October 3, 2026 by Joe. **Started October 5, 2026: discovery, spotlights and thumbnails are built (below); MAGNet Hype and Hype chat are next.** MAGNet is how S.V.E.R moves viewers between live streams. It has three parts:
+Expanded October 3, 2026 by Joe. **Built October 5, 2026: discovery, spotlights, thumbnails, MAGNet Hype and Hype chat (below). Co-stream squads wait for Module 6. Live acceptance with real streams is open.** MAGNet is how S.V.E.R moves viewers between live streams. It has three parts:
 
 1. **Discovery:** the homepage, browse, search, watch-page suggestions and the stream-end countdown, all in fair rotation.
 2. **MAGNet Hype:** channels a viewer can sit on while MAGNet moves them to whichever stream is having a moment, and gives every stream its turn. It reinvents an idea from an earlier platform's auto-switching channel, with fairness built in.
@@ -131,6 +131,18 @@ In Creator Studio:
 ### Staff controls
 
 In `/admin`: enable or disable each Hype channel, force a stream onto a channel and release it, emergency stop, and the decision log (each decision with its candidates, signals and reason; kept 7 days). Every staff action is audited.
+
+### Implementation of MAGNet Hype (October 5; `magnet.rs`, migration `0027_magnet.sql`)
+
+- **Lanes:** `global` plus one per Module 4 genre (`magnet_lanes`, created by the engine). Each lane ticks every 10 seconds with the 5-second media pass. `decide` is a pure function of the lane state and candidates. Its `Candidate` type has no field for viewer count, followers or money, so none can affect selection.
+- **Eligibility:** LIVE (not reconnecting) for 60+ seconds, an active category (the lane's genre on genre lanes), not opted out, an eligible channel and no OPEN integrity case. S.V.E.R Plays (`plays_runtime`) is a candidate only when nothing else is eligible.
+- **Switching:** moments and fair turns alternate (`last_kind`). The rules: a 45-second minimum hold, an 8-minute maximum (then a fair turn), at least 2 minutes between moments, and a moment must clearly beat the current stream (1.5×). Fair turns go to the stream that has waited longest on that lane (never-featured first). There's a 30-minute cooldown unless only one other stream is eligible, and a lone eligible stream holds. If the featured stream ends or becomes ineligible, the lane falls back at once; if nothing is eligible, it clears. A failed tick holds the current stream. A unit simulation proves every eligible stream is featured within 2 × n × 8 minutes, even beside a stream that's always having a moment.
+- **Signals** (each against the stream's own last 30 minutes): distinct verified chatters per minute (accounts under 7 days count half; Hype-side messages never count), verified follows per minute, a raid arriving in the last 2 minutes, and the streamer's flag. The flag adds only to another elevated signal and can be used once every 10 minutes (Studio button or `/flag`). Thresholds come from `MAGNET_TUNING_FILE`; the repo holds safe defaults.
+- **Viewers:** `/magnet` and `/magnet/{genre}`. A switch is announced 5 seconds ahead with a still of the next stream and Stay. The player plays the featured broadcast, so its sessions count for that stream; leases are tagged with the lane for Studio history only. Viewers banned from, timed out in, or blocked by the featured channel get the holding card (no playback session) with other streams in the lane.
+- **Hype chat:** a lane's own room stores `chat_messages` with no channel and `origin` = the lane. While a stream is featured and its streamer allows merging, Hype messages are sent through that channel's normal chat path, so all its rules apply, plus 3 seconds per Hype sender. They're stored in its chat with `origin`, shown with the MAGNet mark, moderatable by its moderators, and excluded from burst signals. The room shows its own messages plus the channel's chat since the feature began, and detaches at the next switch (`/api/magnet/{lane}/chat`, `/api/magnet/{lane}/ws`). Held viewers can read but not send. Room messages can be reported, and staff removal updates open rooms.
+- **Studio** (Creator Studio → MAGNet): featured now, opt-out, chat merging, the flag, and 30-day history with Hype viewers and who followed or chatted. **Staff** (Admin → MAGNet): lanes, enable/disable, force/release, emergency stop and the decision log, all audited.
+- **Not built:** co-stream squads need Module 6 (Support). When it adds squads, a merged squad becomes one candidate in `candidates`, with its members' cooldowns shared.
+- Coverage: the `magnet` unit tests (timing, alternation, cooldowns, own-baseline signals, the fairness bound) and `tests/streams/magnet.rs` (eligibility, countdown and switch, a small-stream chat burst, the no-feedback rule, holding, Hype chat merge and detach, channel rules and slow mode, reports and removal, Studio, staff and audit).
 
 ## Spotlights
 

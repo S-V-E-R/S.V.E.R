@@ -71,7 +71,7 @@ impl Drop for SocketSlot {
 }
 
 #[derive(sqlx::FromRow)]
-struct Row {
+pub(crate) struct Row {
     id: String,
     seq: i64,
     author_id: String,
@@ -81,16 +81,18 @@ struct Row {
     role: Option<String>,
     mentions: Vec<String>,
     reply: Option<Value>,
+    /// The MAGNet Hype lane a message came from; None for a channel's own chat.
+    origin: Option<String>,
 }
 impl Row {
-    fn json(mut self, app: &App) -> Value {
+    pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin})
     }
 }
-fn select() -> String {
+pub(crate) fn select() -> String {
     format!(
-        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} AS author,m.role,
+        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} AS author,m.role,m.origin,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
         CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
             'author_id',r.author_id,'username',ra.username,
@@ -104,7 +106,7 @@ fn select() -> String {
 }
 
 // Apply the same block rule to a quote as to its original message; never expose its internal ID.
-fn visible_message(mut message: Value, hidden: &HashSet<String>) -> Value {
+pub(crate) fn visible_message(mut message: Value, hidden: &HashSet<String>) -> Value {
     if let Some(reply) = message["reply"].as_object_mut() {
         let blocked = reply
             .remove("author_id")
@@ -118,7 +120,7 @@ fn visible_message(mut message: Value, hidden: &HashSet<String>) -> Value {
     message
 }
 
-const VISIBLE: &str = "m.deleted_at IS NULL AND (m.expires_at>now() OR EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id))";
+pub(crate) const VISIBLE: &str = "m.deleted_at IS NULL AND (m.expires_at>now() OR EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id))";
 
 async fn pinned(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Value> {
     let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
@@ -130,6 +132,22 @@ async fn pinned(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Value
         .unwrap_or(Value::Null))
 }
 
+/// Tells open chats (and the Hype room a message came from) that it is gone.
+pub(crate) fn publish_delete(app: &App, channel: Option<&str>, origin: Option<&str>, id: &str) {
+    if let Some(channel) = channel {
+        app.chat
+            .publish(channel, None, 0, json!({"type":"delete","id":id}));
+    }
+    if let Some(lane) = origin {
+        app.chat.publish(
+            &format!("magnet:{lane}"),
+            None,
+            0,
+            json!({"type":"delete","id":id}),
+        );
+    }
+}
+
 /// An active pin is retained until removed; ordinary chat still expires after seven days.
 pub async fn expire(app: &App) -> crate::Result<()> {
     let mut tx = app.db.begin().await?;
@@ -137,12 +155,11 @@ pub async fn expire(app: &App) -> crate::Result<()> {
     // cleanup was waiting on a message must not disappear with that message's ordinary expiry.
     let ids: Vec<String> = sqlx::query_scalar("SELECT m.id FROM chat_messages m WHERE expires_at<=now() AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED")
         .fetch_all(&mut *tx).await?;
-    let removed: Vec<(String, String)> = sqlx::query_as("DELETE FROM chat_messages m WHERE id=ANY($1) AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) RETURNING channel_id,id")
+    let removed: Vec<(Option<String>, Option<String>, String)> = sqlx::query_as("DELETE FROM chat_messages m WHERE id=ANY($1) AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) RETURNING channel_id,origin,id")
         .bind(ids).fetch_all(&mut *tx).await?;
     tx.commit().await?;
-    for (channel, id) in removed {
-        app.chat
-            .publish(&channel, None, 0, json!({"type":"delete","id":id}));
+    for (channel, origin, id) in removed {
+        publish_delete(app, channel.as_deref(), origin.as_deref(), &id);
     }
     Ok(())
 }
@@ -215,7 +232,7 @@ async fn channel(app: &App, name: &str) -> Res<String> {
         .id)
 }
 /// People whose messages the viewer doesn't see: blocks in either direction.
-async fn hidden(app: &App, viewer: Option<&str>) -> Res<HashSet<String>> {
+pub(crate) async fn hidden(app: &App, viewer: Option<&str>) -> Res<HashSet<String>> {
     let Some(viewer) = viewer else {
         return Ok(HashSet::new());
     };
@@ -248,8 +265,21 @@ pub struct Send {
     reply_to: Option<String>,
 }
 
-/// Persists one message and fans it out. Acknowledged only after the insert commits.
+/// Persists one message to a channel's own chat and fans it out.
 async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Value> {
+    send_from(app, jar, Some(channel), input, None).await
+}
+
+/// Persists one message and fans it out. Acknowledged only after the insert commits. `origin` is
+/// a MAGNet Hype lane: with a channel, a Hype message merged into that channel's chat under all of
+/// its rules; without one, a message in the lane's own room (docs/MAGNET.md "Hype chat").
+pub(crate) async fn send_from(
+    app: &App,
+    jar: &CookieJar,
+    channel: Option<&str>,
+    input: Send,
+    origin: Option<&str>,
+) -> Res<Value> {
     // Rechecked on every send, so a revoked session or new restriction takes effect at once.
     let user = profiles::signed_in(app, jar).await?;
     if uuid::Uuid::parse_str(&input.id).is_err() {
@@ -268,7 +298,7 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
     }
     let existing: Option<Row> =
         // select() contains only fixed SQL and a literal chip alias; message values are bound.
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND m.author_id=$2 AND m.channel_id=$3 AND {VISIBLE}", select())))
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND m.author_id=$2 AND m.channel_id IS NOT DISTINCT FROM $3 AND {VISIBLE}", select())))
             .bind(&input.id)
             .bind(&user.id)
             .bind(channel)
@@ -290,20 +320,36 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
         Some((true, true)) => {}
         _ => return Err(Fail::denied("Your account can't chat right now.")),
     }
-    let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))")
-        .bind(channel).bind(&user.id).fetch_one(&app.db).await?;
-    if blocked {
-        return Err(Fail::denied("You can't chat in this channel."));
+    let role = match channel {
+        Some(channel) => {
+            let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))")
+                .bind(channel).bind(&user.id).fetch_one(&app.db).await?;
+            if blocked {
+                return Err(Fail::denied("You can't chat in this channel."));
+            }
+            crate::moderation::check_send(app, channel, &user, body).await?;
+            moderation::role_of(app, channel, &user)
+                .await?
+                .map(|r| r.name())
+        }
+        None if input.reply_to.is_some() => {
+            return Err(Fail::field(
+                "reply_to",
+                "Replies work inside a channel's chat.",
+            ));
+        }
+        None => None,
+    };
+    // Flood protection for small channels: Hype senders get one message every 3 seconds.
+    if let Some(lane) = origin {
+        let room = channel.unwrap_or(lane);
+        sec::reserve(app, vec![format!("hype-slow:{room}:{}", user.id)], 1, 3).await?;
     }
-    crate::moderation::check_send(app, channel, &user, body).await?;
     sec::reserve(app, vec![format!("chat-second:{}", user.id)], 2, 1).await?;
     sec::reserve(app, vec![format!("chat-ten:{}", user.id)], 20, 10).await?;
     let hidden = hidden(app, Some(&user.id)).await?;
-    let role = moderation::role_of(app, channel, &user)
-        .await?
-        .map(|r| r.name());
     let mut tx = app.db.begin().await?;
-    if let Some(reply) = &input.reply_to {
+    if let (Some(reply), Some(channel)) = (&input.reply_to, channel) {
         // Lock against deletion while accepting the reply. Later reads always join the current body.
         let author: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT m.author_id FROM chat_messages m WHERE m.id=$1 AND m.channel_id=$2 AND {VISIBLE} FOR SHARE")))
             .bind(reply).bind(channel).fetch_optional(&mut *tx).await?;
@@ -320,13 +366,15 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
     .bind(mention_names(body))
     .fetch_all(&mut *tx)
     .await?;
-    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING")
-        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).execute(&mut *tx).await?.rows_affected();
+    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING")
+        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
-    crate::factions::chat(app, &mut tx, channel, &user.id, &input.id).await?;
-    crate::plays::chat_vote(&mut tx, channel, &user, body).await?;
+    if let Some(channel) = channel {
+        crate::factions::chat(app, &mut tx, channel, &user.id, &input.id).await?;
+        crate::plays::chat_vote(&mut tx, channel, &user, body).await?;
+    }
     tx.commit().await?;
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1", select())))
@@ -335,12 +383,14 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
         .await?;
     let (seq, author) = (row.seq, row.author_id.clone());
     let message = row.json(app);
-    app.chat.publish(
-        channel,
-        Some(&author),
-        seq,
-        json!({"type":"message","message":message}),
-    );
+    let event = json!({"type":"message","message":message});
+    if let Some(channel) = channel {
+        app.chat.publish(channel, Some(&author), seq, event.clone());
+    }
+    if let Some(lane) = origin {
+        app.chat
+            .publish(&format!("magnet:{lane}"), Some(&author), 0, event);
+    }
     Ok(visible_message(message, &hidden))
 }
 
@@ -557,11 +607,190 @@ async fn session(app: App, jar: CookieJar, channel: String, mut ws: WebSocket) {
     }
 }
 
+/// The featured channel a Hype lane's chat is merged with right now, and since when. Merging stops
+/// when MAGNet moves on, when the lane stops, or when the streamer turns chat merging off.
+async fn hype_merge(app: &App, lane: &str) -> Res<Option<(String, DateTime<Utc>)>> {
+    Ok(sqlx::query_as("SELECT b.owner_id,l.current_since FROM magnet_lanes l JOIN broadcasts b ON b.id=l.current_broadcast WHERE l.id=$1 AND l.enabled AND l.current_since IS NOT NULL AND coalesce((SELECT chat_merge FROM magnet_settings WHERE user_id=b.owner_id),true)")
+        .bind(lane)
+        .fetch_optional(&app.db)
+        .await?)
+}
+async fn hype_lane(app: &App, lane: &str) -> Res<()> {
+    let found: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM magnet_lanes WHERE id=$1)")
+        .bind(lane)
+        .fetch_one(&app.db)
+        .await?;
+    if found { Ok(()) } else { Err(Fail::missing()) }
+}
+/// Banned from, timed out in, or blocked by (or blocking) the featured channel: read-only while merged.
+async fn hype_holding(app: &App, owner: &str, viewer: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND (kind='ban' OR until>now())) OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$2 AND blocked_id=$1) OR (blocker_id=$1 AND blocked_id=$2))")
+        .bind(owner).bind(viewer).fetch_one(&app.db).await?)
+}
+/// The room's latest 100: its own messages, plus the featured channel's chat since the feature
+/// began while merged. Messages from either side stay in both histories after a switch.
+async fn hype_snapshot(
+    app: &App,
+    lane: &str,
+    viewer: Option<&str>,
+) -> Res<(Value, Option<String>)> {
+    let merge = hype_merge(app, lane).await?;
+    let hidden = hidden(app, viewer).await?;
+    // select() contains only fixed SQL and a literal chip alias; values are bound.
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1) OR (m.channel_id=$2 AND m.created_at>=$3)) AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
+        select()
+    )))
+    .bind(lane)
+    .bind(merge.as_ref().map(|m| m.0.as_str()))
+    .bind(merge.as_ref().map(|m| m.1))
+    .bind(HISTORY)
+    .fetch_all(&app.db)
+    .await?;
+    let messages: Vec<Value> = rows
+        .into_iter()
+        .rev()
+        .filter(|r| !hidden.contains(&r.author_id))
+        .map(|r| visible_message(r.json(app), &hidden))
+        .collect();
+    let (merged_with, holding) = match &merge {
+        Some((owner, _)) => {
+            let mut db = app.db.acquire().await?;
+            let chip = profiles::channel_user_by_id(&mut db, owner)
+                .await?
+                .map(|u| profiles::chip(app, &u));
+            let holding = match viewer {
+                Some(v) => hype_holding(app, owner, v).await?,
+                None => false,
+            };
+            (chip, holding)
+        }
+        None => (None, false),
+    };
+    Ok((
+        json!({"type":"snapshot","messages":messages,"merged_with":merged_with,"holding":holding,"can_send":viewer.is_some() && !holding}),
+        merge.map(|m| m.0),
+    ))
+}
+/// GET /api/magnet/{lane}/chat
+async fn hype_read(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(lane): Path<String>,
+) -> Res<Json<Value>> {
+    hype_lane(&app, &lane).await?;
+    let viewer = profiles::viewer(&app, &jar).await?;
+    Ok(Json(
+        hype_snapshot(&app, &lane, viewer.as_ref().map(|v| v.id.as_str()))
+            .await?
+            .0,
+    ))
+}
+/// POST /api/magnet/{lane}/chat: while merged the message goes into the featured channel's chat
+/// under all of its rules (with the MAGNet mark); otherwise it stays in the lane's own room.
+async fn hype_post(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(lane): Path<String>,
+    Json(input): Json<Send>,
+) -> Res<Json<Value>> {
+    hype_lane(&app, &lane).await?;
+    let user = profiles::signed_in(&app, &jar).await?;
+    let message = match hype_merge(&app, &lane).await? {
+        Some((owner, _)) => {
+            if hype_holding(&app, &owner, &user.id).await? {
+                return Err(Fail::denied("Chat resumes when MAGNet moves on."));
+            }
+            send_from(&app, &jar, Some(&owner), input, Some(&lane)).await?
+        }
+        None => send_from(&app, &jar, None, input, Some(&lane)).await?,
+    };
+    Ok(Json(json!({"message": message})))
+}
+/// The Hype room over the same-origin WebSocket. Sending goes over HTTPS (same checks).
+async fn hype_socket(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Path(lane): Path<String>,
+    upgrade: WebSocketUpgrade,
+) -> Res<Response> {
+    if headers.get("origin").and_then(|v| v.to_str().ok()) != Some(app.config.origin.as_str()) {
+        return Err(Fail::denied("Invalid request origin."));
+    }
+    let ip = sec::client_ip(&app, peer, &headers);
+    sec::reserve(&app, vec![format!("chat-connect:{ip}")], 30, 60).await?;
+    hype_lane(&app, &lane).await?;
+    if app.chat.sockets.load(Ordering::Relaxed) >= MAX_SOCKETS {
+        return Err(Fail::unavailable("Chat is busy. Please try again shortly."));
+    }
+    Ok(upgrade
+        .max_message_size(FRAME)
+        .max_frame_size(FRAME)
+        .on_upgrade(move |ws| hype_session(app, jar, lane, ws)))
+}
+async fn hype_session(app: App, jar: CookieJar, lane: String, mut ws: WebSocket) {
+    app.chat.sockets.fetch_add(1, Ordering::Relaxed);
+    let _slot = SocketSlot(app.chat.sockets.clone());
+    let mut events = app.chat.tx.subscribe();
+    let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
+    let viewer = viewer.as_ref().map(|v| v.id.clone());
+    let room = format!("magnet:{lane}");
+    let Ok((first, mut merged)) = hype_snapshot(&app, &lane, viewer.as_deref()).await else {
+        return;
+    };
+    if ws
+        .send(Message::Text(first.to_string().into()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    loop {
+        tokio::select! {
+            event = events.recv() => match event {
+                Ok(e) if e.channel == room || merged.as_deref() == Some(e.channel.as_str()) => {
+                    // A switch: merge or detach, and resend the room.
+                    if e.payload["type"] == "magnet" {
+                        let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref()).await else { return; };
+                        merged = owner;
+                        if ws.send(Message::Text(next.to_string().into())).await.is_err() { return; }
+                        continue;
+                    }
+                    if !matches!(e.payload["type"].as_str(), Some("message" | "delete")) { continue; }
+                    // A merged Hype message arrives on both; forward it once.
+                    if e.channel != room && e.payload["message"]["origin"] == lane.as_str() { continue; }
+                    let Ok(hidden) = crate::chat::hidden(&app, viewer.as_deref()).await else { return; };
+                    if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
+                    let mut payload = e.payload.clone();
+                    if payload["type"] == "message" {
+                        payload["message"] = visible_message(payload["message"].take(), &hidden);
+                    }
+                    if ws.send(Message::Text(payload.to_string().into())).await.is_err() { return; }
+                }
+                Ok(_) => {}
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    let _ = ws.send(Message::Close(Some(CloseFrame { code: 4000, reason: "resync".into() }))).await;
+                    return;
+                }
+                Err(broadcast::error::RecvError::Closed) => return,
+            },
+            incoming = ws.recv() => match incoming {
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
+                Some(Ok(_)) => {}
+            },
+        }
+    }
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/channels/{username}/chat", get(read).post(post))
         .route("/api/channels/{username}/chat/pin", put(pin))
         .route("/api/chat/ws", get(socket))
+        .route("/api/magnet/{lane}/chat", get(hype_read).post(hype_post))
+        .route("/api/magnet/{lane}/ws", get(hype_socket))
 }
 
 #[cfg(test)]
