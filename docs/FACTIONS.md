@@ -17,7 +17,7 @@ Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page. Gli
 
 ## Membership
 
-- **Choosing a side shipped early** (October 4, 2026, with the UI rebuild): sign-up step 2, the one free switch within 7 days, the switch log, and faction colors and crests across the site. Accounts that existed before choose on their next visit (the sidebar and the home banner send them to `/choose-side`). Everything else in this spec still arrives with Module 4.
+- **Choosing a side shipped early** (October 4, 2026, with the UI rebuild): sign-up step 2, the one free switch within 7 days, the switch log, and faction colors and crests across the site. Accounts that existed before choose on their next visit (the sidebar and the home banner send them to the onboarding wizard at `/welcome`). Everything else in this spec still arrives with Module 4.
 - **Every account has a faction**, chosen at sign-up step 2 ("Choose your side", [DESIGN.md](DESIGN.md)). This applies to viewers and streamers alike (legacy limited factions to creator accounts).
 - Accounts imported from legacy keep their legacy faction; accounts with none choose on their next sign-in.
 - **Switching:** one free switch during the first 7 days after choosing; after that, only in the gap between seasons. Every switch is logged.

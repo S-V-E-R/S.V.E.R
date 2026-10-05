@@ -55,12 +55,12 @@ async function render(route, signedIn = false) {
       assert.equal(document.querySelector('form[role="search"]'), null);
       assert.ok(document.querySelector(`nav a[href="${route}"][aria-current="page"]`));
     }
-    for (const route of ["/login", "/choose-side", "/choose-faction", "/signup", "/oauth-signup", "/forgot", "/reset", "/verify", "/mfa"]) {
+    for (const route of ["/login", "/welcome", "/choose-side", "/choose-faction", "/signup", "/oauth-signup", "/forgot", "/reset", "/verify", "/mfa"]) {
       await render(route);
       assert.ok(document.querySelector("header.minimal"));
       assert.equal(document.querySelector("aside"), null);
       // Choosing a side happens signed in, so those screens offer no Log in / Enlist link.
-      if (route.startsWith("/choose-")) assert.equal(document.querySelector("header .topbar-note"), null);
+      if (route === "/welcome" || route.startsWith("/choose-")) assert.equal(document.querySelector("header .topbar-note"), null);
       else assert.ok(document.querySelector(`header a[href="${route === "/login" ? "/signup" : "/login"}"]`));
     }
     // Account tools live in the sidebar's "Your channel" group (docs/DESIGN.md "Layout"); only

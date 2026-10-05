@@ -14,7 +14,7 @@ export async function authPage(screen: AuthScreenName, searchParams: AuthSearchP
     if (screen === "account" && account && !account.faction && !account.deletion_due) {
       // Ineligible accounts cannot enlist; they must retain access to recovery and security.
       const { status } = await apiGet(`/api/channels/${encodeURIComponent(account.username)}/resolve`);
-      if (status === 200) redirect("/choose-faction");
+      if (status === 200) redirect("/welcome");
     }
     if (screen !== "account" && account) {
       const error = (await searchParams).error;

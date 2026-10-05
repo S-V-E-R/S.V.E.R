@@ -317,11 +317,6 @@ img.crest { flex: none; display: block; }
 .signup-steps .hex { width: 24px; height: 28px; display: flex; align-items: center; justify-content: center; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); background: rgba(242, 240, 234, .12); color: var(--ink); }
 .signup-steps li.on { color: var(--accent-light); }
 .signup-steps li.on .hex { background: var(--accent); color: #0A0A0C; }
-.choose-side { width: 100%; max-width: 1048px; margin: 0 auto; padding: 40px 24px 64px; display: flex; flex-direction: column; align-items: center; gap: 24px; }
-.choose-side .signup-steps { margin: 0; }
-.choose-side header { text-align: center; }
-.choose-side h1 { margin: 0; font-weight: 800; font-size: 34px; }
-.choose-side header p { margin: 8px auto 0; max-width: 560px; color: var(--ink-muted); }
 .faction-picks { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 .faction-pick {
   --c: var(--accent); position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; min-height: 0; padding: 28px 20px 22px;
@@ -333,15 +328,6 @@ img.crest { flex: none; display: block; }
 .faction-pick-name { font-family: var(--font-display); font-weight: 800; font-size: 30px; line-height: 1.1; color: var(--c); }
 .faction-pick-creed { font-size: 16px; }
 .center { text-align: center; margin: 0; }
-.choose-actions { display: flex; justify-content: center; }
-.choose-actions button { min-width: 260px; min-height: 48px; }
-.choose-actions [data-faction="myria"] { --accent: #FF9A1F; --accent-light: #FFC56E; --accent-dark: #8A4A06; }
-.choose-actions [data-faction="aetheron"] { --accent: #A68BFF; --accent-light: #D3C6FF; --accent-dark: #4B2A9A; }
-.choose-actions [data-faction="glint"] { --accent: #E9C35A; --accent-light: #F8E6A8; --accent-dark: #7E5F14; }
-.welcome { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px; }
-.welcome .auth-title, .welcome .intro { margin: 0; }
-.welcome-email { width: 100%; border-top: 1px solid var(--line); padding-top: 16px; display: flex; flex-direction: column; gap: 6px; }
-.welcome-email p { margin: 0; }
 
 @media (max-width: 959px) {
   .menu-toggle { display: inline-flex; }

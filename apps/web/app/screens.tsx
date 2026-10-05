@@ -104,8 +104,8 @@ export default function AuthScreen({ screen }: { screen: string }) {
     await run(async () => {
       let result: Reply;
       switch (screen) {
-        case "signup": result = await request("signup", { ...values, turnstile_token: botToken }); window.location.assign("/choose-side"); break;
-        case "oauth-signup": await request("oauth/signup", { ...values, turnstile_token: botToken }); window.location.assign("/choose-side"); break;
+        case "signup": result = await request("signup", { ...values, turnstile_token: botToken }); window.location.assign("/welcome"); break;
+        case "oauth-signup": await request("oauth/signup", { ...values, turnstile_token: botToken }); window.location.assign("/welcome"); break;
         case "login": result = await request("login", values); window.location.assign(result.requires_mfa ? "/mfa" : "/"); break;
         case "mfa": await request("mfa/login", values); window.location.assign("/"); break;
         case "forgot": await request("password/forgot", { ...values, turnstile_token: botToken }); setMessage("If that account exists, a recovery email has been queued. Check your inbox and spam folder."); break;
@@ -195,8 +195,9 @@ export default function AuthScreen({ screen }: { screen: string }) {
     </section></div>;
 }
 
-/** The three sign-up steps from the sign-up mockup: Account, Choose your side, Confirm email. */
-export function SignupSteps({ current }: { current: 1 | 2 | 3 }) {
-  return <ol className="signup-steps" aria-label="Sign-up steps">{["Account", "Choose your side", "Confirm email"].map((label, i) =>
-    <li key={label} className={i + 1 === current ? "on" : undefined} aria-current={i + 1 === current ? "step" : undefined}><span className="hex">{i + 1}</span>{label}</li>)}</ol>;
+/** The sign-up steps from the sign-up mockup, extended by the onboarding wizard (legacy parity). */
+export const SIGNUP_STEPS = ["Account", "Your side", "Profile", "Follow", "Ready"] as const;
+export function SignupSteps({ current }: { current: 1 | 2 | 3 | 4 | 5 }) {
+  return <ol className="signup-steps" aria-label={`Step ${current} of ${SIGNUP_STEPS.length}`}>{SIGNUP_STEPS.map((label, i) =>
+    <li key={label} className={i + 1 === current ? "on" : i + 1 < current ? "done" : undefined} aria-current={i + 1 === current ? "step" : undefined}><span className="hex">{i + 1}</span>{label}</li>)}</ol>;
 }

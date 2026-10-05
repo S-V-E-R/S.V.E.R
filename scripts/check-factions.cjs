@@ -90,7 +90,7 @@ const server=http.createServer(async(req,res)=>{
     const context=await browser.newContext({viewport:{width:390,height:844}}),page=await context.newPage();
     debugPage=page;
     await context.addCookies([{name:'sver_dev',value:'synthetic-new',url:'http://127.0.0.1:13001'}]);
-    await page.goto('http://127.0.0.1:13001/account');await page.waitForURL('**/choose-faction');
+    await page.goto('http://127.0.0.1:13001/account');await page.waitForURL('**/welcome');
     await page.locator('input[value="aetheron"]').check();assert.equal(await page.locator('html').getAttribute('data-theme'),'aetheron');
     await page.getByRole('button',{name:'Enlist in Aetheron'}).click();await page.getByRole('heading',{name:'Welcome to Aetheron'}).waitFor();
     if(process.env.SVER_SCREENSHOTS) await page.screenshot({path:'tmp/factions-welcome-390.png',fullPage:true});

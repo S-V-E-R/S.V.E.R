@@ -237,6 +237,34 @@ pub async fn my_following(
     ))
 }
 
+/// GET /api/me/suggestions: up to 8 channels to follow during onboarding. Live channels first,
+/// then the viewer's own faction, then whoever streamed most recently. Never ranked by follower
+/// or viewer counts. Excludes the viewer, channels already followed, and blocks either way.
+pub async fn suggestions(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut db = app.db.acquire().await?;
+    let faction = crate::factions::membership(&mut db, &user.id).await?;
+    // Only chip SQL and the live expression are interpolated; request values are bound.
+    let rows: Vec<(Value,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {chip} FROM channel_users c JOIN users u ON u.id=c.id \
+         WHERE c.eligible AND c.id<>$1 \
+         AND NOT EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=$1 AND f.following_id=c.id) \
+         AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=c.id) OR (b.blocker_id=c.id AND b.blocked_id=$1)) \
+         AND EXISTS(SELECT 1 FROM broadcasts s WHERE s.owner_id=c.id) \
+         ORDER BY {live} DESC, (u.faction IS NOT DISTINCT FROM $2) DESC, \
+         (SELECT max(s.started_at) FROM broadcasts s WHERE s.owner_id=c.id) DESC NULLS LAST, c.id LIMIT 8",
+        chip = chip_sql("c"),
+        live = crate::playback::live_sql("c.id")
+    )))
+    .bind(&user.id)
+    .bind(&faction)
+    .fetch_all(&mut *db)
+    .await?;
+    let mut items: Vec<Value> = rows.into_iter().map(|(chip,)| chip).collect();
+    items.iter_mut().for_each(|v| hydrate(&app, v));
+    Ok(Json(json!({ "items": items })))
+}
+
 /// War Council for display: eligible members in stored order (gaps filled), plus the owner notice.
 pub async fn war_council_read(
     app: &App,

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import SitePage from "../../components/SitePage";
+import { FACTIONS } from "../../lib/factions";
 
 export const metadata: Metadata = {
   title: "Factions | S.V.E.R",
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "https://sver.tv/factions" },
 };
 
-import { factions } from "../../lib/factions";
+const factions = FACTIONS;
 
 
 export default function FactionsPage() {
@@ -23,14 +24,14 @@ export default function FactionsPage() {
         <p className="eyebrow">{faction.title}</p>
         <h2 id={`${faction.slug}-name`}>{faction.name}</h2>
         <p className="faction-creed">{faction.creed}</p>
-        <p className="faction-values">{faction.values}</p>
+        <p className="faction-values">{faction.values.join(" · ")}</p>
         <p>{faction.belief}</p>
         <h3>Who it speaks to</h3>
         <p>{faction.people}</p>
         <h3>Starting home turf</h3>
         <ul>{faction.turf.map(genre => <li key={genre}>{genre}</li>)}</ul>
         <details><summary>The story of {faction.name}</summary><p>{faction.lore}</p></details>
-        <Link href={`/factions/${faction.slug}`} className="button quiet">Visit {faction.name}</Link><Link href={`/choose-faction?faction=${faction.slug}`} className="button">Join {faction.name}</Link>
+        <Link href={`/factions/${faction.slug}`} className="button quiet">Visit {faction.name}</Link><Link href={`/welcome?pick=${faction.slug}`} className="button">Join {faction.name}</Link>
       </section>)}
     </div>
     <section className="site-prose" id="shared-truth">
