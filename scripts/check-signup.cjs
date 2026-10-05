@@ -67,7 +67,7 @@ async function settle() { await act(async () => { await pause(400); }); }
     await type("email", "invalid-email");
     await type("password", "short");
     for (const provider of ["Google", "Twitch", "Discord"]) {
-      await click(provider);
+      await click(`Continue with ${provider}`);
       const sent = requests.at(-1);
       assert.equal(sent.url, `/api/auth/oauth/${provider.toLowerCase()}/start`);
       assert.deepEqual(sent.body, { intent: "signup", code: "" }, "Provider signup starts with no form details or bot token");

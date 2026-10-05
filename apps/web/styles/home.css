@@ -1,0 +1,90 @@
+/* Home (docs/DESIGN.md "Home"; the Main board of the design canvas). */
+.home { padding: 20px 24px 0; display: flex; flex-direction: column; gap: 40px; }
+
+/* Front-line banner */
+.front { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 14px 18px; }
+.front-crests { display: flex; gap: 4px; flex: none; }
+.front-crests img { display: block; }
+.front-text { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; }
+.front-text strong { font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--accent-light); }
+.front-text span { font-size: 13px; color: var(--ink-muted); }
+.front .button { min-height: 42px; font-size: 14px; letter-spacing: .08em; }
+
+/* Section headings: Cinzel title, diamond, note, then a rule to the right edge. */
+.section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 14px; }
+.section-head h1, .section-head h2 { margin: 0; font-weight: 800; font-size: 24px; letter-spacing: .04em; }
+.section-head h1 { font-size: 22px; }
+.section-head .dia { width: 8px; height: 8px; transform: rotate(45deg); background: var(--accent); flex: none; }
+.section-note { font-size: 13px; color: var(--ink-dim); }
+.section-head .rule { flex: 1 1 40px; height: 1px; background: var(--line); }
+
+/* Tags shared by cards and the carousel */
+.stream-tags { position: absolute; left: 8px; top: 8px; display: flex; gap: 4px; }
+.tag-live, .tag-ally { font-family: var(--font-label); font-weight: 700; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; padding: 0 7px; line-height: 1.6; }
+.tag-live { background: var(--live); color: #fff; }
+.tag-ally { background: var(--accent); color: #07080B; }
+
+/* Rotation carousel */
+.rotation { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.rotation-row { position: relative; width: 100%; display: flex; align-items: center; justify-content: center; gap: 14px; overflow: hidden; }
+.rotation-peek { flex: 0 0 130px; height: 250px; opacity: .4; border: 1px solid var(--line); }
+.rotation-card { flex: 1 1 820px; min-width: 0; max-width: 900px; display: flex; flex-wrap: wrap; padding: 6px; }
+.rotation-stage { position: relative; flex: 999 1 520px; min-width: 0; aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; color: inherit; }
+.rotation-stage:hover { text-decoration: none; }
+.rotation-mark { padding: 0 24px; text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 44px; color: rgba(242, 240, 234, .1); }
+.rotation-stage .stream-tags { left: 12px; top: 12px; }
+.rotation-info { flex: 1 1 260px; min-width: 0; padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 12px; }
+.rotation-who { display: flex; align-items: center; gap: 10px; }
+.rotation-who > span { min-width: 0; display: flex; flex-direction: column; }
+.rotation-name { font-weight: 600; font-size: 17px; }
+.rotation-faction { font-size: 12px; }
+.rotation-title { margin: 0; font-size: 17px; font-weight: 500; line-height: 1.35; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 2px 8px; border: 1px solid var(--line); color: #C8CAD0; }
+.rotation-actions { display: flex; gap: 8px; margin-top: auto; }
+.rotation-actions .button { flex: 1 1 auto; min-height: 46px; font-size: 16px; }
+.rotation-next { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-dim); }
+.rotation-next strong { color: #C8CAD0; }
+.rotation-arrow {
+  position: absolute; top: calc(50% - 38px); width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 50%;
+  background: rgba(5, 6, 9, .92); border: 1px solid var(--accent); box-shadow: none; color: var(--accent-light);
+}
+.rotation-arrow:hover:not(:disabled) { background: var(--tint); filter: none; }
+.rotation-arrow.prev { left: 100px; }
+.rotation-arrow.next { right: 100px; }
+.rotation-controls { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.rotation-dots { display: flex; justify-content: center; gap: 6px; }
+.rotation-dots span { width: 8px; height: 4px; background: #3A3F4B; }
+.rotation-dots span.on { width: 22px; background: var(--accent); }
+
+/* Stream grids */
+.stream-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px 14px; }
+.stream-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; color: var(--ink); }
+.stream-card:hover { text-decoration: none; color: var(--ink); }
+.stream-card:hover .stream-thumb { border-color: var(--accent); }
+.stream-thumb { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid rgba(242, 240, 234, .08); display: flex; align-items: center; justify-content: center; }
+.stream-card.ally .stream-thumb { border-color: var(--accent); }
+.stream-thumb-mark { padding: 0 10px; text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 18px; color: rgba(242, 240, 234, .12); }
+.stream-viewers, .stream-uptime, .stream-started { position: absolute; bottom: 8px; font-size: 12px; padding: 0 7px; background: rgba(5, 6, 9, .85); }
+.stream-viewers { left: 8px; }
+.stream-uptime { right: 8px; color: #C8CAD0; }
+.stream-started { right: 8px; background: linear-gradient(180deg, var(--accent-light), var(--accent) 45%, var(--accent-dark)); color: #0A0A0C; font-weight: 700; }
+.stream-meta { display: flex; gap: 10px; min-width: 0; }
+.stream-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.stream-title { font-size: 14px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.stream-name { font-size: 13px; color: #C8CAD0; }
+.stream-category { align-self: flex-start; font-size: 11px; padding: 0 7px; border: 1px solid var(--line); color: var(--ink-muted); }
+
+.empty-live { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; }
+.empty-live p { margin: 0; color: var(--ink-muted); }
+.empty-live strong { color: var(--ink); }
+
+@media (max-width: 1279px) {
+  .rotation-peek { display: none; }
+  .rotation-arrow { position: static; }
+}
+@media (max-width: 700px) {
+  .home { padding: 16px 16px 0; gap: 32px; }
+  .rotation-mark { font-size: 28px; }
+  .stream-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+}

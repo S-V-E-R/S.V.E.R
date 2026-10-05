@@ -435,11 +435,15 @@ pub async fn me(State(app): State<App>, jar: CookieJar) -> Result<(CookieJar, Js
         .bind(&user.id)
         .fetch_one(&mut *tx)
         .await?;
+    let faction: Option<String> = sqlx::query_scalar("SELECT faction FROM users WHERE id=$1")
+        .bind(&user.id)
+        .fetch_one(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok((
         renew(&app, jar),
         Json(
-            json!({"id":user.id,"email":user.email,"username":user.username,"email_verified":user.email_verified,"mfa_enabled":user.mfa_enabled,"has_password":user.password_hash.is_some(),"providers":providers,"recovery_codes_remaining":remaining,"session_id":session.id,"reauthenticated":recent(&session).is_ok(),"deletion_due":user.deleted_at.map(|d|d+Duration::days(14))}),
+            json!({"id":user.id,"email":user.email,"username":user.username,"faction":faction,"email_verified":user.email_verified,"mfa_enabled":user.mfa_enabled,"has_password":user.password_hash.is_some(),"providers":providers,"recovery_codes_remaining":remaining,"session_id":session.id,"reauthenticated":recent(&session).is_ok(),"deletion_due":user.deleted_at.map(|d|d+Duration::days(14))}),
         ),
     ))
 }

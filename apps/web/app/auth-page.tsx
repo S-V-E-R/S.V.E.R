@@ -12,7 +12,7 @@ export async function authPage(screen: AuthScreenName, searchParams: AuthSearchP
     if (screen === "account" && !account) redirect("/login");
     if (screen !== "account" && account) {
       const error = (await searchParams).error;
-      redirect(typeof error === "string" ? `/account?${new URLSearchParams({ error })}` : "/account");
+      redirect(typeof error === "string" ? `/account?${new URLSearchParams({ error })}` : "/");
     }
   }
   return <AuthScreen screen={screen} />;

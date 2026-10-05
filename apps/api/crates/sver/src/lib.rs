@@ -16,6 +16,7 @@ pub mod auth;
 pub mod bans;
 pub mod chat;
 pub mod emotes;
+pub mod factions;
 pub mod integrity;
 pub mod jobs;
 pub mod media;
@@ -415,6 +416,10 @@ fn profile_routes() -> Router<App> {
             put(so::follow).delete(so::unfollow),
         )
         .route("/api/me/following", get(so::my_following))
+        .route(
+            "/api/me/faction",
+            get(crate::factions::mine).put(crate::factions::choose),
+        )
         .route(
             "/api/me/profile",
             get(p::my_profile).patch(p::update_profile),

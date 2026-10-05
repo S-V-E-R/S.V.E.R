@@ -41,7 +41,7 @@ const factions = [
 
 export default function FactionsPage() {
   return <SitePage path="/factions" title="Three factions. One family." intro="S.V.E.R is built on a simple truth: people do not just want to watch. They want to belong." wide>
-    <p className="notice">Faction enrollment and the seasonal war are planned for Module 4. You can create an account now; choosing your side will come later. <Link href="/roadmap#factions">Follow the roadmap</Link>.</p>
+    <p className="notice">Choosing your side is open now: every new account picks one when it enlists. The seasonal war, the map and influence arrive with Module 4. <Link href="/roadmap#factions">Follow the roadmap</Link>.</p>
     <nav className="site-links" aria-label="Meet each faction">{factions.map(faction =>
       <a key={faction.slug} href={`#${faction.slug}`}>{faction.name}</a>)}</nav>
     <div className="faction-grid">
@@ -57,7 +57,7 @@ export default function FactionsPage() {
         <h3>Starting home turf</h3>
         <ul>{faction.turf.map(genre => <li key={genre}>{genre}</li>)}</ul>
         <details><summary>The story of {faction.name}</summary><p>{faction.lore}</p></details>
-        <a href="#joining" className="button quiet" aria-label={`About joining ${faction.name}`}>About joining</a>
+        <Link href="/choose-side" className="button quiet">Join {faction.name}</Link>
       </section>)}
     </div>
     <section className="site-prose" id="shared-truth">
@@ -79,7 +79,7 @@ export default function FactionsPage() {
     <section className="site-prose" id="joining">
       <h2>Choose by what matters to you</h2>
       <p>Your faction will be an identity, not a restriction on whom you can watch, follow or talk to. You will be able to stream any allowed category, including another faction’s home turf.</p>
-      <p>When enrollment opens, the planned rule is one free switch during your first seven days, then switches between seasons. Creating an account today does not enroll you in a faction or reserve a side.</p>
+      <p>You get one free switch during your first seven days after choosing, then switches only between seasons.</p>
       <p>Every faction follows the same <Link href="/guidelines">Community Guidelines</Link>. Competition belongs in the seasonal war; harassment does not.</p>
     </section>
   </SitePage>;
