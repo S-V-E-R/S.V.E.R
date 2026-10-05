@@ -4,6 +4,7 @@ const svg = (size: number, children: React.ReactNode) => <svg width={size} heigh
 
 export const HomeIcon = ({ size = 18 }: Props) => svg(size, <path d="M1.5 6 6 2l4.5 4M3 5v5h6V5" />);
 export const FollowingIcon = ({ size = 18 }: Props) => svg(size, <path d="M6 10.2 1.8 6.1a2.3 2.3 0 0 1 3.3-3.2L6 3.8l.9-.9a2.3 2.3 0 0 1 3.3 3.2z" />);
+export const WalletIcon = ({ size = 18 }: Props) => svg(size, <><path d="M1.5 3.5h9v6h-9z" /><path d="M7.5 6.5h3" /></>);
 export const StudioIcon = ({ size = 18 }: Props) => svg(size, <><path d="M1.5 3h6.5v6H1.5z" /><path d="m8 5 2.5-1.5v5L8 7" /></>);
 export const SettingsIcon = ({ size = 18 }: Props) => svg(size, <><circle cx="6" cy="6" r="1.6" /><path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M2.5 9.5l1-1M8.5 3.5l1-1" /></>);
 export const ShieldIcon = ({ size = 18 }: Props) => svg(size, <><path d="M6 1 10 2.5V6c0 2.4-1.7 4.2-4 5-2.3-.8-4-2.6-4-5V2.5z" /><path d="m4.3 6 1.2 1.2L7.8 4.8" /></>);

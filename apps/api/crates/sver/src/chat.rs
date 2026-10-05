@@ -83,6 +83,8 @@ pub(crate) struct Row {
     reply: Option<Value>,
     /// The MAGNet Hype lane a message came from; None for a channel's own chat.
     origin: Option<String>,
+    /// Valor paid with this message (a tribute, docs/SUPPORT.md).
+    tribute: Option<i32>,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -92,12 +94,12 @@ impl Row {
     }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute})
     }
 }
 pub(crate) fn select() -> String {
     format!(
-        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,
+        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
         CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
             'author_id',r.author_id,'username',ra.username,
@@ -280,6 +282,9 @@ pub struct Send {
     id: String,
     body: String,
     reply_to: Option<String>,
+    /// Valor to pay with the message (at least 10); the channel must be able to earn.
+    #[serde(default)]
+    tribute: Option<i64>,
 }
 
 /// Persists one message to a channel's own chat and fans it out.
@@ -375,6 +380,28 @@ pub(crate) async fn send_from(
         }
         None => None,
     };
+    if let Some(valor) = input.tribute {
+        // Squad chat money (pooled splits) comes with co-streams; tributes stay in a channel's own chat.
+        let Some(channel) = channel.filter(|_| origin.is_none() && squad.is_none()) else {
+            return Err(Fail::field(
+                "tribute",
+                "Tributes go to a channel's own chat.",
+            ));
+        };
+        if !(10..=1_000_000).contains(&valor) {
+            return Err(Fail::field("tribute", "A tribute is at least 10 Valor."));
+        }
+        if channel == user.id {
+            return Err(Fail::field("tribute", "You can't pay tribute to yourself."));
+        }
+        let mut db = app.db.acquire().await?;
+        if !crate::support::can_earn(&mut db, channel).await? {
+            return Err(Fail::field(
+                "tribute",
+                "This channel can't receive tributes yet.",
+            ));
+        }
+    }
     // Flood protection for small channels: Hype senders get one message every 3 seconds.
     if let Some(lane) = origin {
         let room = channel.unwrap_or(lane);
@@ -414,10 +441,46 @@ pub(crate) async fn send_from(
     .bind(mention_names(body))
     .fetch_all(&mut *tx)
     .await?;
-    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO NOTHING")
-        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).execute(&mut *tx).await?.rows_affected();
+    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO NOTHING")
+        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(input.tribute.map(|v| v as i32)).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
+    }
+    if let (Some(valor), Some(channel)) = (input.tribute, channel) {
+        // The message and the Valor move commit together; the lock serializes the buyer's spends.
+        let wallet = format!("valor:{}", user.id);
+        crate::ledger::lock(&mut tx, &wallet).await?;
+        let balance = crate::ledger::balance(&mut tx, &wallet, "valor").await?;
+        if balance < 0 {
+            return Err(Fail::field(
+                "tribute",
+                "Your Valor is locked until a payment problem is settled.",
+            ));
+        }
+        if balance < valor {
+            return Err(Fail::field("tribute", "You don't have enough Valor."));
+        }
+        crate::ledger::post(
+            &mut tx,
+            "tribute",
+            &format!("tribute:{}", input.id),
+            json!({"message": input.id, "channel": channel, "from": user.id, "valor": valor}),
+            &[
+                (&wallet, "valor", -valor),
+                ("valor:spent", "valor", valor),
+                (
+                    &format!("usd:earnings:{channel}"),
+                    "usd",
+                    valor * crate::ledger::EARN_PER_VALOR,
+                ),
+                (
+                    "usd:platform",
+                    "usd",
+                    -valor * crate::ledger::EARN_PER_VALOR,
+                ),
+            ],
+        )
+        .await?;
     }
     if let Some(channel) = channel
         && squad.is_none()

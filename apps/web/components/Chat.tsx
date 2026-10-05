@@ -10,7 +10,7 @@ import { EmoteImage, type ChannelEmote } from "./Emote";
 import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
-type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null };
+type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null };
 type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null };
 type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null };
 
@@ -50,6 +50,8 @@ export function Chat({ username, account, squad }: { username: string; account: 
   const [emotes, setEmotes] = useState<ChannelEmote[]>([]);
   const [reply, setReply] = useState<Reply | null>(null);
   const [busy, setBusy] = useState(false);
+  // Valor to pay with the next message (docs/SUPPORT.md "Purchased Valor"); null when off.
+  const [tribute, setTribute] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
   // Spike protection: followers-only chat with an end time; moderators get a one-click prompt.
   const [followersOnly, setFollowersOnly] = useState<string | null>(null);
@@ -191,8 +193,9 @@ export function Chat({ username, account, squad }: { username: string; account: 
       if (result.ok) setDraft(""); else setError(result.error);
       return;
     }
-    const command = { id: crypto.randomUUID(), body, reply_to: reply?.id };
-    if (!pinDraft && socket.current?.readyState === WebSocket.OPEN) {
+    const command = { id: crypto.randomUUID(), body, reply_to: reply?.id, ...(tribute ? { tribute } : {}) };
+    // Tributes go over HTTP so a refusal (balance, channel can't earn) shows before anything moves.
+    if (!pinDraft && !tribute && socket.current?.readyState === WebSocket.OPEN) {
       socket.current.send(JSON.stringify(command));
       setDraft(""); setReply(null);
       return;
@@ -200,7 +203,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
     setBusy(true);
     const result = await send<{ message: Message }>("POST", path, command);
     if (result.ok) {
-      merge([result.data.message]); setDraft(""); setReply(null);
+      merge([result.data.message]); setDraft(""); setReply(null); setTribute(null);
       if (pinDraft) await changePin(result.data.message.id, reason);
     } else setError(result.error);
     setBusy(false);
@@ -217,7 +220,8 @@ export function Chat({ username, account, squad }: { username: string; account: 
     {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Followers-only chat for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
     <ol className="chat-messages" ref={list} aria-live="polite">
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
-      {messages.map(m => <li key={m.id}>
+      {messages.map(m => <li key={m.id} className={m.tribute ? "chat-tribute" : undefined}>
+        {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
@@ -248,7 +252,9 @@ export function Chat({ username, account, squad }: { username: string; account: 
       {reply && <div className="chat-reply-draft"><span>Replying to @{reply.username}: {reply.body}</span><button type="button" className="small quiet" onClick={() => setReply(null)}>Cancel reply</button></div>}
       <label htmlFor="chat-input" className="sr-only">Message</label>
       <textarea ref={input} id="chat-input" value={draft} disabled={busy} maxLength={500} rows={2} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
-      <button type="submit" disabled={busy}>Send</button>
+      <button type="submit" disabled={busy}>{tribute ? "Pay tribute" : "Send"}</button>
+      {tribute === null ? <button type="button" className="quiet small" disabled={busy} onClick={() => setTribute(10)}>Tribute</button>
+        : <span className="tribute-draft"><label htmlFor="tribute-amount">Valor</label> <input id="tribute-amount" type="number" min={10} step={1} value={tribute} onChange={e => setTribute(Math.max(0, Math.floor(Number(e.target.value) || 0)))} /> <button type="button" className="quiet small" onClick={() => setTribute(null)}>No tribute</button> <Link href="/wallet" className="small">Get Valor</Link></span>}
       {canPin && <button type="button" className="quiet small" disabled={busy || !draft.trim()} onClick={event => submit(event, true)}>Send and pin</button>}
       {error && <p role="alert" className="error">{error}</p>}
     </form> : <p className="muted"><Link href="/login">Sign in</Link> to chat.</p>}

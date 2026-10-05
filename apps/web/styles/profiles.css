@@ -194,3 +194,9 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .studio-nav .studio-view{margin-top:4px;color:var(--accent-light)}
 @media(max-width:900px){.studio-nav{flex-direction:column}.studio-nav-group{flex-direction:row;flex-wrap:wrap;margin-bottom:6px}.studio-nav-label{width:100%}}
 .magnet-badge { border-color: var(--accent); color: var(--accent-light); }
+.chat-tribute { border-left: 3px solid var(--accent); padding-left: 0.4rem; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.tribute-badge { border-color: var(--accent); color: var(--accent-light); margin-right: 0.3rem; }
+.tribute-draft input { width: 6rem; }
+.valor-packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: 0.6rem; padding: 0; list-style: none; }
+.valor-packs button { width: 100%; display: flex; flex-direction: column; gap: 0.2rem; padding: 0.8rem; }
+.valor-balance { font-size: 2rem; font-weight: 700; }

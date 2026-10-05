@@ -55,6 +55,8 @@ const { Chat } = compile("apps/web/components/Chat.tsx", {
   "./Report": { ReportButton: () => null, TakeDownLink: () => null },
   "./Emote": compile("apps/web/components/Emote.tsx"),
   "./FactionIdentity": { Crest: () => null },
+  "./Guilds": { GuildChatBadge: () => null },
+  "../styles/teams.css": {},
 });
 const root = createRoot(document.getElementById("root"));
 const click = async node => { assert.ok(node); await act(async () => node.click()); };
