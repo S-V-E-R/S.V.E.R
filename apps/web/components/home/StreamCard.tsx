@@ -9,8 +9,9 @@ export function StreamCard({ s, viewerFaction, fresh = false }: { s: LiveCard; v
   const ally = !!viewerFaction && s.faction === viewerFaction;
   return <Link href={`/${s.username}`} className={ally ? "stream-card ally" : "stream-card"}>
     <span className="stream-thumb" style={{ background: scene(s.username) }}>
-      <span className="stream-thumb-mark" aria-hidden="true">{s.category ?? s.display_name}</span>
-      <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}</span>
+      {/* eslint-disable-next-line @next/next/no-img-element -- a still refreshed every minute, already sized */}
+      {s.thumbnail ? <img className="stream-still" src={s.thumbnail} alt="" loading="lazy" /> : <span className="stream-thumb-mark" aria-hidden="true">{s.category ?? s.display_name}</span>}
+      <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}{s.label && <span className="tag-label">{s.label}</span>}</span>
       {fresh
         ? <span className="stream-started">Started {uptime(s.started_at)} ago</span>
         : <><span className="stream-viewers">{s.viewers.toLocaleString()} watching</span><span className="stream-uptime">{uptime(s.started_at)}</span></>}

@@ -38,16 +38,10 @@ pub async fn exercise(e: &Env) {
     let (_, starting) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(starting["live"], false, "STARTING is not public");
     assert!(
-        guest(e, "GET", "/api/streams", Value::Null).await.1["live"]
+        guest(e, "GET", "/api/discovery/home", Value::Null).await.1["live"]
             .as_array()
             .unwrap()
             .is_empty()
-    );
-    assert_eq!(
-        guest(e, "GET", "/api/streams?page=100001", Value::Null)
-            .await
-            .0,
-        StatusCode::BAD_REQUEST
     );
     assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["recorded"], false);
 
@@ -57,9 +51,9 @@ pub async fn exercise(e: &Env) {
     assert_eq!(live["live"], true);
     assert_eq!(live["title"], "Streamer's stream");
     assert_eq!(live["viewers"], 0);
-    let (status, directory) = guest(e, "GET", "/api/streams", Value::Null).await;
+    let (status, directory) = guest(e, "GET", "/api/discovery/home", Value::Null).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(directory["live"][0]["user"]["username"], "Streamer");
+    assert_eq!(directory["live"][0]["username"], "Streamer");
     assert_eq!(directory["live"][0]["viewers"], 0);
     assert!(
         !directory.to_string().contains("pub-play"),
@@ -70,7 +64,7 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert!(
-        guest(e, "GET", "/api/streams", Value::Null).await.1["live"]
+        guest(e, "GET", "/api/discovery/home", Value::Null).await.1["live"]
             .as_array()
             .unwrap()
             .is_empty()
@@ -129,7 +123,7 @@ pub async fn exercise(e: &Env) {
     let (_, counted) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(counted["viewers"], 2);
     assert_eq!(
-        guest(e, "GET", "/api/streams", Value::Null).await.1["live"][0]["viewers"],
+        guest(e, "GET", "/api/discovery/home", Value::Null).await.1["live"][0]["viewers"],
         2
     );
 
@@ -142,7 +136,7 @@ pub async fn exercise(e: &Env) {
     e.sql("UPDATE broadcasts SET reconnect_deadline=now()-interval '1 second' WHERE id='play-1'")
         .await;
     assert!(
-        guest(e, "GET", "/api/streams", Value::Null).await.1["live"]
+        guest(e, "GET", "/api/discovery/home", Value::Null).await.1["live"]
             .as_array()
             .unwrap()
             .is_empty()
@@ -152,13 +146,12 @@ pub async fn exercise(e: &Env) {
     assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["recorded"], false);
     let (_, ended) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(ended, json!({"live":false}));
-    let (_, recent) = guest(e, "GET", "/api/streams", Value::Null).await;
+    let (_, recent) = guest(e, "GET", "/api/discovery/home", Value::Null).await;
     assert_eq!(recent["recent"][0]["user"]["username"], "Streamer");
-    assert_eq!(recent["recent"][0]["live"], false);
     e.sql("UPDATE broadcasts SET end_reason='revoked' WHERE id='play-1'")
         .await;
     assert!(
-        guest(e, "GET", "/api/streams", Value::Null).await.1["recent"]
+        guest(e, "GET", "/api/discovery/home", Value::Null).await.1["recent"]
             .as_array()
             .unwrap()
             .is_empty(),

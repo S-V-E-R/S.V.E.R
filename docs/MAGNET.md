@@ -1,6 +1,6 @@
 # Module 5: MAGNet
 
-Expanded October 3, 2026 by Joe. Not started. MAGNet is how S.V.E.R moves viewers between live streams. It has three parts:
+Expanded October 3, 2026 by Joe. **Started October 5, 2026: discovery, spotlights and thumbnails are built (below); MAGNet Hype and Hype chat are next.** MAGNet is how S.V.E.R moves viewers between live streams. It has three parts:
 
 1. **Discovery:** the homepage, browse, search, watch-page suggestions and the stream-end countdown, all in fair rotation.
 2. **MAGNet Hype:** channels a viewer can sit on while MAGNet moves them to whichever stream is having a moment, and gives every stream its turn. It reinvents an idea from an earlier platform's auto-switching channel, with fairness built in.
@@ -28,6 +28,16 @@ Carried over from the plan:
 - **Watch page:** suggests other live streams: same genre first, then same faction, then anything live.
 - **Stream end:** viewers are offered the next stream (same order) with a 10-second countdown and Cancel. A raid in progress takes priority over this.
 - **Nothing live:** never an empty grid; show recently live channels and the war map.
+
+Implementation (October 5; `discovery.rs`, migration `0026_discovery.sql`):
+
+- **Fair rotation** (`rotate`): live streams sit in a fixed cycle ordered by start time, and the cycle advances one place every 3 minutes (`ROTATE_SECONDS`), so every stream is first within one cycle. Streams in the viewer's faction's home genres (`faction_genres.home`) take a second place in the cycle, the home-turf boost. Inputs are start time, genre and the viewer's faction only. Unit tests prove every stream reaches the top within the cycle, that the boost doubles a stream's turns, and that viewer counts change nothing; the API test repeats the last check with 40 counted sessions.
+- **Public stream** = LIVE, or RECONNECTING inside its grace window, on an eligible (not restricted or deleted) channel. Channels the viewer blocked, or that blocked the viewer, are left out of that viewer's lists.
+- **Endpoints:** `GET /api/discovery/home` (following live, live in rotation, the viewer's faction, just went live under 30 minutes, spotlights, recently live in the last 14 days when nothing is live), `GET /api/discovery/live?genre=&category=&faction=`, `GET /api/discovery/browse` (genres → categories with live counts), `GET /api/search?q=` (2–50 characters, literal substring, live channels first, then categories) and `GET /api/channels/{username}/suggestions` (same genre, then same faction, then anything; it works just after a stream ends). The old `/api/streams` and `/api/live` lists are removed.
+- **Web:** the home page, `/browse`, `/search` (with the top-bar search box), Up next on the watch page, and the stream-end countdown (`UpNext`: 10 seconds with Cancel, shown only to viewers who saw the stream live; a raid moves them before the stream ends). Cards show the live still and a New creator / Returning creator label.
+- **Spotlights:** automatic for a first broadcast ever and for a return after 30+ days away (derived from broadcast history, so no table). Staff spotlights (Admin → Live streams) have a public reason of up to 120 characters, last 1–14 days, allow one active per channel with a 7-day cooldown (serialized per channel), and both creating and ending one are audited.
+- **Thumbnails** (`probe.rs`): the OBS-health probe already fetches each live stream's newest HLS segment every 30 seconds; about once a minute ffmpeg decodes one frame to a 640-pixel WebP (the stream is never re-encoded). Each still gets a new key, the previous one is deleted, and ended streams' stills are swept. The API image gains `ffmpeg`.
+- Coverage: `discovery` unit tests, `tests/streams/discovery.rs`, `scripts/check-discovery.cjs` and the updated shell check.
 
 ## MAGNet Hype
 

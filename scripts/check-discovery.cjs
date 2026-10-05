@@ -1,4 +1,4 @@
-// Synthetic component acceptance; no live accounts or network requests.
+// Synthetic component acceptance for MAGNet discovery (docs/MAGNET.md); no accounts or network.
 // node scripts/check-discovery.cjs <path-to-jsdom>
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -18,59 +18,74 @@ const ts = webRequire("typescript");
 function compile(file, deps = {}) {
   const source = ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
   const mod = { exports: {} };
-  vm.runInThisContext(`(function(require,module,exports){${source}\n})`, { filename: file })(name => {
+  // A module may get its own `window` (deps.window), e.g. to record navigation.
+  vm.runInThisContext(`(function(require,module,exports,window){${source}\n})`, { filename: file })(name => {
     if (name === "next/link") return ({ children, ...props }) => React.createElement("a", props, children);
     if (name === "next/image") return ({ unoptimized, ...props }) => React.createElement("img", props);
     if (deps[name]) return deps[name];
-    if (name.startsWith(".")) { const resolved=path.resolve(path.dirname(file),name); return compile(fs.existsSync(resolved+".tsx") ? resolved+".tsx" : resolved+".ts"); }
+    if (name.endsWith(".css")) return {};
+    if (name.startsWith(".")) { const resolved = path.resolve(path.dirname(file), name); return compile(fs.existsSync(resolved + ".tsx") ? resolved + ".tsx" : resolved + ".ts", deps); }
     return webRequire(name);
-  }, mod, mod.exports);
+  }, mod, mod.exports, deps.window ?? global.window);
   return mod.exports;
 }
-const avatar = { Avatar: ({ name }) => React.createElement("span", null, name) };
-const shelf = compile("apps/web/components/StreamShelf.tsx", { "./Avatar": avatar });
-const spotlight = compile("apps/web/components/LiveSpotlight.tsx", { "./StreamShelf": shelf });
-const streams = ["First", "Second"].map(username => ({ user: { username, display_name: username, avatar: null, linked: true }, banner: null, live: true, title: `<${username}> playing`, category: "Art", viewers: 3, started_at: "2026-10-04T12:00:00Z" }));
-let directory = { live: streams, recent: [], has_more: true, as_of: "2026-10-04T12:30:00Z" };
+const card = (username, extra = {}) => ({ username, display_name: username, avatar: null, faction: "glint", title: `<${username}> playing`, category: "Art", genre: "art", started_at: "2026-10-05T12:00:00Z", viewers: 3, broadcast_id: `b-${username}`, thumbnail: null, label: null, fresh: false, ...extra });
+const first = card("First", { label: "New creator", fresh: true }), second = card("Second", { faction: "myria", thumbnail: "https://media.example/thumbs/b-second/1.webp" });
+let home = { live: [first, second], following: [], faction: null, fresh: [first], spotlights: [{ kind: "first_stream", reason: "First stream on S.V.E.R", stream: first }, { kind: "staff", reason: "Community pick", stream: null, user: { username: "Quiet", display_name: "Quiet" } }], recent: [] };
 let account = null;
-const { default: Home } = compile("apps/web/app/page.tsx", {
-  "../lib/server-api": { apiGet: async url => ({ data: url.startsWith("/api/streams") ? directory : url === "/api/factions/war" ? { season: null, week: null, genres: [], scoreboard: [], previous_winners: [] } : url === "/api/me/following" ? { items: [{ user: streams[0].user }] } : { categories: [{ id: "art", name: "Art", genre: "art" }] } }) },
-  "../components/StreamShelf": shelf, "../components/LiveSpotlight": spotlight,
-  "../components/shell/Icons": compile("apps/web/components/shell/Icons.tsx"),
+const deps = {
+  "../lib/server-api": { apiGet: async url => ({ data: url === "/api/discovery/home" ? home : null }) },
   "./session": { currentAccount: async () => account },
-});
-const root = createRoot(document.getElementById("root"));
+  "../Avatar": { Avatar: ({ name }) => React.createElement("span", null, name) },
+};
+const { default: Home } = compile("apps/web/app/page.tsx", deps);
+const position = (html, id) => html.indexOf(`id="${id}"`);
 (async () => {
-  try {
-    let html = renderToStaticMarkup(await Home({ searchParams: Promise.resolve({}) }));
-    const ids = ["front-line-title", "spotlight-title", "live-now", "beacons-title", "just-live", "territories-title", "clips-title"];
-    for (let i = 1; i < ids.length; i++) assert(html.indexOf(`id="${ids[i - 1]}"`) < html.indexOf(`id="${ids[i]}"`), "Planned shelf order");
-    assert.match(html, /href="\/First\/live"/);
-    assert.match(html, /&lt;First&gt; playing/);
-    assert.match(html, /More live streams/);
-    assert.match(html, /<h3>Art<\/h3>/);
-    account = { username: "Viewer" };
-    html = renderToStaticMarkup(await Home({ searchParams: Promise.resolve({}) }));
-    assert.match(html, /Following · live/);
-    directory = { ...directory, live: [], recent: [{ ...streams[0], live: false }], has_more: false };
-    html = renderToStaticMarkup(await Home({ searchParams: Promise.resolve({}) }));
-    assert.match(html, /Recently live/);
-    assert.match(html, /href="\/First"/);
-    assert.doesNotMatch(html, /href="\/First\/live"/);
-    directory = null;
-    html = renderToStaticMarkup(await Home({ searchParams: Promise.resolve({ page: "invalid" }) }));
-    assert.match(html, /Streams couldn’t be loaded/);
-    assert.doesNotMatch(html, /Nothing live right now/);
-    await act(async () => root.render(React.createElement(spotlight.LiveSpotlight, { streams })));
-    const watch = () => document.querySelector('a.button').getAttribute("href");
-    assert.equal(watch(), "/First/live");
-    await act(async () => document.querySelector('[aria-label="Next stream"]').click());
-    assert.equal(watch(), "/Second/live");
-    await act(async () => document.querySelector('[aria-label="Next stream"]').click());
-    assert.equal(watch(), "/First/live");
-    await act(async () => document.querySelector('[aria-label="Previous stream"]').click());
-    assert.equal(watch(), "/Second/live");
-    assert.equal(document.querySelectorAll("video").length, 0, "Previews do not start playback");
-    console.log("Discovery UI passed: shelf order, watch links, following, recent fallback, outage state, safe text, and carousel wraparound.");
-  } finally { await act(async () => root.unmount()); dom.window.close(); }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+  let html = renderToStaticMarkup(await Home());
+  // Signed out: spotlight, rotation, live now, just went live, in that order; no personal shelves.
+  const order = ["spot-h", "rot-h", "live-h", "new-h"].map(id => position(html, id));
+  assert(order.every(p => p > 0) && order.every((p, i) => i === 0 || p > order[i - 1]), "shelf order");
+  assert.equal(position(html, "fol-h"), -1);
+  assert.equal(position(html, "fac-h"), -1);
+  assert.match(html, /href="\/First"/);
+  assert.match(html, /&lt;First&gt; playing/, "titles are text");
+  assert.match(html, /New creator/);
+  assert.match(html, /Community pick/);
+  assert.match(html, /src="https:\/\/media.example\/thumbs\/b-second\/1.webp"/, "live still on the card");
+  assert.doesNotMatch(html, /<video/, "previews never start playback");
+  // Signed in with a faction: following and own-faction shelves.
+  account = { username: "Viewer", faction: "glint" };
+  home = { ...home, following: [second], faction: [first] };
+  html = renderToStaticMarkup(await Home());
+  assert(position(html, "fol-h") > 0 && position(html, "fac-h") > position(html, "live-h"));
+  assert.match(html, /From Glint/);
+  // Nothing live: recently live channels and the war map, never an empty page.
+  home = { ...home, live: [], following: [], faction: [], fresh: [], spotlights: [], recent: [{ user: { username: "Gone", display_name: "Gone", avatar: null }, ended_at: "2026-10-04T12:00:00Z" }] };
+  html = renderToStaticMarkup(await Home());
+  assert.match(html, /Nobody is live right now/);
+  assert.match(html, /href="\/Gone"/);
+  assert.match(html, /href="\/war-map"/);
+  home = null;
+  html = renderToStaticMarkup(await Home());
+  assert.match(html, /couldn&#x27;t be loaded|couldn't be loaded/);
+
+  // Stream end: the next stream after a 10-second countdown; Cancel stops it.
+  let moved = null;
+  const client = { send: async () => ({ ok: true, data: { items: [second] } }) };
+  const { UpNext } = compile("apps/web/components/UpNext.tsx", { "../lib/client-api": client, window: { location: { assign: url => { moved = url; } } } });
+  const root = createRoot(document.getElementById("root"));
+  const realTimeout = global.setTimeout;
+  global.setTimeout = (fn) => realTimeout(fn, 0);
+  await act(async () => root.render(React.createElement(UpNext, { username: "First", focused: true })));
+  for (let i = 0; i < 12 && !moved; i++) await act(async () => new Promise(r => realTimeout(r, 5)));
+  assert.equal(moved, "/Second/live");
+  moved = null;
+  await act(async () => root.render(React.createElement(UpNext, { key: "again", username: "First", focused: false })));
+  await act(async () => document.querySelector(".up-next button").click());
+  for (let i = 0; i < 12; i++) await act(async () => new Promise(r => realTimeout(r, 5)));
+  assert.equal(moved, null, "Cancel keeps the viewer here");
+  assert.match(document.querySelector(".up-next").textContent, /Up next:/);
+  global.setTimeout = realTimeout;
+  await act(async () => root.unmount());
+  console.log("Discovery UI passed: shelf order, personal shelves, safe text, stills, spotlights, empty and outage states, stream-end countdown and cancel.");
+})().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => dom.window.close());

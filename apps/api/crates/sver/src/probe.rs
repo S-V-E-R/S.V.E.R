@@ -138,6 +138,7 @@ pub async fn tick(app: &App) -> Res<()> {
             && let Some(ts) = fetch(app, url.as_str(), SEGMENT_LIMIT).await
         {
             reordered = b_frames(&ts);
+            thumbnail(app, &id, ts).await?;
         }
         let measured = json!({"keyframe_seconds":keyframes,"b_frames":reordered,
             "keyframe_warning":keyframes.is_some_and(|k|k>KEYFRAME_WARNING_SECONDS),"probed_at":chrono::Utc::now()});
@@ -146,6 +147,117 @@ pub async fn tick(app: &App) -> Res<()> {
             .bind(measured)
             .execute(&app.db)
             .await?;
+    }
+    Ok(())
+}
+
+/// Decodes one frame of a segment to a 640-pixel-wide WebP. The stream itself is never altered.
+pub async fn snapshot(ts: Vec<u8>) -> Option<Vec<u8>> {
+    use tokio::io::AsyncWriteExt;
+    let mut child = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            "pipe:0",
+            "-frames:v",
+            "1",
+        ])
+        .args([
+            "-vf",
+            "scale=640:-2",
+            "-c:v",
+            "libwebp",
+            "-quality",
+            "70",
+            "-f",
+            "webp",
+            "pipe:1",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    let mut stdin = child.stdin.take()?;
+    // ffmpeg may stop reading after the first frame; a broken pipe then is fine.
+    let feed = tokio::spawn(async move {
+        let _ = stdin.write_all(&ts).await;
+    });
+    let output = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
+        .await
+        .ok()?
+        .ok()?;
+    let _ = feed.await;
+    (output.status.success() && output.stdout.len() > 32 && output.stdout.len() < 2_000_000)
+        .then_some(output.stdout)
+}
+/// About once a minute per live stream: a fresh still for discovery cards. Each still gets a new
+/// key (immutable caching) and the previous one is deleted.
+async fn thumbnail(app: &App, broadcast: &str, ts: Vec<u8>) -> Res<()> {
+    let due: bool = sqlx::query_scalar("SELECT coalesce(thumbnail_at<now()-interval '55 seconds',true) FROM broadcasts WHERE id=$1 AND state='LIVE'")
+        .bind(broadcast)
+        .fetch_optional(&app.db)
+        .await?
+        .unwrap_or(false);
+    if !due || !app.config.media.storage.available() {
+        return Ok(());
+    }
+    let Some(image) = snapshot(ts).await else {
+        return Ok(());
+    };
+    let key = format!("thumbs/{broadcast}/{}.webp", chrono::Utc::now().timestamp());
+    if app
+        .config
+        .media
+        .storage
+        .put(&app.http, &key, image)
+        .await
+        .is_err()
+    {
+        return Ok(());
+    }
+    let previous: Option<Option<String>> = sqlx::query_scalar("UPDATE broadcasts b SET thumbnail_key=$2,thumbnail_at=now() FROM (SELECT thumbnail_key FROM broadcasts WHERE id=$1 FOR UPDATE) old WHERE b.id=$1 AND b.state='LIVE' RETURNING old.thumbnail_key")
+        .bind(broadcast)
+        .bind(&key)
+        .fetch_optional(&app.db)
+        .await?;
+    match previous {
+        // The stream ended meanwhile: don't keep a still for it.
+        None => {
+            let _ = app.config.media.storage.delete(&app.http, &key).await;
+        }
+        Some(Some(old)) => {
+            let _ = app.config.media.storage.delete(&app.http, &old).await;
+        }
+        Some(None) => {}
+    }
+    Ok(())
+}
+/// Ended streams keep no still (also covers a stopped or removed stream).
+pub async fn sweep_thumbnails(app: &App) -> Res<()> {
+    let keys: Vec<(String, String)> = sqlx::query_as("SELECT id,thumbnail_key FROM broadcasts WHERE state='ENDED' AND thumbnail_key IS NOT NULL LIMIT 50")
+        .fetch_all(&app.db)
+        .await?;
+    for (id, key) in keys {
+        if app
+            .config
+            .media
+            .storage
+            .delete(&app.http, &key)
+            .await
+            .is_ok()
+        {
+            sqlx::query(
+                "UPDATE broadcasts SET thumbnail_key=NULL WHERE id=$1 AND thumbnail_key=$2",
+            )
+            .bind(&id)
+            .bind(&key)
+            .execute(&app.db)
+            .await?;
+        }
     }
     Ok(())
 }

@@ -2,14 +2,14 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FollowingIcon, HomeIcon, SettingsIcon, ShieldIcon, StudioIcon, WarMapIcon } from "./Icons";
+import { BrowseIcon, FollowingIcon, HomeIcon, SettingsIcon, ShieldIcon, StudioIcon, WarMapIcon } from "./Icons";
 
 type Item = { href: string; label: string; icon: React.ReactNode; match: (path: string) => boolean };
 const under = (base: string) => (path: string) => path === base || path.startsWith(`${base}/`);
 
 /**
  * Main sidebar navigation (docs/DESIGN.md "Layout"). Only destinations that exist are listed:
- * Browse and Beacons join this list when their modules ship,
+ * Beacons joins this list when its module ships,
  * rather than sitting here greyed out.
  */
 export function SideNav({ signedIn, faction }: { signedIn: boolean; faction: { name: string; slug: string } | null }) {
@@ -22,6 +22,7 @@ export function SideNav({ signedIn, faction }: { signedIn: boolean; faction: { n
       icon: faction ? <Image src={`/factions/${faction.slug}.webp`} width={18} height={18} alt="" unoptimized /> : <WarMapIcon />,
       match: under("/factions")
     },
+    { href: "/browse", label: "Browse", icon: <BrowseIcon />, match: under("/browse") },
     { href: "/war-map", label: "War map", icon: <WarMapIcon />, match: under("/war-map") },
   ];
   const yours: Item[] = signedIn ? [

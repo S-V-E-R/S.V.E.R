@@ -66,11 +66,11 @@ export function Chrome({ actions, sidebar, footer, children }: Props) {
       <button ref={toggle} type="button" className="menu-toggle" aria-controls="site-sidebar" aria-expanded={open} aria-label={open ? "Close menu" : "Open menu"} onClick={() => setOpenOn(open ? null : pathname)}>{open ? <CloseIcon /> : <MenuIcon />}</button>
       <Link href="/" className="logo">S.V.E.R</Link>
       <span className="topbar-space" />
-      <div className="search">
+      <form className="search" role="search" action="/search">
         <SearchIcon />
-        <label htmlFor="site-search" className="sr-only">Search channels, categories and Beacons</label>
-        <input id="site-search" type="search" placeholder="Search · coming with MAGNet" disabled />
-      </div>
+        <label htmlFor="site-search" className="sr-only">Search channels and categories</label>
+        <input id="site-search" name="q" type="search" placeholder="Search channels and categories" minLength={2} maxLength={50} autoComplete="off" />
+      </form>
       <span className="topbar-space" />
       <div className="topbar-actions">{actions}</div>
     </header>

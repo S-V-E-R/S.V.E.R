@@ -4,7 +4,6 @@ import { Avatar } from "./Avatar";
 import type { Chip, Sizes } from "../lib/types";
 
 export type StreamCardData = { user: Chip; banner: Sizes; started_at: string; title: string; category: string | null; viewers: number; live: boolean };
-export type StreamDirectory = { live: StreamCardData[]; recent: StreamCardData[]; has_more: boolean; as_of: string };
 
 export function ShelfHeading({ id, title, description, href, link = "View all" }: { id: string; title: string; description?: string; href?: string; link?: string }) {
   return <div className="shelf-heading"><h2 id={id}>{title}</h2><span className="heading-diamond" aria-hidden="true" />{description && <p>{description}</p>}<span className="heading-rule" />{href && <Link href={href}>{link}</Link>}</div>;

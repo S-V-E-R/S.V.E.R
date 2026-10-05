@@ -26,6 +26,8 @@ mod bans;
 mod chat;
 #[path = "streams/chat_social.rs"]
 mod chat_social;
+#[path = "streams/discovery.rs"]
+mod discovery;
 #[path = "streams/integrity.rs"]
 mod integrity;
 #[path = "streams/moderation.rs"]
@@ -326,6 +328,7 @@ async fn exercise(e: &Env) {
     alerts::exercise(e).await;
     raids::exercise(e).await;
     staff_streams::exercise(e).await;
+    discovery::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")

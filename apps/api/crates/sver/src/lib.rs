@@ -15,6 +15,7 @@ pub mod alerts;
 pub mod auth;
 pub mod bans;
 pub mod chat;
+pub mod discovery;
 pub mod emotes;
 pub mod factions;
 pub mod integrity;
@@ -370,6 +371,7 @@ pub fn router(app: App) -> Router {
         .merge(emotes::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
+        .merge(discovery::routes())
         .merge(staff_streams::routes())
         .merge(factions::routes())
         .merge(moderation::routes())
