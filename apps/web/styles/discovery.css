@@ -1,0 +1,46 @@
+/* Homepage and focused watching: DESIGN.md section order, light frames and native grids. */
+.home-page{max-width:1800px;margin:0 auto;padding:24px 28px 48px;display:flex;flex-direction:column;gap:32px}
+.home-page>section{min-width:0}
+.front-line{display:flex;align-items:center;gap:18px;padding:18px 20px;flex-wrap:wrap}
+.front-line>div:nth-child(2){flex:1;min-width:200px}
+.front-line h2{font-size:18px;margin:0 0 4px}.front-line p{margin:0;color:var(--ink-muted)}
+.front-line-crests{display:flex;gap:6px}.front-line-crests a{display:flex;align-items:center;min-height:44px}
+.front-line .button{font-size:13px;padding:0 14px}
+.shelf-heading{display:flex;align-items:center;gap:12px;margin:0 0 16px;flex-wrap:wrap}
+.shelf-heading h2{margin:0;font-size:22px}.shelf-heading p{margin:0;color:var(--ink-dim);font-size:13px}
+.heading-diamond{width:6px;height:6px;transform:rotate(45deg);background:var(--accent);flex:none}
+.heading-rule{height:1px;background:var(--line);flex:1;min-width:20px}
+.shelf-heading>a{font:700 13px/1.5 var(--font-label);letter-spacing:.1em;text-transform:uppercase;min-height:44px;display:inline-flex;align-items:center}
+.spotlight{display:grid;grid-template-columns:minmax(0,2fr) minmax(200px,1fr);gap:24px;padding:20px;align-items:center}
+.spotlight .stream-card-info{display:none}.spotlight-copy h2{font-size:26px;overflow-wrap:anywhere}.spotlight-copy>p{color:var(--ink-muted)}
+.spotlight-controls{display:flex;gap:12px;align-items:center;margin-top:20px}.spotlight-controls button{padding:0;min-width:44px}.spotlight-controls span{font:600 13px/1 var(--font-label);color:var(--ink-muted)}
+.spotlight>.shelf-empty{grid-column:1/-1;min-height:240px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center}
+.shelf-note{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-dim);margin:12px 0 0}
+.shelf-note svg{flex:none}
+.stream-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));gap:24px 16px}
+.stream-card{min-width:0}.stream-thumbnail{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:16/9;background:var(--tint);border:1px solid var(--line);overflow:hidden;color:var(--ink-muted)}
+.stream-thumbnail:hover{border-color:var(--accent);text-decoration:none}.stream-thumbnail>img{width:100%;height:100%;object-fit:cover}
+.stream-category-art{font:800 20px/1.3 var(--font-display);text-align:center;padding:28px 16px;color:var(--ink-muted);overflow-wrap:anywhere}
+.stream-thumbnail>.badge{position:absolute;top:8px;left:8px}.stream-viewers{position:absolute;right:8px;bottom:8px;padding:2px 6px;background:var(--bg);font:600 12px/1.5 var(--font-label)}
+.stream-card-info{display:flex;gap:10px;padding:10px 0 0}.stream-card-info>div{min-width:0}
+.stream-card h3{font:600 15px/1.35 var(--font-body);margin:0 0 4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.stream-card h3 a{color:var(--ink)}.stream-creator{display:block;color:var(--ink-muted);font-size:13px}
+.category-chip{display:table;border:1px solid var(--line);padding:1px 6px;margin-top:5px;font:600 11px/1.4 var(--font-label);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted)}
+.shelf-empty{padding:20px;margin:0;color:var(--ink-muted)}.shelf-empty h2{margin-top:0}.shelf-empty a:not(.button){text-decoration:underline}
+.beacons-shelf{padding:20px}.beacons-shelf>p{margin:0}
+.territory-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+.territory-tile{aspect-ratio:3/4;padding:16px 12px;border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;justify-content:flex-end;gap:10px;min-width:0}
+.territory-tile .eyebrow{margin-bottom:auto;font-size:11px}.territory-tile h3{font-size:16px;line-height:1.3;margin:0;overflow-wrap:anywhere}.territory-tile>span:last-child{font-size:11px;color:var(--ink-muted)}
+.channel.watch{max-width:1800px;padding:24px;grid-template-columns:minmax(0,1fr) 340px;grid-template-areas:"player chat" "streamer chat" "next chat";gap:0 20px}
+.watch-main{display:contents}.watch-player{grid-area:player;min-width:0}.watch .live-player.focused video{max-height:none}
+.watch-offline{aspect-ratio:16/9;padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:var(--bg)}
+.watch-offline h2{font-size:24px;overflow-wrap:anywhere}
+.streamer-bar{grid-area:streamer;display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:16px 0 20px;border-bottom:1px solid var(--line);min-width:0}
+.streamer-name{flex:1;min-width:140px}.streamer-name h1{font-size:20px;margin:0;overflow-wrap:anywhere}.streamer-name p{margin:0;font-size:12px}
+.streamer-bar .channel-actions{max-width:100%}.watch-next{grid-area:next;min-width:0;margin-top:24px}
+.watch>.chat{grid-area:chat;position:sticky;top:84px;height:calc(100dvh - 108px);max-height:920px;padding:16px}
+.watch .chat-messages{flex:1;max-height:none;min-height:160px}.watch .chat{overflow-wrap:anywhere}.watch .chat-form textarea{min-height:64px}
+.watch .stream-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:1199px){.spotlight{grid-template-columns:minmax(0,1fr)}.spotlight-copy{padding:0 4px 8px}.spotlight-copy h2{font-size:22px}.shelf-heading p{flex-basis:100%;order:5}.front-line{gap:12px}}
+@media(max-width:959px){.home-page{padding:20px 18px 36px;gap:26px}.channel.watch{padding:18px;grid-template-columns:minmax(0,1fr);grid-template-areas:"player" "streamer" "chat" "next"}.watch>.chat{position:relative;top:auto;height:520px;max-height:none;margin-top:20px}.watch-next{margin-top:26px}.watch .chat-messages{min-height:120px}}
+@media(max-width:540px){.home-page{padding:16px 14px 32px}.spotlight{padding:12px;gap:8px}.front-line{padding:16px}.front-line>div:nth-child(2){flex-basis:100%}.shelf-heading{gap:8px}.shelf-heading h2{font-size:21px}.shelf-heading>a{font-size:12px}.heading-rule{min-width:8px}.stream-grid{grid-template-columns:minmax(0,1fr)}.territory-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.channel.watch{padding:12px}.watch-offline{padding:16px}.watch-offline h1{font-size:20px}.watch .stream-grid{grid-template-columns:minmax(0,1fr)}.streamer-bar .small{min-height:44px}.beacons-shelf{padding:16px}.shelf-note{align-items:flex-start}}

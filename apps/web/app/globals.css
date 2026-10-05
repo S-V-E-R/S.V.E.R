@@ -166,6 +166,12 @@ a.logo:hover { color: var(--accent-light); text-decoration: none; }
 .player-chip { display: flex; align-items: center; gap: 10px; color: var(--ink); min-width: 0; }
 .player-chip:hover { color: var(--accent-light); text-decoration: none; }
 .player-chip-name { font-weight: 600; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-menu { position: relative; }
+.player-menu summary { cursor: pointer; min-height: 44px; list-style: none; }
+.player-menu summary::-webkit-details-marker { display: none; }
+.player-menu-links { position: absolute; top: calc(100% + 12px); right: 0; width: 240px; max-width: calc(100vw - 32px); padding: 8px; background: var(--bg); }
+.player-menu-links a { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 12px; color: var(--ink); }
+.player-menu-links a:hover, .player-menu-links a[aria-current="page"] { background: var(--tint); text-decoration: none; }
 /* Crest slot: a square placeholder holding the initial until Module 4 supplies faction crests. */
 .crest-slot {
   width: 36px; height: 36px; flex: none; display: inline-flex; align-items: center; justify-content: center;
@@ -184,17 +190,23 @@ a.logo:hover { color: var(--accent-light); text-decoration: none; }
 main { flex: 1 1 auto; min-width: 0; }
 
 .sidebar {
-  width: 268px; flex: none; display: flex; flex-direction: column; gap: 18px; padding: 16px 12px 24px;
+  width: 268px; flex: none; display: flex; flex-direction: column; gap: 22px; padding: 16px 8px 24px;
   border-right: 1px solid var(--line); background: rgba(4, 5, 8, .6);
 }
-.player-card { display: flex; align-items: center; gap: 12px; padding: 14px; color: var(--ink); }
+.player-card { display: flex; align-items: center; gap: 12px; min-height: 104px; padding: 16px 12px; color: var(--ink); }
 .player-card:hover { text-decoration: none; color: var(--ink); border-color: var(--accent); }
-.player-card-text { min-width: 0; display: flex; flex-direction: column; }
-.player-card-name { font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.player-card-faction { font-family: var(--font-display); font-weight: 700; font-size: 13px; color: var(--ink-dim); }
+.player-card-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.player-card-name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-card-faction { font-family: var(--font-display); font-weight: 700; font-size: 12px; color: var(--accent); }
+.player-card-link { margin-top: 7px; font: 600 11px/1.4 var(--font-label); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted); }
+.daily-orders { padding: 16px 12px; }
+.daily-orders h2 { margin: 0 0 12px; font-size: 15px; }
+.daily-orders p { margin: 0 0 12px; font-size: 13px; color: var(--ink-muted); }
+.daily-orders .daily-orders-status { font: 700 11px/1.4 var(--font-label); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); border-top: 1px solid var(--line); padding-top: 10px; }
+.daily-orders a { font-size: 12px; text-decoration: underline; }
 .side-nav ul, .side-channels { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .nav-item {
-  display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 12px 0 15px;
+  display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 12px 0 15px;
   color: #C8CAD0; font-weight: 500; border-left: 3px solid transparent; margin-left: -3px;
 }
 a.nav-item:hover { color: var(--ink); background: var(--tint); text-decoration: none; }
@@ -205,17 +217,21 @@ a.nav-item:hover { color: var(--ink); background: var(--tint); text-decoration: 
   font-family: var(--font-label); font-weight: 700; font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
 }
 .side-section { display: flex; flex-direction: column; gap: 2px; }
-.side-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px 6px; }
-.magnet { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; letter-spacing: .1em; text-transform: none; color: #C8CAD0; }
+.side-label { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 8px 8px; font-size: 11px; letter-spacing: .12em; }
+.magnet { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; letter-spacing: .02em; text-transform: none; color: var(--ink-muted); }
 .magnet-mark { display: inline-flex; gap: 2px; }
 .magnet-mark span { width: 4px; height: 10px; }
 .magnet-mark span:nth-child(1) { background: var(--myria); }
 .magnet-mark span:nth-child(2) { background: var(--aetheron); }
 .magnet-mark span:nth-child(3) { background: var(--glint); }
 .side-empty { margin: 0; padding: 4px 12px; font-size: 14px; color: var(--ink-dim); }
-.side-channels a { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 12px; color: var(--ink); }
+.side-channels a { display: flex; align-items: center; gap: 9px; min-height: 52px; padding: 6px 8px; color: var(--ink); }
 .side-channels a:hover { background: var(--tint); text-decoration: none; }
-.side-channel-name { flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-channel-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.side-channel-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-channel-category { font-size: 12px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-channel-count { flex: none; display: flex; align-items: center; gap: 5px; font: 600 12px/1 var(--font-label); }
+.side-channel-count .live-dot { width: 5px; height: 5px; border-radius: 50%; }
 .live-dot { width: 8px; height: 8px; flex: none; background: var(--live); }
 .nav-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; vertical-align: middle; background: var(--accent); transform: rotate(45deg); }
 .drawer-backdrop { display: none; }

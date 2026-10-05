@@ -138,6 +138,16 @@ While pages are being restored, navigation includes only working destinations. T
 
 **Phones (below 960 px).** The sidebar becomes a drawer opened from a menu button in the top bar; grids drop to one or two columns; the watch page stacks player, streamer bar, then chat.
 
+### Home and watch before the discovery modules
+
+The homepage is public for guests and members; it never redirects to account security. Keep the approved section order. Until MAGNet, the featured frame is a manual **Live spotlight** carousel over real streams, ordered by start time, with an explicit note that rotation is coming. Previewing a card never starts a playback session. The live grid links directly to `/{username}/live`, and Just went live uses the API snapshot time and a one-hour window. When nothing is live, show recently live channels and the existing faction information page. Channel banners or category labels stand in for live thumbnails; never imply they are captured video frames.
+
+The front-line banner links to the three faction explanations and offers Enlist to guests. Do not invent season standings, select a faction before enrollment exists, or show unearned XP, Valor or active daily orders. Beacons and Latest clips retain compact, plainly labeled empty sections with roadmap links until those modules supply content. Territories uses the real active category catalog and states that control opens with Factions. Search is visibly disabled until MAGNet.
+
+The sidebar keeps the reference's structure in every theme: signed-in player card, Home / Browse / Beacons / War map / Faction hub, framed Daily orders, then Following · live or Picked for you with the full MAGNet wordmark. Before their modules, planned destinations are noninteractive rows marked Soon and Daily orders states that it is coming with Progression. Account tools (My channel, Following, Creator Studio, Settings, Account security) live in the top-bar player menu. Use real profile avatars until factions supply crests; live rows show the creator, category and actual viewer count. Do not manufacture faction membership, ranks, levels, XP or quest progress to fill the reference.
+
+The focused watch page keeps a 16:9 player, the streamer identity and existing Follow/Share/report controls beneath it, a 340 px chat column, and an Up next shelf of other real live streams. Below 960 px, the order is player, streamer, chat, then Up next. Recommendations by genre/faction and the stream-end countdown remain part of MAGNet. Plays/CrowdSync controls are not reproduced before their systems exist. This layout work does not close or start those modules.
+
 ## Copy
 
 - Short, direct, specific. Say what something does ("Every live stream gets a turn here, whether it has 3 viewers or 3,000"), not slogans.

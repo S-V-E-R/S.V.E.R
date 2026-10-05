@@ -254,6 +254,16 @@ pub async fn eligible_by_name(db: &mut PgConnection, name: &str) -> Res<Option<C
             .await?,
     )
 }
+/// Public profile projection for stream lists; hidden accounts never enter discovery.
+pub async fn public_channels(db: &mut PgConnection, ids: &[String]) -> Res<Vec<ChannelUser>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM channel_users WHERE id=ANY($1) AND eligible")
+            .bind(ids)
+            .fetch_all(db)
+            .await?,
+    )
+}
+
 pub enum Resolved {
     Found(Box<ChannelUser>),
     Redirect(String),

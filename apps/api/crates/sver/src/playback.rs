@@ -6,7 +6,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::HeaderMap,
     routing::{get, post},
 };
@@ -225,8 +225,50 @@ pub async fn beat(
     }))
 }
 
+#[derive(Deserialize, Default)]
+struct DirectoryQuery {
+    #[serde(default)]
+    page: u32,
+}
+type DirectoryRow = (String, DateTime<Utc>, String, Option<String>, i64);
+
+/// Public home shelves. MAGNet's weighted rotation remains Module 5.
+async fn directory(
+    State(app): State<App>,
+    Query(query): Query<DirectoryQuery>,
+) -> Res<Json<Value>> {
+    if query.page > 100_000 {
+        return Err(Fail::bad("Invalid page."));
+    }
+    let mut db = app.db.acquire().await?;
+    let mut shelves = json!({"as_of": Utc::now()});
+    for recent in [false, true] {
+        // Page candidates by broadcast start, never viewer count. Recent channels are unique.
+        let rows: Vec<DirectoryRow> = sqlx::query_as(
+            "SELECT b.owner_id,b.started_at,coalesce(s.title,'Live stream'),c.name,
+             (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted'))
+             FROM (SELECT DISTINCT ON (owner_id) id,owner_id,started_at,state,reconnect_deadline,end_reason FROM broadcasts ORDER BY owner_id,started_at DESC,id DESC) b
+             LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id
+             WHERE CASE WHEN $1 THEN b.state='ENDED' AND b.end_reason IS DISTINCT FROM 'revoked' ELSE b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>now()) END
+             ORDER BY b.started_at DESC,b.owner_id LIMIT 25 OFFSET $2",
+        ).bind(recent).bind(if recent { 0 } else { i64::from(query.page) * 24 }).fetch_all(&mut *db).await?;
+        if !recent {
+            shelves["has_more"] = json!(rows.len() > 24);
+        }
+        let ids: Vec<_> = rows.iter().take(24).map(|r| r.0.clone()).collect();
+        let users = profiles::public_channels(&mut db, &ids).await?;
+        let items: Vec<_> = rows.into_iter().take(24).filter_map(|(id, started_at, title, category, viewers)| {
+            let user = users.iter().find(|u| u.id == id)?;
+            Some(json!({"user": profiles::chip(&app, user), "banner": profiles::banner_json(&app,user.banner_key.as_deref()), "started_at":started_at,"title":title,"category":category,"viewers":viewers,"live":!recent}))
+        }).collect();
+        shelves[if recent { "recent" } else { "live" }] = json!(items);
+    }
+    Ok(Json(shelves))
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
+        .route("/api/streams", get(directory))
         .route("/api/channels/{username}/live", get(live))
         .route("/api/channels/{username}/live/beat", post(beat))
 }
