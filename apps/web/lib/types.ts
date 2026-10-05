@@ -9,7 +9,7 @@ export type Post = Reply & { pinned_position: number | null; like_count: number;
 export type WallViewer = { can_post: boolean; reason: string | null; is_owner: boolean; can_react?: boolean };
 export type Occurrence = { start_at: string; end_at: string; label: string; kind: "weekly" | "event"; live: boolean };
 export type Channel = {
-  channel: { username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[] };
+  channel: { plays?: boolean; username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[] };
   tabs: { wall: boolean; schedule: boolean; about: boolean; fan_art: boolean };
   fan_art_enabled: boolean;
   /** Owner-editable header copy with defaults resolved (docs/PROFILES.md, P9). */
