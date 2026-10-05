@@ -15,6 +15,8 @@ use serde_json::{Value, json};
 use sqlx::PgConnection;
 
 pub const SIZES: [u32; 3] = [28, 56, 112];
+/// Subscriber emote slots per tier, on top of the 10 open emotes (docs/SUPPORT.md).
+const TIER_SLOTS: i64 = 5;
 
 fn code(value: &str) -> Res<&str> {
     if !(3..=20).contains(&value.len()) || !value.bytes().all(|c| c.is_ascii_alphanumeric()) {
@@ -39,7 +41,7 @@ async fn hidden(app: &App, rows: &[Value]) -> Res<std::collections::HashSet<Stri
 
 /// The current catalog, also used on reconnect and by the HTTP chat fallback.
 pub async fn catalog(app: &App, channel: &str) -> Res<Vec<Value>> {
-    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',e.id,'code',e.code,'image_key',e.image_key) FROM channel_emotes e JOIN channel_users c ON c.id=e.channel_id WHERE e.channel_id=$1 AND e.status='VISIBLE' AND c.eligible ORDER BY e.code")
+    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',e.id,'code',e.code,'image_key',e.image_key,'tier',e.tier) FROM channel_emotes e JOIN channel_users c ON c.id=e.channel_id WHERE e.channel_id=$1 AND e.status='VISIBLE' AND c.eligible ORDER BY e.code")
         .bind(channel).fetch_all(&app.db).await?;
     let held = hidden(app, &rows).await?;
     rows.retain(|row| !held.contains(row["image_key"].as_str().unwrap_or("")));
@@ -50,7 +52,7 @@ pub async fn catalog(app: &App, channel: &str) -> Res<Vec<Value>> {
 }
 async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
-    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',e.id,'code',e.code,'image_key',e.image_key,'status',e.status) FROM channel_emotes e WHERE channel_id=$1 ORDER BY created_at,id")
+    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',e.id,'code',e.code,'image_key',e.image_key,'status',e.status,'tier',e.tier) FROM channel_emotes e WHERE channel_id=$1 ORDER BY created_at,id")
         .bind(&user.id).fetch_all(&app.db).await?;
     let held = hidden(&app, &rows).await?;
     for row in &mut rows {
@@ -63,7 +65,9 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
             row.as_object_mut().unwrap().remove("image_key");
         }
     }
-    Ok(Json(json!({"items":rows,"max_emotes":10})))
+    Ok(Json(
+        json!({"items":rows,"max_emotes":10,"max_tier_emotes":TIER_SLOTS}),
+    ))
 }
 async fn upload(State(app): State<App>, jar: CookieJar, multipart: Multipart) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
@@ -74,6 +78,13 @@ async fn upload(State(app): State<App>, jar: CookieJar, multipart: Multipart) ->
     profiles::rate(&app, format!("image-upload:{}", user.id), 20, 3600).await?;
     let (bytes, _, fields) = media::read_upload(multipart, Kind::Emote).await?;
     let code = code(fields.get("code").and_then(Value::as_str).unwrap_or(""))?;
+    let tier: Option<i16> = match fields.get("tier").and_then(Value::as_str).unwrap_or("") {
+        "" => None,
+        "1" => Some(1),
+        "2" => Some(2),
+        "3" => Some(3),
+        _ => return Err(Fail::field("tier", "Choose open, or tier 1, 2 or 3.")),
+    };
     crate::moderation::check_emote_code(&mut *app.db.acquire().await?, &user.id, code).await?;
     let processed = media::process_async(bytes, Kind::Emote, None).await?;
     media::store(&app, &processed).await?;
@@ -83,30 +94,41 @@ async fn upload(State(app): State<App>, jar: CookieJar, multipart: Multipart) ->
     profiles::ensure_unrestricted(&mut tx, &user.id).await?;
     crate::moderation::check_emote_code(&mut tx, &user.id, code).await?;
     let (count, duplicate): (i64, bool) = sqlx::query_as(
-        "SELECT count(*),coalesce(bool_or(code=$2),false) FROM channel_emotes WHERE channel_id=$1",
+        "SELECT count(*) FILTER (WHERE tier IS NOT DISTINCT FROM $3),coalesce(bool_or(code=$2),false) FROM channel_emotes WHERE channel_id=$1",
     )
     .bind(&user.id)
     .bind(code)
+    .bind(tier)
     .fetch_one(&mut *tx)
     .await?;
     if duplicate {
         return Err(Fail::conflict("That code is already in your channel."));
     }
-    if count >= 10 {
-        return Err(Fail::conflict("You can add up to 10 emotes."));
+    match tier {
+        None if count >= 10 => return Err(Fail::conflict("You can add up to 10 open emotes.")),
+        Some(t) if count >= TIER_SLOTS => {
+            return Err(Fail::conflict(format!(
+                "You can add up to {TIER_SLOTS} Tier {t} emotes."
+            )));
+        }
+        _ => {}
     }
     let id = profiles::new_id();
-    sqlx::query("INSERT INTO channel_emotes(id,channel_id,code,image_key) VALUES($1,$2,$3,$4)")
-        .bind(&id)
-        .bind(&user.id)
-        .bind(code)
-        .bind(&processed.stored)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO channel_emotes(id,channel_id,code,image_key,tier) VALUES($1,$2,$3,$4,$5)",
+    )
+    .bind(&id)
+    .bind(&user.id)
+    .bind(code)
+    .bind(&processed.stored)
+    .bind(tier)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     app.chat
         .publish(&user.id, None, 0, json!({"type":"emotes"}));
-    let mut row = json!({"id":id,"code":code,"image_key":processed.stored,"status":"VISIBLE"});
+    let mut row =
+        json!({"id":id,"code":code,"image_key":processed.stored,"status":"VISIBLE","tier":tier});
     urls(&app, &mut row);
     Ok(Json(row))
 }

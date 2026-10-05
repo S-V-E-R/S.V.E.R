@@ -85,6 +85,8 @@ pub(crate) struct Row {
     origin: Option<String>,
     /// Valor paid with this message (a tribute, docs/SUPPORT.md).
     tribute: Option<i32>,
+    /// The author's active subscription to this channel: tier and months, for the badge.
+    sub: Option<Value>,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -94,12 +96,13 @@ impl Row {
     }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub})
     }
 }
 pub(crate) fn select() -> String {
     format!(
         "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,
+        (SELECT jsonb_build_object('tier',s.tier,'months',s.months) FROM channel_subs s WHERE s.channel_id=m.channel_id AND s.user_id=m.author_id AND s.paid_through>now()) AS sub,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
         CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
             'author_id',r.author_id,'username',ra.username,
@@ -516,7 +519,7 @@ pub async fn read(
     let viewer = profiles::viewer(&app, &jar).await?;
     let hidden = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await?;
     Ok(Json(
-        json!({"messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?}),
+        json!({"messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?, "subs_only":crate::moderation::subs_only(&app, &channel).await?}),
     ))
 }
 pub async fn post(
@@ -734,10 +737,13 @@ async fn session(
     let Ok(followers_only) = crate::moderation::followers_only(&app, &channel).await else {
         return;
     };
+    let Ok(subs_only) = crate::moderation::subs_only(&app, &channel).await else {
+        return;
+    };
     if squad.is_some() {
         pin = Value::Null;
     }
-    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes,"followers_only_until":followers_only}).to_string();
+    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes,"followers_only_until":followers_only,"subs_only":subs_only}).to_string();
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
     }

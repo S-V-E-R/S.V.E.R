@@ -10,7 +10,7 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | 3 | Live streams | Creator Studio, OBS streaming, playback, chat and moderation, viewbot detection, custom emotes, go-live alerts, raids and hosting. Live delivery is still being prepared and verified. | In progress |
 | 4 | Factions | Myria, Aetheron, Glint; membership, weekly genre checkpoints, seasonal rewards, private councils and faction hubs | Done |
 | 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff | In progress |
-| 6 | Support | Subscriptions, Valor and tributes, channel rewards, co-streams, payouts. Payout setup, Valor packs and tributes are built first. | Started |
+| 6 | Support | Subscriptions, Valor and tributes, channel rewards, co-streams, payouts. Payout setup, Valor packs, tributes and subscriptions are built. | Started |
 | 7 | CrowdSync | Interactive boards, Skills, polls and predictions, faction rallies | Planned |
 | 8 | VODs and clips | Past broadcasts and clipping | Planned |
 | 9 | Beacons | Short vertical videos that lead to live streams | Planned |

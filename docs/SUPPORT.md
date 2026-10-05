@@ -1,6 +1,6 @@
 # Module 6: Support
 
-Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Started October 5, 2026: part 1 (below) is built.
+Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Started October 5, 2026: parts 1 and 2 (below) are built.
 
 This module lets viewers support streamers with money and loyalty, and gets streamers paid. It follows the closure rule: specify, build, then test against "Done when". All open items were decided by Joe on October 3, 2026.
 
@@ -149,9 +149,18 @@ Decided by Joe on October 3, 2026.
 
 **Configuration** (private env, never in the repo): `STRIPE_SECRET_KEY` (test keys only outside production; the API refuses an `sk_live_` key in development), `STRIPE_WEBHOOK_SECRET` (comma-separated when the platform and Connect endpoints have separate secrets) and optionally `STRIPE_API_URL` for tests.
 
-**Webhook:** `POST /api/stripe/webhook`, signature-checked (5-minute tolerance). Events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed` on the platform endpoint, and `account.updated` on a Connect ("connected accounts") endpoint. Every event is stored before processing; a failed or early event returns 503 so Stripe retries it.
+**Webhook:** `POST /api/stripe/webhook`, signature-checked (5-minute tolerance). Events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed` on the platform endpoint, `invoice.paid`, `customer.subscription.updated` and `customer.subscription.deleted` on the platform endpoint (part 2), and `account.updated` on a Connect ("connected accounts") endpoint. Every event is stored before processing; a failed or early event returns 503 so Stripe retries it.
 
-**Still to build:** importing creators' legacy connected accounts at the live cutover (test mode can't see live accounts), subscriptions, Engagement Valor and rewards, creator tiers, co-streams, Shine, paydays and Early Pay.
+**Part 2: subscriptions.**
+
+- A channel page shows **Subscribe** once the channel can earn. Card subscriptions go through Stripe Checkout and renew monthly; each paid invoice extends the subscription to the end of its billing period and credits the streamer's share. Since Stripe API version 2025-03-31.basil an invoice's subscription and metadata are read from `parent.subscription_details`, and its payment from Invoice Payments.
+- One month can also be paid with Purchased Valor (499, 999 or 2,499 Valor), at 0.8¢ per Valor to the streamer. A viewer with an auto-renewing card subscription upgrades it (charged now, prorated) or cancels it (benefits run to the end of the paid month).
+- Every streamer is Scout (65%) until weekly creator-tier checks ship; the split is applied to card subscriptions and card gifts.
+- Gift subs: one month to a named viewer, or 5, 10 or 20 to random signed-in chatters from the last day who allow gifts (a setting on `/wallet`, default on). Gifts never go to the gifter, the owner, someone banned or blocked, or someone with an auto-renewing subscription there. Card gifts reserve their recipients at checkout and grant them when Stripe confirms the payment.
+- Badges show months subscribed (1, 3, 6, 9, 12, then each year). Each tier has 5 subscriber-emote slots on top of the 10 open emotes; only subscribers of that tier or higher (and channel roles) can send them. Owners and moderators can switch on subscriber-only chat.
+- Refunds and disputes of subscription payments and card gifts reverse the streamer's share in proportion; a full refund of a subscription payment also ends its benefits.
+
+**Still to build:** importing creators' legacy connected accounts at the live cutover (test mode can't see live accounts), Engagement Valor and rewards, creator tiers, pooled money in merged co-streams, Shine, paydays and Early Pay.
 
 ## Done when
 

@@ -3,7 +3,7 @@ import { useCallback, useState } from "react";
 import { Section } from "./Form";
 import { send, useLoad } from "../lib/client-api";
 
-type Data = { valor: number; locked: boolean; available: boolean; packs: { cents: number; valor: number }[]; minor: boolean; guardian_confirmed: boolean; month_cents: number | null; cap_cents: number | null };
+type Data = { valor: number; locked: boolean; available: boolean; packs: { cents: number; valor: number }[]; minor: boolean; guardian_confirmed: boolean; month_cents: number | null; cap_cents: number | null; allow_gifts: boolean };
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 /** Purchased Valor (docs/SUPPORT.md): balance and packs. Checkout is Stripe-hosted; Valor arrives by webhook. */
@@ -17,6 +17,10 @@ export function Wallet({ returned }: { returned: boolean }) {
     if (result.ok) setData(result.data); else setError(result.error);
   }, []);
   useLoad(load);
+  async function allowGifts(allow: boolean) {
+    const result = await send<{ allow_gifts: boolean }>("PUT", "/api/me/gifts", { allow });
+    if (result.ok) setData(d => d && { ...d, allow_gifts: result.data.allow_gifts }); else setError(result.error);
+  }
   async function buy(cents: number) {
     setBusy(true); setError("");
     const result = await send<{ url: string }>("POST", "/api/me/wallet/checkout", { cents, guardian_consent: consent });
@@ -41,6 +45,9 @@ export function Wallet({ returned }: { returned: boolean }) {
         <p className="muted small">Purchases are non-refundable except where the law or the refund policy says otherwise. A parent can report an unauthorized purchase through support.</p>
       </>}
       {error && <p role="alert" className="form-message error">{error}</p>}
+    </Section>
+    <Section title="Gift subs" intro="Viewers can gift subscriptions to people in a channel's chat.">
+      <label className="checkbox"><input type="checkbox" checked={data.allow_gifts} onChange={e => allowGifts(e.target.checked)} /> Let people gift me subscriptions</label>
     </Section>
   </>;
 }
