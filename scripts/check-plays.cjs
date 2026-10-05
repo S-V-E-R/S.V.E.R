@@ -15,7 +15,7 @@ const server=http.createServer(async(req,res)=>{
   else if(url.pathname==='/api/channels/ExampleGame')data={channel:{...profile,plays:true,bio:'A game',banner:null,mood_emoji:'',status_text:'',joined_at:new Date(),follower_count:0,following_count:0,links:[],song:null,live:false},viewer:{signed_in:signed,is_owner:false,following:false,blocked:false,interaction_blocked:false},tabs:{},header:{},war_council:{members:[],unavailable_count:0},wall_preview:{pinned:[],latest:[],viewer:{}},schedule_next:{items:[]}};
   else if(url.pathname.endsWith('/live'))data={live:false};
   else if(url.pathname.endsWith('/card'))data=profile;
-  else if(url.pathname==='/api/streams')data={live:[],recent:[],has_more:false};
+  else if(url.pathname.endsWith('/suggestions'))data={items:[]};
   else if(url.pathname==='/api/me/following')data={items:[],next_cursor:null};
   else if(url.pathname==='/api/auth/config')data={providers:[],development:true,turnstile_site_key:''};
   else if(url.pathname.endsWith('/chat'))data={messages:[],emotes:[],pinned:null,viewer:{signed_in:signed,can_chat:signed}};

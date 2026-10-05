@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { ReportButton, TakeDownLink } from "./Report";
 import { Turnstile } from "./Turnstile";
+import { UpNext } from "./UpNext";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string } };
@@ -114,6 +115,13 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const hls = live?.live ? live.playback?.hls ?? null : null;
   const preferred = live?.live ? live.playback?.preferred ?? null : null;
   const isOwner = live?.live ? live.is_owner : false;
+  // Remember that this page saw the stream live, so its end can offer the next stream.
+  const [ended, setEnded] = useState(false);
+  const wasLive = useRef(false);
+  useEffect(() => {
+    if (live?.live) wasLive.current = true;
+    else if (live && wasLive.current && !isOwner) setEnded(true);
+  }, [live, isOwner]);
   const polled = live?.live ? live.raid ?? null : null;
   const raid = pushed === undefined ? polled : pushed;
   const counting = raid && raid.status !== "cancelled" && raid.status !== "failed" && stayed !== raid.id ? raid : null;
@@ -198,7 +206,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       <p className="hosting-bar">Hosting <Link href={`/${live.hosting.username}`}>{live.hosting.display_name}</Link></p>
       <LivePlayer username={live.hosting.username} focused={focused} signedIn={signedIn} nested>{children}</LivePlayer>
     </div>;
-    return <>{children}</>;
+    return <>{ended && !nested && <UpNext username={username} focused={focused} />}{children}</>;
   }
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;

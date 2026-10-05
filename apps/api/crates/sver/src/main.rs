@@ -76,6 +76,9 @@ async fn main() -> Result<(), String> {
             if sver::probe::tick(&media_jobs).await.is_err() {
                 eprintln!("probe_event=measure outcome=retry");
             }
+            if sver::probe::sweep_thumbnails(&media_jobs).await.is_err() {
+                eprintln!("probe_event=thumbnail_sweep outcome=retry");
+            }
         }
     });
     let bind = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8080".into());

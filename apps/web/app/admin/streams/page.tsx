@@ -64,6 +64,7 @@ export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boo
           <button type="button" className="small quiet danger-text" onClick={() => stop(s)}>Stop stream</button>
         </li>)}</ul>}
     </Section>}
+    {!catalogOnly && <Spotlights />}
     <Section title="Categories" intro="Creators pick from active categories. Hiding one keeps it on channels that already use it until they change it. Genre changes and merges across genres are allowed only between seasons.">
       <form className="row" onSubmit={add}>
         <label className="field"><span>Name</span><input name="name" required maxLength={60} /></label>
@@ -81,4 +82,42 @@ export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boo
       </li>)}</ul>
     </Section>
   </>;
+}
+
+type Spotlight = { id: string; username: string; reason: string; starts_at: string; ends_at: string; ended_early_at: string | null; active: boolean };
+
+/** Staff spotlights (docs/MAGNET.md "Spotlights"): a public reason, at most 14 days, one active per channel, 7-day cooldown. */
+function Spotlights() {
+  const [items, setItems] = useState<Spotlight[] | null>(null);
+  const [message, setMessage] = useState("");
+  const load = useCallback(async () => {
+    const result = await send<{ items: Spotlight[] }>("GET", "/api/admin/spotlights");
+    if (result.ok) setItems(result.data.items); else setMessage(result.error);
+  }, []);
+  useLoad(load);
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const result = await send<{ items: Spotlight[] }>("POST", "/api/admin/spotlights", { username: String(data.get("username") ?? "").trim(), reason: String(data.get("reason") ?? "").trim(), days: Number(data.get("days")) });
+    if (result.ok) { setItems(result.data.items); form.reset(); setMessage("Spotlight added."); } else setMessage(result.error);
+  }
+  async function end(id: string) {
+    const result = await send<{ items: Spotlight[] }>("POST", `/api/admin/spotlights/${id}/end`);
+    if (result.ok) { setItems(result.data.items); setMessage("Spotlight ended."); } else setMessage(result.error);
+  }
+  return <Section title="Spotlights" intro="Staff picks shown on the homepage with a short public reason. At most 14 days, one at a time per channel, then 7 days before the same channel again. First streams and returning creators are spotlighted automatically.">
+    <form className="row" onSubmit={create}>
+      <label className="field"><span>Channel</span><input name="username" required maxLength={26} autoComplete="off" /></label>
+      <label className="field"><span>Public reason</span><input name="reason" required maxLength={120} /></label>
+      <label className="field"><span>Days</span><input name="days" type="number" min={1} max={14} defaultValue={7} required /></label>
+      <button type="submit" className="small">Spotlight</button>
+    </form>
+    {message && <p role="status" className="form-message">{message}</p>}
+    {!items ? <p className="loading">Loading…</p> : items.length === 0 ? <p className="muted">No staff spotlights yet.</p> :
+      <ul className="list">{items.map(s => <li key={s.id} className="row between">
+        <span><Link href={`/${s.username}`}>@{s.username}</Link> · {s.reason} <span className="muted">· {s.active ? `until ${new Date(s.ends_at).toLocaleDateString()}` : s.ended_early_at ? "ended early" : "ended"}</span></span>
+        {s.active && <button type="button" className="small quiet" onClick={() => end(s.id)}>End now</button>}
+      </li>)}</ul>}
+  </Section>;
 }

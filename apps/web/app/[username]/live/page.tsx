@@ -8,7 +8,8 @@ import { Crest } from "../../../components/FactionIdentity";
 import { factionInfo } from "../../../lib/factions";
 import { Avatar } from "../../../components/Avatar";
 import { ChannelActions } from "../../../components/ChannelActions";
-import { ShelfHeading, StreamShelf, type StreamDirectory } from "../../../components/StreamShelf";
+import { SectionHead, StreamGrid } from "../../../components/home/Shelves";
+import type { LiveCard } from "../../../components/home/types";
 import { apiGet } from "../../../lib/server-api";
 import "../../../styles/profiles.css";
 
@@ -20,8 +21,8 @@ export async function generateMetadata({ params }: { params: ChannelParams }) {
 export default async function Live({ params }: { params: ChannelParams }) {
   const data = await loadChannel((await params).username);
   const c = data.channel;
-  const [account, directory] = await Promise.all([currentAccount(), apiGet<StreamDirectory>("/api/streams")]);
-  const next = directory.data?.live.filter(stream => stream.user.username !== c.username).slice(0, 4) ?? [];
+  const [account, suggestions] = await Promise.all([currentAccount(), apiGet<{ items: LiveCard[] }>(`/api/channels/${encodeURIComponent(c.username)}/suggestions`)]);
+  const next = suggestions.data?.items.slice(0, 4) ?? [];
   return <div className="channel watch" data-theme={c.faction ?? "neutral"} data-plays={c.plays ? "true" : undefined}>
     <div className="watch-main">
     <div className="watch-player frame">
@@ -38,7 +39,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
     </section>
     {c.plays && <PlaysControls username={c.username} />}
-    <section className="watch-next" aria-labelledby="up-next"><ShelfHeading id="up-next" title="Up next" href="/" link="All live streams" />{next.length ? <StreamShelf streams={next} /> : <p className="shelf-empty frame">{directory.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>
+    <section className="watch-next" aria-labelledby="up-next"><SectionHead id="up-next" title="Up next" note="Same genre first, then same faction" href="/browse" link="Browse" />{next.length ? <StreamGrid streams={next} viewerFaction={account?.faction ?? null} /> : <p className="shelf-empty frame">{suggestions.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>
     </div>
     <Chat username={c.username} account={account?.username ?? null} />
   </div>;
