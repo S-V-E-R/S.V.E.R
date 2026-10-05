@@ -2,7 +2,7 @@
 
 This is the source of truth for how S.V.E.R looks. Build every page against it. If a page needs something this file doesn't cover, follow its spirit and add the rule here in the same change.
 
-Approved by Joe on October 2, 2026 (reference mockup: "S.V.E.R Homepage Concept", version 4). This file is self-contained; you don't need the mockup to build from it.
+Approved by Joe on October 2, 2026 (reference mockup: "S.V.E.R Homepage Concept", version 4). This file gives the rules; the rendered mockups in [design/README.md](design/README.md) show the approved layout of each page. Build pages to match both.
 
 ## The idea in one paragraph
 

@@ -1,31 +1,40 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BeaconsIcon, BrowseIcon, FactionIcon, HomeIcon, WarMapIcon } from "./Icons";
+import { FollowingIcon, HomeIcon, SettingsIcon, ShieldIcon, StudioIcon, WarMapIcon } from "./Icons";
 
-import { factionInfo, type Faction } from "../../lib/factions";
-import { Crest } from "../FactionIdentity";
+type Item = { href: string; label: string; icon: React.ReactNode; match: (path: string) => boolean };
+const under = (base: string) => (path: string) => path === base || path.startsWith(`${base}/`);
 
-type Item = { href?: string; label: string; icon: React.ReactNode; upcoming?: string };
-
-const ITEMS: Item[] = [
-  { href: "/", label: "Home", icon: <HomeIcon /> },
-  { label: "Browse", icon: <BrowseIcon />, upcoming: "Coming with MAGNet" },
-  { label: "Beacons", icon: <BeaconsIcon />, upcoming: "Coming with Beacons" },
-  { href: "/war-map", label: "War map", icon: <WarMapIcon /> },
-
-];
-
-/** Main sidebar navigation. A client component only so the active item can follow the pathname. */
-export function SideNav({ faction = null }: { faction?: Faction | null }) {
-  const items: Item[] = [...ITEMS, { href: faction ? `/factions/${faction}` : "/choose-faction", label: faction ? `${factionInfo(faction).name} hub` : "Choose your side", icon: faction ? <Crest faction={faction} size={18} /> : <FactionIcon /> }];
+/**
+ * Main sidebar navigation (docs/DESIGN.md "Layout"). Only destinations that exist are listed:
+ * Browse and Beacons join this list when their modules ship,
+ * rather than sitting here greyed out.
+ */
+export function SideNav({ signedIn, faction }: { signedIn: boolean; faction: { name: string; slug: string } | null }) {
   const pathname = usePathname() ?? "/";
+  const main: Item[] = [
+    { href: "/", label: "Home", icon: <HomeIcon />, match: path => path === "/" },
+    ...(signedIn ? [{ href: "/following", label: "Following", icon: <FollowingIcon />, match: under("/following") }] : []),
+    {
+      href: faction ? `/factions/${faction.slug}` : "/factions", label: faction ? `${faction.name} hub` : "Factions",
+      icon: faction ? <Image src={`/factions/${faction.slug}.webp`} width={18} height={18} alt="" unoptimized /> : <WarMapIcon />,
+      match: under("/factions")
+    },
+    { href: "/war-map", label: "War map", icon: <WarMapIcon />, match: under("/war-map") },
+  ];
+  const yours: Item[] = signedIn ? [
+    { href: "/studio/channel", label: "Creator Studio", icon: <StudioIcon />, match: under("/studio") },
+    { href: "/settings/profile", label: "Settings", icon: <SettingsIcon />, match: under("/settings") },
+    { href: "/account", label: "Account security", icon: <ShieldIcon />, match: under("/account") },
+  ] : [];
+  const list = (items: Item[]) => <ul>{items.map(item => {
+    const active = item.match(pathname);
+    return <li key={item.href}><Link href={item.href} className="nav-item" aria-current={active ? "page" : undefined}>{item.icon}<span>{item.label}</span></Link></li>;
+  })}</ul>;
   return <nav className="side-nav" aria-label="Main">
-    <ul>
-      {items.map(item => <li key={item.label}>{item.href
-        ? <Link href={item.href} className="nav-item" aria-current={pathname === item.href ? "page" : undefined}>{item.icon}<span>{item.label}</span></Link>
-        : <span className="nav-item soon" aria-disabled="true" title={item.upcoming}>{item.icon}<span>{item.label}</span><span className="soon-chip">Soon</span><span className="sr-only">{item.upcoming}</span></span>}
-      </li>)}
-    </ul>
+    {list(main)}
+    {yours.length > 0 && <><span className="side-label nav-group">Your channel</span>{list(yours)}</>}
   </nav>;
 }

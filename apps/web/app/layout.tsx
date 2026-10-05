@@ -5,22 +5,19 @@ import SiteShell from "../components/SiteShell";
 import { StaffRemovalAlerts } from "../components/StaffRemovalAlerts";
 import { BellIcon, MagnetMark } from "../components/shell/Icons";
 import { SideNav } from "../components/shell/SideNav";
-import { PlayerMenu } from "../components/shell/PlayerMenu";
-import { Avatar } from "../components/Avatar";
-import type { Chip } from "../lib/types";
 import type { PeoplePage } from "../components/People";
 import { apiGet } from "../lib/server-api";
 import { themeFor } from "../lib/theme";
+import { factionOf } from "../lib/factions";
+import { Crest } from "../components/Crest";
 import { currentAccount, hasAlerts } from "./session";
 import "./globals.css";
 import "../styles/profiles.css";
 import "../styles/design.css";
 import "../styles/site-pages.css";
+// Module 4 pages (faction hubs, war map) and the shared stream shelves.
 import "../styles/discovery.css";
 import "../styles/factions.css";
-import { Crest } from "../components/FactionIdentity";
-import { factionInfo } from "../lib/factions";
-import type { StreamDirectory } from "../components/StreamShelf";
 
 // Type per docs/DESIGN.md "Type": self-hosted and subset by next/font.
 const cinzel = Cinzel({ subsets: ["latin"], weight: ["700", "800"], variable: "--font-cinzel", display: "swap" });
@@ -41,35 +38,24 @@ export const metadata: Metadata = {
 /** Channels the viewer follows that are live now, from the first page of their follows. */
 async function followingLive() {
   const page = (await apiGet<PeoplePage>("/api/me/following")).data;
-  if (!page) return null;
-  const users = page.items.map(item => item.user).filter(user => user.live && user.username).slice(0, 8);
-  const channels = await Promise.all(users.map(async user => {
-    const state = (await apiGet<{ live: boolean; category?: string | null; viewers?: number }>(`/api/channels/${encodeURIComponent(user.username!)}/live`)).data;
-    return state?.live ? { user, category: state.category ?? null, viewers: state.viewers ?? null } : null;
-  }));
-  return channels.filter(channel => channel !== null);
-}
-
-async function pickedLive() {
-  const page = (await apiGet<StreamDirectory>("/api/streams")).data;
-  return page?.live.slice(0, 8).map(({ user, category, viewers }) => ({ user, category, viewers })) ?? null;
+  return (page?.items ?? []).map(item => item.user).filter(user => user.live && user.username);
 }
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const account = await currentAccount();
-  const [alerts, live, profile] = await Promise.all([
-    account ? hasAlerts() : false,
-    account ? followingLive() : pickedLive(),
-    account ? apiGet<Pick<Chip, "display_name" | "avatar">>(`/api/users/${encodeURIComponent(account.username)}/card`) : null,
-  ]);
-  const avatar = profile?.data?.avatar ?? null;
-  const displayName = profile?.data?.display_name ?? account?.username ?? "";
+  const [alerts, live] = account ? await Promise.all([hasAlerts(), followingLive()]) : [false, []];
+  const initial = account?.username.slice(0, 1).toUpperCase();
+
+  const faction = factionOf(account?.faction);
 
   const actions = account
     ? <>
       <StaffRemovalAlerts />
       <Link href="/notifications" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
-      <PlayerMenu username={account.username} avatar={avatar} faction={account.faction} />
+      <Link href={`/${account.username}`} className="player-chip">
+        <Crest faction={account.faction} initial={initial ?? "?"} size={36} label={faction?.name} />
+        <span className="player-chip-text"><span className="player-chip-name">{account.username}</span>{faction && <span className="player-chip-title">{faction.title}</span>}</span>
+      </Link>
     </>
     : <>
       <Link href="/login" className="topbar-link">Log in</Link>
@@ -77,18 +63,22 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     </>;
 
   const sidebar = <>
-    {account && <Link href={`/${account.username}`} className="player-card frame">
-      {account.faction ? <Crest faction={account.faction} size={48} /> : <Avatar sizes={avatar} name={displayName} size={48} />}
-      <span className="player-card-text"><span className="player-card-name">{displayName}</span><span className="player-card-faction">{account.faction ? `${factionInfo(account.faction).name} · ${factionInfo(account.faction).title}` : "No faction yet"}</span><span className="player-card-link">View your channel</span></span>
-    </Link>}
-    <SideNav faction={account?.faction ?? null} />
-    <section className="daily-orders frame" aria-labelledby="daily-orders-title"><h2 id="daily-orders-title">Daily orders</h2><p>Watch, chat and help your faction.</p><p className="daily-orders-status">Coming with Progression</p><Link href="/roadmap">See the roadmap</Link></section>
-    <section className="side-section" aria-labelledby="following-live">
-      <div className="side-label"><span id="following-live">{account ? "Following · live" : "Picked for you"}</span><span className="magnet"><MagnetMark />MAGNet</span></div>
-      {!live?.length
-        ? <p className="side-empty">{!live ? "Live channels are unavailable." : account ? "Nobody you follow is live." : "Nothing live right now."}</p>
-        : <ul className="side-channels">{live.map(({ user, category, viewers }) => <li key={user.username}><Link href={`/${user.username}/live`}><Avatar sizes={user.avatar} name={user.display_name} size={28} /><span className="side-channel-text"><span className="side-channel-name">{user.display_name}</span>{category && <span className="side-channel-category">{category}</span>}</span><span className="side-channel-count"><span className="live-dot" aria-hidden="true" />{viewers !== null && viewers.toLocaleString()}<span className="sr-only"> watching live</span></span></Link></li>)}</ul>}
-    </section>
+    {account && (faction
+      ? <Link href={`/${account.username}`} className="player-card frame">
+        <Crest faction={account.faction} initial={initial ?? "?"} size={56} label={faction.name} />
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">{faction.title}</span></span>
+      </Link>
+      : <Link href="/choose-side" className="player-card frame unchosen">
+        <Crest faction={null} initial={initial ?? "?"} size={56} />
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side →</span></span>
+      </Link>)}
+    <SideNav signedIn={!!account} faction={faction ? { name: faction.name, slug: faction.slug } : null} />
+    {account && <section className="side-section" aria-labelledby="following-live">
+      <div className="side-label"><span id="following-live">Following · live</span><span className="magnet"><MagnetMark />MAGNet</span></div>
+      {live.length === 0
+        ? <p className="side-empty">Nobody you follow is live.</p>
+        : <ul className="side-channels">{live.map(user => <li key={user.username}><Link href={`/${user.username}`}><Crest faction={user.faction ?? null} initial={user.display_name.slice(0, 1).toUpperCase()} size={30} /><span className="side-channel-name">{user.display_name}</span><span className="live-dot" aria-hidden="true" /><span className="sr-only">, live</span></Link></li>)}</ul>}
+    </section>}
   </>;
 
   return <html lang="en" data-theme={themeFor(account)} className={`${cinzel.variable} ${barlow.variable} ${barlowCondensed.variable}`}>

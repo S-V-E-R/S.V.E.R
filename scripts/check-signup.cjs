@@ -40,6 +40,7 @@ vm.runInThisContext(`(function(require, module, exports) {${source}\n})`, { file
   if (name === "next/script") return function Script({ onReady }) { React.useEffect(onReady, []); return null; };
   // Account-only media is outside these signup checks.
   if (name === "../components/Avatar") return { Avatar: () => null };
+  if (name === "../lib/factions") return { isFaction: value => ["myria", "aetheron", "glint"].includes(value) };
   if (name === "../components/Turnstile") {
     const component = { exports: {} };
     vm.runInThisContext(`(function(require,module,exports){${compile("apps/web/components/Turnstile.tsx")}\n})`)(dependency => dependency === "next/script" ? function Script({onReady}) { React.useEffect(onReady,[]); return null; } : webRequire(dependency),component,component.exports);
@@ -67,7 +68,7 @@ async function settle() { await act(async () => { await pause(400); }); }
     await type("email", "invalid-email");
     await type("password", "short");
     for (const provider of ["Google", "Twitch", "Discord"]) {
-      await click(provider);
+      await click(`Continue with ${provider}`);
       const sent = requests.at(-1);
       assert.equal(sent.url, `/api/auth/oauth/${provider.toLowerCase()}/start`);
       assert.deepEqual(sent.body, { intent: "signup", code: "" }, "Provider signup starts with no form details or bot token");

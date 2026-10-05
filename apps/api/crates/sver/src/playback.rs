@@ -286,9 +286,52 @@ pub async fn faction_streams(
         users.iter().find(|u|u.id==id).map(|u|json!({"user":profiles::chip(app,u),"banner":profiles::banner_json(app,u.banner_key.as_deref()),"started_at":started_at,"title":title,"category":category,"viewers":viewers,"live":true}))
     }).take(6).collect())
 }
+/// One public live channel for the homepage list.
+type LiveRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+    DateTime<Utc>,
+    i64,
+);
+
+/// GET /api/live: every public live channel, for the homepage (docs/DESIGN.md, "Home"). Never
+/// ordered by viewer count: `now` is a fair shuffle that changes every hour until MAGNet
+/// (Module 5) takes over ordering, and `fresh` is newest first. Viewer counts are shown, never
+/// ranked on.
+pub async fn live_now(State(app): State<App>) -> Res<Json<Value>> {
+    let rows: Vec<LiveRow> = sqlx::query_as(
+        "SELECT cu.username,cu.display_name,cu.avatar_key,(SELECT fm.faction FROM faction_members fm WHERE fm.user_id=b.owner_id),coalesce(s.title,cu.username||'''s stream'),c.name,c.genre,b.started_at,\
+         (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) \
+         FROM broadcasts b JOIN channel_users cu ON cu.id=b.owner_id \
+         LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id \
+         WHERE b.state IN ('LIVE','RECONNECTING') AND cu.eligible AND cu.deleted_at IS NULL \
+         ORDER BY md5(b.id||date_trunc('hour',now())::text) LIMIT 120",
+    )
+    .fetch_all(&app.db)
+    .await?;
+    let item = |r: &LiveRow| {
+        json!({
+            "username": r.0, "display_name": r.1, "avatar": profiles::avatar_json(&app, r.2.as_deref()),
+            "faction": r.3, "title": r.4, "category": r.5, "genre": r.6, "started_at": r.7, "viewers": r.8,
+        })
+    };
+    let now: Vec<Value> = rows.iter().map(item).collect();
+    let cutoff = Utc::now() - chrono::Duration::minutes(30);
+    let mut fresh: Vec<&LiveRow> = rows.iter().filter(|r| r.7 > cutoff).collect();
+    fresh.sort_by_key(|r| std::cmp::Reverse(r.7));
+    let fresh: Vec<Value> = fresh.into_iter().take(10).map(item).collect();
+    Ok(Json(json!({"now": now, "fresh": fresh})))
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/streams", get(directory))
+        .route("/api/live", get(live_now))
         .route("/api/channels/{username}/live", get(live))
         .route("/api/channels/{username}/live/beat", post(beat))
 }

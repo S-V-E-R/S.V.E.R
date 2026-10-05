@@ -32,7 +32,6 @@ function compile(file, dependencies = {}) {
 const icons = compile("apps/web/components/shell/Icons.tsx");
 const chrome = compile("apps/web/components/shell/Chrome.tsx", { "./Icons": icons });
 const { SideNav } = compile("apps/web/components/shell/SideNav.tsx", { "./Icons": icons });
-const { PlayerMenu } = compile("apps/web/components/shell/PlayerMenu.tsx", { "./Icons": icons, "../Avatar": compile("apps/web/components/Avatar.tsx") });
 const { default: SiteShell } = compile("apps/web/components/SiteShell.tsx", { "./shell/Chrome": chrome });
 const root = createRoot(document.getElementById("root"));
 const pages = ["/about", "/factions", "/roadmap", "/help", "/terms", "/privacy", "/guidelines", "/dmca", "/contact", "/take-it-down"];
@@ -40,8 +39,8 @@ async function render(route, signedIn = false) {
   pathname = route;
   await act(async () => root.render(React.createElement(SiteShell, {
     account: signedIn ? { username: "ExampleUser" } : null, alerts: false,
-    actions: signedIn ? React.createElement(PlayerMenu, { username: "ExampleUser", avatar: null }) : React.createElement("a", { href: "/login" }, "Log in"),
-    sidebar: React.createElement(SideNav),
+    actions: signedIn ? React.createElement("a", { href: "/ExampleUser", className: "player-chip" }, "ExampleUser") : React.createElement("a", { href: "/login" }, "Log in"),
+    sidebar: React.createElement(SideNav, { signedIn, faction: null }),
     children: React.createElement("h1", null, "Page content")
   })));
   assert.equal(document.querySelectorAll("main#main").length, 1);
@@ -56,27 +55,23 @@ async function render(route, signedIn = false) {
       assert.equal(document.querySelector('form[role="search"]'), null);
       assert.ok(document.querySelector(`nav a[href="${route}"][aria-current="page"]`));
     }
-    for (const route of ["/login", "/choose-faction", "/signup", "/oauth-signup", "/forgot", "/reset", "/verify", "/mfa"]) {
+    for (const route of ["/login", "/choose-side", "/choose-faction", "/signup", "/oauth-signup", "/forgot", "/reset", "/verify", "/mfa"]) {
       await render(route);
       assert.ok(document.querySelector("header.minimal"));
       assert.equal(document.querySelector("aside"), null);
-      assert.ok(document.querySelector(`header a[href="${route === "/login" ? "/signup" : "/login"}"]`));
+      // Choosing a side happens signed in, so those screens offer no Log in / Enlist link.
+      if (route.startsWith("/choose-")) assert.equal(document.querySelector("header .topbar-note"), null);
+      else assert.ok(document.querySelector(`header a[href="${route === "/login" ? "/signup" : "/login"}"]`));
     }
+    // Account tools live in the sidebar's "Your channel" group (docs/DESIGN.md "Layout"); only
+    // destinations that exist are listed, so nothing is greyed out as "coming soon".
     await render("/settings/profile", true);
-    assert.ok(document.querySelector('.player-menu a[href="/settings/profile"][aria-current="page"]'));
-    assert.equal(document.querySelector('aside a[href="/settings/profile"]'), null);
+    assert.ok(document.querySelector('aside a[href="/settings/profile"][aria-current="page"]'));
     const navLabels = [...document.querySelectorAll('aside .nav-item')].map(item => item.querySelector('span')?.textContent);
-    assert.deepEqual(navLabels, ['Home', 'Browse', 'Beacons', 'War map', 'Choose your side']);
-    assert.equal(document.querySelectorAll('aside [aria-disabled="true"]').length, 2);
-    const menu = document.querySelector('.player-menu');
-    await act(async () => menu.querySelector('summary').click());
-    assert.equal(menu.open, true);
-    await act(async () => menu.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
-    assert.equal(menu.open, false);
-    assert.equal(document.activeElement, menu.querySelector('summary'));
-    await act(async () => menu.querySelector('summary').click());
+    assert.deepEqual(navLabels, ['Home', 'Following', 'Factions', 'War map', 'Creator Studio', 'Settings', 'Account security']);
+    assert.equal(document.querySelectorAll('aside [aria-disabled="true"]').length, 0);
     await render('/studio/channel', true);
-    assert.equal(document.querySelector('.player-menu').open, false, 'Navigation closes the account menu');
+    assert.ok(document.querySelector('aside a[href="/studio/channel"][aria-current="page"]'));
     assert.equal(document.querySelectorAll('aside a[href="/browse"]').length, 0);
     const toggle = () => document.querySelector("button.menu-toggle");
     await act(async () => toggle().click());
