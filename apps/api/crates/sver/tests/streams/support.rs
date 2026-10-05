@@ -246,6 +246,26 @@ pub async fn exercise(e: &Env) {
     );
     assert_eq!(valor(e, &buyer).await, 975);
 
+    // Without any webhook, opening the wallet asks Stripe about open checkouts and credits paid
+    // ones once; a later webhook for the same session changes nothing.
+    buy(e, &buyer, 199, false).await;
+    let quiet = last_session(e);
+    e.fake.lock().unwrap().session = json!({"id": quiet, "status": "complete",
+        "payment_status": "paid", "amount_total": 199, "payment_intent": "pi_sp_quiet"});
+    assert_eq!(valor(e, &buyer).await, 1_175);
+    assert_eq!(valor(e, &buyer).await, 1_175);
+    assert_eq!(
+        event(
+            e,
+            completed("evt_sp_late", &quiet, 199, "pi_sp_quiet"),
+            true
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(valor(e, &buyer).await, 1_175);
+    e.fake.lock().unwrap().session = Value::Null;
+
     // Under 18: a guardian confirms once, and purchases are capped at $50 a month.
     let (status, needs) = buy(e, &teen, 499, false).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

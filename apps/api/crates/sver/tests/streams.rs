@@ -65,6 +65,8 @@ struct Media {
     /// Synthetic Stripe: every API call (path, form body), and the Connect account GET returns.
     stripe: Vec<(String, String)>,
     account: Value,
+    /// What GET /v1/checkout/sessions/{id} returns.
+    session: Value,
 }
 type Fake = Arc<Mutex<Media>>;
 async fn versions(State(fake): State<Fake>) -> (StatusCode, Json<Value>) {
@@ -103,10 +105,18 @@ async fn kick(State(fake): State<Fake>, Path(client): Path<String>) -> (StatusCo
         Json(json!({"code":0,"server":"test-server","service":m.service})),
     )
 }
-async fn stripe(State(fake): State<Fake>, uri: axum::http::Uri, body: String) -> Json<Value> {
+async fn stripe(
+    State(fake): State<Fake>,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    body: String,
+) -> Json<Value> {
     let mut m = fake.lock().unwrap();
     let path = uri.path().to_string();
-    m.stripe.push((path.clone(), body));
+    // Only calls that create something are logged (and number the synthetic ids).
+    if method == axum::http::Method::POST {
+        m.stripe.push((path.clone(), body));
+    }
     let n = m.stripe.len();
     Json(match path.as_str() {
         "/v1/checkout/sessions" => {
@@ -115,6 +125,7 @@ async fn stripe(State(fake): State<Fake>, uri: axum::http::Uri, body: String) ->
         "/v1/accounts" => json!({"id": "acct_test_owner"}),
         "/v1/account_links" => json!({"url": "https://connect.stripe.test/onboarding"}),
         p if p.ends_with("/login_links") => json!({"url": "https://connect.stripe.test/express"}),
+        p if p.starts_with("/v1/checkout/sessions/") => m.session.clone(),
         _ => m.account.clone(),
     })
 }
@@ -312,6 +323,7 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/accounts", post(stripe))
         .route("/v1/account_links", post(stripe))
         .route("/v1/accounts/{id}", get(stripe))
+        .route("/v1/checkout/sessions/{id}", get(stripe))
         .route("/v1/accounts/{id}/login_links", post(stripe))
         .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
