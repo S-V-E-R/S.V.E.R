@@ -33,7 +33,7 @@ try {
   assert.match(navigation(await (await get("/signup")).text()), /href="\/login"/);
   assert.match(navigation(await (await get("/login", "sver_dev=invalid")).text()), /href="\/signup"/);
   // Public site pages never require a session or go through channel tab redirects.
-  const sitePages = [["/about", "About S.V.E.R"], ["/factions", "Three factions. One family."], ["/roadmap", "The road ahead"], ["/help", "Help &amp; FAQ"], ["/terms", "Terms of Service"], ["/privacy", "Privacy Policy"], ["/guidelines", "Community Guidelines"], ["/dmca", "Copyright &amp; DMCA"], ["/contact", "Contact S.V.E.R"], ["/take-it-down", "Take It Down requests"]];
+  const sitePages = [["/about", "Streaming Vigorously Ensures Revenue."], ["/factions", "Three factions. One family."], ["/roadmap", "The road ahead"], ["/help", "Help &amp; FAQ"], ["/terms", "Terms of Service"], ["/privacy", "Privacy Policy"], ["/guidelines", "Community Guidelines"], ["/dmca", "Copyright &amp; DMCA"], ["/contact", "Contact S.V.E.R"], ["/take-it-down", "Take It Down requests"]];
   for (const [path, title] of sitePages) {
     for (const cookie of ["", "sver_dev=invalid", `sver_dev=${token}`]) {
       const response = await get(`${path}?tab=wall`, cookie);
@@ -46,7 +46,7 @@ try {
         assert.match(html, /The short version/);
         assert.match(html, /aria-label="On this page"/);
         for (const [, anchor] of html.matchAll(/href="#(section-\d+)"/g)) assert.ok(html.includes(`id="${anchor}"`), `Policy anchor ${anchor} must exist`);
-      } else assert.match(html, /class="site-cta frame"/, "Information pages end with a framed next step");
+      } else assert.match(html, /class="site-cta frame[" ]/, "Information pages end with a framed next step");
       assert.ok(html.includes(`href="https://sver.tv${path}"`), `${path} must have a canonical URL`);
       const activeLinks = html.match(/<a\b[^>]*aria-current="page"[^>]*>/g) || [];
       assert.ok(activeLinks.some(link => link.includes(`href="${path}"`)), `${path} must mark its navigation link`);
@@ -56,7 +56,7 @@ try {
   }
   for (const path of ["/signup", "/oauth-signup"]) {
     const html = await (await get(path)).text();
-    assert.match(html, /By creating an account, you agree/);
+    assert.match(html, /By continuing you agree/);
     for (const href of ["/terms", "/privacy", "/guidelines"]) assert.ok(html.includes(`href="${href}"`));
   }
   // Explicit auth routes (formerly the [screen] catch-all) and the channel placeholder.
@@ -123,10 +123,12 @@ try {
   const signedIn = navigation(await account.text());
   assert.match(signedIn, new RegExp(username));
   assert.doesNotMatch(signedIn, /href="\/(login|signup)"/);
-  for (const path of ["/", "/login", "/signup"]) {
+  // Home is the signed-in landing page; the sign-in screens send a signed-in visitor there.
+  assert.equal((await get("/", cookie)).status, 200, "Home renders signed in");
+  for (const path of ["/login", "/signup"]) {
     const response = await get(path, cookie);
     assert.equal(response.status, 307);
-    assert.equal(response.headers.get("location"), "/account");
+    assert.equal(response.headers.get("location"), "/");
   }
   const error = new URLSearchParams({ error: "Provider sign-in was cancelled." });
   assert.equal((await get(`/login?${error}`, cookie)).headers.get("location"), `/account?${error}`);

@@ -1,5 +1,5 @@
 export type Sizes = Record<string, string> | null;
-export type Chip = { username: string | null; display_name: string; avatar: Sizes; linked: boolean; deleted: boolean; live?: boolean };
+export type Chip = { username: string | null; display_name: string; avatar: Sizes; linked: boolean; deleted: boolean; live?: boolean; faction?: string | null };
 export type Link = { platform: string; url: string };
 export type Song = { provider: "youtube" | "soundcloud"; media_id: string; title: string | null; artist: string | null; thumbnail: string | null; volume: number } | null;
 export type Viewer = { signed_in: boolean; is_owner: boolean; following: boolean; alerts?: boolean; blocked: boolean; interaction_blocked: boolean };
@@ -8,7 +8,7 @@ export type Post = Reply & { pinned_position: number | null; like_count: number;
 export type WallViewer = { can_post: boolean; reason: string | null; is_owner: boolean; can_react?: boolean };
 export type Occurrence = { start_at: string; end_at: string; label: string; kind: "weekly" | "event"; live: boolean };
 export type Channel = {
-  channel: { username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: null };
+  channel: { username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: string | null };
   tabs: { wall: boolean; schedule: boolean; about: boolean; fan_art: boolean };
   fan_art_enabled: boolean;
   /** Owner-editable header copy with defaults resolved (docs/PROFILES.md, P9). */

@@ -78,3 +78,29 @@
 @media(max-width:650px){.site-page{padding:36px 20px 44px}.site-page h1{font-size:36px}.site-intro{font-size:17px}.site-document h2,.site-cta h2{font-size:22px}.site-document h2{gap:10px}.site-document .policy-summary,.site-cta{padding:24px 20px}.policy-contents ol{columns:1}.site-links{gap:4px 20px}}
 .site-document blockquote{margin:18px 0;padding:6px 0 6px 20px;border-left:3px solid var(--accent)}.site-document blockquote p{margin:0;font:700 clamp(19px,2vw,23px)/1.5 var(--font-heading),serif;color:var(--accent-light)}
 .site-document .dmca-agent{margin:14px 0;padding:14px 18px;border:1px solid var(--line,rgba(255,255,255,.12));border-radius:8px;font-style:normal;line-height:1.7}
+/* About (the About board of the design canvas) */
+.about-page{width:100%;max-width:1000px;margin:0 auto;padding:72px 24px 96px;display:flex;flex-direction:column;gap:72px}
+.about-hero{display:flex;flex-direction:column;gap:20px}
+.about-hero h1{margin:0;font-weight:800;font-size:clamp(36px,5vw,54px);line-height:1.08;max-width:880px}
+.about-lead{margin:0;max-width:720px;font-size:21px;line-height:1.55;color:#D9DBE0}
+.about-section{display:flex;flex-direction:column;gap:24px}
+.rule-heading{display:flex;align-items:center;gap:12px;margin:0;font-weight:800;font-size:26px;letter-spacing:.03em}
+.rule-heading::after{content:"";flex:1;height:1px;background:var(--line)}
+.rule-heading .dia{width:8px;height:8px;transform:rotate(45deg);background:var(--accent);flex:none}
+.about-quote{margin:0;padding:6px 0 6px 20px;border-left:3px solid var(--accent)}
+.about-quote p{margin:0;font:700 clamp(19px,2vw,23px)/1.5 var(--font-display);color:var(--accent-light)}
+.about-why{display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+.about-prose{min-width:0;max-width:720px}
+.about-why .about-prose{flex:999 1 520px}
+.about-prose p{margin:0 0 16px;color:#D9DBE0;font-size:18px;line-height:1.65}
+.about-founder{flex:1 1 260px;padding:24px;display:flex;flex-direction:column;gap:10px}
+.about-founder-name{font-family:var(--font-display);font-weight:800;font-size:22px;color:var(--accent-light)}
+.about-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.about-card{padding:22px}
+.about-card h3{margin:0 0 8px;font-weight:800;font-size:19px}
+.about-card p{margin:0;color:#D3D5DA}
+.about-links{display:flex;flex-wrap:wrap;gap:12px}
+.about-cta{margin-top:0;padding:40px 32px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px}
+.about-cta h2{margin:0;font-weight:800;font-size:30px}
+.about-cta p{margin:6px 0 0}
+@media(max-width:700px){.about-page{padding:40px 16px 64px;gap:48px}.about-lead{font-size:18px}.about-prose p{font-size:16px}.about-cta{padding:28px 20px}}

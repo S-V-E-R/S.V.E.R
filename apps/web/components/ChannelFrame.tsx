@@ -6,21 +6,25 @@ import { ChannelActions } from "./ChannelActions";
 import { ChannelTabs } from "./ChannelTabs";
 import { LivePlayer } from "./LivePlayer";
 import { SongPlayer } from "./SongPlayer";
+import { Crest } from "./Crest";
+import { factionOf } from "../lib/factions";
 import "../styles/profiles.css";
 
 /** Header frame shared by every channel tab (docs/PROFILES.md, "Header frame"). */
 export function ChannelFrame({ data, path, children }: { data: Channel; path: string; children: React.ReactNode }) {
   const c = data.channel;
   const banner = c.banner ? Object.entries(c.banner) : [];
-  return <div className="channel">
-    <section className="player-slot" aria-label="Stream">
+  const faction = factionOf(c.faction);
+  // Channel pages wear the owner's faction colors inside the channel area (decided October 3, 2026).
+  return <div className="channel" data-theme={faction?.slug}>
+    <section className={banner.length ? "player-slot" : "player-slot no-banner"} aria-label="Stream">
       <LivePlayer username={c.username}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      {banner.length ? <img className="banner" src={banner[0][1]} srcSet={banner.map(([w, u]) => `${u} ${w}w`).join(", ")} sizes="(max-width: 900px) 100vw, 1100px" alt="" /> : <div className="banner default-banner" aria-hidden="true" />}
+      {banner.length ? <img className="banner" src={banner[0][1]} srcSet={banner.map(([w, u]) => `${u} ${w}w`).join(", ")} sizes="(max-width: 900px) 100vw, 1100px" alt="" /> : <div className="banner default-banner" aria-hidden="true">{faction && <Crest faction={faction.slug} initial="" size={88} />}</div>}
       <span className="offline badge">Offline</span>
       </LivePlayer>
     </section>
-    <section className="identity panel">
+    <section className="identity panel frame">
       <Avatar sizes={c.avatar} name={c.display_name} size={112} />
       <div className="identity-text">
         {data.header?.label && <span className="page-label">{data.header.label}</span>}
@@ -28,7 +32,7 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
         <p className="handle">@{c.username}</p>
         {data.header?.welcome && <p className="welcome-line">{data.header.welcome}</p>}
         {(c.mood_emoji || c.status_text) && <p className="status-line">{c.mood_emoji && <span aria-label="Mood">{c.mood_emoji}</span>} {c.status_text}</p>}
-        <span className="faction-slot" aria-hidden="true" />
+        {faction && <p className="faction-line"><Crest faction={faction.slug} initial="" size={22} />{faction.name} · {faction.title}</p>}
         {c.bio && <p className="bio">{c.bio}</p>}
         {c.links.length > 0 && <ul className="links">{c.links.map(l => <li key={l.url}><a href={l.url} rel="nofollow noopener noreferrer ugc" target="_blank"><PlatformIcon platform={l.platform} /><span>{platformNames[l.platform] || l.platform}</span>{linkHost(l.url) && <small className="link-host">{linkHost(l.url)}</small>}</a></li>)}</ul>}
         <p className="counts"><Link href={`/${c.username}/followers`}><strong>{c.follower_count.toLocaleString()}</strong> followers</Link><Link href={`/${c.username}/following`}><strong>{c.following_count.toLocaleString()}</strong> following</Link><span className="muted">Joined {joined(c.joined_at)}</span>{data.header?.vibe && <span className="muted page-vibe">Vibe: <strong>{data.header.vibe}</strong></span>}</p>

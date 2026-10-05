@@ -101,10 +101,10 @@ export default function AuthScreen({ screen }: { screen: string }) {
     await run(async () => {
       let result: Reply;
       switch (screen) {
-        case "signup": result = await request("signup", { ...values, turnstile_token: botToken }); window.location.assign("/account"); break;
-        case "oauth-signup": await request("oauth/signup", { ...values, turnstile_token: botToken }); window.location.assign("/account"); break;
-        case "login": result = await request("login", values); window.location.assign(result.requires_mfa ? "/mfa" : "/account"); break;
-        case "mfa": await request("mfa/login", values); window.location.assign("/account"); break;
+        case "signup": result = await request("signup", { ...values, turnstile_token: botToken }); window.location.assign("/choose-side"); break;
+        case "oauth-signup": await request("oauth/signup", { ...values, turnstile_token: botToken }); window.location.assign("/choose-side"); break;
+        case "login": result = await request("login", values); window.location.assign(result.requires_mfa ? "/mfa" : "/"); break;
+        case "mfa": await request("mfa/login", values); window.location.assign("/"); break;
         case "forgot": await request("password/forgot", { ...values, turnstile_token: botToken }); setMessage("If that account exists, a recovery email has been queued. Check your inbox and spam folder."); break;
         case "reset": await request("password/reset", { ...values, token: linkToken }); setLinkToken(""); setMessage("Your password has been changed. Sign in again to continue."); break;
         case "verify": await request("email/verify", { token: linkToken }); setLinkToken(""); setMessage("Your email is verified. You’re ready for your next chapter."); break;
@@ -134,8 +134,8 @@ export default function AuthScreen({ screen }: { screen: string }) {
     });
   }
   const titles: Record<string, [string, string]> = {
-    login: ["Log in", "Use your email address or username."],
-    signup: ["Enlist", "Create your S.V.E.R account."],
+    login: ["Log in", "Welcome back."],
+    signup: ["Enlist", "Create your account. Watching is free and needs no account."],
     "oauth-signup": ["Finish enlisting", "Finish creating your S.V.E.R account."],
     forgot: ["Reset your password", "We’ll email you a link to set a new password."],
     reset: ["Set a new password", "Choose a new password for your account."],
@@ -165,22 +165,35 @@ export default function AuthScreen({ screen }: { screen: string }) {
 
   const isSignup = screen === "signup" || screen === "oauth-signup";
   const botRequired = isSignup || screen === "forgot";
+  const withProviders = screen === "login" || screen === "signup";
+  const providerButtons = withProviders && <div className="providers">{Object.entries(providerNames).map(([p, name]) => <button type="button" className="provider" key={p} disabled={busy || !config?.providers.includes(p)} title={!config?.providers.includes(p) ? `${name} sign-in is not configured yet` : undefined} onClick={() => oauth(p, screen === "signup" ? "signup" : "login")}><ProviderIcon name={p} /><span>Continue with {name}</span></button>)}{config && !config.providers.length && <p className="provider-note">Google, Twitch and Discord sign-in arrive once those connections are configured.</p>}</div>;
   return <div className="entry-page">
-    <section className="auth-panel panel" aria-labelledby="auth-title"><h1 id="auth-title" className="auth-title">{titles[screen][0]}</h1><p className="intro">{titles[screen][1]}</p>{notice}
-      {isSignup && <p className="signup-policy">By creating an account, you agree to the <Link href="/terms">Terms of Service</Link> and <Link href="/guidelines">Community Guidelines</Link>. Read our <Link href="/privacy">Privacy Policy</Link> to learn how we handle your information.</p>}
+    {isSignup && <SignupSteps current={1} />}
+    <section className="auth-panel frame" aria-labelledby="auth-title"><h1 id="auth-title" className="auth-title">{titles[screen][0]}</h1><p className="intro">{titles[screen][1]}</p>{notice}
+      {screen === "signup" && <>{providerButtons}<div className="divider"><span>or with email</span></div></>}
       {screen === "oauth-signup" && !pendingSignup && <p className="small-text">{error ? <Link href="/signup">Start signup again</Link> : "Checking your provider sign-in…"}</p>}
       {(screen !== "oauth-signup" || pendingSignup) && <form ref={form} onSubmit={submit}>
-        {isSignup && <>{pendingSignup && <p className="small-text">Connected with {providerNames[pendingSignup.provider]}. Confirm your username and age to finish.</p>}<UsernameField initialUsername={pendingSignup?.username} /><Field label="Date of birth" name="date_of_birth" type="date" autoComplete="bday" hint="You must be at least 13. Your birthday stays private." /></>}
+        {pendingSignup && <p className="small-text">Connected with {providerNames[pendingSignup.provider]}. Confirm your username and age to finish.</p>}
+        {screen === "signup" && <Field label="Email" name="email" type="email" autoComplete="email" maxLength={320} />}
+        {isSignup && <UsernameField initialUsername={pendingSignup?.username} />}
         {screen === "login" && <Field label="Email or username" name="identifier" autoComplete="username" maxLength={320} />}
-        {["signup", "forgot"].includes(screen) && <Field label="Email address" name="email" type="email" autoComplete="email" maxLength={320} />}
-        {["login", "signup", "reset"].includes(screen) && <Field label={screen === "reset" ? "New password" : "Password"} name="password" type="password" autoComplete={screen === "login" ? "current-password" : "new-password"} minLength={screen === "login" ? undefined : 10} maxLength={screen === "login" ? 4096 : 128} hint={screen === "login" ? undefined : "At least 10 characters. Use a unique password."} />}
+        {screen === "forgot" && <Field label="Email address" name="email" type="email" autoComplete="email" maxLength={320} />}
+        {["login", "signup", "reset"].includes(screen) && <Field label={screen === "reset" ? "New password" : "Password"} name="password" type="password" autoComplete={screen === "login" ? "current-password" : "new-password"} minLength={screen === "login" ? undefined : 10} maxLength={screen === "login" ? 4096 : 128} hint={screen === "login" ? undefined : "At least 10 characters."} />}
+        {screen === "login" && <p className="form-meta"><Link href="/forgot">Forgot password?</Link></p>}
+        {isSignup && <Field label="Date of birth" name="date_of_birth" type="date" autoComplete="bday" hint="You must be 13 or older. Never shown on your profile." />}
         {screen === "mfa" && <Field label="Authenticator or recovery code" name="code" autoComplete="one-time-code" maxLength={64} />}
-        {screen === "login" && <div className="form-meta"><span>Stay signed in securely</span><Link href="/forgot">Forgot password?</Link></div>}
         {botRequired && config && <Turnstile key={botKey} sitekey={config.turnstile_site_key} action={isSignup ? "signup" : "recovery"} onToken={setBotToken} />}
         {(screen === "reset" || screen === "verify") && !linkToken && !message && <p className="notice">Open the link from your email to continue.</p>}
-        <button className="primary" disabled={busy || (botRequired && !botToken) || ((screen === "reset" || screen === "verify") && !linkToken)}>{busy ? "Please wait…" : ({ login: "Log in", signup: "Create account", "oauth-signup": "Finish creating account", forgot: "Send recovery link", reset: "Set new password", verify: "Verify email", mfa: "Confirm code" })[screen]}</button>
+        <button className="primary" disabled={busy || (botRequired && !botToken) || ((screen === "reset" || screen === "verify") && !linkToken)}>{busy ? "Please wait…" : ({ login: "Log in", signup: "Continue", "oauth-signup": "Continue", forgot: "Send recovery link", reset: "Set new password", verify: "Verify email", mfa: "Confirm code" })[screen]}</button>
       </form>}
-      {["login", "signup"].includes(screen) && <><div className="divider"><span>OR CONTINUE WITH</span></div><div className="providers">{Object.entries(providerNames).map(([p, name]) => <button type="button" className="provider" key={p} disabled={busy || !config?.providers.includes(p)} title={!config?.providers.includes(p) ? `${name} sign-in is not configured yet` : undefined} onClick={() => oauth(p, screen === "signup" ? "signup" : "login")}><ProviderIcon name={p} /><span>{name}</span></button>)}</div>{config && !config.providers.length && <p className="provider-note">Provider sign-in will be available once connections are configured.</p>}</>}
+      {isSignup && <p className="signup-policy">By continuing you agree to the <Link href="/terms">Terms</Link> and <Link href="/guidelines">Community Guidelines</Link>, and you&apos;ve read the <Link href="/privacy">Privacy Policy</Link>.</p>}
+      {screen === "login" && <><div className="divider"><span>or</span></div>{providerButtons}</>}
       <div className="form-footer">{screen === "login" ? <>New here? <Link href="/signup">Enlist</Link></> : isSignup ? <>Already enlisted? <Link href="/login">Log in</Link></> : <Link href="/login">Back to log in</Link>}</div>
     </section></div>;
+}
+
+/** The three sign-up steps from the sign-up mockup: Account, Choose your side, Confirm email. */
+export function SignupSteps({ current }: { current: 1 | 2 | 3 }) {
+  return <ol className="signup-steps" aria-label="Sign-up steps">{["Account", "Choose your side", "Confirm email"].map((label, i) =>
+    <li key={label} className={i + 1 === current ? "on" : undefined} aria-current={i + 1 === current ? "step" : undefined}><span className="hex">{i + 1}</span>{label}</li>)}</ol>;
 }

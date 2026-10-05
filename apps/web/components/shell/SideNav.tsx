@@ -1,38 +1,39 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BeaconsIcon, BrowseIcon, FactionIcon, FollowingIcon, HomeIcon, SettingsIcon, ShieldIcon, StudioIcon, WarMapIcon } from "./Icons";
+import { FollowingIcon, HomeIcon, SettingsIcon, ShieldIcon, StudioIcon, WarMapIcon } from "./Icons";
 
-type Item = { href: string; label: string; icon: React.ReactNode; match: (path: string) => boolean; signedIn?: boolean };
+type Item = { href: string; label: string; icon: React.ReactNode; match: (path: string) => boolean };
 const under = (base: string) => (path: string) => path === base || path.startsWith(`${base}/`);
 
-const ITEMS: Item[] = [
-  { href: "/", label: "Home", icon: <HomeIcon />, match: path => path === "/" },
-  { href: "/following", label: "Following", icon: <FollowingIcon />, match: under("/following"), signedIn: true },
-  { href: "/studio/channel", label: "Creator Studio", icon: <StudioIcon />, match: under("/studio"), signedIn: true },
-  { href: "/settings/profile", label: "Settings", icon: <SettingsIcon />, match: under("/settings"), signedIn: true },
-  { href: "/account", label: "Account security", icon: <ShieldIcon />, match: under("/account"), signedIn: true }
-];
-
-// Destinations from docs/DESIGN.md that aren't built yet. They are shown, but never linked,
-// until their routes exist (Browse and the war map with Modules 4–5, Beacons with Module 8).
-const SOON = [
-  { label: "Browse", icon: <BrowseIcon /> },
-  { label: "Beacons", icon: <BeaconsIcon /> },
-  { label: "War map", icon: <WarMapIcon /> },
-  { label: "Faction hub", icon: <FactionIcon /> }
-];
-
-/** Main sidebar navigation. A client component only so the active item can follow the pathname. */
-export function SideNav({ signedIn }: { signedIn: boolean }) {
+/**
+ * Main sidebar navigation (docs/DESIGN.md "Layout"). Only destinations that exist are listed:
+ * Browse, Beacons, the war map and the faction hub join this list when their modules ship,
+ * rather than sitting here greyed out.
+ */
+export function SideNav({ signedIn, faction }: { signedIn: boolean; faction: { name: string; slug: string } | null }) {
   const pathname = usePathname() ?? "/";
+  const main: Item[] = [
+    { href: "/", label: "Home", icon: <HomeIcon />, match: path => path === "/" },
+    ...(signedIn ? [{ href: "/following", label: "Following", icon: <FollowingIcon />, match: under("/following") }] : []),
+    {
+      href: "/factions", label: faction ? `${faction.name} hub` : "Factions",
+      icon: faction ? <Image src={`/factions/${faction.slug}.webp`} width={18} height={18} alt="" unoptimized /> : <WarMapIcon />,
+      match: under("/factions")
+    },
+  ];
+  const yours: Item[] = signedIn ? [
+    { href: "/studio/channel", label: "Creator Studio", icon: <StudioIcon />, match: under("/studio") },
+    { href: "/settings/profile", label: "Settings", icon: <SettingsIcon />, match: under("/settings") },
+    { href: "/account", label: "Account security", icon: <ShieldIcon />, match: under("/account") },
+  ] : [];
+  const list = (items: Item[]) => <ul>{items.map(item => {
+    const active = item.match(pathname);
+    return <li key={item.href}><Link href={item.href} className="nav-item" aria-current={active ? "page" : undefined}>{item.icon}<span>{item.label}</span></Link></li>;
+  })}</ul>;
   return <nav className="side-nav" aria-label="Main">
-    <ul>
-      {ITEMS.filter(item => signedIn || !item.signedIn).map(item => {
-        const active = item.match(pathname);
-        return <li key={item.href}><Link href={item.href} className="nav-item" aria-current={active ? "page" : undefined}>{item.icon}<span>{item.label}</span></Link></li>;
-      })}
-      {SOON.map(item => <li key={item.label}><span className="nav-item soon" aria-disabled="true">{item.icon}<span>{item.label}</span><span className="soon-chip">Soon</span></span></li>)}
-    </ul>
+    {list(main)}
+    {yours.length > 0 && <><span className="side-label nav-group">Your channel</span>{list(yours)}</>}
   </nav>;
 }

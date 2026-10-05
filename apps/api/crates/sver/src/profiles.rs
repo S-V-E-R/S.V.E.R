@@ -337,7 +337,7 @@ pub fn chip(app: &App, user: &ChannelUser) -> Value {
 pub fn chip_sql(alias: &'static str) -> String {
     // jsonb chip built in SQL for list queries; the web maps avatar keys through `media_base`.
     format!(
-        "jsonb_build_object('username',CASE WHEN {a}.deleted_at IS NULL THEN {a}.username END,'display_name',CASE WHEN {a}.deleted_at IS NOT NULL THEN 'Deleted user' WHEN {a}.eligible THEN {a}.display_name ELSE {a}.username END,'avatar_key',CASE WHEN {a}.eligible THEN {a}.avatar_key END,'linked',{a}.eligible,'deleted',{a}.deleted_at IS NOT NULL,'live',{a}.eligible AND {live})",
+        "jsonb_build_object('username',CASE WHEN {a}.deleted_at IS NULL THEN {a}.username END,'display_name',CASE WHEN {a}.deleted_at IS NOT NULL THEN 'Deleted user' WHEN {a}.eligible THEN {a}.display_name ELSE {a}.username END,'avatar_key',CASE WHEN {a}.eligible THEN {a}.avatar_key END,'linked',{a}.eligible,'deleted',{a}.deleted_at IS NOT NULL,'live',{a}.eligible AND {live},'faction',CASE WHEN {a}.eligible AND {a}.deleted_at IS NULL THEN (SELECT f.faction FROM users f WHERE f.id={a}.id) END)",
         a = alias,
         live = crate::playback::live_sql(&format!("{alias}.id"))
     )
@@ -466,7 +466,7 @@ pub async fn channel(
             "song": song,
             "song_notice": song_notice,
             "live": crate::playback::is_live(&mut db, &user.id).await?,
-            "faction": null,
+            "faction": crate::factions::of(&mut db, &user.id).await?,
         },
         "tabs": {
             "wall": true,

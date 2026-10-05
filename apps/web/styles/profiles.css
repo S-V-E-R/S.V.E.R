@@ -180,3 +180,15 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .raid-countdown{position:absolute;left:50%;bottom:64px;transform:translateX(-50%);margin:0;padding:8px 14px;background:var(--surface);border:1px solid var(--accent);text-align:center;display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center;max-width:calc(100% - 32px)}
 .hosting-bar{margin:0;padding:6px 12px;background:var(--surface);border-bottom:1px solid var(--line)}
 .chat-system{margin:0 0 8px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--surface)}
+/* Offline with no banner: a short strip with the owner's crest instead of an empty 3:1 box. */
+.player-slot.no-banner:not(:has(.live-player)){aspect-ratio:auto;height:150px}
+.player-slot .default-banner{display:flex;align-items:center;justify-content:center;background:radial-gradient(60% 120% at 50% 0%,var(--tint),transparent) ,var(--surface)}
+.default-banner img{opacity:.35}
+.faction-line{display:flex;align-items:center;gap:8px;margin:6px 0 0;font-family:var(--font-label);font-weight:700;font-size:14px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.channel[data-theme]{background:radial-gradient(80% 380px at 50% 0%,var(--accent-deep),transparent)}
+/* Creator Studio navigation groups */
+.studio-nav-group{display:flex;flex-direction:column;gap:2px;margin-bottom:14px}
+.studio-nav-label{padding:0 10px 4px;font-family:var(--font-label);font-weight:700;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-dim)}
+.studio-nav a{padding:7px 10px}
+.studio-nav .studio-view{margin-top:4px;color:var(--accent-light)}
+@media(max-width:900px){.studio-nav{flex-direction:column}.studio-nav-group{flex-direction:row;flex-wrap:wrap;margin-bottom:6px}.studio-nav-label{width:100%}}

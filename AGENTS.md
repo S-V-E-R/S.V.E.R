@@ -127,6 +127,7 @@ The old codebase is frozen as a reference (tag `legacy-web-final`). It is a spec
 - `./scripts/dev.ps1 test` passes before you call a module done.
 - Every endpoint validates input and checks permissions.
 - Accessible markup: real buttons and links, labels on inputs, keyboard reachable.
+- UI matches the mockups in `docs/design/` (rules in `docs/design/README.md`). Every UI pull request includes 1440 px and 390 px screenshots of each changed page beside its mockup; any deliberate difference is listed and needs Joe's approval.
 
 ## When a task is done
 

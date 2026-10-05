@@ -8,6 +8,8 @@ import { SideNav } from "../components/shell/SideNav";
 import type { PeoplePage } from "../components/People";
 import { apiGet } from "../lib/server-api";
 import { themeFor } from "../lib/theme";
+import { factionOf } from "../lib/factions";
+import { Crest } from "../components/Crest";
 import { currentAccount, hasAlerts } from "./session";
 import "./globals.css";
 import "../styles/profiles.css";
@@ -41,14 +43,15 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const [alerts, live] = account ? await Promise.all([hasAlerts(), followingLive()]) : [false, []];
   const initial = account?.username.slice(0, 1).toUpperCase();
 
+  const faction = factionOf(account?.faction);
+
   const actions = account
     ? <>
       <StaffRemovalAlerts />
       <Link href="/notifications" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
       <Link href={`/${account.username}`} className="player-chip">
-        {/* Crest placeholder until Module 4 gives the account a faction. */}
-        <span className="crest-slot" aria-hidden="true">{initial}</span>
-        <span className="player-chip-name">@{account.username}</span>
+        <Crest faction={account.faction} initial={initial ?? "?"} size={36} label={faction?.name} />
+        <span className="player-chip-text"><span className="player-chip-name">{account.username}</span>{faction && <span className="player-chip-title">{faction.title}</span>}</span>
       </Link>
     </>
     : <>
@@ -57,16 +60,21 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     </>;
 
   const sidebar = <>
-    {account && <Link href={`/${account.username}`} className="player-card frame">
-      <span className="crest-slot large" aria-hidden="true">{initial}</span>
-      <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">No faction yet</span></span>
-    </Link>}
-    <SideNav signedIn={!!account} />
+    {account && (faction
+      ? <Link href={`/${account.username}`} className="player-card frame">
+        <Crest faction={account.faction} initial={initial ?? "?"} size={56} label={faction.name} />
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">{faction.title}</span></span>
+      </Link>
+      : <Link href="/choose-side" className="player-card frame unchosen">
+        <Crest faction={null} initial={initial ?? "?"} size={56} />
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side →</span></span>
+      </Link>)}
+    <SideNav signedIn={!!account} faction={faction ? { name: faction.name, slug: faction.slug } : null} />
     {account && <section className="side-section" aria-labelledby="following-live">
       <div className="side-label"><span id="following-live">Following · live</span><span className="magnet"><MagnetMark />MAGNet</span></div>
       {live.length === 0
         ? <p className="side-empty">Nobody you follow is live.</p>
-        : <ul className="side-channels">{live.map(user => <li key={user.username}><Link href={`/${user.username}`}><span className="crest-slot small" aria-hidden="true">{user.display_name.slice(0, 1).toUpperCase()}</span><span className="side-channel-name">{user.display_name}</span><span className="live-dot" aria-hidden="true" /><span className="sr-only">, live</span></Link></li>)}</ul>}
+        : <ul className="side-channels">{live.map(user => <li key={user.username}><Link href={`/${user.username}`}><Crest faction={user.faction ?? null} initial={user.display_name.slice(0, 1).toUpperCase()} size={30} /><span className="side-channel-name">{user.display_name}</span><span className="live-dot" aria-hidden="true" /><span className="sr-only">, live</span></Link></li>)}</ul>}
     </section>}
   </>;
 

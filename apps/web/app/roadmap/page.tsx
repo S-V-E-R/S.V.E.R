@@ -35,7 +35,7 @@ export default async function RoadmapPage() {
     </section>
     <section className="site-prose" aria-labelledby="updates-title">
       <h2 id="updates-title">Follow the work</h2>
-      <p>S.V.E.R is open source under AGPL-3.0. The <a href="https://github.com/S-V-E-R/sver">source repository</a> and <a href="https://github.com/S-V-E-R/sver/blob/main/docs/ROADMAP.md">development roadmap</a> track the work. If something available today is broken, <Link href="/contact">contact support</Link>.</p>
+      <p>S.V.E.R is open source under AGPL-3.0. The <a href="https://github.com/S-V-E-R/S.V.E.R">source repository</a> and <a href="https://github.com/S-V-E-R/S.V.E.R/blob/main/docs/ROADMAP.md">development roadmap</a> track the work. If something available today is broken, <Link href="/contact">contact support</Link>.</p>
     </section>
   </SitePage>;
 }
