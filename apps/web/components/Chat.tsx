@@ -242,7 +242,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
         {m.author.username ? <Link className="faction-name" data-faction={m.author.faction} href={`/${m.author.username}`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
         {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber`}>{subBadge(m.sub.months)}</span>}
-        {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet Hype">MAGNet</span>}
+        {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet">MAGNet</span>}
         {m.role && <span className="badge">{{ owner: "Broadcaster", moderator: "Moderator", staff: "Staff" }[m.role]}</span>}: <MessageBody message={m} account={account} emotes={emotes} />
         <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.author.display_name}`}>Actions</summary><div className="chat-message-controls">
         {account && <button type="button" className="small quiet" aria-label={`Reply to ${m.author.display_name}`} onClick={() => { setReply({ id: m.id, username: m.author.username, body: Array.from(m.body.replace(/[\r\n]+/g, " ")).slice(0, 80).join("") }); input.current?.focus(); }}>Reply</button>}

@@ -34,11 +34,11 @@ export default function StudioMagnet() {
       <button type="button" className="small" onClick={flag}>Flag this moment</button> <span className="muted">Also <code>/flag</code> in your chat; once every 10 minutes.</span>
     </Section>
     <Section title="Settings">
-      <label className="checkbox"><input type="checkbox" checked={!data.opt_out} onChange={e => save({ opt_out: !e.target.checked })} /> Feature my streams in MAGNet Hype</label>
-      <label className="checkbox"><input type="checkbox" checked={data.chat_merge} onChange={e => save({ chat_merge: e.target.checked })} /> Merge Hype chat into my chat while I&apos;m featured</label>
+      <label className="checkbox"><input type="checkbox" checked={!data.opt_out} onChange={e => save({ opt_out: !e.target.checked })} /> Feature my streams in MAGNet</label>
+      <label className="checkbox"><input type="checkbox" checked={data.chat_merge} onChange={e => save({ chat_merge: e.target.checked })} /> Merge MAGNet chat into my chat while I&apos;m featured</label>
     </Section>
     <Section title="Feature history" intro="The last 30 days. Who stayed to follow or chat is shown to you only and never used for scoring.">
-      {data.history.length === 0 ? <p className="muted">No features yet.</p> : <table className="table"><thead><tr><th>Started</th><th>Lane</th><th>Why</th><th>Length</th><th>Hype viewers</th><th>Followed</th><th>Chatted</th></tr></thead>
+      {data.history.length === 0 ? <p className="muted">No features yet.</p> : <table className="table"><thead><tr><th>Started</th><th>Lane</th><th>Why</th><th>Length</th><th>MAGNet viewers</th><th>Followed</th><th>Chatted</th></tr></thead>
         <tbody>{data.history.map(f => <tr key={f.started_at + f.lane}><td>{new Date(f.started_at).toLocaleString()}</td><td>{f.name}</td><td>{f.reason}</td><td>{minutes(f.seconds)}</td><td>{f.hype_viewers}</td><td>{f.followed}</td><td>{f.chatted}</td></tr>)}</tbody></table>}
     </Section>
     {message && <p role="status" className="form-message">{message}</p>}

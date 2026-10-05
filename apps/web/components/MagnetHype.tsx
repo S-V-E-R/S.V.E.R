@@ -12,7 +12,7 @@ type Lane = { id: string; name: string; enabled: boolean; featured: Featured | n
 type LaneLink = { id: string; name: string; enabled: boolean; featuring: string | null };
 
 /**
- * A MAGNet Hype channel (docs/MAGNET.md "What the viewer sees"): one player on the featured
+ * A MAGNet channel (docs/MAGNET.md "What the viewer sees"): one player on the featured
  * stream with a one-line reason, a 5-second countdown with a still of the next stream and Stay,
  * and a holding card for viewers who can't watch the featured channel.
  */
