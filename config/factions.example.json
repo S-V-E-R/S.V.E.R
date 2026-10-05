@@ -1,0 +1,12 @@
+{
+  "starts_at": "2026-10-01T00:00:00Z",
+  "points_per_second": [10, 10],
+  "chat_points": 1,
+  "supporter_points": 2,
+  "daily_caps": [1000, 1000, 10, 10],
+  "chat_hourly_cap": 3,
+  "minimum_divisor": 2,
+  "flip_margin_bps": 100,
+  "neutral_minimum": 10,
+  "board_slow_seconds": 30
+}

@@ -10,7 +10,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const { status } = await apiGet("/api/admin/appeals");
   if (status !== 200) notFound();
   return <div className="settings-page">
-    <nav className="settings-nav" aria-label="Admin"><span className="eyebrow">MODERATION</span><Link href="/admin/take-it-down">Take It Down</Link><Link href="/admin/reports">Reports</Link><Link href="/admin/appeals">Appeals</Link><Link href="/admin/bans">Bans</Link><Link href="/admin/streams">Live streams</Link><Link href="/admin/integrity">Integrity</Link><Link href="/admin/media">Media review</Link><Link href="/admin/parts">Setup parts</Link></nav>
+    <nav className="settings-nav" aria-label="Admin"><span className="eyebrow">MODERATION</span><Link href="/admin/take-it-down">Take It Down</Link><Link href="/admin/reports">Reports</Link><Link href="/admin/appeals">Appeals</Link><Link href="/admin/bans">Bans</Link><Link href="/admin/streams">Live streams</Link><Link href="/admin/categories">Categories</Link><Link href="/admin/factions">Factions</Link><Link href="/admin/integrity">Integrity</Link><Link href="/admin/media">Media review</Link><Link href="/admin/parts">Setup parts</Link></nav>
     <div className="settings-body">{children}</div>
     <StaffStepUp />
   </div>;

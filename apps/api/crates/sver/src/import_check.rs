@@ -284,6 +284,9 @@ async fn main() -> Result<(), String> {
     if args.first().map(String::as_str) == Some("profiles") {
         return profiles(config, &database, &url, &args[1..]).await;
     }
+    if args.first().map(String::as_str) == Some("factions") {
+        return factions(config, &database, &url, &args[1..]).await;
+    }
     let mode = args.get(1).map(String::as_str).unwrap_or("rehearsal");
     if args.is_empty()
         || args.len() > 2
@@ -461,6 +464,93 @@ fn outside_workspace(path: &str, what: &'static str) -> Result<PathBuf, String> 
         return Err(format!("{what} must remain outside the workspace"));
     }
     Ok(path)
+}
+
+/// Import preserved account selections using a mapping exported from the restored legacy Faction table.
+async fn factions(
+    config: Config,
+    database: &str,
+    url: &url::Url,
+    args: &[String],
+) -> Result<(), String> {
+    if args.len() != 2
+        || !matches!(
+            args[1].as_str(),
+            "--check" | "--apply" | "--check-live" | "--apply-live"
+        )
+    {
+        return Err("Usage: sver-import-check factions EXTERNAL_ID_TO_SLUG_JSON --check|--apply|--check-live|--apply-live".into());
+    }
+    let live = args[1].ends_with("-live");
+    if !matches!(url.host_str(), Some("localhost" | "127.0.0.1"))
+        || if live {
+            !config.production
+                || config.origin != "https://sver.tv"
+                || url.path() != "/sver_stage"
+                || url.username() != "sver_stage"
+                || url.port() != Some(15432)
+        } else {
+            config.production || url.path() != "/sver_rebuild"
+        }
+    {
+        return Err("Target refused: use the loopback development database or the dedicated live rebuild database.".into());
+    }
+    let path = outside_workspace(&args[0], "Legacy faction mapping")?;
+    let map: HashMap<String, String> =
+        serde_json::from_slice(&std::fs::read(path).map_err(|_| "Mapping unreadable")?)
+            .map_err(|_| "Invalid faction mapping JSON")?;
+    if map.is_empty() || map.values().any(|slug| !sver::factions::valid(slug)) {
+        return Err("Mapping must contain only known faction slugs.".into());
+    }
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database)
+        .await
+        .map_err(|_| "Import database unavailable")?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|_| "Import transaction failed")?;
+    sqlx::query("SET LOCAL lock_timeout='10s'")
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| "Could not set lock timeout")?;
+    let rows = sver::auth::legacy_factions(&mut tx)
+        .await
+        .map_err(|_| "Preserved membership read failed")?;
+    if rows.iter().any(|(_, id, _)| !map.contains_key(id)) {
+        return Err("A preserved faction ID is missing from the mapping; nothing changed.".into());
+    }
+    let mut imported = 0;
+    for (user, id, chosen) in &rows {
+        if sver::factions::import_membership(&mut tx, user, &map[id], *chosen)
+            .await
+            .map_err(|_| "Membership import failed; rolled back")?
+        {
+            imported += 1;
+        }
+    }
+    let apply = args[1].starts_with("--apply");
+    if apply {
+        tx.commit().await.map_err(|_| "Import commit failed")?;
+    } else {
+        tx.rollback()
+            .await
+            .map_err(|_| "Import check rollback failed")?;
+    }
+    println!(
+        "Faction import {}: {} preserved selections; {} new memberships; {} existing choices kept.",
+        if apply {
+            "applied"
+        } else {
+            "checked and rolled back"
+        },
+        rows.len(),
+        imported,
+        rows.len() - imported
+    );
+    pool.close().await;
+    Ok(())
 }
 
 fn print_counts(title: &str, counts: &profile_import::Counts) {

@@ -9,7 +9,7 @@ const under = (base: string) => (path: string) => path === base || path.startsWi
 
 /**
  * Main sidebar navigation (docs/DESIGN.md "Layout"). Only destinations that exist are listed:
- * Browse, Beacons, the war map and the faction hub join this list when their modules ship,
+ * Browse and Beacons join this list when their modules ship,
  * rather than sitting here greyed out.
  */
 export function SideNav({ signedIn, faction }: { signedIn: boolean; faction: { name: string; slug: string } | null }) {
@@ -18,10 +18,11 @@ export function SideNav({ signedIn, faction }: { signedIn: boolean; faction: { n
     { href: "/", label: "Home", icon: <HomeIcon />, match: path => path === "/" },
     ...(signedIn ? [{ href: "/following", label: "Following", icon: <FollowingIcon />, match: under("/following") }] : []),
     {
-      href: "/factions", label: faction ? `${faction.name} hub` : "Factions",
+      href: faction ? `/factions/${faction.slug}` : "/factions", label: faction ? `${faction.name} hub` : "Factions",
       icon: faction ? <Image src={`/factions/${faction.slug}.webp`} width={18} height={18} alt="" unoptimized /> : <WarMapIcon />,
       match: under("/factions")
     },
+    { href: "/war-map", label: "War map", icon: <WarMapIcon />, match: under("/war-map") },
   ];
   const yours: Item[] = signedIn ? [
     { href: "/studio/channel", label: "Creator Studio", icon: <StudioIcon />, match: under("/studio") },

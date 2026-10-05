@@ -64,6 +64,7 @@ pub struct Config {
     pub streaming: Option<streams::Config>,
     pub playback: playback::Config,
     pub integrity: integrity::Tuning,
+    pub factions: factions::Tuning,
     pub take_down: take_down::Config,
     pub staff_push: staff_push::Config,
 }
@@ -128,6 +129,7 @@ impl Config {
             streaming: streams::Config::from_env()?,
             playback: playback::Config::from_env(production)?,
             integrity: integrity::Tuning::from_env()?,
+            factions: factions::Tuning::from_env(production)?,
             take_down: take_down::Config::from_env(),
             staff_push: staff_push::Config::from_env(),
             youtube_oembed_url: "https://www.youtube.com/oembed".into(),
@@ -369,6 +371,7 @@ pub fn router(app: App) -> Router {
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(staff_streams::routes())
+        .merge(factions::routes())
         .merge(moderation::routes())
         .merge(bans::routes())
         .merge(integrity::routes())
@@ -417,10 +420,6 @@ fn profile_routes() -> Router<App> {
         )
         .route("/api/me/following", get(so::my_following))
         .route("/api/me/suggestions", get(so::suggestions))
-        .route(
-            "/api/me/faction",
-            get(crate::factions::mine).put(crate::factions::choose),
-        )
         .route(
             "/api/me/profile",
             get(p::my_profile).patch(p::update_profile),

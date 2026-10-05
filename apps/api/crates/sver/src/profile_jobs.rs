@@ -15,6 +15,9 @@ pub async fn erase(db: &mut PgConnection, user_id: &str) -> Result<()> {
         return Ok(());
     };
     crate::streams::revoke(db, user_id).await?;
+    crate::factions::erase(db, user_id)
+        .await
+        .map_err(|_| crate::Error::internal())?;
     // Their playback sessions on other channels; leases on their own broadcasts cascade.
     sqlx::query("DELETE FROM playback_leases WHERE viewer_key='u:'||$1")
         .bind(user_id)

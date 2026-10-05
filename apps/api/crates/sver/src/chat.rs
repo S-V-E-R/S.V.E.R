@@ -325,6 +325,7 @@ async fn send(app: &App, jar: &CookieJar, channel: &str, input: Send) -> Res<Val
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
+    crate::factions::chat(app, &mut tx, channel, &user.id, &input.id).await?;
     tx.commit().await?;
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1", select())))

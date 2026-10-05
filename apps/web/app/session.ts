@@ -1,19 +1,15 @@
 import { cache } from "react";
+import { isFaction, type Faction } from "../lib/factions";
 import { cookies } from "next/headers";
-import type { FactionSlug } from "../lib/factions";
 
-export type Account = { username: string; faction: FactionSlug | null };
-
-export const currentAccount = cache(async (): Promise<Account | null> => {
+export const currentAccount = cache(async (): Promise<{ username: string; faction: Faction | null; email_verified: boolean; deletion_due: string | null } | null> => {
   const jar = await cookies();
   if (!jar.has("__Host-sver") && !jar.has("sver_dev")) return null;
   try {
     const response = await fetch(`${process.env.API_INTERNAL_ORIGIN || "http://127.0.0.1:8080"}/api/auth/me`, { headers: { cookie: jar.toString() }, cache: "no-store" });
     if (!response.ok) return null;
     const account = await response.json();
-    if (typeof account.username !== "string") return null;
-    const faction = ["myria", "aetheron", "glint"].includes(account.faction) ? account.faction as FactionSlug : null;
-    return { username: account.username, faction };
+    return typeof account.username === "string" ? { username: account.username, faction: isFaction(account.faction) ? account.faction : null, email_verified: account.email_verified === true, deletion_due: account.deletion_due ?? null } : null;
   } catch {
     return null;
   }

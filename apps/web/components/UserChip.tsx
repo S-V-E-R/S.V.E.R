@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { send } from "../lib/client-api";
 import { joined, platformNames, type Chip, type Sizes } from "../lib/types";
+import { Crest } from "./FactionIdentity";
 import { Avatar } from "./Avatar";
 
 type Card = { username: string; display_name: string; avatar: Sizes; bio: string; follower_count: number; joined_at: string; viewer: { signed_in: boolean; is_self: boolean; following: boolean; blocked: boolean }; live: boolean; also_known_as?: { platform: string; handle: string; url: string | null }[] };
@@ -37,7 +38,7 @@ export function UserChip({ user, size = 32 }: { user: Chip; size?: number }) {
     if (result.ok) setCard({ ...card, follower_count: result.data.follower_count, viewer: { ...card.viewer, following: result.data.following } });
   }
   return <span className="chip" ref={root}>
-    <button type="button" className="chip-button" aria-expanded={open} onClick={toggle}><Avatar sizes={user.avatar} name={user.display_name} size={size} /><span><strong>{user.display_name}</strong> <span className="handle">@{username}</span>{user.live && <> <span className="live badge">Live</span></>}</span></button>
+    <button type="button" className="chip-button" aria-expanded={open} onClick={toggle}><Avatar sizes={user.avatar} name={user.display_name} size={size} />{user.faction && <Crest faction={user.faction} size={18} />}<span><strong className="faction-name" data-faction={user.faction}>{user.display_name}</strong> <span className="handle">@{username}</span>{user.live && <> <span className="live badge">Live</span></>}</span></button>
     {open && <span className="user-card panel" role="dialog" aria-label={`${user.display_name} (@${username})`}>
       {error ? <span className="muted">{error}</span> : !card ? <span className="muted">Loading…</span> : <>
         <span className="card-head"><Avatar sizes={card.avatar} name={card.display_name} size={64} /><span><strong>{card.display_name}</strong><span className="handle">@{card.username}</span></span></span>

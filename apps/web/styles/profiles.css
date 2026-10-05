@@ -99,6 +99,7 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .live-player video{display:block;width:100%;aspect-ratio:16/9;background:#000}
 .live-player.focused video{max-height:calc(100vh - 160px)}
 .player-status,.player-action{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);margin:0;padding:8px 14px;background:var(--surface);border:1px solid var(--line);text-align:center}
+.player-action{color:var(--ink);max-width:calc(100% - 24px)}
 .live-meta{margin:0;padding:10px 14px;background:var(--surface);border-top:1px solid var(--line)}
 .live.badge{border-color:var(--live);background:var(--live);color:#fff}
 .watch{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}

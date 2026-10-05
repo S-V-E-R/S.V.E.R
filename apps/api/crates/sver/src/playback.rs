@@ -6,7 +6,7 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::HeaderMap,
     routing::{get, post},
 };
@@ -225,6 +225,67 @@ pub async fn beat(
     }))
 }
 
+#[derive(Deserialize, Default)]
+struct DirectoryQuery {
+    #[serde(default)]
+    page: u32,
+}
+type DirectoryRow = (String, DateTime<Utc>, String, Option<String>, i64);
+
+/// Public home shelves. MAGNet's weighted rotation remains Module 5.
+async fn directory(
+    State(app): State<App>,
+    Query(query): Query<DirectoryQuery>,
+) -> Res<Json<Value>> {
+    if query.page > 100_000 {
+        return Err(Fail::bad("Invalid page."));
+    }
+    let mut db = app.db.acquire().await?;
+    let mut shelves = json!({"as_of": Utc::now()});
+    for recent in [false, true] {
+        // Page candidates by broadcast start, never viewer count. Recent channels are unique.
+        let rows: Vec<DirectoryRow> = sqlx::query_as(
+            "SELECT b.owner_id,b.started_at,coalesce(s.title,'Live stream'),c.name,
+             (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted'))
+             FROM (SELECT DISTINCT ON (owner_id) id,owner_id,started_at,state,reconnect_deadline,end_reason FROM broadcasts ORDER BY owner_id,started_at DESC,id DESC) b
+             LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id
+             WHERE CASE WHEN $1 THEN b.state='ENDED' AND b.end_reason IS DISTINCT FROM 'revoked' ELSE b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>now()) END
+             ORDER BY b.started_at DESC,b.owner_id LIMIT 25 OFFSET $2",
+        ).bind(recent).bind(if recent { 0 } else { i64::from(query.page) * 24 }).fetch_all(&mut *db).await?;
+        if !recent {
+            shelves["has_more"] = json!(rows.len() > 24);
+        }
+        let ids: Vec<_> = rows.iter().take(24).map(|r| r.0.clone()).collect();
+        let users = profiles::public_channels(&mut db, &ids).await?;
+        let items: Vec<_> = rows.into_iter().take(24).filter_map(|(id, started_at, title, category, viewers)| {
+            let user = users.iter().find(|u| u.id == id)?;
+            Some(json!({"user": profiles::chip(&app, user), "banner": profiles::banner_json(&app,user.banner_key.as_deref()), "started_at":started_at,"title":title,"category":category,"viewers":viewers,"live":!recent}))
+        }).collect();
+        shelves[if recent { "recent" } else { "live" }] = json!(items);
+    }
+    Ok(Json(shelves))
+}
+
+/// A circular queue advances one place every 30 seconds. Every faction stream gets a turn;
+/// viewer counts only label the result. Module 5 can replace this with its full MAGNet scheduler.
+pub async fn faction_streams(
+    app: &App,
+    db: &mut PgConnection,
+    faction: &str,
+    at: DateTime<Utc>,
+) -> Res<Vec<Value>> {
+    let rows:Vec<DirectoryRow>=sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "WITH live AS (SELECT b.*,row_number() OVER(ORDER BY b.started_at,b.id)-1 AS pos,count(*) OVER() AS total FROM broadcasts b WHERE b.state='LIVE' AND {}=$1)
+         SELECT b.owner_id,b.started_at,coalesce(s.title,'Live stream'),c.name,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) FROM live b LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id ORDER BY (b.pos-$2%b.total+b.total)%b.total LIMIT 12",
+        crate::factions::membership_sql("b.owner_id"))))
+        .bind(faction).bind(at.timestamp().div_euclid(30)).fetch_all(&mut *db).await?;
+    let users =
+        profiles::public_channels(db, &rows.iter().map(|r| r.0.clone()).collect::<Vec<_>>())
+            .await?;
+    Ok(rows.into_iter().filter_map(|(id,started_at,title,category,viewers)| {
+        users.iter().find(|u|u.id==id).map(|u|json!({"user":profiles::chip(app,u),"banner":profiles::banner_json(app,u.banner_key.as_deref()),"started_at":started_at,"title":title,"category":category,"viewers":viewers,"live":true}))
+    }).take(6).collect())
+}
 /// One public live channel for the homepage list.
 type LiveRow = (
     String,
@@ -244,9 +305,9 @@ type LiveRow = (
 /// ranked on.
 pub async fn live_now(State(app): State<App>) -> Res<Json<Value>> {
     let rows: Vec<LiveRow> = sqlx::query_as(
-        "SELECT cu.username,cu.display_name,cu.avatar_key,u.faction,coalesce(s.title,cu.username||'''s stream'),c.name,c.genre,b.started_at,\
+        "SELECT cu.username,cu.display_name,cu.avatar_key,(SELECT fm.faction FROM faction_members fm WHERE fm.user_id=b.owner_id),coalesce(s.title,cu.username||'''s stream'),c.name,c.genre,b.started_at,\
          (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) \
-         FROM broadcasts b JOIN channel_users cu ON cu.id=b.owner_id JOIN users u ON u.id=b.owner_id \
+         FROM broadcasts b JOIN channel_users cu ON cu.id=b.owner_id \
          LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id \
          WHERE b.state IN ('LIVE','RECONNECTING') AND cu.eligible AND cu.deleted_at IS NULL \
          ORDER BY md5(b.id||date_trunc('hour',now())::text) LIMIT 120",
@@ -269,6 +330,7 @@ pub async fn live_now(State(app): State<App>) -> Res<Json<Value>> {
 
 pub fn routes() -> Router<App> {
     Router::new()
+        .route("/api/streams", get(directory))
         .route("/api/live", get(live_now))
         .route("/api/channels/{username}/live", get(live))
         .route("/api/channels/{username}/live/beat", post(beat))

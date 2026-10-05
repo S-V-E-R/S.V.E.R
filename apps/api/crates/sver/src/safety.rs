@@ -51,6 +51,7 @@ pub const FIELDS: &[&str] = &[
     "header",
 ];
 const TARGETS: &[&str] = &[
+    "faction_post",
     "emote",
     "profile",
     "wall_post",
@@ -185,8 +186,15 @@ struct Target {
     snapshot: Value,
 }
 /// Resolves a report target that the reporter can currently see.
-async fn target(db: &mut PgConnection, kind: &str, id: &str, field: Option<&str>) -> Res<Target> {
+async fn target(
+    db: &mut PgConnection,
+    kind: &str,
+    id: &str,
+    field: Option<&str>,
+    reporter: &str,
+) -> Res<Target> {
     let row: Option<(String, String, Value)> = match kind {
+        "faction_post" => crate::factions::target(db,id,reporter).await?,
         "emote" => crate::emotes::target(db, id).await?,
         "profile" => {
             let user = profiles::eligible_by_name(db, id).await?.ok_or_else(Fail::missing)?;
@@ -245,6 +253,7 @@ pub async fn report(
         &input.target_type,
         &input.target_id,
         input.field.as_deref(),
+        &user.id,
     )
     .await?;
     if target.owner_id == user.id {
@@ -852,6 +861,9 @@ async fn reset_field(
 }
 /// Hides a wall post, reply or fan art item; returns the reference used to restore it on overturn.
 async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Value> {
+    if kind == "faction_post" {
+        return crate::factions::remove(db, id).await;
+    }
     if kind == "emote" {
         return crate::emotes::remove(db, id).await;
     }
@@ -925,6 +937,7 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
 }
 async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
     let owner: Option<String> = match kind {
+        "faction_post" => crate::factions::owner(db, id).await?,
         "emote" => crate::emotes::owner(db, id).await?,
         "profile" => {
             sqlx::query_scalar("SELECT id FROM users WHERE id=$1")
@@ -995,6 +1008,7 @@ async fn current_content(
             Ok(v) => v,
             Err(_) => Value::Null,
         },
+        "faction_post" => crate::factions::snapshot(db,id).await?,
         "wall_post" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM wall_posts WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "wall_reply" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM wall_replies WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "setup_photo" => sqlx::query_scalar("SELECT jsonb_build_object('image',image_key||'/400.webp','alt',alt,'status',status) FROM setup_photos WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
@@ -1485,6 +1499,10 @@ pub async fn decide(
                 continue;
             };
             let table = match kind {
+                "faction_post" => {
+                    crate::factions::restore(&mut tx, item_id, previous).await?;
+                    continue;
+                }
                 "emote" => {
                     crate::emotes::restore(&mut tx, item_id, previous).await?;
                     continue;

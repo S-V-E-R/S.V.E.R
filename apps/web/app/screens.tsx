@@ -2,6 +2,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Turnstile } from "../components/Turnstile";
+import { isFaction } from "../lib/factions";
 import { Avatar } from "../components/Avatar";
 import type { Sizes } from "../lib/types";
 
@@ -83,6 +84,8 @@ export default function AuthScreen({ screen }: { screen: string }) {
     const params = new URLSearchParams(window.location.hash.slice(1));
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the link token is read from the URL hash, which only exists on the client
     setLinkToken(params.get("token") || "");
+    const preferred = new URLSearchParams(window.location.search).get("faction");
+    if (isFaction(preferred)) sessionStorage.setItem("preferred-faction", preferred);
     const providerError = new URLSearchParams(window.location.search).get("error");
     if (providerError) setError(providerError);
     if (window.location.hash || providerError) history.replaceState(null, "", window.location.pathname);

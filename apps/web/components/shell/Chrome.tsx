@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { CloseIcon, MenuIcon, SearchIcon } from "./Icons";
 
 // Sign-in screens get no sidebar and a minimal top bar (docs/DESIGN.md "Pages": sign up, log in, …).
-const AUTH_ROUTES = new Set(["login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "welcome"]);
+const AUTH_ROUTES = new Set(["login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "welcome", "choose-side", "choose-faction"]);
 
 type Props = {
   /** Right side of the full top bar: notifications and player chip, or Log in and Enlist. */
@@ -51,7 +51,7 @@ export function Chrome({ actions, sidebar, footer, children }: Props) {
       <header className="topbar minimal">
         <Link href="/" className="logo">S.V.E.R</Link>
         <span className="topbar-space" />
-        {first === "welcome" ? null : first === "login"
+        {/^(welcome|choose-side|choose-faction)$/.test(first) ? null : first === "login"
           ? <span className="topbar-note">New here? <Link href="/signup">Enlist</Link></span>
           : <span className="topbar-note">{first === "signup" ? "Already enlisted? " : ""}<Link href="/login">Log in</Link></span>}
       </header>
@@ -66,14 +66,11 @@ export function Chrome({ actions, sidebar, footer, children }: Props) {
       <button ref={toggle} type="button" className="menu-toggle" aria-controls="site-sidebar" aria-expanded={open} aria-label={open ? "Close menu" : "Open menu"} onClick={() => setOpenOn(open ? null : pathname)}>{open ? <CloseIcon /> : <MenuIcon />}</button>
       <Link href="/" className="logo">S.V.E.R</Link>
       <span className="topbar-space" />
-      {/* TODO(search): there is no search route yet (channels, categories and Beacons arrive with
-          Browse and MAGNet). The field is real and labeled, but submitting does nothing until then. */}
-      <form role="search" className="search" onSubmit={event => event.preventDefault()}>
+      <div className="search">
         <SearchIcon />
         <label htmlFor="site-search" className="sr-only">Search channels, categories and Beacons</label>
-        <input id="site-search" type="search" name="q" placeholder="Search channels, categories and Beacons" autoComplete="off" aria-describedby="site-search-note" />
-        <span id="site-search-note" className="sr-only">Search isn&apos;t available yet.</span>
-      </form>
+        <input id="site-search" type="search" placeholder="Search · coming with MAGNet" disabled />
+      </div>
       <span className="topbar-space" />
       <div className="topbar-actions">{actions}</div>
     </header>

@@ -243,7 +243,7 @@ pub async fn my_following(
 pub async fn suggestions(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = signed_in(&app, &jar).await?;
     let mut db = app.db.acquire().await?;
-    let faction = crate::factions::of(&mut db, &user.id).await?;
+    let faction = crate::factions::membership(&mut db, &user.id).await?;
     // Only chip SQL and the live expression are interpolated; request values are bound.
     let rows: Vec<(Value,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {chip} FROM channel_users c JOIN users u ON u.id=c.id \
@@ -599,7 +599,7 @@ pub async fn card(
         "follower_count": followers,
         "joined_at": me.created_at,
         "viewer": {"signed_in": viewer.is_some(), "is_self": is_self, "following": following, "blocked": blocked},
-        "faction": crate::factions::of(&mut db, &me.id).await?,
+        "faction": crate::factions::membership(&mut db, &me.id).await?,
         "live": crate::playback::is_live(&mut db, &me.id).await?,
     })))
 }

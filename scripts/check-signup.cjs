@@ -40,6 +40,7 @@ vm.runInThisContext(`(function(require, module, exports) {${source}\n})`, { file
   if (name === "next/script") return function Script({ onReady }) { React.useEffect(onReady, []); return null; };
   // Account-only media is outside these signup checks.
   if (name === "../components/Avatar") return { Avatar: () => null };
+  if (name === "../lib/factions") return { isFaction: value => ["myria", "aetheron", "glint"].includes(value) };
   if (name === "../components/Turnstile") {
     const component = { exports: {} };
     vm.runInThisContext(`(function(require,module,exports){${compile("apps/web/components/Turnstile.tsx")}\n})`)(dependency => dependency === "next/script" ? function Script({onReady}) { React.useEffect(onReady,[]); return null; } : webRequire(dependency),component,component.exports);

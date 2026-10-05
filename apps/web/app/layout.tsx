@@ -15,6 +15,9 @@ import "./globals.css";
 import "../styles/profiles.css";
 import "../styles/design.css";
 import "../styles/site-pages.css";
+// Module 4 pages (faction hubs, war map) and the shared stream shelves.
+import "../styles/discovery.css";
+import "../styles/factions.css";
 
 // Type per docs/DESIGN.md "Type": self-hosted and subset by next/font.
 const cinzel = Cinzel({ subsets: ["latin"], weight: ["700", "800"], variable: "--font-cinzel", display: "swap" });

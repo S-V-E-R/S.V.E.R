@@ -52,6 +52,9 @@ pub async fn removal_notice(db: &mut PgConnection, id: &str) -> Result<()> {
     Ok(())
 }
 pub async fn tick(app: &App) -> Result<()> {
+    if crate::factions::tick(app).await.is_err() {
+        eprintln!("faction_event=checkpoint outcome=retry");
+    }
     // Deliver urgent notices before historical media indexing or other maintenance work.
     if crate::staff_push::tick(app).await.is_err() {
         eprintln!("staff_push_event=delivery outcome=retry");

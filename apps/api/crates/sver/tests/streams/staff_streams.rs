@@ -181,7 +181,7 @@ pub async fn exercise(e: &Env) {
         "POST",
         "/api/admin/categories",
         Some(&admin),
-        json!({"name":"Just Chatting","genre":"irl"}),
+        json!({"name":"Music Workshop","genre":"music","note":"Catalog test"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -190,11 +190,11 @@ pub async fn exercise(e: &Env) {
             .as_array()
             .unwrap()
             .iter()
-            .any(|c| c["id"] == "just-chatting" && c["genre"] == "irl" && c["active"] == true)
+            .any(|c| c["id"] == "music-workshop" && c["genre"] == "music" && c["active"] == true)
     );
     for body in [
-        json!({"name":"Just  chatting!","genre":"irl"}),
-        json!({"name":"Cooking","genre":"Food Stuff"}),
+        json!({"name":"Music  Workshop!","genre":"music","note":"Catalog test"}),
+        json!({"name":"Cooking","genre":"Food Stuff","note":"Catalog test"}),
     ] {
         let status = call(e, "POST", "/api/admin/categories", Some(&admin), body)
             .await
@@ -208,9 +208,9 @@ pub async fn exercise(e: &Env) {
         call(
             e,
             "PATCH",
-            "/api/admin/categories/just-chatting",
+            "/api/admin/categories/music-workshop",
             Some(&admin),
-            json!({"name":"Minecraft"})
+            json!({"name":"Minecraft","note":"Catalog test"})
         )
         .await
         .0,
@@ -219,9 +219,9 @@ pub async fn exercise(e: &Env) {
     let (status, cats) = call(
         e,
         "PATCH",
-        "/api/admin/categories/just-chatting",
+        "/api/admin/categories/music-workshop",
         Some(&admin),
-        json!({"name":"Chatting","active":false}),
+        json!({"name":"Music session","active":false,"note":"Catalog test"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -230,10 +230,12 @@ pub async fn exercise(e: &Env) {
             .as_array()
             .unwrap()
             .iter()
-            .any(|c| c["id"] == "just-chatting" && c["name"] == "Chatting" && c["active"] == false)
+            .any(|c| c["id"] == "music-workshop"
+                && c["name"] == "Music session"
+                && c["active"] == false)
     );
 
-    e.sql("DELETE FROM stream_categories WHERE id='just-chatting'")
+    e.sql("DELETE FROM stream_categories WHERE id='music-workshop'")
         .await;
     for statement in [
         "DELETE FROM moderation_actions WHERE actor_id='so-staff'",

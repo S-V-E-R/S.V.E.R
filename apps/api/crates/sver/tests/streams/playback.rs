@@ -37,6 +37,18 @@ pub async fn exercise(e: &Env) {
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('play-1','stream-owner','pub-play',1,'STARTING','s','v','c',now(),now(),now()+interval '15 seconds')").await;
     let (_, starting) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(starting["live"], false, "STARTING is not public");
+    assert!(
+        guest(e, "GET", "/api/streams", Value::Null).await.1["live"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        guest(e, "GET", "/api/streams?page=100001", Value::Null)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
     assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["recorded"], false);
 
     e.sql("UPDATE broadcasts SET state='LIVE' WHERE id='play-1'")
@@ -45,6 +57,26 @@ pub async fn exercise(e: &Env) {
     assert_eq!(live["live"], true);
     assert_eq!(live["title"], "Streamer's stream");
     assert_eq!(live["viewers"], 0);
+    let (status, directory) = guest(e, "GET", "/api/streams", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(directory["live"][0]["user"]["username"], "Streamer");
+    assert_eq!(directory["live"][0]["viewers"], 0);
+    assert!(
+        !directory.to_string().contains("pub-play"),
+        "Directory exposes no playback identifiers"
+    );
+    e.sql(
+        "UPDATE profiles SET restricted_until=now()+interval '1 day' WHERE user_id='stream-owner'",
+    )
+    .await;
+    assert!(
+        guest(e, "GET", "/api/streams", Value::Null).await.1["live"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    e.sql("UPDATE profiles SET restricted_until=NULL WHERE user_id='stream-owner'")
+        .await;
     assert_eq!(live["is_owner"], false);
     assert_eq!(
         live["playback"],
@@ -96,6 +128,10 @@ pub async fn exercise(e: &Env) {
     sver::integrity::tick(&e.app).await.unwrap();
     let (_, counted) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(counted["viewers"], 2);
+    assert_eq!(
+        guest(e, "GET", "/api/streams", Value::Null).await.1["live"][0]["viewers"],
+        2
+    );
 
     // A lease without a heartbeat in the last 30 seconds stops counting; reconnect grace stays public.
     e.sql("UPDATE playback_leases SET expires_at=now()-interval '1 second' WHERE viewer_key=(SELECT viewer_key FROM playback_leases ORDER BY created_at LIMIT 1)").await;
@@ -103,11 +139,31 @@ pub async fn exercise(e: &Env) {
     let (_, reconnecting) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(reconnecting["state"], "RECONNECTING");
     assert_eq!(reconnecting["viewers"], 1);
+    e.sql("UPDATE broadcasts SET reconnect_deadline=now()-interval '1 second' WHERE id='play-1'")
+        .await;
+    assert!(
+        guest(e, "GET", "/api/streams", Value::Null).await.1["live"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 
     e.sql("UPDATE broadcasts SET state='ENDED',reconnect_deadline=NULL,ended_at=now(),end_reason='test' WHERE id='play-1'").await;
     assert_eq!(beat(e, "browser-aaaaaaaaaaaa").await.1["recorded"], false);
     let (_, ended) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(ended, json!({"live":false}));
+    let (_, recent) = guest(e, "GET", "/api/streams", Value::Null).await;
+    assert_eq!(recent["recent"][0]["user"]["username"], "Streamer");
+    assert_eq!(recent["recent"][0]["live"], false);
+    e.sql("UPDATE broadcasts SET end_reason='revoked' WHERE id='play-1'")
+        .await;
+    assert!(
+        guest(e, "GET", "/api/streams", Value::Null).await.1["recent"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "Revoked streams stay off public shelves"
+    );
     let (_, card) = guest(e, "GET", "/api/users/streamer/card", Value::Null).await;
     assert_eq!(card["live"], false);
     media_gate(e).await;

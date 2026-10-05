@@ -34,7 +34,7 @@ pub async fn locate(
             snapshot: Value::Null,
         }));
     }
-    let t = match target(db, kind, id, None).await {
+    let t = match target(db, kind, id, None, "").await {
         Ok(t) => t,
         Err(e) if e.status == axum::http::StatusCode::NOT_FOUND => return Ok(None),
         Err(e) => return Err(e),

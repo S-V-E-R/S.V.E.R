@@ -209,6 +209,7 @@ struct Broadcast {
     publisher_started_at: DateTime<Utc>,
     reconnect_deadline: Option<DateTime<Utc>>,
     recv_bytes: Option<i64>,
+    checked_at: Option<DateTime<Utc>>,
 }
 async fn current(db: &mut PgConnection, owner: &str) -> Result<Option<Broadcast>> {
     Ok(
@@ -264,6 +265,22 @@ pub async fn categories(State(app): State<App>) -> Result<Json<Value>> {
     let categories: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name,'genre',genre) FROM stream_categories WHERE active ORDER BY name")
         .fetch_all(&app.db).await?;
     Ok(Json(json!({"categories":categories})))
+}
+/// Confirmed advancing media and its current genre; callers cannot award to a client-picked genre.
+pub async fn influence_context(
+    db: &mut PgConnection,
+    broadcast: &str,
+) -> profiles::Res<Option<(String, String)>> {
+    Ok(sqlx::query_as("SELECT b.owner_id,c.genre FROM broadcasts b JOIN stream_settings s ON s.owner_id=b.owner_id JOIN stream_categories c ON c.id=s.category_id WHERE b.id=$1 AND b.state='LIVE' AND b.observed_at>clock_timestamp()-interval '20 seconds'")
+        .bind(broadcast).fetch_optional(db).await?)
+}
+pub async fn live_broadcast(db: &mut PgConnection, owner: &str) -> profiles::Res<Option<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT id FROM broadcasts WHERE owner_id=$1 AND state='LIVE'")
+            .bind(owner)
+            .fetch_optional(db)
+            .await?,
+    )
 }
 pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>> {
     let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
@@ -755,6 +772,10 @@ pub async fn tick(app: &App) -> Result<()> {
         .fetch_all(&app.db).await?;
     for owner in owners {
         let mut tx = app.db.begin().await?;
+        // Checkpoints can grant FK-backed rewards; acquire their barrier before account locks.
+        crate::factions::lock(&mut tx)
+            .await
+            .map_err(|_| Error::internal())?;
         let Some(user) = auth::stream_owner(&mut tx, &owner).await? else {
             continue;
         };
@@ -777,6 +798,15 @@ pub async fn tick(app: &App) -> Result<()> {
                             c.eq_ignore_ascii_case("h264") || c.eq_ignore_ascii_case("avc")
                         }) && audio.is_some_and(|c| c.eq_ignore_ascii_case("aac"));
                         let fresh = b.recv_bytes.is_some_and(|previous| bytes > previous);
+                        if compatible && fresh && b.state == "LIVE" {
+                            let at = clock(&mut tx).await?;
+                            let elapsed = b
+                                .checked_at
+                                .map_or(0, |last| (at - last).num_milliseconds());
+                            crate::factions::stream(app, &mut tx, &b.id, elapsed, at)
+                                .await
+                                .map_err(|_| Error::internal())?;
+                        }
                         let kbps = stream["kbps"]["recv_30s"]
                             .as_f64()
                             .filter(|n| n.is_finite() && *n >= 0.0);

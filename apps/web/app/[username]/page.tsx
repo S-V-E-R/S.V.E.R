@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ChannelFrame } from "../../components/ChannelFrame";
 import { Occurrences } from "../../components/Schedule";
+import { Crest } from "../../components/FactionIdentity";
 import { Avatar } from "../../components/Avatar";
 import { WallPost } from "../../components/Wall";
 import { ActivityFeed } from "../../components/ActivityFeed";
@@ -13,7 +14,7 @@ function CouncilTile({ user, crown }: { user: Chip; crown: boolean }) {
   const body = <>
     {crown && <span className="crown" title="Top spot" aria-label="Top spot">♛</span>}
     <Avatar sizes={user.avatar} name={user.display_name} size={72} />
-    <strong>{user.display_name}</strong>
+    {user.faction && <Crest faction={user.faction} size={18} />}<strong>{user.display_name}</strong>
     {user.username && <span className="handle">@{user.username}</span>}
   </>;
   return user.linked && user.username ? <Link className="council-tile" href={`/${user.username}`}>{body}</Link> : <span className="council-tile">{body}</span>;

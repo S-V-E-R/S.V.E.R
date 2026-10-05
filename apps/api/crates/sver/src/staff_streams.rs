@@ -126,8 +126,9 @@ fn slug(name: &str) -> String {
 struct NewCategory {
     name: String,
     genre: String,
+    note: String,
 }
-/// POST /api/admin/categories. The genre is fixed at creation (factions group categories by it).
+/// POST /api/admin/categories. Genres come from the war's catalog.
 async fn create(
     State(app): State<App>,
     jar: CookieJar,
@@ -137,18 +138,12 @@ async fn create(
     let name = name(&input.name)?;
     let id = slug(&name);
     let genre = input.genre.trim();
+    let note = safety::note(Some(&input.note), "note", true)?;
     if id.is_empty() || id.len() > 60 {
         return Err(Fail::field("name", "Use letters or numbers in the name."));
     }
-    if !(2..=40).contains(&genre.len())
-        || !genre.bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
-    {
-        return Err(Fail::field(
-            "genre",
-            "Genres are 2–40 lowercase letters or underscores.",
-        ));
-    }
     let mut tx = app.db.begin().await?;
+    crate::factions::validate_genre(&mut tx, genre).await?;
     let inserted = sqlx::query(
         "INSERT INTO stream_categories(id,name,genre) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
     )
@@ -168,7 +163,7 @@ async fn create(
         "category",
         &id,
         &[],
-        &name,
+        &note,
         json!({"genre": genre}),
         false,
     )
@@ -180,6 +175,8 @@ async fn create(
 struct EditCategory {
     name: Option<String>,
     active: Option<bool>,
+    genre: Option<String>,
+    note: String,
 }
 /// PATCH /api/admin/categories/{id}: rename, or hide from new choices. Channels keep their current
 /// category until they change it.
@@ -191,7 +188,19 @@ async fn edit(
 ) -> Res<Json<Value>> {
     let staff = safety::staff_write(&app, &jar).await?;
     let new_name = input.name.as_deref().map(name).transpose()?;
+    let note = safety::note(Some(&input.note), "note", true)?;
     let mut tx = app.db.begin().await?;
+    if let Some(genre) = &input.genre {
+        crate::factions::validate_genre(&mut tx, genre).await?;
+        let old: Option<String> =
+            sqlx::query_scalar("SELECT genre FROM stream_categories WHERE id=$1")
+                .bind(&id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if old.as_deref() != Some(genre) {
+            crate::factions::category_move_allowed(&app, &mut tx).await?;
+        }
+    }
     let taken: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM stream_categories WHERE name=$2 AND id<>$1)",
     )
@@ -202,10 +211,11 @@ async fn edit(
     if taken {
         return Err(Fail::conflict("Another category has that name."));
     }
-    let updated = sqlx::query("UPDATE stream_categories SET name=coalesce($2,name),active=coalesce($3,active) WHERE id=$1")
+    let updated = sqlx::query("UPDATE stream_categories SET name=coalesce($2,name),active=coalesce($3,active),genre=coalesce($4,genre) WHERE id=$1")
         .bind(&id)
         .bind(&new_name)
         .bind(input.active)
+        .bind(&input.genre)
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -219,8 +229,8 @@ async fn edit(
         "category",
         &id,
         &[],
-        new_name.as_deref().unwrap_or(""),
-        json!({"active": input.active}),
+        &note,
+        json!({"active": input.active,"genre":input.genre,"name":new_name}),
         false,
     )
     .await?;
@@ -228,12 +238,73 @@ async fn edit(
     categories(State(app), jar).await
 }
 
+#[derive(Deserialize)]
+struct MergeCategory {
+    into: String,
+    note: String,
+}
+async fn merge_category(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Json(input): Json<MergeCategory>,
+) -> Res<Json<Value>> {
+    let actor = safety::staff_write(&app, &jar).await?;
+    if id == input.into {
+        return Err(Fail::bad("Choose a different destination category."));
+    }
+    let note = safety::note(Some(&input.note), "note", true)?;
+    let mut tx = app.db.begin().await?;
+    crate::factions::lock(&mut tx).await?;
+    let source: Option<String> =
+        sqlx::query_scalar("SELECT genre FROM stream_categories WHERE id=$1 FOR UPDATE")
+            .bind(&id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let target: Option<String> =
+        sqlx::query_scalar("SELECT genre FROM stream_categories WHERE id=$1 AND active FOR UPDATE")
+            .bind(&input.into)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let (Some(source), Some(target)) = (source, target) else {
+        return Err(Fail::missing());
+    };
+    if source != target {
+        crate::factions::category_move_allowed(&app, &mut tx).await?;
+    }
+    sqlx::query(
+        "UPDATE stream_settings SET category_id=$2,revision=revision+1 WHERE category_id=$1",
+    )
+    .bind(&id)
+    .bind(&input.into)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE stream_categories SET active=false WHERE id=$1")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    safety::audit(
+        &mut tx,
+        Some(&actor.id),
+        "merge_category",
+        "category",
+        &id,
+        &[],
+        &note,
+        json!({"into":input.into}),
+        false,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"saved":true})))
+}
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/admin/streams", get(list))
         .route("/api/admin/streams/{id}/stop", post(stop))
         .route("/api/admin/categories", get(categories).post(create))
         .route("/api/admin/categories/{id}", patch(edit))
+        .route("/api/admin/categories/{id}/merge", post(merge_category))
 }
 
 #[cfg(test)]
