@@ -46,6 +46,7 @@ pub mod staff_streams;
 pub mod streams;
 pub mod stripe;
 pub mod studio;
+pub mod subs;
 pub mod support;
 pub mod take_down;
 pub mod text;
@@ -397,6 +398,7 @@ pub fn router(app: App) -> Router {
         .merge(take_down::routes())
         .merge(staff_push::routes())
         .merge(support::routes())
+        .merge(subs::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

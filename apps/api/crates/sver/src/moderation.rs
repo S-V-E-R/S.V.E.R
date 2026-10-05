@@ -97,6 +97,16 @@ pub async fn followers_only(app: &App, channel: &str) -> Res<Option<DateTime<Utc
         .await?)
 }
 
+/// Whether chat is limited to subscribers (docs/SUPPORT.md "Subscriptions").
+pub async fn subs_only(app: &App, channel: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT coalesce((SELECT subs_only FROM chat_settings WHERE channel_id=$1),false)",
+    )
+    .bind(channel)
+    .fetch_one(&app.db)
+    .await?)
+}
+
 #[derive(Deserialize)]
 pub struct Protect {
     on: bool,
@@ -209,6 +219,42 @@ pub async fn check_emote_code(db: &mut sqlx::PgConnection, channel: &str, code: 
 }
 
 /// Chat rules applied by `chat::send` before a message is stored.
+/// PUT /api/channels/{username}/chat/subs-only: owners and moderators limit chat to subscribers.
+pub async fn set_subs_only(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Json(input): Json<Protect>,
+) -> Res<Json<Value>> {
+    let channel = channel(&app, &name).await?;
+    let (user, role) = actor(&app, &jar, &channel).await?;
+    let mut tx = app.db.begin().await?;
+    sqlx::query("INSERT INTO chat_settings(channel_id,subs_only) VALUES($1,$2) ON CONFLICT(channel_id) DO UPDATE SET subs_only=EXCLUDED.subs_only")
+        .bind(&channel)
+        .bind(input.on)
+        .execute(&mut *tx)
+        .await?;
+    log(
+        &mut tx,
+        &channel,
+        &user.id,
+        role,
+        if input.on {
+            "subs_only_on"
+        } else {
+            "subs_only_off"
+        },
+        None,
+        None,
+        json!({}),
+        "Subscriber-only chat",
+    )
+    .await?;
+    tx.commit().await?;
+    app.chat
+        .publish(&channel, None, 0, json!({"type":"subs_only","on":input.on}));
+    Ok(Json(json!({"subs_only": input.on})))
+}
 pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<()> {
     let restriction: Option<(String, Option<DateTime<Utc>>)> = sqlx::query_as("SELECT kind, until FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND (kind='ban' OR until>now()) ORDER BY kind='ban' DESC LIMIT 1")
         .bind(channel).bind(&user.id).fetch_optional(&app.db).await?;
@@ -238,6 +284,19 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
                 "Chat is followers-only for a few minutes (followers of at least 10 minutes can chat).",
             ));
         }
+    }
+    // Subscriber-only chat and subscriber emotes; channel roles are exempt.
+    let tier = crate::subs::active_tier(app, channel, &user.id).await?;
+    let tokens: Vec<&str> = body.split_whitespace().collect();
+    let locked: Option<i16> = sqlx::query_scalar("SELECT max(tier) FROM channel_emotes WHERE channel_id=$1 AND status='VISIBLE' AND tier>coalesce($2,0::smallint) AND code=ANY($3)")
+        .bind(channel).bind(tier).bind(&tokens).fetch_one(&app.db).await?;
+    if (locked.is_some() || (tier.is_none() && subs_only(app, channel).await?))
+        && role_of(app, channel, user).await?.is_none()
+    {
+        return Err(match locked {
+            Some(t) => Fail::bad(format!("That emote is for Tier {t} subscribers.")),
+            None => Fail::denied("Chat is subscribers-only right now."),
+        });
     }
     let settings: Option<(i32, bool, Vec<String>)> = sqlx::query_as(
         "SELECT slow_mode_seconds, block_links, banned_words FROM chat_settings WHERE channel_id=$1",
@@ -619,6 +678,10 @@ pub fn routes() -> Router<App> {
         .route("/api/channels/{username}/chat/moderation", get(view))
         .route("/api/channels/{username}/chat/settings", put(save_settings))
         .route("/api/channels/{username}/chat/protect", put(protect))
+        .route(
+            "/api/channels/{username}/chat/subs-only",
+            put(set_subs_only),
+        )
         .route(
             "/api/channels/{username}/chat/messages/{id}",
             delete(delete_message),

@@ -50,6 +50,8 @@ mod resets;
 mod staff_streams;
 #[path = "streams/staff_window.rs"]
 mod staff_window;
+#[path = "streams/subs.rs"]
+mod subs;
 #[path = "streams/support.rs"]
 mod support;
 #[path = "streams/teams.rs"]
@@ -125,6 +127,16 @@ async fn stripe(
         "/v1/accounts" => json!({"id": "acct_test_owner"}),
         "/v1/account_links" => json!({"url": "https://connect.stripe.test/onboarding"}),
         p if p.ends_with("/login_links") => json!({"url": "https://connect.stripe.test/express"}),
+        "/v1/invoice_payments" => {
+            let invoice = uri
+                .query()
+                .unwrap_or_default()
+                .trim_start_matches("invoice=");
+            json!({"data": [{"payment": {"payment_intent": format!("pi_{invoice}")}}]})
+        }
+        p if p.starts_with("/v1/subscriptions/") => {
+            json!({"items": {"data": [{"id": "si_test", "price": {"product": "prod_test"}}]}})
+        }
         p if p.starts_with("/v1/checkout/sessions/") => m.session.clone(),
         _ => m.account.clone(),
     })
@@ -324,6 +336,8 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/account_links", post(stripe))
         .route("/v1/accounts/{id}", get(stripe))
         .route("/v1/checkout/sessions/{id}", get(stripe))
+        .route("/v1/invoice_payments", get(stripe))
+        .route("/v1/subscriptions/{id}", get(stripe).post(stripe))
         .route("/v1/accounts/{id}/login_links", post(stripe))
         .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -390,6 +404,7 @@ async fn exercise(e: &Env) {
     playback::exercise(e).await;
     chat::exercise(e).await;
     support::exercise(e).await;
+    subs::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;
     reports::exercise(e).await;

@@ -77,7 +77,9 @@ async fn reconcile(app: &App, user: &str) -> Res<()> {
             session["payment_status"].as_str(),
         ) {
             (_, Some("paid")) => paid(&mut tx, &session).await?,
-            (Some("expired"), _) => process(&mut tx, "checkout.session.expired", &session).await?,
+            (Some("expired"), _) => {
+                process(app, &mut tx, "checkout.session.expired", &session).await?
+            }
             _ => continue,
         }
         tx.commit().await?;
@@ -97,6 +99,10 @@ pub async fn wallet(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
             .fetch_one(&mut *db)
             .await?;
     let spent = month_cents(&mut db, &user.id).await?;
+    let allow_gifts: bool = sqlx::query_scalar("SELECT allow_gifts FROM users WHERE id=$1")
+        .bind(&user.id)
+        .fetch_one(&mut *db)
+        .await?;
     Ok(Json(json!({
         "valor": valor,
         "locked": valor < 0,
@@ -104,9 +110,50 @@ pub async fn wallet(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
         "packs": PACKS.iter().map(|(cents, valor)| json!({"cents":cents,"valor":valor})).collect::<Vec<_>>(),
         "minor": minor,
         "guardian_confirmed": guardian,
+        "allow_gifts": allow_gifts,
         "month_cents": if minor { Some(spent) } else { None },
         "cap_cents": if minor { Some(MINOR_CAP_CENTS) } else { None },
     })))
+}
+
+/// Card purchases by an account aged 13 to 17 need a guardian's one-time confirmation and stay
+/// under the monthly cap. The caller holds the buyer's checkout lock.
+// ponytail: monthly renewals and upgrade prorations aren't counted toward the cap.
+pub(crate) async fn card_gate(
+    tx: &mut PgConnection,
+    user: &str,
+    cents: i64,
+    consent: bool,
+) -> Res<()> {
+    match age(tx, user).await? {
+        Some(a) if a < 13 => Err(Fail::denied("You can't make purchases on this account.")),
+        Some(a) if a < 18 => {
+            let confirmed: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM guardian_consents WHERE user_id=$1)",
+            )
+            .bind(user)
+            .fetch_one(&mut *tx)
+            .await?;
+            if !confirmed && !consent {
+                return Err(Fail::field(
+                    "guardian_consent",
+                    "A parent or guardian must confirm they are the cardholder and consent to this purchase.",
+                ));
+            }
+            if month_cents(tx, user).await? + cents > MINOR_CAP_CENTS {
+                return Err(Fail::field(
+                    "cents",
+                    "Accounts under 18 can spend up to $50 a month. Choose a smaller purchase or wait until next month.",
+                ));
+            }
+            sqlx::query("INSERT INTO guardian_consents(user_id) VALUES($1) ON CONFLICT DO NOTHING")
+                .bind(user)
+                .execute(tx)
+                .await?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -130,34 +177,7 @@ pub async fn checkout(
     let mut tx = app.db.begin().await?;
     // One checkout at a time per buyer, so concurrent tabs can't slip past the monthly cap.
     ledger::lock(&mut tx, &format!("checkout:{}", user.id)).await?;
-    match age(&mut tx, &user.id).await? {
-        Some(a) if a < 13 => return Err(Fail::denied("You can't buy Valor on this account.")),
-        Some(a) if a < 18 => {
-            let confirmed: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM guardian_consents WHERE user_id=$1)",
-            )
-            .bind(&user.id)
-            .fetch_one(&mut *tx)
-            .await?;
-            if !confirmed && !input.guardian_consent {
-                return Err(Fail::field(
-                    "guardian_consent",
-                    "A parent or guardian must confirm they are the cardholder and consent to this purchase.",
-                ));
-            }
-            if month_cents(&mut tx, &user.id).await? + cents > MINOR_CAP_CENTS {
-                return Err(Fail::field(
-                    "cents",
-                    "Accounts under 18 can spend up to $50 a month. Choose a smaller pack or wait until next month.",
-                ));
-            }
-            sqlx::query("INSERT INTO guardian_consents(user_id) VALUES($1) ON CONFLICT DO NOTHING")
-                .bind(&user.id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        _ => {}
-    }
+    card_gate(&mut tx, &user.id, cents, input.guardian_consent).await?;
     let origin = &app.config.origin;
     let expires = chrono::Utc::now().timestamp() + 31 * 60;
     let session = stripe::post(
@@ -385,7 +405,7 @@ pub async fn webhook(State(app): State<App>, headers: HeaderMap, body: Bytes) ->
     if done != Some(false) {
         return Ok(Json(json!({"received": true})));
     }
-    match process(&mut tx, kind, &event["data"]["object"]).await {
+    match process(&app, &mut tx, kind, &event["data"]["object"]).await {
         Ok(()) => {
             sqlx::query("UPDATE stripe_events SET processed_at=now(),error=NULL WHERE id=$1")
                 .bind(id)
@@ -407,7 +427,7 @@ pub async fn webhook(State(app): State<App>, headers: HeaderMap, body: Bytes) ->
     }
 }
 
-async fn process(tx: &mut PgConnection, kind: &str, object: &Value) -> Res<()> {
+async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -> Res<()> {
     match kind {
         "checkout.session.completed" | "checkout.session.async_payment_succeeded"
             if object["payment_status"] == "paid" =>
@@ -427,25 +447,95 @@ async fn process(tx: &mut PgConnection, kind: &str, object: &Value) -> Res<()> {
         "charge.dispute.created" => disputed(tx, object, false).await,
         "charge.dispute.closed" if object["status"] == "won" => disputed(tx, object, true).await,
         "account.updated" => sync_account(tx, object).await,
+        "invoice.paid" => crate::subs::invoice_paid(app, tx, object).await,
+        "customer.subscription.updated" | "customer.subscription.deleted" => {
+            crate::subs::subscription_changed(tx, kind, object).await
+        }
         _ => Ok(()),
     }
 }
 
-/// A paid Valor checkout credits the buyer.
+/// One balanced ledger movement: `debit` gains `amount`, `credit` loses it, in `unit`.
+pub(crate) type Pair = (String, String, &'static str, i64);
+
+/// A card payment: cash in, and the streamer's share (tenths of a cent) owed by the platform.
+pub(crate) fn card_pairs(channel: &str, cents: i64, share: i64) -> Vec<Pair> {
+    vec![
+        ("usd:stripe".into(), "usd:sales".into(), "usd", cents * 10),
+        (
+            format!("usd:earnings:{channel}"),
+            "usd:platform".into(),
+            "usd",
+            share,
+        ),
+    ]
+}
+/// What a paid checkout posted at full value.
+fn checkout_pairs(
+    kind: &str,
+    user: Option<&str>,
+    cents: i64,
+    valor: i64,
+    detail: &Value,
+) -> Vec<Pair> {
+    match kind {
+        "gift" => card_pairs(
+            detail["channel"].as_str().unwrap_or_default(),
+            cents,
+            detail["share_tenths"].as_i64().unwrap_or(0),
+        ),
+        _ => vec![
+            (
+                format!("valor:{}", user.unwrap_or("unclaimed")),
+                "valor:issued".into(),
+                "valor",
+                valor,
+            ),
+            ("usd:stripe".into(), "usd:sales".into(), "usd", cents * 10),
+        ],
+    }
+}
+/// Posts `pairs` with each amount passed through `scale` (a refund or dispute share, negated to
+/// reverse). Returns false when `reference` was already posted.
+pub(crate) async fn post_pairs(
+    tx: &mut PgConnection,
+    kind: &str,
+    reference: &str,
+    detail: Value,
+    pairs: &[Pair],
+    scale: impl Fn(i64) -> i64,
+) -> Res<bool> {
+    let mut entries = Vec::new();
+    for (debit, credit, unit, amount) in pairs {
+        let amount = scale(*amount);
+        entries.push((debit.as_str(), *unit, amount));
+        entries.push((credit.as_str(), *unit, -amount));
+    }
+    ledger::post(tx, kind, reference, detail, &entries).await
+}
+
+/// A checkout row: buyer, cents, Valor, kind, detail and status.
+type CheckoutRow = (Option<String>, i32, Option<i32>, String, Value, String);
+
+/// A paid checkout: a Valor pack credits the buyer and a gift grants its recipients. A card
+/// subscription is credited by its invoices instead (subs::invoice_paid).
 async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
     let id = object["id"].as_str().unwrap_or_default();
-    let row: Option<(Option<String>, i32, Option<i32>)> = sqlx::query_as(
-        "SELECT user_id,amount_cents,valor FROM checkout_sessions WHERE id=$1 FOR UPDATE",
+    let row: Option<CheckoutRow> = sqlx::query_as(
+        "SELECT user_id,amount_cents,valor,kind,detail,status FROM checkout_sessions WHERE id=$1 FOR UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
-    // Not one of ours (another integration on the same Stripe account).
-    let Some((user, cents, valor)) = row else {
+    // Not one of ours (another integration on the same Stripe account), or already handled.
+    let Some((user, cents, valor, kind, detail, status)) = row else {
         return Ok(());
     };
-    if object["amount_total"].as_i64() != Some(cents.into()) {
-        return Err(Fail::bad("Checkout amount doesn't match the pack."));
+    if status == "paid" {
+        return Ok(());
+    }
+    if kind != "sub" && object["amount_total"].as_i64() != Some(cents.into()) {
+        return Err(Fail::bad("Checkout amount doesn't match."));
     }
     let intent = object["payment_intent"].as_str();
     sqlx::query("UPDATE checkout_sessions SET status='paid',payment_intent=$2 WHERE id=$1")
@@ -453,119 +543,138 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
         .bind(intent)
         .execute(&mut *tx)
         .await?;
-    let buyer = format!("valor:{}", user.as_deref().unwrap_or("unclaimed"));
-    let (cents, valor) = (i64::from(cents), i64::from(valor.unwrap_or(0)));
-    ledger::post(
+    if kind == "sub" {
+        return Ok(());
+    }
+    if kind == "gift" {
+        crate::subs::grant_gifts(tx, &detail).await?;
+    }
+    let cents = i64::from(cents);
+    let pairs = checkout_pairs(
+        &kind,
+        user.as_deref(),
+        cents,
+        valor.unwrap_or(0).into(),
+        &detail,
+    );
+    post_pairs(
         tx,
-        "valor_purchase",
+        if kind == "gift" {
+            "gift_purchase"
+        } else {
+            "valor_purchase"
+        },
         &format!("checkout:{id}"),
         json!({"session": id, "payment_intent": intent, "user": user, "cents": cents}),
-        &[
-            (&buyer, "valor", valor),
-            ("valor:issued", "valor", -valor),
-            ("usd:stripe", "usd", cents * 10),
-            ("usd:sales", "usd", -cents * 10),
-        ],
+        &pairs,
+        |amount| amount,
     )
     .await?;
     Ok(())
 }
 
-/// The credited purchase (buyer account, cents, Valor) a payment intent belongs to.
-async fn purchase(tx: &mut PgConnection, intent: &str) -> Res<Option<(String, i64, i64)>> {
-    // The intent is stored only when its checkout is credited; purchase_of tells "not ours" from
-    // "not credited yet" by the charge's metadata.
-    let row: Option<(Option<String>, i32, Option<i32>)> = sqlx::query_as(
-        "SELECT user_id,amount_cents,valor FROM checkout_sessions WHERE payment_intent=$1",
+/// The credited payment behind a charge: its intent, cents and the pairs it posted. An unknown
+/// payment of ours (by its metadata) waits for the checkout event; anything else isn't ours.
+async fn payment_of(
+    tx: &mut PgConnection,
+    object: &Value,
+) -> Res<Option<(String, i64, Vec<Pair>)>> {
+    let Some(intent) = object["payment_intent"].as_str() else {
+        return Ok(None);
+    };
+    let checkout: Option<CheckoutRow> = sqlx::query_as(
+        "SELECT user_id,amount_cents,valor,kind,detail,status FROM checkout_sessions WHERE payment_intent=$1",
     )
     .bind(intent)
     .fetch_optional(&mut *tx)
     .await?;
-    Ok(row.map(|(user, cents, valor)| {
-        (
-            format!("valor:{}", user.as_deref().unwrap_or("unclaimed")),
-            cents.into(),
+    if let Some((user, cents, valor, kind, detail, _)) = checkout {
+        let cents = i64::from(cents);
+        let pairs = checkout_pairs(
+            &kind,
+            user.as_deref(),
+            cents,
             valor.unwrap_or(0).into(),
-        )
-    }))
-}
-/// `purchase`, but an unknown payment of ours (by its metadata) waits for the checkout event.
-async fn purchase_of(
-    tx: &mut PgConnection,
-    object: &Value,
-) -> Res<Option<(String, String, i64, i64)>> {
-    let Some(intent) = object["payment_intent"].as_str() else {
-        return Ok(None);
-    };
-    match purchase(tx, intent).await? {
-        Some((buyer, cents, valor)) => Ok(Some((intent.to_string(), buyer, cents, valor))),
-        None if object["metadata"]["sver_user"].is_string() => {
-            Err(Fail::conflict("Purchase not credited yet."))
-        }
-        None => Ok(None),
+            &detail,
+        );
+        return Ok(Some((intent.to_string(), cents, pairs)));
     }
+    let invoice: Option<(String, i32, i64)> = sqlx::query_as(
+        "SELECT channel_id,amount_cents,share_tenths FROM sub_invoices WHERE payment_intent=$1",
+    )
+    .bind(intent)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((channel, cents, share)) = invoice {
+        let cents = i64::from(cents);
+        return Ok(Some((
+            intent.to_string(),
+            cents,
+            card_pairs(&channel, cents, share),
+        )));
+    }
+    if object["metadata"]["sver_user"].is_string() {
+        return Err(Fail::conflict("Purchase not credited yet."));
+    }
+    Ok(None)
 }
 
-/// Refunds reverse Valor in proportion. `amount_refunded` is cumulative, so each event posts only
-/// the increase over what earlier refund events already reversed.
+/// Refunds reverse a payment in proportion: Valor, cash and the streamer's share. `amount_refunded`
+/// is cumulative, so each event posts only the increase over earlier refund events. A full refund
+/// of a subscription payment also ends its benefits.
 async fn refunded(tx: &mut PgConnection, object: &Value) -> Res<()> {
-    let Some((intent, buyer, cents, valor)) = purchase_of(tx, object).await? else {
+    let Some((intent, cents, pairs)) = payment_of(tx, object).await? else {
         return Ok(());
     };
+    if cents <= 0 {
+        return Ok(());
+    }
     let refunded = object["amount_refunded"].as_i64().unwrap_or(0).min(cents);
     ledger::lock(tx, &format!("refund:{intent}")).await?;
-    let before: i64 = sqlx::query_scalar("SELECT COALESCE(max((detail->>'refunded_cents')::bigint),0) FROM ledger_transactions WHERE kind='valor_refund' AND detail->>'payment_intent'=$1")
+    let before: i64 = sqlx::query_scalar("SELECT COALESCE(max((detail->>'refunded_cents')::bigint),0) FROM ledger_transactions WHERE kind IN ('valor_refund','refund') AND detail->>'payment_intent'=$1")
         .bind(&intent).fetch_one(&mut *tx).await?;
     if refunded <= before {
         return Ok(());
     }
-    let reversed = valor * refunded / cents - valor * before / cents;
-    let cash = (refunded - before) * 10;
-    ledger::post(
+    post_pairs(
         tx,
-        "valor_refund",
+        "refund",
         &format!("refund:{intent}:{refunded}"),
         json!({"payment_intent": intent, "refunded_cents": refunded}),
-        &[
-            (&buyer, "valor", -reversed),
-            ("valor:issued", "valor", reversed),
-            ("usd:stripe", "usd", -cash),
-            ("usd:sales", "usd", cash),
-        ],
+        &pairs,
+        |amount| -(amount * refunded / cents - amount * before / cents),
     )
     .await?;
+    if refunded == cents {
+        crate::subs::refunded_in_full(tx, &intent).await?;
+    }
     Ok(())
 }
 
-/// A chargeback reverses the disputed Valor (the balance may go negative, which locks spending);
-/// winning it credits the Valor back.
+/// A chargeback reverses the disputed share of a payment (a Valor balance may go negative, which
+/// locks spending; a streamer's earnings may too, recovered from later earnings); winning it posts
+/// it back.
 // ponytail: a dispute on an already-refunded charge reverses twice and Stripe's dispute fee isn't
 // posted; handle both when payouts reconcile against Stripe balance transactions.
 async fn disputed(tx: &mut PgConnection, object: &Value, won: bool) -> Res<()> {
     let Some(id) = object["id"].as_str() else {
         return Ok(());
     };
-    let Some((intent, buyer, cents, valor)) = purchase_of(tx, object).await? else {
+    let Some((intent, cents, pairs)) = payment_of(tx, object).await? else {
         return Ok(());
     };
+    if cents <= 0 {
+        return Ok(());
+    }
     let amount = object["amount"].as_i64().unwrap_or(cents).min(cents);
-    let reversed = valor * amount / cents;
     let sign = if won { 1 } else { -1 };
-    ledger::post(
+    post_pairs(
         tx,
-        if won {
-            "valor_dispute_won"
-        } else {
-            "valor_dispute"
-        },
+        if won { "dispute_won" } else { "dispute" },
         &format!("{}:{id}", if won { "dispute-won" } else { "dispute" }),
         json!({"payment_intent": intent, "dispute": id, "cents": amount}),
-        &[
-            (&buyer, "valor", sign * reversed),
-            ("valor:issued", "valor", -sign * reversed),
-            ("usd:stripe", "usd", sign * amount * 10),
-            ("usd:sales", "usd", -sign * amount * 10),
-        ],
+        &pairs,
+        |value| sign * (value * amount / cents),
     )
     .await?;
     Ok(())

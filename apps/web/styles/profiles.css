@@ -200,3 +200,8 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .valor-packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: 0.6rem; padding: 0; list-style: none; }
 .valor-packs button { width: 100%; display: flex; flex-direction: column; gap: 0.2rem; padding: 0.8rem; }
 .valor-balance { font-size: 2rem; font-weight: 700; }
+.sub-badge { border-color: var(--accent-light); color: var(--accent-light); margin-right: 0.3rem; }
+.subscribe-panel { display: grid; gap: 1rem; max-width: 40rem; }
+.subscribe-panel h3 { margin: 0 0 0.3rem; }
+.subscribe-tiers { list-style: none; padding: 0; display: grid; gap: 0.5rem; }
+.subscribe-tiers li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }

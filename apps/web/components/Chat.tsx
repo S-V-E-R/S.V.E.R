@@ -10,9 +10,16 @@ import { EmoteImage, type ChannelEmote } from "./Emote";
 import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
-type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null };
-type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null };
-type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null };
+type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null };
+/** Subscriber badge milestones: 1, 3, 6, 9 and 12 months, then each further year (docs/SUPPORT.md). */
+export function subBadge(months: number) {
+  if (months >= 24) return `${Math.floor(months / 12)} years`;
+  if (months >= 12) return "1 year";
+  const step = [9, 6, 3].find(m => months >= m) ?? 1;
+  return `${step} ${step === 1 ? "month" : "months"}`;
+}
+type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean };
+type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null } | { type: "subs_only"; on: boolean };
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
@@ -55,6 +62,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
   const [notice, setNotice] = useState("");
   // Spike protection: followers-only chat with an end time; moderators get a one-click prompt.
   const [followersOnly, setFollowersOnly] = useState<string | null>(null);
+  const [subsOnly, setSubsOnly] = useState(false);
   const [spike, setSpike] = useState(false);
   const canPin = !squad && (role === "owner" || role === "moderator");
   const socket = useRef<WebSocket | null>(null);
@@ -97,6 +105,10 @@ export function Chat({ username, account, squad }: { username: string; account: 
     const timer = setTimeout(() => setFollowersOnly(null), Math.max(0, Date.parse(followersOnly) - Date.now()));
     return () => clearTimeout(timer);
   }, [followersOnly]);
+  async function limitToSubs(on: boolean) {
+    const result = await send<{ subs_only: boolean }>("PUT", `${path}/subs-only`, { on });
+    if (result.ok) setSubsOnly(result.data.subs_only); else setError(result.error);
+  }
   async function protect(on: boolean) {
     const result = await send<{ followers_only_until: string | null }>("PUT", `${path}/protect`, { on });
     if (result.ok) { setFollowersOnly(result.data.followers_only_until); setSpike(false); } else setError(result.error);
@@ -121,8 +133,9 @@ export function Chat({ username, account, squad }: { username: string; account: 
       ws.onmessage = event => {
         if (closed) return;
         const data = JSON.parse(event.data) as Event;
-        if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); }
+        if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); }
         else if (data.type === "protect") setFollowersOnly(data.until);
+        else if (data.type === "subs_only") setSubsOnly(data.on);
         else if (data.type === "emotes") setEmotes(data.emotes);
         else if (data.type === "pin") setPinned(data.pinned);
         else if (data.type === "message" || data.type === "ack") merge([data.message]);
@@ -217,6 +230,8 @@ export function Chat({ username, account, squad }: { username: string; account: 
     </aside>}
     {notice && <p className="chat-system" role="status">{notice}</p>}
     {followersOnly && <p className="chat-system" role="status">Followers-only chat until {time(followersOnly)} (followers of at least 10 minutes can chat).{canPin && <> <button type="button" className="small quiet" onClick={() => protect(false)}>End now</button></>}</p>}
+    {subsOnly ? <p className="chat-system" role="status">Subscriber-only chat.{canPin && <> <button type="button" className="small quiet" onClick={() => limitToSubs(false)}>Open to everyone</button></>}</p>
+      : canPin && <p className="chat-system"><button type="button" className="small quiet" onClick={() => limitToSubs(true)}>Subscriber-only chat</button></p>}
     {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Followers-only chat for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
     <ol className="chat-messages" ref={list} aria-live="polite">
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
@@ -226,6 +241,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
         {m.author.username ? <Link className="faction-name" data-faction={m.author.faction} href={`/${m.author.username}`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
+        {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber`}>{subBadge(m.sub.months)}</span>}
         {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet Hype">MAGNet</span>}
         {m.role && <span className="badge">{{ owner: "Broadcaster", moderator: "Moderator", staff: "Staff" }[m.role]}</span>}: <MessageBody message={m} account={account} emotes={emotes} />
         <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.author.display_name}`}>Actions</summary><div className="chat-message-controls">
