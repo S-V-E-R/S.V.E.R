@@ -30,6 +30,8 @@ mod chat_social;
 mod discovery;
 #[path = "streams/integrity.rs"]
 mod integrity;
+#[path = "streams/magnet.rs"]
+mod magnet;
 #[path = "streams/moderation.rs"]
 mod moderation;
 #[path = "streams/playback.rs"]
@@ -329,6 +331,7 @@ async fn exercise(e: &Env) {
     raids::exercise(e).await;
     staff_streams::exercise(e).await;
     discovery::exercise(e).await;
+    magnet::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")

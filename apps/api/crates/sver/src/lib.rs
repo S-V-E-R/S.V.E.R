@@ -20,6 +20,7 @@ pub mod emotes;
 pub mod factions;
 pub mod integrity;
 pub mod jobs;
+pub mod magnet;
 pub mod media;
 pub mod moderation;
 pub mod oauth;
@@ -65,6 +66,7 @@ pub struct Config {
     pub streaming: Option<streams::Config>,
     pub playback: playback::Config,
     pub integrity: integrity::Tuning,
+    pub magnet: magnet::Tuning,
     pub factions: factions::Tuning,
     pub take_down: take_down::Config,
     pub staff_push: staff_push::Config,
@@ -130,6 +132,7 @@ impl Config {
             streaming: streams::Config::from_env()?,
             playback: playback::Config::from_env(production)?,
             integrity: integrity::Tuning::from_env()?,
+            magnet: magnet::Tuning::from_env()?,
             factions: factions::Tuning::from_env(production)?,
             take_down: take_down::Config::from_env(),
             staff_push: staff_push::Config::from_env(),
@@ -372,6 +375,7 @@ pub fn router(app: App) -> Router {
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(discovery::routes())
+        .merge(magnet::routes())
         .merge(staff_streams::routes())
         .merge(factions::routes())
         .merge(moderation::routes())
