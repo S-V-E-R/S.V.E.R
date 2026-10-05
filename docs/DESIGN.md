@@ -173,3 +173,9 @@ The map is inline SVG grouped by home region and colored by current ownership; s
 ### Dedicated Plays channel
 
 The dedicated game channel adds a framed Play together panel below its streamer bar, with a keyboard-accessible directional pad, A/B/Start/Select buttons, live aggregate votes and a five-second countdown. Guests can watch; verified members can vote. Disconnected controls disable immediately. On phones, the pad and round status stack without shrinking the buttons. Its profile has a Watch and play link. This is the requested Plays restoration; the general CrowdSync controls remain separate.
+
+### Guilds and co-streams
+
+These routes have no dedicated mockup. They reuse the channel header, plain content panels, Creator Studio navigation, existing live player and chat patterns. Only the guild header uses corner brackets. The viewer's theme stays in place across a cross-faction guild; each member keeps their own crest. Guild emblems appear at 18 px after the faction crest in chat, with an accessible tag label and a text fallback.
+
+The squad page uses a two-column stream grid and a 340 px chat column on wide screens. Chat follows the players on smaller screens, and players stack on phones. Each stream has a labeled audio button; selecting it mutes every other stream. Guild management uses native forms and disclosure controls. Screenshots from `scripts/check-teams.cjs` cover desktop and phone layouts, plus overflow checks at 320 px.

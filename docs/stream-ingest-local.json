@@ -1,6 +1,6 @@
 {
   "authenticated_real_callbacks": true,
-  "checked_at": "2026-10-05T04:11:56.477844400Z",
+  "checked_at": "2026-10-05T17:01:21.577481400Z",
   "hls_audio_video_decode": true,
   "key_rejection": true,
   "latency_acceptance": false,
@@ -14,7 +14,7 @@
   "passed": true,
   "playback_denies_when_authorization_unavailable": true,
   "reconnect_preserves_broadcast": true,
-  "reconnect_publish_attempts": 2,
+  "reconnect_publish_attempts": 1,
   "rotation_disconnects_and_rejects_old_key": true,
   "scope": "isolated Rust API, Postgres, SRS and FFmpeg",
   "single_publisher": true,

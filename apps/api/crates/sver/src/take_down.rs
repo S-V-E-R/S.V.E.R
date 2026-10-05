@@ -205,8 +205,22 @@ async fn locate(
     }
     let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
     let name = url.path().trim_matches('/').split('/').next().unwrap_or("");
-    let kind = query.get("report").map(String::as_str).unwrap_or("profile");
+    let guild = if name == "g" {
+        crate::guilds::id_by_slug(
+            db,
+            url.path().trim_matches('/').split('/').nth(1).unwrap_or(""),
+        )
+        .await?
+    } else {
+        None
+    };
+    let kind = query
+        .get("report")
+        .map(String::as_str)
+        .unwrap_or(if guild.is_some() { "guild" } else { "profile" });
     if ![
+        "guild",
+        "guild_emblem",
         "emote",
         "profile",
         "wall_post",
@@ -220,7 +234,11 @@ async fn locate(
     {
         return Ok((vec![], None));
     }
-    let id = query.get("id").map(String::as_str).unwrap_or(name);
+    let id = query
+        .get("id")
+        .map(String::as_str)
+        .or(guild.as_deref())
+        .unwrap_or(name);
     let mut target =
         safety::take_down::locate(db, kind, id, query.get("field").map(String::as_str)).await?;
     if target.is_none() && kind != "profile" {

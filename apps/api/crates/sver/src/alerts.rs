@@ -16,6 +16,123 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+pub const COMMUNITY_TYPES: [&str; 4] = [
+    "guild_application",
+    "guild_decision",
+    "guild_invite",
+    "squad_invite",
+];
+/// A durable community event. Its stable key also deduplicates push work on retries.
+#[allow(clippy::too_many_arguments)]
+pub async fn community(
+    db: &mut sqlx::PgConnection,
+    recipient: &str,
+    actor: &str,
+    kind: &str,
+    key: &str,
+    guild: Option<&str>,
+    payload: &Value,
+) -> Res<()> {
+    if !COMMUNITY_TYPES.contains(&kind) {
+        return Err(Fail::internal());
+    }
+    if recipient == actor || profiles::blocked_between(db, recipient, actor).await? {
+        return Ok(());
+    }
+    if profiles::channel_user_by_id(db, recipient)
+        .await?
+        .is_none_or(|u| !u.eligible)
+    {
+        return Ok(());
+    }
+    let (site,push):(bool,bool)=sqlx::query_as("SELECT coalesce(t.site,true),coalesce(t.push,true) FROM (SELECT 1) one LEFT JOIN notification_type_settings t ON t.user_id=$1 AND t.kind=$2")
+        .bind(recipient).bind(kind).fetch_one(&mut *db).await?;
+    if !site && !push {
+        return Ok(());
+    }
+    let id = profiles::new_id();
+    let inserted=sqlx::query("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload,guild_id,site_visible) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING")
+        .bind(&id).bind(recipient).bind(kind).bind(actor).bind(format!("{kind}:{key}")).bind(payload).bind(guild).bind(site).execute(&mut *db).await?.rows_affected();
+    if inserted > 0 && push {
+        sqlx::query("INSERT INTO push_jobs(id,subscription_id,notification_id) SELECT gen_random_uuid()::text,id,$2 FROM push_subscriptions WHERE user_id=$1 ON CONFLICT DO NOTHING")
+            .bind(recipient).bind(id).execute(db).await?;
+    }
+    Ok(())
+}
+
+async fn deliver_community(app: &App) -> Res<()> {
+    type PushRow = (
+        String,
+        String,
+        String,
+        i32,
+        String,
+        String,
+        String,
+        Option<String>,
+        Value,
+    );
+    let Some(key) = staff_push::signing_key(app)? else {
+        return Ok(());
+    };
+    for _ in 0..50 {
+        let mut tx = app.db.begin().await?;
+        let row:Option<PushRow>=sqlx::query_as("SELECT j.id,s.id,s.subscription,j.attempts,n.user_id,n.channel_id,n.kind,n.guild_id,n.payload FROM push_jobs j JOIN notifications n ON n.id=j.notification_id JOIN push_subscriptions s ON s.id=j.subscription_id WHERE j.available_at<=now() ORDER BY j.available_at FOR UPDATE OF j SKIP LOCKED LIMIT 1")
+            .fetch_optional(&mut *tx).await?;
+        let Some((job, subscription, sealed, attempts, user, actor, kind, guild, mut payload)) =
+            row
+        else {
+            break;
+        };
+        let enabled:bool=sqlx::query_scalar("SELECT coalesce((SELECT push FROM notification_type_settings WHERE user_id=$1 AND kind=$2),true)").bind(&user).bind(&kind).fetch_one(&mut *tx).await?;
+        let allowed = enabled
+            && !profiles::blocked_between(&mut tx, &user, &actor).await?
+            && profiles::channel_user_by_id(&mut tx, &user)
+                .await?
+                .is_some_and(|u| u.eligible)
+            && profiles::channel_user_by_id(&mut tx, &actor)
+                .await?
+                .is_some_and(|u| u.eligible)
+            && match &guild {
+                Some(g) => crate::guilds::notify_allowed(&mut tx, g, &user).await?,
+                None => true,
+            };
+        let input: Option<Subscription> = sec::unseal(app, "push", &sealed)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok());
+        payload["id"] = json!(job);
+        payload["tag"] = json!(format!("sver-{kind}-{job}"));
+        let sent = if !allowed {
+            Sent::Accepted
+        } else if let Some(input) = input {
+            staff_push::send(app, &key, &input, &job, &payload)
+                .await
+                .unwrap_or(Sent::Retry)
+        } else {
+            Sent::Gone
+        };
+        match sent {
+            Sent::Accepted => {
+                sqlx::query("DELETE FROM push_jobs WHERE id=$1")
+                    .bind(&job)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            Sent::Gone => {
+                sqlx::query("DELETE FROM push_subscriptions WHERE id=$1")
+                    .bind(&subscription)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            Sent::Retry => {
+                sqlx::query("UPDATE push_jobs SET attempts=attempts+1,available_at=now()+make_interval(secs=>$2) WHERE id=$1").bind(&job).bind(f64::from(30*2_i32.pow(attempts.min(4) as u32))).execute(&mut *tx).await?;
+            }
+        }
+        tx.commit().await?;
+    }
+    Ok(())
+}
+
 /// Fans out broadcasts that reached LIVE and have not alerted yet. Each broadcast is handled in one
 /// transaction that also marks it, so a retry never sends twice.
 pub async fn fan_out(app: &App) -> Res<()> {
@@ -98,6 +215,8 @@ pub async fn deliver(app: &App) -> Res<()> {
     sqlx::query("DELETE FROM notifications WHERE created_at<now()-interval '30 days'")
         .execute(&app.db)
         .await?;
+    sqlx::query("DELETE FROM push_jobs WHERE notification_id IS NOT NULL AND created_at<now()-interval '1 day'").execute(&app.db).await?;
+    deliver_community(app).await?;
     // A go-live push for a stream that ended, or older than an hour, is dropped.
     sqlx::query("DELETE FROM push_jobs j USING broadcasts b WHERE b.id=j.broadcast_id AND (b.state='ENDED' OR j.created_at<now()-interval '1 hour')")
         .execute(&app.db)
@@ -166,18 +285,41 @@ async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         .bind(&user.id)
         .fetch_all(&app.db)
         .await?;
-    let unread = rows.iter().filter(|r| !r.3).count();
-    let items: Vec<Value> = rows.into_iter().map(|(id,kind,at,read,live,username,display_name,avatar)| json!({"id":id,"kind":kind,"created_at":at,"read":read,"live":live,
+    let mut items: Vec<Value> = rows.into_iter().map(|(id,kind,at,read,live,username,display_name,avatar)| json!({"id":id,"kind":kind,"created_at":at,"read":read,"live":live,
         "channel":{"username":username,"display_name":display_name,"avatar":profiles::avatar_json(&app,avatar.as_deref())}})).collect();
+    let mut db = app.db.acquire().await?;
+    let other:Vec<(Option<String>,Value)>=sqlx::query_as("SELECT n.guild_id,jsonb_build_object('id',n.id,'kind',n.kind,'created_at',n.created_at,'read',n.read_at IS NOT NULL,'payload',n.payload) FROM notifications n JOIN channel_users c ON c.id=n.channel_id AND c.eligible WHERE n.user_id=$1 AND n.site_visible AND n.kind<>'live' AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=$1 AND k.blocked_id=n.channel_id) OR (k.blocker_id=n.channel_id AND k.blocked_id=$1)) ORDER BY n.created_at DESC LIMIT 50")
+        .bind(&user.id).fetch_all(&mut *db).await?;
+    for (guild, item) in other {
+        if let Some(g) = guild
+            && !crate::guilds::notify_allowed(&mut db, &g, &user.id).await?
+        {
+            continue;
+        }
+        items.push(item);
+    }
+    items.sort_by(|a, b| b["created_at"].as_str().cmp(&a["created_at"].as_str()));
+    items.truncate(50);
+    let unread = items.iter().filter(|i| i["read"] == false).count();
     Ok(Json(json!({"items":items,"unread":unread})))
 }
 /// Unread in-site notifications, for the top-bar bell.
 pub async fn unread(app: &App, user: &str) -> Res<i64> {
-    Ok(sqlx::query_scalar("SELECT count(*) FROM notifications n JOIN channel_users c ON c.id=n.channel_id AND c.eligible WHERE n.user_id=$1 AND n.read_at IS NULL")
-        .bind(user)
-        .fetch_one(&app.db)
-        .await?)
+    let mut db = app.db.acquire().await?;
+    let rows:Vec<Option<String>>=sqlx::query_scalar("SELECT n.guild_id FROM notifications n JOIN channel_users c ON c.id=n.channel_id AND c.eligible WHERE n.user_id=$1 AND n.read_at IS NULL AND n.site_visible AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=n.channel_id) OR (b.blocker_id=n.channel_id AND b.blocked_id=$1))")
+        .bind(user).fetch_all(&mut *db).await?;
+    let mut count = 0;
+    for guild in rows {
+        if let Some(g) = guild
+            && !crate::guilds::notify_allowed(&mut db, &g, user).await?
+        {
+            continue;
+        }
+        count += 1;
+    }
+    Ok(count)
 }
+
 /// POST /api/me/notifications/read
 async fn mark_read(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = signed_in(&app, &jar).await?;
@@ -193,14 +335,24 @@ struct Settings {
     site: bool,
     push: bool,
     email: bool,
+    #[serde(default)]
+    community: Vec<TypeSettings>,
+}
+#[derive(Deserialize)]
+struct TypeSettings {
+    kind: String,
+    site: bool,
+    push: bool,
 }
 async fn settings_json(app: &App, user: &str) -> Res<Json<Value>> {
     let (site, push, email, devices): (bool, bool, bool, i64) = sqlx::query_as("SELECT coalesce(s.site,true),coalesce(s.push,true),coalesce(s.email,false),(SELECT count(*) FROM push_subscriptions WHERE user_id=$1) FROM (SELECT 1) one LEFT JOIN notification_settings s ON s.user_id=$1")
         .bind(user)
         .fetch_one(&app.db)
         .await?;
+    let community:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('kind',k,'site',coalesce(t.site,true),'push',coalesce(t.push,true)) FROM unnest($2::text[]) k LEFT JOIN notification_type_settings t ON t.user_id=$1 AND t.kind=k")
+        .bind(user).bind(COMMUNITY_TYPES.to_vec()).fetch_all(&app.db).await?;
     Ok(Json(
-        json!({"site":site,"push":push,"email":email,"push_devices":devices,"push_key":app.config.staff_push.public_key}),
+        json!({"site":site,"push":push,"email":email,"push_devices":devices,"push_key":app.config.staff_push.public_key,"community":community}),
     ))
 }
 /// GET /api/me/notifications/settings
@@ -220,8 +372,23 @@ async fn put_settings(
             "Verify your email address before turning on email alerts.",
         ));
     }
+    let mut kinds = std::collections::HashSet::new();
+    if input.community.len() > COMMUNITY_TYPES.len()
+        || input
+            .community
+            .iter()
+            .any(|t| !COMMUNITY_TYPES.contains(&t.kind.as_str()) || !kinds.insert(&t.kind))
+    {
+        return Err(Fail::bad("Invalid or repeated notification type."));
+    }
+    let mut tx = app.db.begin().await?;
     sqlx::query("INSERT INTO notification_settings(user_id,site,push,email) VALUES($1,$2,$3,$4) ON CONFLICT(user_id) DO UPDATE SET site=$2,push=$3,email=$4")
-        .bind(&user.id).bind(input.site).bind(input.push).bind(input.email).execute(&app.db).await?;
+        .bind(&user.id).bind(input.site).bind(input.push).bind(input.email).execute(&mut *tx).await?;
+    for t in input.community {
+        sqlx::query("INSERT INTO notification_type_settings(user_id,kind,site,push) VALUES($1,$2,$3,$4) ON CONFLICT(user_id,kind) DO UPDATE SET site=$3,push=$4")
+            .bind(&user.id).bind(t.kind).bind(t.site).bind(t.push).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     settings_json(&app, &user.id).await
 }
 

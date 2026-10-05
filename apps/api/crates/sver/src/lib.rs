@@ -18,6 +18,7 @@ pub mod chat;
 pub mod discovery;
 pub mod emotes;
 pub mod factions;
+pub mod guilds;
 pub mod integrity;
 pub mod jobs;
 pub mod magnet;
@@ -38,6 +39,7 @@ pub mod roadmap;
 pub mod safety;
 pub mod security;
 pub mod social;
+pub mod squads;
 pub mod staff_push;
 pub mod staff_streams;
 pub mod streams;
@@ -372,6 +374,8 @@ pub fn router(app: App) -> Router {
         .merge(streams::routes())
         .merge(playback::routes())
         .merge(plays::routes())
+        .merge(guilds::routes())
+        .merge(squads::routes())
         .merge(chat::routes())
         .merge(emotes::routes())
         .merge(alerts::routes())

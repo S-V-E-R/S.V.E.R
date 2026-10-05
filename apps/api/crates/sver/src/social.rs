@@ -204,32 +204,47 @@ pub async fn following(
 ) -> Res<Json<Value>> {
     follow_list(&app, &jar, &name, &q.cursor, false).await
 }
-/// GET /api/me/following: the viewer's followed channels (newest first until Module 3 adds live).
+#[derive(Deserialize)]
+pub struct FollowingQuery {
+    cursor: Option<String>,
+    #[serde(default)]
+    live: bool,
+}
+/// Followed channels plus live members of followed guilds, without duplicate channels.
 pub async fn my_following(
     State(app): State<App>,
     jar: CookieJar,
-    Query(q): CursorQuery,
+    Query(q): Query<FollowingQuery>,
 ) -> Res<Json<Value>> {
     let user = signed_in(&app, &jar).await?;
     let after = parse_cursor(&q.cursor)?;
     let mut db = app.db.acquire().await?;
+    let guilds = crate::guilds::followed_members(&mut db, &user.id).await?;
+    let guild_ids: Vec<_> = guilds.iter().map(|r| r.0.clone()).collect();
+    let guild_dates: Vec<_> = guilds.iter().map(|r| r.1).collect();
     // Only literal column choices and chip SQL are interpolated; request values are bound.
     let rows: Vec<(Value, DateTime<Utc>, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {chip}, f.created_at, c.id FROM follows f JOIN channel_users c ON c.id=f.following_id WHERE f.follower_id=$1 AND c.eligible \
+        "WITH sources AS (SELECT following_id AS id,created_at FROM follows WHERE follower_id=$1 UNION ALL SELECT gs.id,gs.at FROM unnest($5::text[],$6::timestamptz[]) gs(id,at) WHERE {guild_live}), \
+         f AS (SELECT id,max(created_at) AS created_at FROM sources GROUP BY id) \
+         SELECT {chip} || jsonb_build_object('direct_follow',EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=c.id)), f.created_at, c.id FROM f JOIN channel_users c ON c.id=f.id WHERE c.eligible \
+         AND (NOT $7 OR {live}) AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=c.id) OR (b.blocker_id=c.id AND b.blocked_id=$1)) \
          AND ($2::timestamptz IS NULL OR (f.created_at,c.id) < ($2,$3)) ORDER BY f.created_at DESC, c.id DESC LIMIT $4",
-        chip = chip_sql("c")
+        chip = chip_sql("c"), live = crate::playback::live_sql("c.id"), guild_live = crate::playback::live_sql("gs.id")
     )))
     .bind(&user.id)
     .bind(after.as_ref().map(|a| a.0))
     .bind(after.as_ref().map(|a| a.1.clone()).unwrap_or_default())
     .bind(PAGE + 1)
+    .bind(guild_ids)
+    .bind(guild_dates)
+    .bind(q.live)
     .fetch_all(&mut *db)
     .await?;
     let more = rows.len() as i64 > PAGE;
     let rows = &rows[..rows.len().min(PAGE as usize)];
     let mut items: Vec<Value> = rows
         .iter()
-        .map(|(chip, at, _)| json!({"user": chip, "followed_at": at}))
+        .map(|(chip, at, id)| json!({"user": chip, "followed_at": at,"guilds":guilds.iter().find(|g|g.0==*id).map(|g|&g.2)}))
         .collect();
     items.iter_mut().for_each(|v| hydrate(&app, v));
     Ok(Json(

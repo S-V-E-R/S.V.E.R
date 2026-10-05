@@ -95,6 +95,8 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 
 ## Co-streams (squad view)
 
+On October 5, 2026, Joe brought co-stream viewing, invitations and shared chat forward into the Guilds step. Payment pooling and settlement still build with this module.
+
 - A live owner invites 1 to 3 other live owners. When an invitee accepts, their stream joins the squad.
 - The squad page shows the streams side by side (stacked on phones). Viewers choose which stream they hear and whose chat they use; the others play muted.
 - The host picks one of two modes when creating the squad:

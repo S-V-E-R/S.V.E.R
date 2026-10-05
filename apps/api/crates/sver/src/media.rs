@@ -979,7 +979,9 @@ pub async fn cleanup(app: &App) -> Res<usize> {
         if removal::held(&mut tx, &key).await? {
             continue;
         }
-        if key.starts_with("emotes/") && crate::emotes::referenced(&mut tx, &key).await? {
+        if (key.starts_with("emotes/") && crate::emotes::referenced(&mut tx, &key).await?)
+            || crate::guilds::referenced(&mut tx, &key).await?
+        {
             continue;
         }
         let pending: bool = sqlx::query_scalar(

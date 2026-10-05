@@ -3,6 +3,8 @@ import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { send } from "../lib/client-api";
 import type { Chip } from "../lib/types";
+import { Crest } from "./FactionIdentity";
+import { GuildChatBadge } from "./Guilds";
 
 type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: string | null; origin?: string | null };
 type Snapshot = { type: "snapshot"; messages: Message[]; merged_with: Chip | null; holding: boolean; can_send: boolean };
@@ -62,6 +64,8 @@ export function HypeChat({ lane, account, upNext }: { lane: string; account: str
     <ol className="chat-messages" ref={list} aria-live="polite">
       {(state?.messages.length ?? 0) === 0 && <li className="muted">No messages yet.</li>}
       {state?.messages.map(m => <li key={m.id}>
+        {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
+        {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
         {m.author.username ? <Link href={`/${m.author.username}`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
         {m.origin && <span className="badge magnet-badge">MAGNet</span>}: <span className="chat-body">{m.body}</span>
       </li>)}

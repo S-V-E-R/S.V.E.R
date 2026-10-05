@@ -245,6 +245,17 @@ pub async fn channel_user_by_id(db: &mut PgConnection, id: &str) -> Res<Option<C
         .await?;
     with_faction(db, user).await
 }
+/// Account lookup for authorized membership management, including restricted accounts.
+/// Callers must check eligibility before publishing or admitting the account.
+pub async fn account_by_name(db: &mut PgConnection, name: &str) -> Res<Option<ChannelUser>> {
+    let user = sqlx::query_as(
+        "SELECT * FROM channel_users WHERE lower(username)=lower($1) AND deleted_at IS NULL",
+    )
+    .bind(name)
+    .fetch_optional(&mut *db)
+    .await?;
+    with_faction(db, user).await
+}
 async fn with_faction(
     db: &mut PgConnection,
     user: Option<ChannelUser>,

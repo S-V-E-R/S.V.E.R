@@ -274,6 +274,17 @@ pub async fn influence_context(
     Ok(sqlx::query_as("SELECT b.owner_id,c.genre FROM broadcasts b JOIN stream_settings s ON s.owner_id=b.owner_id JOIN stream_categories c ON c.id=s.category_id WHERE b.id=$1 AND b.state='LIVE' AND b.observed_at>clock_timestamp()-interval '20 seconds'")
         .bind(broadcast).fetch_optional(db).await?)
 }
+pub async fn has_streamed(db: &mut PgConnection, owner: &str) -> profiles::Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND confirmed_live_at IS NOT NULL)").bind(owner).fetch_one(db).await?)
+}
+pub async fn broadcast_active(
+    db: &mut PgConnection,
+    owner: &str,
+    broadcast: &str,
+) -> profiles::Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM broadcasts WHERE id=$1 AND owner_id=$2 AND state IN ('LIVE','RECONNECTING'))")
+        .bind(broadcast).bind(owner).fetch_one(db).await?)
+}
 pub async fn live_broadcast(db: &mut PgConnection, owner: &str) -> profiles::Res<Option<String>> {
     Ok(
         sqlx::query_scalar("SELECT id FROM broadcasts WHERE owner_id=$1 AND state='LIVE'")
@@ -814,7 +825,7 @@ pub async fn tick(app: &App) -> Result<()> {
                             "height":stream["video"]["height"].as_u64(),"input_kbps":kbps,
                             "codec_warning":video.is_some()&&!compatible,
                             "bitrate_warning":kbps.is_some_and(|n|n>8000.0),"bitrate_warning_provisional":true});
-                        sqlx::query("UPDATE broadcasts SET state=CASE WHEN $2 AND $3 THEN 'LIVE' ELSE state END,recv_bytes=$4,health=$5::jsonb||jsonb_strip_nulls(jsonb_build_object('keyframe_seconds',health->'keyframe_seconds','b_frames',health->'b_frames','keyframe_warning',health->'keyframe_warning','probed_at',health->'probed_at')),observed_at=CASE WHEN $3 THEN clock_timestamp() ELSE observed_at END WHERE id=$1 AND state IN ('STARTING','LIVE')")
+                        sqlx::query("UPDATE broadcasts SET confirmed_live_at=CASE WHEN $2 AND $3 THEN coalesce(confirmed_live_at,clock_timestamp()) ELSE confirmed_live_at END,state=CASE WHEN $2 AND $3 THEN 'LIVE' ELSE state END,recv_bytes=$4,health=$5::jsonb||jsonb_strip_nulls(jsonb_build_object('keyframe_seconds',health->'keyframe_seconds','b_frames',health->'b_frames','keyframe_warning',health->'keyframe_warning','probed_at',health->'probed_at')),observed_at=CASE WHEN $3 THEN clock_timestamp() ELSE observed_at END WHERE id=$1 AND state IN ('STARTING','LIVE')")
                             .bind(&b.id).bind(compatible).bind(fresh).bind(bytes).bind(health).execute(&mut *tx).await?;
                     }
                 } else if b.state != "STARTING" {

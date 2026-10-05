@@ -74,6 +74,12 @@ pub async fn tick(app: &App) -> Result<()> {
     }
     // Only this rebuild database is touched. Future modules extend the user FK erasure policy.
     // Module 2 erasure steps run first so holds, report closures and counts are kept consistent.
+    if crate::squads::tick(app).await.is_err() {
+        eprintln!("squad maintenance failed; retrying next pass");
+    }
+    if crate::guilds::tick(app).await.is_err() {
+        eprintln!("guild_event=maintenance outcome=retry");
+    }
     crate::profile_jobs::tick(app).await?;
     sqlx::query(
         "DELETE FROM users WHERE deleted_at<=now()-interval '14 days' AND NOT legacy_deletion_hold",

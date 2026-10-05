@@ -6,6 +6,8 @@ A guild is a group of streamers: a stream team, a creator collective, or a real 
 
 Brand sponsorships and deals are a separate, later feature (Phase 4, with ads), not part of guilds.
 
+Implemented October 5, 2026. Joe explicitly included co-streaming in this step: the squad-view and shared-chat behavior in [Support](SUPPORT.md) moves forward with Guilds. Payment collection and revenue settlement remain with Support; there are no payment controls before that module exists.
+
 ## Who can do what
 
 - **Create a guild:** a verified account with 2FA that has streamed on S.V.E.R at least once. A person can lead (own) one guild.
@@ -50,3 +52,12 @@ The legacy guilds module allowed one guild per person with invite-only recruitme
 ## Done when
 
 A streamer creates a guild; others apply and are accepted or declined by the leader and officers; an invited streamer applies and joins; a streamer belongs to 3 guilds and shows one guild's emblem badge in chat, with the tag as its label; the guild page shows live members first and a combined schedule; viewers follow a guild and see its live members; team shortcuts raid, host and invite guildmates; staff verify an org and can rename or disband a guild; nothing about guilds changes MAGNet or influence.
+
+## Implementation and checks
+
+- Directory `/guilds`, public pages `/g/{name}`, management `/g/{name}/settings`, Creator Studio `/studio/guilds` and `/studio/squads`, squad viewing `/squads/{id}`, staff review `/admin/guilds`.
+- Guild admission and leadership changes serialize in Postgres. Deleting or banning a leader promotes the oldest eligible officer who does not already lead another guild. Orphaned archives without a remaining content owner are retained for staff only.
+- Emblems use the existing image processor, storage, review queue and Take It Down quarantine. Guild application, decision and invitation alerts and co-stream invitations reuse the notification/push queue with separate preferences and guild muting.
+- Shared rooms have separate history and moderation restrictions. They inherit every participant's channel bans and sending rules. They do not contribute to faction influence or MAGNet chat signals. Each player keeps its normal media transport and playback lease.
+- `scripts/dev.ps1 test` includes the Postgres Guilds/co-stream acceptance scenario: admission caps, applications, badges, follows, schedules, notifications, succession, media review/removal, staff actions, room isolation and live WebSocket revocation.
+- After building the web app, `node scripts/check-teams.cjs [path-to-playwright]` checks populated pages at 1440, 390 and 320 px, four advancing HLS videos, exclusive audio and both chat modes. Requires FFmpeg and Edge. Set `SVER_SCREENSHOTS=1` to write desktop/phone captures under ignored `tmp/`.

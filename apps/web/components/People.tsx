@@ -2,7 +2,7 @@ import Link from "next/link";
 import { followedOn, type Chip } from "../lib/types";
 import { UserChip } from "./UserChip";
 
-export type PeoplePage = { items: { user: Chip; followed_at: string }[]; next_cursor: string | null };
+export type PeoplePage = { items: { user: Chip & { direct_follow?: boolean }; followed_at: string; guilds?: { name: string; slug: string }[] | null }[]; next_cursor: string | null };
 export function People({ page, base }: { page: PeoplePage | null; base: string }) {
   if (!page) return <p className="muted">This list couldn&apos;t be loaded. Please try again.</p>;
   return <>

@@ -1,6 +1,6 @@
 import type { Faction } from "./factions";
 export type Sizes = Record<string, string> | null;
-export type Chip = { username: string | null; display_name: string; avatar: Sizes; linked: boolean; deleted: boolean; live?: boolean; faction?: Faction | null };
+export type Chip = { username: string | null; display_name: string; avatar: Sizes; linked: boolean; deleted: boolean; live?: boolean; faction?: Faction | null; guild?: { slug: string; name: string; tag: string; image: string | null } | null };
 export type Link = { platform: string; url: string };
 export type Song = { provider: "youtube" | "soundcloud"; media_id: string; title: string | null; artist: string | null; thumbnail: string | null; volume: number } | null;
 export type Viewer = { signed_in: boolean; is_owner: boolean; following: boolean; alerts?: boolean; blocked: boolean; interaction_blocked: boolean };

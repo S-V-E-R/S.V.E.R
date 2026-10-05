@@ -21,6 +21,10 @@ use serde_json::{Value, json};
 // A ban is in force while status='ACTIVE' AND (until IS NULL OR until>now()): a timed ban ends
 // by database time. The condition is written out in each query so every query stays static SQL.
 
+pub async fn active(db: &mut sqlx::PgConnection, user: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM account_bans WHERE user_id=$1 AND status='ACTIVE' AND (until IS NULL OR until>now()))").bind(user).fetch_one(db).await?)
+}
+
 /// Writes a banned account may still make: account security (all of Login), standing and appeals.
 fn allowed_while_banned(path: &str) -> bool {
     path.starts_with("/api/auth/")

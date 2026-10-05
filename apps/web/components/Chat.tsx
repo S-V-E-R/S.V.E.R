@@ -4,8 +4,10 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { ReportButton, TakeDownLink } from "./Report";
 import { Crest } from "./FactionIdentity";
+import { GuildChatBadge } from "./Guilds";
 import type { Chip } from "../lib/types";
 import { EmoteImage, type ChannelEmote } from "./Emote";
+import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
 type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null };
@@ -37,12 +39,13 @@ function MessageBody({ message, account, emotes }: { message: Message; account: 
  * Channel chat. Live over the same-origin WebSocket; if the socket can't connect it polls history
  * and sends over HTTPS, which run the same server checks. Messages render as plain text.
  */
-export function Chat({ username, account }: { username: string; account: string | null }) {
+export function Chat({ username, account, squad }: { username: string; account: string | null; squad?: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"connecting" | "live" | "polling">("connecting");
   const [role, setRole] = useState<string | null>(null);
+  const [restrictions, setRestrictions] = useState<{ user: Chip; kind: string; until: string | null }[]>([]);
   const [pinned, setPinned] = useState<Message | null>(null);
   const [emotes, setEmotes] = useState<ChannelEmote[]>([]);
   const [reply, setReply] = useState<Reply | null>(null);
@@ -51,11 +54,11 @@ export function Chat({ username, account }: { username: string; account: string 
   // Spike protection: followers-only chat with an end time; moderators get a one-click prompt.
   const [followersOnly, setFollowersOnly] = useState<string | null>(null);
   const [spike, setSpike] = useState(false);
-  const canPin = role === "owner" || role === "moderator";
+  const canPin = !squad && (role === "owner" || role === "moderator");
   const socket = useRef<WebSocket | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const path = `/api/channels/${encodeURIComponent(username)}/chat`;
+  const path = squad ? `/api/squads/${encodeURIComponent(squad)}/chat` : `/api/channels/${encodeURIComponent(username)}/chat`;
 
   // Deduplicates by ID and keeps the latest 100 in server order.
   const merge = useCallback((incoming: Message[], replace = false) => {
@@ -76,8 +79,9 @@ export function Chat({ username, account }: { username: string; account: string 
   // Owner, moderators and staff get per-message actions; the server enforces every permission.
   const loadRole = useCallback(async () => {
     if (!account) return;
-    const r = await send<{ role: string; spike?: boolean; followers_only_until?: string | null }>("GET", `${path}/moderation`);
-    if (r.ok) { setRole(r.data.role); setSpike(!!r.data.spike); setFollowersOnly(r.data.followers_only_until ?? null); }
+    const r = await send<{ role: string; spike?: boolean; followers_only_until?: string | null; restrictions?: { user: Chip; kind: string; until: string | null }[] }>("GET", `${path}/moderation`);
+    if (r.ok) { setRole(r.data.role); setSpike(!!r.data.spike); setFollowersOnly(r.data.followers_only_until ?? null); setRestrictions(r.data.restrictions ?? []); }
+    else setRole(null);
   }, [account, path]);
   useLoad(loadRole);
   useEffect(() => {
@@ -103,12 +107,12 @@ export function Chat({ username, account }: { username: string; account: string 
     const fallback = () => {
       if (closed || poll) return;
       setMode("polling");
-      const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); } };
+      const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
       void load();
       poll = setInterval(() => { if (!document.hidden) void load(); }, 4000);
     };
     const open = (attempt: number) => {
-      const ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/chat/ws?channel=${encodeURIComponent(username)}`);
+      const ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/chat/ws?${squad ? `squad=${encodeURIComponent(squad)}` : `channel=${encodeURIComponent(username)}`}`);
       socket.current = ws;
       let opened = false;
       ws.onopen = () => { opened = true; setMode("live"); };
@@ -136,7 +140,7 @@ export function Chat({ username, account }: { username: string; account: string 
     };
     open(0);
     return () => { closed = true; clearInterval(poll); clearTimeout(retry); socket.current?.close(); };
-  }, [path, username, merge, remove]);
+  }, [path, username, squad, merge, remove]);
 
   useEffect(() => { list.current?.lastElementChild?.scrollIntoView({ block: "nearest" }); }, [messages]);
 
@@ -157,6 +161,7 @@ export function Chat({ username, account }: { username: string; account: string 
       : await send("POST", `${path}/restrictions`, { username: who, kind: action, seconds, reason });
     if (!result.ok) setError(result.error);
     else if (action === "delete") remove(m.id);
+    else if (squad) await loadRole();
   }
 
   async function changePin(messageId: string | null, reason?: string) {
@@ -215,6 +220,7 @@ export function Chat({ username, account }: { username: string; account: string 
       {messages.map(m => <li key={m.id}>
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
+        {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
         {m.author.username ? <Link className="faction-name" data-faction={m.author.faction} href={`/${m.author.username}`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
         {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet Hype">MAGNet</span>}
         {m.role && <span className="badge">{{ owner: "Broadcaster", moderator: "Moderator", staff: "Staff" }[m.role]}</span>}: <MessageBody message={m} account={account} emotes={emotes} />
@@ -231,6 +237,7 @@ export function Chat({ username, account }: { username: string; account: string 
         </div></details>
       </li>)}
     </ol>
+    {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt("Reason for lifting this restriction")?.trim(); if (!reason || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, { reason }); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
     <details className="chat-emotes"><summary>Channel emotes ({emotes.length})</summary>
       {emotes.length === 0 ? <p className="muted">No channel emotes yet.</p> : <ul className="list">{emotes.map(emote => <li key={emote.id}>
         {account ? <button type="button" className="quiet small" disabled={busy} onClick={() => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${emote.code} `.slice(0, 500)); input.current?.focus(); }} aria-label={`Insert ${emote.code}`}><EmoteImage emote={emote} /> {emote.code}</button> : <span className="row"><EmoteImage emote={emote} /> {emote.code}</span>}

@@ -135,6 +135,8 @@ pub const RESERVED: &[&str] = &[
     "gifting",
     "goals",
     "guilds",
+    "g",
+    "squads",
     "hype",
     "icons",
     "leaderboards",
