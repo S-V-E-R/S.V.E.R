@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Chat } from "../../../components/Chat";
 import { LivePlayer } from "../../../components/LivePlayer";
+import { PlaysControls } from "../../../components/PlaysControls";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../../lib/channel";
 import { currentAccount } from "../../session";
 import { Crest } from "../../../components/FactionIdentity";
@@ -21,7 +22,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
   const c = data.channel;
   const [account, directory] = await Promise.all([currentAccount(), apiGet<StreamDirectory>("/api/streams")]);
   const next = directory.data?.live.filter(stream => stream.user.username !== c.username).slice(0, 4) ?? [];
-  return <div className="channel watch" data-theme={c.faction ?? "neutral"}>
+  return <div className="channel watch" data-theme={c.faction ?? "neutral"} data-plays={c.plays ? "true" : undefined}>
     <div className="watch-main">
     <div className="watch-player frame">
     <LivePlayer username={c.username} focused signedIn={!!account}>
@@ -36,6 +37,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
       <div className="streamer-name"><h1><Link href={`/${c.username}`}>{c.display_name}</Link></h1><p className="handle">@{c.username}</p>{c.faction && <Link href={`/factions/${c.faction}`}>{factionInfo(c.faction).name}</Link>}<p className="muted">{c.follower_count.toLocaleString()} followers</p></div>
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
     </section>
+    {c.plays && <PlaysControls username={c.username} />}
     <section className="watch-next" aria-labelledby="up-next"><ShelfHeading id="up-next" title="Up next" href="/" link="All live streams" />{next.length ? <StreamShelf streams={next} /> : <p className="shelf-empty frame">{directory.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>
     </div>
     <Chat username={c.username} account={account?.username ?? null} />

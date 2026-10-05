@@ -33,6 +33,7 @@ export default async function ChannelHome({ params }: { params: ChannelParams })
   const activity = (await apiGet<{ items: ActivityItem[]; next_cursor: string | null }>(`/api/channels/${encodeURIComponent(c.username)}/activity`)).data;
   const intro = data.header?.intro_body ? data.header : null;
   return <ChannelFrame data={data} path={`/${c.username}`}>
+    {c.plays && <section className="panel section"><h2>SVER Plays · 24/7</h2><p>Watch the game and vote for its next move.</p><Link className="button" href={`/${c.username}/live`}>Watch and play</Link></section>}
     {intro && <section className="panel section intro-card"><h2>{intro.intro_title || "About this page"}</h2><p className="intro-body">{intro.intro_body}</p></section>}
     {(council.length > 0 || viewer.is_owner) && <section className="panel section">
       <h2>War Council</h2>

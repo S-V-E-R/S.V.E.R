@@ -493,6 +493,7 @@ pub async fn channel(
             "song": song,
             "song_notice": song_notice,
             "live": crate::playback::is_live(&mut db, &user.id).await?,
+            "plays": crate::plays::is_channel(&mut db, &user.id).await?,
             "faction": user.faction,
             "season_rewards":crate::factions::rewards(&mut db,&user.id).await?,
         },

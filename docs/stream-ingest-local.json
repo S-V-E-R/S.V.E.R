@@ -1,6 +1,6 @@
 {
   "authenticated_real_callbacks": true,
-  "checked_at": "2026-10-04T15:50:45.546710700Z",
+  "checked_at": "2026-10-05T04:11:56.477844400Z",
   "hls_audio_video_decode": true,
   "key_rejection": true,
   "latency_acceptance": false,

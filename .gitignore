@@ -18,3 +18,4 @@ test-results/
 /ChangeLog.md
 /docs/OPERATIONS.md
 /docs/PLATFORM_PLAN.md
+__pycache__/
