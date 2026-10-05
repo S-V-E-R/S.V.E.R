@@ -36,6 +36,8 @@ mod magnet;
 mod moderation;
 #[path = "streams/playback.rs"]
 mod playback;
+#[path = "streams/plays.rs"]
+mod plays;
 #[path = "streams/raids.rs"]
 mod raids;
 #[path = "streams/real_media.rs"]
@@ -331,6 +333,7 @@ async fn exercise(e: &Env) {
     raids::exercise(e).await;
     staff_streams::exercise(e).await;
     discovery::exercise(e).await;
+    plays::exercise(e).await;
     magnet::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
