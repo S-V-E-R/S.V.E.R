@@ -11,7 +11,7 @@ type Snapshot = { type: "snapshot"; messages: Message[]; merged_with: Chip | nul
 type Event = Snapshot | { type: "message"; message: Message } | { type: "delete"; id: string };
 
 /**
- * A Hype channel's chat (docs/MAGNET.md "Hype chat"). While a stream is featured it is merged
+ * A MAGNet channel's chat (docs/MAGNET.md "MAGNet chat"). While a stream is featured it is merged
  * with that channel's chat (messages carry the MAGNet mark there); it detaches when MAGNet moves on.
  */
 export function HypeChat({ lane, account, upNext }: { lane: string; account: string | null; upNext: { name: string; seconds: number } | null }) {
@@ -56,8 +56,8 @@ export function HypeChat({ lane, account, upNext }: { lane: string; account: str
     else setError(result.error);
     setBusy(false);
   }
-  return <section className="chat panel" aria-label="Hype chat">
-    <h2>Hype chat</h2>
+  return <section className="chat panel" aria-label="MAGNet chat">
+    <h2>MAGNet chat</h2>
     {state?.merged_with ? <p className="chat-system" role="status">Chatting with <Link href={`/${state.merged_with.username}`}>{state.merged_with.display_name}</Link>&apos;s chat; their rules apply.</p>
       : <p className="chat-system muted">MAGNet&apos;s own room.</p>}
     {upNext && <p className="chat-system" role="status">Chat joins {upNext.name} in {upNext.seconds}…</p>}

@@ -68,7 +68,7 @@ async function render(route, signedIn = false) {
     await render("/settings/profile", true);
     assert.ok(document.querySelector('aside a[href="/settings/profile"][aria-current="page"]'));
     const navLabels = [...document.querySelectorAll('aside .nav-item')].map(item => item.querySelector('span')?.textContent);
-    assert.deepEqual(navLabels, ['Home', 'Following', 'Factions', 'Browse', 'MAGNet Hype', 'War map', 'Creator Studio', 'Valor', 'Settings', 'Account security']);
+    assert.deepEqual(navLabels, ['Home', 'Following', 'Factions', 'Browse', 'MAGNet', 'War map', 'Creator Studio', 'Valor', 'Settings', 'Account security']);
     assert.equal(document.querySelectorAll('aside [aria-disabled="true"]').length, 0);
     await render('/studio/channel', true);
     assert.ok(document.querySelector('aside a[href="/studio/channel"][aria-current="page"]'));

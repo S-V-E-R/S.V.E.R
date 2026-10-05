@@ -1,9 +1,11 @@
 # Module 5: MAGNet
 
-Expanded October 3, 2026 by Joe. **Built October 5, 2026: discovery, spotlights, thumbnails, MAGNet Hype and Hype chat (below). Co-stream squads wait for Module 6. Live acceptance with real streams is open.** MAGNet is how S.V.E.R moves viewers between live streams. It has three parts:
+The product name is **MAGNet**. Its channels, chat and Creator Studio labels use that name.
+
+Expanded October 3, 2026 by Joe. **Built October 5, 2026: discovery, spotlights, thumbnails, MAGNet and MAGNet chat (below). Co-stream squads wait for Module 6. Live acceptance with real streams is open.** MAGNet is how S.V.E.R moves viewers between live streams. It has three parts:
 
 1. **Discovery:** the homepage, browse, search, watch-page suggestions and the stream-end countdown, all in fair rotation.
-2. **MAGNet Hype:** channels a viewer can sit on while MAGNet moves them to whichever stream is having a moment, and gives every stream its turn. It reinvents an idea from an earlier platform's auto-switching channel, with fairness built in.
+2. **MAGNet channels:** channels a viewer can sit on while MAGNet moves them to whichever stream is having a moment, and gives every stream its turn. It reinvents an idea from an earlier platform's auto-switching channel, with fairness built in.
 3. **Spotlights:** short featured slots for first streams, returning creators and staff picks.
 
 It follows the closure rule: specify, build, then test against "Done when". All numbers here were accepted by Joe as defaults on October 3, 2026 and can be tuned later; weights and thresholds for scoring live in the private tuning config, with safe example values in the repo.
@@ -39,19 +41,19 @@ Implementation (October 5; `discovery.rs`, migration `0026_discovery.sql`):
 - **Thumbnails** (`probe.rs`): the OBS-health probe already fetches each live stream's newest HLS segment every 30 seconds; about once a minute ffmpeg decodes one frame to a 640-pixel WebP (the stream is never re-encoded). Each still gets a new key, the previous one is deleted, and ended streams' stills are swept. The API image gains `ffmpeg`.
 - Coverage: `discovery` unit tests, `tests/streams/discovery.rs`, `scripts/check-discovery.cjs` and the updated shell check.
 
-## MAGNet Hype
+## MAGNet channels
 
 ### Channels
 
-- **Global Hype** at `/magnet`, plus **one Hype lane per genre** (`/magnet/{genre}`), using the genres defined by Module 4. Each channel runs its own engine with its own rotation, hold times and cooldowns.
-- Faction Hype channels (one per faction) are a later addition.
+- **Global MAGNet** at `/magnet`, plus **one MAGNet lane per genre** (`/magnet/{genre}`), using the genres defined by Module 4. Each channel runs its own engine with its own rotation, hold times and cooldowns.
+- Faction MAGNet channels (one per faction) are a later addition.
 
 ### Who can be featured
 
 A stream is eligible when it is:
 - live for at least 60 seconds and not reconnecting;
 - in a category allowed by the content rules;
-- not opted out. **Every channel is eligible by default**; a streamer can opt out of MAGNet Hype in Creator Studio at any time, effective at the next tick;
+- not opted out. **Every channel is eligible by default**; a streamer can opt out of MAGNet in Creator Studio at any time, effective at the next tick;
 - from a channel that isn't restricted and has no open staff integrity case.
 
 S.V.E.R Plays and other system channels are featured only when nothing else is live.
@@ -82,67 +84,67 @@ Room signals only at launch, each compared with that stream's own recent baselin
 - **Raid arriving:** a raid (Module 3) landing on the stream.
 - **Streamer flag:** a "Flag this moment" button in Creator Studio and `/flag` in chat. It counts only together with another elevated signal, with a cooldown (once every 10 minutes).
 
-Not used: viewer count, follower totals, money, faction (Hype channels are faction-neutral; the homepage keeps its home-turf weighting).
+Not used: viewer count, follower totals, money, faction (MAGNet channels are faction-neutral; the homepage keeps its home-turf weighting).
 
-Later add-ons: game-API detectors and computer-vision moment detection for specific games, CrowdSync activity, and faction Hype channels. Vision needs frame decoding, so it must be measured against the transmux-only rule before it is added.
+Later add-ons: game-API detectors and computer-vision moment detection for specific games, CrowdSync activity, and faction MAGNet channels. Vision needs frame decoding, so it must be measured against the transmux-only rule before it is added.
 
 ### What the viewer sees
 
 - One player showing the featured stream, its title, streamer, category and a one-line reason ("Chat is going off", "Fair turn: hasn't been featured today", "Just raided by …").
-- Before a switch: a **5-second countdown** with a still preview card of the next stream and a **Stay** button. Stay opens the current stream on its own channel page and leaves the Hype channel.
-- Chat works as described in "Hype chat" below.
-- Viewers on a Hype channel are ordinary playback sessions on the featured broadcast, so they count for that stream like any other viewer.
+- Before a switch: a **5-second countdown** with a still preview card of the next stream and a **Stay** button. Stay opens the current stream on its own channel page and leaves the MAGNet channel.
+- Chat works as described in "MAGNet chat" below.
+- Viewers on a MAGNet channel are ordinary playback sessions on the featured broadcast, so they count for that stream like any other viewer.
 - Discovery labels where true: First feature, Returning creator, New creator.
 
-### Hype chat
+### MAGNet chat
 
-Each Hype channel has its **own chat**, separate from every streamer's channel chat. It merges with the featured stream's chat during a feature and detaches when MAGNet moves on.
+Each MAGNet channel has its **own chat**, separate from every streamer's channel chat. It merges with the featured stream's chat during a feature and detaches when MAGNet moves on.
 
-- **Between features** (countdown, nothing live): Hype chat is its own room. During the countdown it shows "Chat joins *streamer* in 5…".
-- **During a feature (merged):** Hype chat and the featured channel's chat show each other's messages in real time. Messages from the Hype side carry the MAGNet mark so the streamer and their community can see who came from MAGNet. Viewers on the channel page and on the Hype channel are in the same conversation.
+- **Between features** (countdown, nothing live): MAGNet chat is its own room. During the countdown it shows "Chat joins *streamer* in 5…".
+- **During a feature (merged):** MAGNet chat and the featured channel's chat show each other's messages in real time. Messages from the MAGNet side carry the MAGNet mark so the streamer and their community can see who came from MAGNet. Viewers on the channel page and on the MAGNet channel are in the same conversation.
 - **After the switch (detached):** the link closes. Messages sent during the merge stay in both histories; new messages stay in the room they were sent in. The streamer's chat is back to just their channel.
-- **The channel's rules apply to everything that crosses into it:** its slow mode, link blocking, banned words, followers-only and subscriber-only modes. The channel's moderators can delete Hype messages that crossed into their chat and time out or ban those users from their channel.
+- **The channel's rules apply to everything that crosses into it:** its slow mode, link blocking, banned words, followers-only and subscriber-only modes. The channel's moderators can delete MAGNet messages that crossed into their chat and time out or ban those users from their channel.
 - **Viewers banned from (or timed out in, or blocked by) the featured channel:** a channel ban means no chat and no signed-in watching (Module 3), and MAGNet doesn't create a way around it. For as long as that channel is featured, the banned viewer:
   - sees a holding card instead of the stream ("This stream isn't available to you. MAGNet moves on in about *n* minutes"), with links to other live streams in the same lane;
-  - can read Hype chat but can't send, because Hype chat is merged into that channel's conversation ("Chat resumes when MAGNet moves on");
+  - can read MAGNet chat but can't send, because MAGNet chat is merged into that channel's conversation ("Chat resumes when MAGNet moves on");
   - gets no playback session on that broadcast, so they aren't counted as its viewer.
   
   When MAGNet switches, video and chat come back automatically. A timeout works the same way until it expires. If the viewer has blocked the streamer, they get the same holding card. One banned viewer never stops a stream from being featured. As everywhere, signed-out viewing can't be blocked.
-- **Flood protection for small channels:** Hype senders get an extra slow mode in the merged channel (one message every 3 seconds per person) on top of the channel's own rules. The streamer can turn off chat merging for their channel and stay in MAGNet; Hype viewers then chat only in Hype chat.
-- **Hype chat itself** is moderated by staff and follows the platform chat rules (500 characters, latest 100 on join, 7-day expiry, reports).
-- **No feedback loop:** messages from the Hype side never count toward the featured stream's chat-burst signal, so being featured can't keep a stream featured.
+- **Flood protection for small channels:** MAGNet senders get an extra slow mode in the merged channel (one message every 3 seconds per person) on top of the channel's own rules. The streamer can turn off chat merging for their channel and stay in MAGNet; MAGNet viewers then chat only in MAGNet chat.
+- **MAGNet chat itself** is moderated by staff and follows the platform chat rules (500 characters, latest 100 on join, 7-day expiry, reports).
+- **No feedback loop:** messages from the MAGNet side never count toward the featured stream's chat-burst signal, so being featured can't keep a stream featured.
 
 ### Co-streams on MAGNet
 
 Co-streams (Module 6, Support) can be picked up by MAGNet:
 
-- **Separate squads:** each member stays its own candidate. When one is featured, the player shows "Co-streaming with …" with links to the others; Hype chat merges with that member's chat only.
-- **Merged squads:** the squad is **one candidate**. Its moment signals come from the squad's shared chat and all members' follows; its fair-turn wait is the longest wait among its members. When featured, the Hype player shows the squad's focused stream with small tabs to switch between members (still one video player), and Hype chat merges with the squad's shared chat. Each member's opt-out applies: an opted-out member is left out of the featured squad.
+- **Separate squads:** each member stays its own candidate. When one is featured, the player shows "Co-streaming with …" with links to the others; MAGNet chat merges with that member's chat only.
+- **Merged squads:** the squad is **one candidate**. Its moment signals come from the squad's shared chat and all members' follows; its fair-turn wait is the longest wait among its members. When featured, the MAGNet player shows the squad's focused stream with small tabs to switch between members (still one video player), and MAGNet chat merges with the squad's shared chat. Each member's opt-out applies: an opted-out member is left out of the featured squad.
 - **Cooldown:** a featured squad puts all its members on the normal cooldown, so a squad can't take repeated turns through different members.
-- **Viewers and money:** Hype viewers watching a squad count for the stream they're watching. Support spent through the Hype channel while a merged squad is featured follows the squad's pooled split.
+- **Viewers and money:** MAGNet viewers watching a squad count for the stream they're watching. Support spent through the MAGNet channel while a merged squad is featured follows the squad's pooled split.
 
 ### What the streamer sees
 
 In Creator Studio:
 - Live: whether they're featured, on which channel, and why.
-- After: feature history with how long each feature lasted and how many Hype viewers stayed to follow or chat (shown to the streamer only, never used for scoring).
-- Settings: opt out of MAGNet Hype; turn chat merging off or on; the flag-moment button.
+- After: feature history with how long each feature lasted and how many MAGNet viewers stayed to follow or chat (shown to the streamer only, never used for scoring).
+- Settings: opt out of MAGNet; turn chat merging off or on; the flag-moment button.
 
 ### Staff controls
 
-In `/admin`: enable or disable each Hype channel, force a stream onto a channel and release it, emergency stop, and the decision log (each decision with its candidates, signals and reason; kept 7 days). Every staff action is audited.
+In `/admin`: enable or disable each MAGNet channel, force a stream onto a channel and release it, emergency stop, and the decision log (each decision with its candidates, signals and reason; kept 7 days). Every staff action is audited.
 
-### Implementation of MAGNet Hype (October 5; `magnet.rs`, migration `0027_magnet.sql`)
+### Implementation of MAGNet (October 5; `magnet.rs`, migration `0027_magnet.sql`)
 
 - **Lanes:** `global` plus one per Module 4 genre (`magnet_lanes`, created by the engine). Each lane ticks every 10 seconds with the 5-second media pass. `decide` is a pure function of the lane state and candidates. Its `Candidate` type has no field for viewer count, followers or money, so none can affect selection.
 - **Eligibility:** LIVE (not reconnecting) for 60+ seconds, an active category (the lane's genre on genre lanes), not opted out, an eligible channel and no OPEN integrity case. S.V.E.R Plays (`plays_runtime`) is a candidate only when nothing else is eligible.
 - **Switching:** moments and fair turns alternate (`last_kind`). The rules: a 45-second minimum hold, an 8-minute maximum (then a fair turn), at least 2 minutes between moments, and a moment must clearly beat the current stream (1.5×). Fair turns go to the stream that has waited longest on that lane (never-featured first). There's a 30-minute cooldown unless only one other stream is eligible, and a lone eligible stream holds. If the featured stream ends or becomes ineligible, the lane falls back at once; if nothing is eligible, it clears. A failed tick holds the current stream. A unit simulation proves every eligible stream is featured within 2 × n × 8 minutes, even beside a stream that's always having a moment.
-- **Signals** (each against the stream's own last 30 minutes): distinct verified chatters per minute (accounts under 7 days count half; Hype-side messages never count), verified follows per minute, a raid arriving in the last 2 minutes, and the streamer's flag. The flag adds only to another elevated signal and can be used once every 10 minutes (Studio button or `/flag`). Thresholds come from `MAGNET_TUNING_FILE`; the repo holds safe defaults.
+- **Signals** (each against the stream's own last 30 minutes): distinct verified chatters per minute (accounts under 7 days count half; MAGNet-side messages never count), verified follows per minute, a raid arriving in the last 2 minutes, and the streamer's flag. The flag adds only to another elevated signal and can be used once every 10 minutes (Studio button or `/flag`). Thresholds come from `MAGNET_TUNING_FILE`; the repo holds safe defaults.
 - **Viewers:** `/magnet` and `/magnet/{genre}`. A switch is announced 5 seconds ahead with a still of the next stream and Stay. The player plays the featured broadcast, so its sessions count for that stream; leases are tagged with the lane for Studio history only. Viewers banned from, timed out in, or blocked by the featured channel get the holding card (no playback session) with other streams in the lane.
-- **Hype chat:** a lane's own room stores `chat_messages` with no channel and `origin` = the lane. While a stream is featured and its streamer allows merging, Hype messages are sent through that channel's normal chat path, so all its rules apply, plus 3 seconds per Hype sender. They're stored in its chat with `origin`, shown with the MAGNet mark, moderatable by its moderators, and excluded from burst signals. The room shows its own messages plus the channel's chat since the feature began, and detaches at the next switch (`/api/magnet/{lane}/chat`, `/api/magnet/{lane}/ws`). Held viewers can read but not send. Room messages can be reported, and staff removal updates open rooms.
-- **Studio** (Creator Studio → MAGNet): featured now, opt-out, chat merging, the flag, and 30-day history with Hype viewers and who followed or chatted. **Staff** (Admin → MAGNet): lanes, enable/disable, force/release, emergency stop and the decision log, all audited.
+- **MAGNet chat:** a lane's own room stores `chat_messages` with no channel and `origin` = the lane. While a stream is featured and its streamer allows merging, MAGNet messages are sent through that channel's normal chat path, so all its rules apply, plus 3 seconds per MAGNet sender. They're stored in its chat with `origin`, shown with the MAGNet mark, moderatable by its moderators, and excluded from burst signals. The room shows its own messages plus the channel's chat since the feature began, and detaches at the next switch (`/api/magnet/{lane}/chat`, `/api/magnet/{lane}/ws`). Held viewers can read but not send. Room messages can be reported, and staff removal updates open rooms.
+- **Studio** (Creator Studio → MAGNet): featured now, opt-out, chat merging, the flag, and 30-day history with MAGNet viewers and who followed or chatted. **Staff** (Admin → MAGNet): lanes, enable/disable, force/release, emergency stop and the decision log, all audited.
 - **Not built:** co-stream squads need Module 6 (Support). When it adds squads, a merged squad becomes one candidate in `candidates`, with its members' cooldowns shared.
-- Coverage: the `magnet` unit tests (timing, alternation, cooldowns, own-baseline signals, the fairness bound) and `tests/streams/magnet.rs` (eligibility, countdown and switch, a small-stream chat burst, the no-feedback rule, holding, Hype chat merge and detach, channel rules and slow mode, reports and removal, Studio, staff and audit).
+- Coverage: the `magnet` unit tests (timing, alternation, cooldowns, own-baseline signals, the fairness bound) and `tests/streams/magnet.rs` (eligibility, countdown and switch, a small-stream chat burst, the no-feedback rule, holding, MAGNet chat merge and detach, channel rules and slow mode, reports and removal, Studio, staff and audit).
 
 ## Spotlights
 
@@ -156,11 +158,11 @@ Preview cards need a still image of each live stream. Generate one keyframe snap
 
 ## Storage and API outline
 
-Chat messages gain an origin (channel or Hype channel) so merged messages can be shown, moderated and excluded from burst signals. Tables: Hype channels and their state (current, pending and forced stream; lock and hold times), per-stream feature history and cooldowns, the decision log, streamer MAGNet settings, flag moments, spotlights. Signals are computed from existing chat, follow and raid data plus playback-lease levels; no new tracking of viewers. A Postgres-backed job runs the engines; the realtime switch and countdown events go over the existing WebSocket. No Redis.
+Chat messages gain an origin (channel or MAGNet channel) so merged messages can be shown, moderated and excluded from burst signals. Tables: MAGNet channels and their state (current, pending and forced stream; lock and hold times), per-stream feature history and cooldowns, the decision log, streamer MAGNet settings, flag moments, spotlights. Signals are computed from existing chat, follow and raid data plus playback-lease levels; no new tracking of viewers. A Postgres-backed job runs the engines; the realtime switch and countdown events go over the existing WebSocket. No Redis.
 
 ## Not in this module
 
-- Computer vision and game-API detectors, CrowdSync signals, faction Hype channels (later).
+- Computer vision and game-API detectors, CrowdSync signals, faction MAGNet channels (later).
 - Surge (a collective hype event funded by support) belongs with Support or later, and never feeds MAGNet.
 - Auto-clips of featured moments belong to Module 8 (VODs and clips).
 - Personalization from watch history.
@@ -171,4 +173,4 @@ The legacy MAGNet was reviewed on October 3, 2026. Kept: hold, maximum-duration 
 
 ## Done when
 
-A signed-out visitor reaches a live stream in one click from the homepage; every live stream reaches the top row within a rotation cycle; the watch page and stream-end countdown move viewers to another live stream; search finds channels and categories; empty states show recent channels. On the Global Hype channel and each genre lane: a chat or follow burst on a small stream triggers a moment switch with a countdown and a reason; fair-turn switches alternate with moment switches and every eligible stream is featured within the bound; hold, maximum time and cooldowns work; opted-out, restricted and integrity-flagged streams never appear; Hype chat merges with the featured chat under the channel's rules and detaches on switch, viewers banned from the featured channel get the holding card and can't send until it switches, and merged messages don't count toward the burst signal; merged co-stream squads are featured as one unit; money and viewer count provably have no effect on selection; streamers see their feature history; staff can force, release and stop a channel.
+A signed-out visitor reaches a live stream in one click from the homepage; every live stream reaches the top row within a rotation cycle; the watch page and stream-end countdown move viewers to another live stream; search finds channels and categories; empty states show recent channels. On the Global MAGNet channel and each genre lane: a chat or follow burst on a small stream triggers a moment switch with a countdown and a reason; fair-turn switches alternate with moment switches and every eligible stream is featured within the bound; hold, maximum time and cooldowns work; opted-out, restricted and integrity-flagged streams never appear; MAGNet chat merges with the featured chat under the channel's rules and detaches on switch, viewers banned from the featured channel get the holding card and can't send until it switches, and merged messages don't count toward the burst signal; merged co-stream squads are featured as one unit; money and viewer count provably have no effect on selection; streamers see their feature history; staff can force, release and stop a channel.
