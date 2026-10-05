@@ -35,6 +35,7 @@ pub mod safety;
 pub mod security;
 pub mod social;
 pub mod staff_push;
+pub mod staff_streams;
 pub mod streams;
 pub mod studio;
 pub mod take_down;
@@ -366,6 +367,7 @@ pub fn router(app: App) -> Router {
         .merge(emotes::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
+        .merge(staff_streams::routes())
         .merge(moderation::routes())
         .merge(bans::routes())
         .merge(integrity::routes())

@@ -1,6 +1,6 @@
 # Module 3: Live streams and chat
 
-Started October 3, 2026 at the user's direction. **Status: stream backend, Creator Studio, player/accounting, chat/moderation, Take It Down, staff username resets and the initial viewer-integrity system are deployed. Chat mentions, replies, pins, role badges and custom emotes are implemented; deployment verification is recorded below. The remaining social features, staff operations and OBS/browser/CDN acceptance are open.** Modules 1 and 2 are closed by user acceptance.
+Started October 3, 2026 at the user's direction. **Status: stream backend, Creator Studio, player/accounting, chat/moderation, Take It Down, staff username resets and the initial viewer-integrity system are deployed. Chat social features, custom emotes, go-live alerts, raids, hosting, measured OBS warnings, staff stream operations and spike chat protection are implemented and deployed (October 4). Still open: real-OBS live acceptance (direct and CDN latency, capacity), the Bunny CDN path and the IPinfo network data.** Modules 1 and 2 are closed by user acceptance.
 
 This document expands Module 3 of [PLATFORM_PLAN.md](PLATFORM_PLAN.md), the security contract in [LOGIN.md](LOGIN.md), and the approved profile/moderation rules in [PROFILES.md](PROFILES.md). Existing plan requirements are identified below. Details marked **Proposed** are implementation defaults for review, not recorded user decisions. Engineering measurements remain open even if the product defaults are accepted.
 
@@ -257,6 +257,8 @@ A moderator cannot sanction the owner, themselves, another appointed moderator o
 
 ## Platform moderation and appeals
 
+Staff operations (October 4, `staff_streams.rs`, Admin → Live streams): staff see every open broadcast with channel, title, category, state, time live, the public/trusted/pending/excluded/raw session counts, measured OBS health and warnings, open stream reports and whether followers-only chat is on. Stop stream (reason required, staff window) ends the broadcast and revokes the key exactly like a report's remove-content action, and is recorded in `moderation_actions`. Staff also manage the category catalog: add a category with a genre, which is fixed at creation because factions group categories by genre; rename; or hide it from new choices while channels keep their current category. Every change is audited. Covered by `tests/streams/staff_streams.rs`.
+
 Extend Module 2 reports with LIVE_STREAM and CHAT_MESSAGE targets. Snapshot title/category, broadcast ID/time and reported message text as applicable. Do not silently begin recording video evidence: live recording/VOD retention remains separately scoped. Stream reports can be reviewed against a currently live stream; ended content without a recording is explicitly unavailable.
 
 Retain the approved warning, 72-hour restriction, indefinite level-three restriction, 24-hour interim maximum and strike-appeal rules. Channel moderator actions do not themselves create platform strikes. A platform admin decides whether a reported incident merits one.
@@ -373,7 +375,9 @@ Built (`integrity.rs`, migration `0017`, `tests/streams/integrity.rs` and unit t
 - Creator Studio shows, after a stream, how many viewers who watched a minute or more were never counted. The Privacy Policy describes the counting. Retention: leases 30 days after the broadcast ends (no longer deleted on expiry), snapshots 1 year, decided cases 1 year after decision. Account erasure removes the account's leases.
 - Weights and thresholds: `integrity::Tuning` defaults are the example values; production reads private values from `INTEGRITY_TUNING_FILE` (JSON).
 
-Not built yet, with hooks left for them: the IPinfo Lite network database (hosting/VPN risk; network signals are absent until it is installed), Bunny signed per-lease CDN URLs (with the CDN), SRS WebRTC connection matching, cohort detection beyond arrival rate, raids/MAGNet/go-live alerts explaining bursts, the optional spike chat-protection prompt (needs followers-only chat) and the Plays control gate below (with the Plays migration).
+Built since (October 4): a raid explains its burst for two minutes. Go-live alerts go out as a stream starts, so the start-of-stream grace window covers them. Spike chat protection: while a provisional window is open, the owner and moderators see a one-click prompt in chat for followers-only chat for 10 minutes (migration 0023). It always ends by itself, can be ended early and is logged in the channel moderation log. Meanwhile only followers of at least 10 minutes and the channel's roles can chat. It is never turned on automatically. Covered by `tests/streams/staff_streams.rs`.
+
+Not built yet, with hooks left for them: the IPinfo Lite network database (hosting/VPN risk; network signals are absent until it is installed, which needs an IPinfo account token), Bunny signed per-lease CDN URLs (with the CDN), SRS WebRTC connection matching, cohort detection beyond arrival rate, MAGNet handoffs explaining bursts (MAGNet module) and the Plays control gate below (with the Plays migration).
 
 ### S.V.E.R Plays
 
@@ -407,7 +411,7 @@ The chat interface supports Reply/Cancel reply, Pin/Unpin and Send and pin, with
 
 Deployed October 4 after a verified backup and a restore rehearsal that preserved all account rows. Migration 19 and a compatible rollback API passed on the restored database. Rust formatting, Clippy, the full standard Cargo suite, the development acceptance script, web typecheck/lint/build, the chat component checks and the secret scan passed (lint retains existing warnings outside chat). Synthetic desktop/phone browser checks covered the populated interface; public browser checks confirmed guest WebSocket snapshots, no uncaught errors and no horizontal overflow. Signed-in production chat actions have not been exercised. The opt-in real-media test was not rerun for this chat-only release.
 
-Remaining in this module: the staff operations pages, the remaining integrity integrations, and measured live-media acceptance. Custom emotes, go-live alerts, raids and hosting are implemented below. No module closure is claimed.
+Remaining in this module: the integrity integrations that need outside services (IPinfo Lite, Bunny signed URLs) and measured live-media acceptance with a real OBS stream (direct and CDN latency, capacity). Custom emotes, go-live alerts, raids and hosting are implemented below; staff stream operations are under "Platform moderation and appeals". No module closure is claimed.
 
 ### Custom emotes
 

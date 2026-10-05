@@ -40,6 +40,8 @@ mod real_media;
 mod reports;
 #[path = "streams/resets.rs"]
 mod resets;
+#[path = "streams/staff_streams.rs"]
+mod staff_streams;
 #[path = "streams/staff_window.rs"]
 mod staff_window;
 
@@ -323,6 +325,7 @@ async fn exercise(e: &Env) {
     staff_window::exercise(e).await;
     alerts::exercise(e).await;
     raids::exercise(e).await;
+    staff_streams::exercise(e).await;
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")
