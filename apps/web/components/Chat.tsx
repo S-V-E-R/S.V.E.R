@@ -7,10 +7,11 @@ import { Crest } from "./FactionIdentity";
 import { GuildChatBadge } from "./Guilds";
 import type { Chip } from "../lib/types";
 import { EmoteImage, type ChannelEmote } from "./Emote";
+import { Rewards } from "./Rewards";
 import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
-type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null };
+type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean };
 /** Subscriber badge milestones: 1, 3, 6, 9 and 12 months, then each further year (docs/SUPPORT.md). */
 export function subBadge(months: number) {
   if (months >= 24) return `${Math.floor(months / 12)} years`;
@@ -59,6 +60,9 @@ export function Chat({ username, account, squad }: { username: string; account: 
   const [busy, setBusy] = useState(false);
   // Valor to pay with the next message (docs/SUPPORT.md "Purchased Valor"); null when off.
   const [tribute, setTribute] = useState<number | null>(null);
+  // Engagement Valor cost of highlighting the next message; null when off. The version reloads the balance after paying.
+  const [highlight, setHighlight] = useState<number | null>(null);
+  const [rewardsVersion, setRewardsVersion] = useState(0);
   const [notice, setNotice] = useState("");
   // Spike protection: followers-only chat with an end time; moderators get a one-click prompt.
   const [followersOnly, setFollowersOnly] = useState<string | null>(null);
@@ -206,9 +210,9 @@ export function Chat({ username, account, squad }: { username: string; account: 
       if (result.ok) setDraft(""); else setError(result.error);
       return;
     }
-    const command = { id: crypto.randomUUID(), body, reply_to: reply?.id, ...(tribute ? { tribute } : {}) };
+    const command = { id: crypto.randomUUID(), body, reply_to: reply?.id, ...(tribute ? { tribute } : {}), ...(highlight !== null ? { highlight: true } : {}) };
     // Tributes go over HTTP so a refusal (balance, channel can't earn) shows before anything moves.
-    if (!pinDraft && !tribute && socket.current?.readyState === WebSocket.OPEN) {
+    if (!pinDraft && !tribute && highlight === null && socket.current?.readyState === WebSocket.OPEN) {
       socket.current.send(JSON.stringify(command));
       setDraft(""); setReply(null);
       return;
@@ -217,6 +221,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
     const result = await send<{ message: Message }>("POST", path, command);
     if (result.ok) {
       merge([result.data.message]); setDraft(""); setReply(null); setTribute(null);
+      if (highlight !== null) { setHighlight(null); setRewardsVersion(v => v + 1); }
       if (pinDraft) await changePin(result.data.message.id, reason);
     } else setError(result.error);
     setBusy(false);
@@ -235,7 +240,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
     {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Followers-only chat for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
     <ol className="chat-messages" ref={list} aria-live="polite">
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
-      {messages.map(m => <li key={m.id} className={m.tribute ? "chat-tribute" : undefined}>
+      {messages.map(m => <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
@@ -264,10 +269,12 @@ export function Chat({ username, account, squad }: { username: string; account: 
         {account && account.toLowerCase() !== username.toLowerCase() ? <ReportButton label={`Report ${emote.code}`} target={{ target_type: "emote", target_id: emote.id }} /> : <TakeDownLink target={{ target_type: "emote", target_id: emote.id }} />}
       </li>)}</ul>}
     </details>
+    <Rewards username={username} account={account} version={rewardsVersion} onHighlight={setHighlight} />
     {account ? <form onSubmit={submit} className="chat-form">
       {reply && <div className="chat-reply-draft"><span>Replying to @{reply.username}: {reply.body}</span><button type="button" className="small quiet" onClick={() => setReply(null)}>Cancel reply</button></div>}
       <label htmlFor="chat-input" className="sr-only">Message</label>
       <textarea ref={input} id="chat-input" value={draft} disabled={busy} maxLength={500} rows={2} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
+      {highlight !== null && <span className="tribute-draft">Highlighted · {highlight.toLocaleString()} Engagement Valor <button type="button" className="small quiet" onClick={() => setHighlight(null)}>Not highlighted</button></span>}
       <button type="submit" disabled={busy}>{tribute ? "Pay tribute" : "Send"}</button>
       {tribute === null ? <button type="button" className="quiet small" disabled={busy} onClick={() => setTribute(10)}>Tribute</button>
         : <span className="tribute-draft"><label htmlFor="tribute-amount">Valor</label> <input id="tribute-amount" type="number" min={10} step={1} value={tribute} onChange={e => setTribute(Math.max(0, Math.floor(Number(e.target.value) || 0)))} /> <button type="button" className="quiet small" onClick={() => setTribute(null)}>No tribute</button> <Link href="/wallet" className="small">Get Valor</Link></span>}

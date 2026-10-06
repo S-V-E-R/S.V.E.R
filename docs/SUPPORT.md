@@ -1,6 +1,6 @@
 # Module 6: Support
 
-Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Started October 5, 2026: parts 1 and 2 (below) are built.
+Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Started October 5, 2026: parts 1 to 3 (below) are built.
 
 This module lets viewers support streamers with money and loyalty, and gets streamers paid. It follows the closure rule: specify, build, then test against "Done when". All open items were decided by Joe on October 3, 2026.
 
@@ -160,7 +160,14 @@ Decided by Joe on October 3, 2026.
 - Badges show months subscribed (1, 3, 6, 9, 12, then each year). Each tier has 5 subscriber-emote slots on top of the 10 open emotes; only subscribers of that tier or higher (and channel roles) can send them. Owners and moderators can switch on subscriber-only chat.
 - Refunds and disputes of subscription payments and card gifts reverse the streamer's share in proportion; a full refund of a subscription payment also ends its benefits.
 
-**Still to build:** importing creators' legacy connected accounts at the live cutover (test mode can't see live accounts), Engagement Valor and rewards, creator tiers, pooled money in merged co-streams, Shine, paydays and Early Pay.
+**Part 3: Engagement Valor and channel rewards.**
+
+- Verified viewers earn in each channel separately: watch points for each interval of real playback (a lease that viewer integrity counts, on a live stream), chat points at most once per cooldown, and a one-time follow bonus that refollowing never repeats. Rates come from `ENGAGEMENT_TUNING_FILE`; `config/engagement.example.json` holds the safe defaults.
+- Channel rewards (Creator Studio → Rewards, up to 49 plus the built-in one): name, cost, cooldown, per-stream limit, and optional text the viewer must enter. The built-in "Highlight my message" is paid inside the chat message, so nothing is spent unless the message passes every chat rule.
+- Redemptions wait in the Studio queue; the owner or a moderator marks each done or refunds it, which returns the points. Retried redemptions are idempotent by request ID.
+- A channel ban freezes earning and spending in that channel.
+
+**Still to build:** importing creators' legacy connected accounts at the live cutover (test mode can't see live accounts), creator tiers, pooled money in merged co-streams, Shine, paydays and Early Pay.
 
 ## Done when
 

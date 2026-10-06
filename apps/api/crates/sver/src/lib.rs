@@ -17,6 +17,7 @@ pub mod bans;
 pub mod chat;
 pub mod discovery;
 pub mod emotes;
+pub mod engagement;
 pub mod factions;
 pub mod guilds;
 pub mod integrity;
@@ -74,6 +75,7 @@ pub struct Config {
     pub playback: playback::Config,
     pub integrity: integrity::Tuning,
     pub magnet: magnet::Tuning,
+    pub engagement: engagement::Tuning,
     pub factions: factions::Tuning,
     pub take_down: take_down::Config,
     pub staff_push: staff_push::Config,
@@ -141,6 +143,7 @@ impl Config {
             playback: playback::Config::from_env(production)?,
             integrity: integrity::Tuning::from_env()?,
             magnet: magnet::Tuning::from_env()?,
+            engagement: engagement::Tuning::from_env()?,
             factions: factions::Tuning::from_env(production)?,
             take_down: take_down::Config::from_env(),
             staff_push: staff_push::Config::from_env(),
@@ -399,6 +402,7 @@ pub fn router(app: App) -> Router {
         .merge(staff_push::routes())
         .merge(support::routes())
         .merge(subs::routes())
+        .merge(engagement::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

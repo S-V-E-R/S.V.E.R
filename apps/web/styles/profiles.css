@@ -205,3 +205,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .subscribe-panel h3 { margin: 0 0 0.3rem; }
 .subscribe-tiers { list-style: none; padding: 0; display: grid; gap: 0.5rem; }
 .subscribe-tiers li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.chat-highlight { background: color-mix(in srgb, var(--accent-light) 16%, transparent); border-radius: 4px; padding: 0.15rem 0.4rem; }
+.chat-rewards summary { cursor: pointer; }
+.chat-rewards li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.4rem; }
+.reward-form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.6rem; }
