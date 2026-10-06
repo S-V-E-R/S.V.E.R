@@ -141,6 +141,7 @@ export default function StreamStudio() {
       </form>
     </Section>
     <Section title="OBS connection" intro="Use Custom in OBS's Stream settings. Keep your stream key private.">
+      {(!data.settings.title.trim() || !data.settings.category_id) && <p role="alert">Save a title and category in Stream details first. Until then S.V.E.R refuses the connection and OBS only reports “Failed to connect to server”.</p>}
       <p>Viewing or replacing a key requires a sign-in confirmation from the last five minutes and a fresh authenticator or recovery code.</p>
       {account?.has_password ? <label className="field"><span>Current password {account.reauthenticated ? "(optional while recently confirmed)" : ""}</span><input type="password" autoComplete="current-password" value={password} disabled={busy || !usable} onChange={event => setPassword(event.target.value)} /></label> : <p><Link href="/account">Confirm your linked sign-in method in Account security</Link>, then return here.</p>}
       <label className="field"><span>Authenticator or recovery code</span><input autoComplete="one-time-code" maxLength={64} value={code} disabled={busy || !usable} onChange={event => setCode(event.target.value)} /></label>
@@ -155,7 +156,7 @@ export default function StreamStudio() {
       </div>}
     </Section>
     <Section title="OBS setup and input health" intro="Use H.264 video and AAC audio, turn B-frames off, and set a one-second keyframe interval.">
-      <p>Start testing at 6 Mbps video and 160 Kbps audio, up to 1080p60. The bitrate recommendation is provisional while delivery testing continues.</p>
+      <p>Start testing at 6 Mbps video and 160 Kbps audio, up to 1080p60. The bitrate recommendation is provisional while delivery testing continues. Step-by-step OBS setup and fixes for common problems are in <Link href="/help#obs-setup">Help</Link>.</p>
       <dl className="setup">
         <div><dt>Video / audio</dt><dd>{health.video_codec ?? "Not measured"} / {health.audio_codec ?? "Not measured"}</dd></div>
         <div><dt>Resolution</dt><dd>{health.width && health.height ? health.width + " × " + health.height : "Not measured"}</dd></div>
