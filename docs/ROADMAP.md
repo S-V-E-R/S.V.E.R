@@ -11,7 +11,7 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | 4 | Factions | Myria, Aetheron, Glint; membership, weekly genre checkpoints, seasonal rewards, private councils and faction hubs | Done |
 | 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff | In progress |
 | 6 | Support | Subscriptions, Valor and tributes, channel rewards, co-streams, payouts. Live on Stripe since October 6, 2026. | Done |
-| 7 | CrowdSync | Interactive boards, Skills, polls and predictions, faction rallies. Boards are built. | In progress |
+| 7 | CrowdSync | Interactive boards, Skills, polls and predictions, faction rallies. Boards, polls, predictions and counters are built. | In progress |
 | 8 | VODs and clips | Past broadcasts and clipping | Planned |
 | 9 | Beacons | Short vertical videos that lead to live streams | Planned |
 

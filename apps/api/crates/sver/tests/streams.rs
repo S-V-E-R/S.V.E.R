@@ -28,6 +28,8 @@ mod boards;
 mod chat;
 #[path = "streams/chat_social.rs"]
 mod chat_social;
+#[path = "streams/crowd.rs"]
+mod crowd;
 #[path = "streams/discovery.rs"]
 mod discovery;
 #[path = "streams/engagement.rs"]
@@ -441,6 +443,7 @@ async fn exercise(e: &Env) {
     subs::exercise(e).await;
     engagement::exercise(e).await;
     boards::exercise(e).await;
+    crowd::exercise(e).await;
     rest::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;

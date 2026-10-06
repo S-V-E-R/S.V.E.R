@@ -95,6 +95,9 @@ async fn main() -> Result<(), String> {
             if sver::engagement::tick(&media_jobs).await.is_err() {
                 eprintln!("engagement_event=watch outcome=retry");
             }
+            if sver::crowd::tick(&media_jobs).await.is_err() {
+                eprintln!("crowd_event=polls outcome=retry");
+            }
             if sver::tiers::tick(&media_jobs).await.is_err() {
                 eprintln!("tiers_event=tick outcome=retry");
             }

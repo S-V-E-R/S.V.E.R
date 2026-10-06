@@ -319,7 +319,7 @@ async fn channel(app: &App, name: &str) -> Res<String> {
         .id)
 }
 /// The channel's live broadcast: (id, milliseconds since it started).
-async fn live(app: &App, channel: &str) -> Res<Option<(String, i64)>> {
+pub(crate) async fn live(app: &App, channel: &str) -> Res<Option<(String, i64)>> {
     Ok(sqlx::query_as("SELECT id,(extract(epoch FROM now()-started_at)*1000)::bigint FROM broadcasts WHERE owner_id=$1 AND state IN ('LIVE','RECONNECTING') AND started_at IS NOT NULL")
         .bind(channel)
         .fetch_optional(&app.db)
@@ -754,21 +754,9 @@ async fn press(
         .control(&input.control)
         .filter(|c| pressable(c))
         .ok_or_else(Fail::missing)?;
-    // Only real viewers: a counted or trusted playback session on this live broadcast.
-    let (broadcast, stream_ms) = live(&app, &channel)
-        .await?
-        .ok_or_else(|| Fail::conflict("The board works while the stream is live."))?;
-    let network: Option<Option<String>> = sqlx::query_scalar("SELECT net_hash FROM playback_leases WHERE broadcast_id=$1 AND viewer_key='u:'||$2 AND expires_at>now() AND level IN ('counted','trusted')")
-        .bind(&broadcast)
-        .bind(&user.id)
-        .fetch_optional(&app.db)
-        .await?;
-    let Some(network) = network else {
-        return Err(Fail::denied("Watch the stream to use the board."));
-    };
+    let (broadcast, stream_ms, net) = real_viewer(&app, &channel, &user).await?;
     // Per account and per network, across all controls; joystick moves have their own budget
     // (at most 10 a second per viewer).
-    let net = network.unwrap_or_else(|| format!("user:{}", user.id));
     let (prefix, window) = if control.kind == "joystick" {
         ("board-joy", 1)
     } else {
@@ -776,12 +764,13 @@ async fn press(
     };
     sec::reserve(&app, vec![format!("{prefix}:{}", user.id)], 10, window).await?;
     sec::reserve(&app, vec![format!("{prefix}-net:{net}")], 50, window).await?;
-    moderation::check_restriction(&app, &channel, &user.id).await?;
-    let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM board_blocks WHERE channel_id=$1 AND user_id=$2) OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))")
-        .bind(&channel)
-        .bind(&user.id)
-        .fetch_one(&app.db)
-        .await?;
+    let blocked: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM board_blocks WHERE channel_id=$1 AND user_id=$2)",
+    )
+    .bind(&channel)
+    .bind(&user.id)
+    .fetch_one(&app.db)
+    .await?;
     if blocked {
         return Err(Fail::denied("You can't use this board."));
     }
@@ -895,6 +884,34 @@ async fn press(
     .await?;
     Ok(Json(json!({"balance": balance, "goal": goal})))
 }
+/// Only real viewers act (docs/CROWDSYNC.md "Rules that apply everywhere"): a verified account,
+/// not the owner, with a Counted or Trusted playback lease on the channel's live broadcast, not
+/// banned or timed out there, and not blocked either way. Returns the broadcast, its stream time
+/// in milliseconds and a key for per-network rate limits. Shared by boards, polls and predictions.
+pub(crate) async fn real_viewer(
+    app: &App,
+    channel: &str,
+    user: &auth::User,
+) -> Res<(String, i64, String)> {
+    profiles::ensure_verified(user, "Verify your email address to take part.")?;
+    let (broadcast, stream_ms) = live(app, channel)
+        .await?
+        .ok_or_else(|| Fail::conflict("This works while the stream is live."))?;
+    let network: Option<Option<String>> = sqlx::query_scalar("SELECT net_hash FROM playback_leases WHERE broadcast_id=$1 AND viewer_key='u:'||$2 AND expires_at>now() AND level IN ('counted','trusted')")
+        .bind(&broadcast)
+        .bind(&user.id)
+        .fetch_optional(&app.db)
+        .await?;
+    let Some(network) = network else {
+        return Err(Fail::denied("Watch the stream to take part."));
+    };
+    moderation::check_restriction(app, channel, &user.id).await?;
+    if profiles::blocked_between(&mut *app.db.acquire().await?, channel, &user.id).await? {
+        return Err(Fail::denied("You can't take part in this channel."));
+    }
+    let net = network.unwrap_or_else(|| format!("user:{}", user.id));
+    Ok((broadcast, stream_ms, net))
+}
 async fn audience(app: &App, channel: &str, user: &auth::User, audience: &str) -> Res<()> {
     let (ok, message) = match audience {
         "followers" => (
@@ -960,6 +977,16 @@ async fn overlay_socket(
 async fn overlay_session(app: App, channel: String, digest: String, mut ws: WebSocket) {
     let mut events = app.chat.subscribe();
     let test_room = format!("overlay:{channel}");
+    // The overlay shows the channel's counters from the start.
+    let Ok(counters) =
+        async { crate::crowd::counters_json(&mut *app.db.acquire().await?, &channel).await }.await
+    else {
+        return;
+    };
+    let snapshot = json!({"type": "counters", "counters": counters}).to_string();
+    if ws.send(Message::Text(snapshot.into())).await.is_err() {
+        return;
+    }
     let mut beat = tokio::time::interval(Duration::from_secs(10));
     beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -988,7 +1015,7 @@ fn forward(e: &Arc<Event>, channel: &str, test_room: &str) -> bool {
     (e.channel == channel || e.channel == test_room)
         && matches!(
             e.payload["type"].as_str(),
-            Some("board_effect" | "board_input" | "board")
+            Some("board_effect" | "board_input" | "board" | "poll" | "counters")
         )
 }
 

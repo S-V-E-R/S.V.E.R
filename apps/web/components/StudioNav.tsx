@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 
 const GROUPS: [string, [string, string][]][] = [
   ["Teams", [["/studio/guilds", "Guilds"], ["/studio/squads", "Co-streams"]]],
-  ["Stream", [["/studio/stream", "Live stream"], ["/studio/chat", "Chat"], ["/studio/emotes", "Emotes"], ["/studio/raids", "Raids & hosting"], ["/studio/magnet", "MAGNet"], ["/studio/rewards", "Rewards"], ["/studio/board", "Board"]]],
+  ["Stream", [["/studio/stream", "Live stream"], ["/studio/chat", "Chat"], ["/studio/emotes", "Emotes"], ["/studio/raids", "Raids & hosting"], ["/studio/magnet", "MAGNet"], ["/studio/rewards", "Rewards"], ["/studio/board", "Board"], ["/studio/counters", "Counters"]]],
   ["Earnings", [["/studio/payouts", "Payouts"], ["/studio/shine", "Shine"]]],
   ["Channel page", [["/studio/channel", "Overview"], ["/studio/channel/header", "Page header"], ["/studio/channel/song", "Song"], ["/studio/channel/war-council", "War Council"], ["/studio/channel/wall", "Wall"], ["/studio/channel/schedule", "Schedule"], ["/studio/channel/sponsors", "Sponsors"], ["/studio/channel/setup", "Streaming setup"], ["/studio/channel/blocks", "About blocks"], ["/studio/channel/fan-art", "Fan Art"]]],
 ];

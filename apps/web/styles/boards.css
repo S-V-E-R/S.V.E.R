@@ -31,3 +31,16 @@
 .board-builder legend{font-weight:600}
 .board-preview{position:relative;aspect-ratio:16/9;max-width:560px;background:#000;border:1px solid var(--line)}
 .overlay-page{position:fixed;inset:0;background:transparent}
+
+/* Phase 2: polls, predictions and counters. */
+.crowd{display:grid;gap:10px;margin:12px 0}
+.crowd-card{padding:12px 16px}
+.crowd-card h3{margin:4px 0}
+.crowd-options{display:flex;flex-wrap:wrap;align-items:end;gap:8px}
+.crowd-results li{display:grid;grid-template-columns:1fr auto;gap:2px 10px}
+.crowd-results progress{grid-column:1/-1;width:100%}
+.crowd-counters{display:flex;flex-wrap:wrap;gap:8px 16px;list-style:none;margin:0;padding:8px 12px;border:1px solid var(--line)}
+.crowd-counters li{display:flex;align-items:center;gap:8px}
+.overlay-widgets{position:fixed;top:24px;left:24px;display:grid;gap:10px;max-width:420px;font-size:20px;color:#fff}
+.overlay-counter,.overlay-poll{margin:0;padding:8px 14px;background:rgba(8,10,14,.82);border:1px solid rgba(255,255,255,.3)}
+.overlay-poll .list{margin:6px 0 0;padding:0;list-style:none}

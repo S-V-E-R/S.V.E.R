@@ -54,6 +54,9 @@ function delay(video: HTMLVideoElement | null, transport: "webrtc" | "hls" | nul
   const edge = ranges.length ? ranges.end(ranges.length - 1) : video.currentTime;
   return Math.round((Math.max(0, edge - video.currentTime) + 2) * 1000);
 }
+let latest = 500;
+/** This page's player delay in milliseconds, so poll windows can close by stream time. */
+export const playerDelay = () => latest;
 
 /**
  * Effects over the live player, shown when this viewer's video reaches the moment of the press, so
@@ -70,7 +73,8 @@ export function PlayerEffects({ username, video, transport }: { username: string
       timers.push(window.setTimeout(() => add(e), delay(video.current, transport)));
     };
     window.addEventListener("sver:board", on);
-    return () => { window.removeEventListener("sver:board", on); timers.forEach(clearTimeout); };
+    const measure = setInterval(() => { latest = delay(video.current, transport); }, 2000);
+    return () => { window.removeEventListener("sver:board", on); timers.forEach(clearTimeout); clearInterval(measure); };
   }, [username, video, transport, add]);
   if (!shown.length) return null;
   return <EffectStage events={shown} calm={reduced()} />;
