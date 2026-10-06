@@ -507,6 +507,8 @@ pub async fn channel(
             "plays": crate::plays::is_channel(&mut db, &user.id).await?,
             "faction": user.faction,
             "season_rewards":crate::factions::rewards(&mut db,&user.id).await?,
+            "creator_tier": crate::tiers::tier_of(&mut db, &user.id).await?,
+            "shine": crate::shine::channel(&mut db, &user.id).await?,
         },
         "tabs": {
             "wall": true,

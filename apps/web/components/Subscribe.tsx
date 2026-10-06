@@ -9,8 +9,11 @@ type Status = { available: boolean; can_subscribe: boolean; own: boolean; tiers:
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 const date = (iso: string) => new Date(iso).toLocaleDateString();
 
-/** Subscribe and gift subs on a channel page (docs/SUPPORT.md "Subscriptions"). Card payments open Stripe Checkout. */
-export function Subscribe({ username }: { username: string }) {
+/**
+ * Subscribe and gift subs on a channel page (docs/SUPPORT.md "Subscriptions"). Card payments open
+ * Stripe Checkout. On a merged co-stream's page `squad` pools the money among its members.
+ */
+export function Subscribe({ username, squad }: { username: string; squad?: string }) {
   const path = `/api/channels/${encodeURIComponent(username)}`;
   const [status, setStatus] = useState<Status | null>(null);
   const [open, setOpen] = useState(false);
@@ -37,9 +40,9 @@ export function Subscribe({ username }: { username: string }) {
     setError(r.error);
   }
   const subscribe = (tier: number, pay: "card" | "valor") =>
-    act("/subscription", { tier, pay, id: crypto.randomUUID(), guardian_consent: consent }, "Subscribed for a month. Thank you!");
+    act("/subscription", { tier, pay, id: crypto.randomUUID(), guardian_consent: consent, squad }, "Subscribed for a month. Thank you!");
   const sendGift = (pay: "card" | "valor") =>
-    act("/gifts", { ...gift, recipient: gift.count === 1 ? gift.recipient : undefined, pay, id: crypto.randomUUID(), guardian_consent: consent }, "Gift sent. Thank you!");
+    act("/gifts", { ...gift, recipient: gift.count === 1 ? gift.recipient : undefined, pay, id: crypto.randomUUID(), guardian_consent: consent, squad }, "Gift sent. Thank you!");
   const mine = status.mine;
   const price = status.tiers[gift.tier - 1];
 

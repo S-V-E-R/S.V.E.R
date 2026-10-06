@@ -43,6 +43,18 @@ pub async fn post(
     form: &[(&str, String)],
     idempotency: Option<&str>,
 ) -> Res<Value> {
+    post_as(http, config, None, path, form, idempotency).await
+}
+/// `post` on behalf of a connected account (the `Stripe-Account` header), for example an instant
+/// payout from a creator's Express balance.
+pub async fn post_as(
+    http: &reqwest::Client,
+    config: &Config,
+    account: Option<&str>,
+    path: &str,
+    form: &[(&str, String)],
+    idempotency: Option<&str>,
+) -> Res<Value> {
     if !config.available() {
         return Err(Fail::unavailable("Payments aren't available yet."));
     }
@@ -56,6 +68,9 @@ pub async fn post(
         .body(body);
     if let Some(key) = idempotency {
         request = request.header("Idempotency-Key", key);
+    }
+    if let Some(account) = account {
+        request = request.header("Stripe-Account", account);
     }
     respond(request.send().await).await
 }

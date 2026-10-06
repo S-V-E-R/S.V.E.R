@@ -458,17 +458,41 @@ async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -
 /// One balanced ledger movement: `debit` gains `amount`, `credit` loses it, in `unit`.
 pub(crate) type Pair = (String, String, &'static str, i64);
 
-/// A card payment: cash in, and the streamer's share (tenths of a cent) owed by the platform.
-pub(crate) fn card_pairs(channel: &str, cents: i64, share: i64) -> Vec<Pair> {
-    vec![
-        ("usd:stripe".into(), "usd:sales".into(), "usd", cents * 10),
-        (
-            format!("usd:earnings:{channel}"),
+/// A card payment: cash in, and each streamer's share (tenths of a cent) owed by the platform.
+pub(crate) fn share_pairs(cents: i64, shares: &[(String, i64)]) -> Vec<Pair> {
+    let mut pairs = vec![("usd:stripe".into(), "usd:sales".into(), "usd", cents * 10)];
+    for (member, share) in shares {
+        pairs.push((
+            format!("usd:earnings:{member}"),
             "usd:platform".into(),
             "usd",
-            share,
-        ),
-    ]
+            *share,
+        ));
+    }
+    pairs
+}
+pub(crate) fn card_pairs(channel: &str, cents: i64, share: i64) -> Vec<Pair> {
+    share_pairs(cents, &[(channel.to_string(), share)])
+}
+/// `total` split equally among `members` (merged co-streams); the remainder goes to the first, so
+/// the split is exact.
+pub(crate) fn split_equally(members: &[String], total: i64) -> Vec<(String, i64)> {
+    let each = total / members.len().max(1) as i64;
+    let rest = total - each * members.len() as i64;
+    members
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.clone(), if i == 0 { each + rest } else { each }))
+        .collect()
+}
+/// Stored shares: [[member, tenths], ...].
+pub(crate) fn shares_from(value: &Value) -> Option<Vec<(String, i64)>> {
+    value.as_array().map(|items| {
+        items
+            .iter()
+            .filter_map(|i| Some((i[0].as_str()?.to_string(), i[1].as_i64()?)))
+            .collect()
+    })
 }
 /// What a paid checkout posted at full value.
 fn checkout_pairs(
@@ -479,11 +503,14 @@ fn checkout_pairs(
     detail: &Value,
 ) -> Vec<Pair> {
     match kind {
-        "gift" => card_pairs(
-            detail["channel"].as_str().unwrap_or_default(),
-            cents,
-            detail["share_tenths"].as_i64().unwrap_or(0),
-        ),
+        "gift" => match shares_from(&detail["shares"]) {
+            Some(shares) => share_pairs(cents, &shares),
+            None => card_pairs(
+                detail["channel"].as_str().unwrap_or_default(),
+                cents,
+                detail["share_tenths"].as_i64().unwrap_or(0),
+            ),
+        },
         _ => vec![
             (
                 format!("valor:{}", user.unwrap_or("unclaimed")),
@@ -599,19 +626,19 @@ async fn payment_of(
         );
         return Ok(Some((intent.to_string(), cents, pairs)));
     }
-    let invoice: Option<(String, i32, i64)> = sqlx::query_as(
-        "SELECT channel_id,amount_cents,share_tenths FROM sub_invoices WHERE payment_intent=$1",
+    let invoice: Option<(String, i32, i64, Option<Value>)> = sqlx::query_as(
+        "SELECT channel_id,amount_cents,share_tenths,shares FROM sub_invoices WHERE payment_intent=$1",
     )
     .bind(intent)
     .fetch_optional(&mut *tx)
     .await?;
-    if let Some((channel, cents, share)) = invoice {
+    if let Some((channel, cents, share, shares)) = invoice {
         let cents = i64::from(cents);
-        return Ok(Some((
-            intent.to_string(),
-            cents,
-            card_pairs(&channel, cents, share),
-        )));
+        let pairs = match shares.as_ref().and_then(shares_from) {
+            Some(shares) => share_pairs(cents, &shares),
+            None => card_pairs(&channel, cents, share),
+        };
+        return Ok(Some((intent.to_string(), cents, pairs)));
     }
     if object["metadata"]["sver_user"].is_string() {
         return Err(Fail::conflict("Purchase not credited yet."));
