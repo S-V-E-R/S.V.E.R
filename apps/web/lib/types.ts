@@ -13,7 +13,7 @@ export type Shine = { live: { name: string; url: string } | null; badges: { char
 /** Creator tier names, by tier (docs/SUPPORT.md "Creator tiers"). */
 export const CREATOR_TIERS = ["Scout", "Trailblazer", "Pioneer", "Pathfinder"];
 export type Channel = {
-  channel: { plays?: boolean; username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[]; creator_tier?: number; shine?: Shine };
+  channel: { plays?: boolean; board?: boolean; username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[]; creator_tier?: number; shine?: Shine };
   tabs: { wall: boolean; schedule: boolean; about: boolean; fan_art: boolean };
   fan_art_enabled: boolean;
   /** Owner-editable header copy with defaults resolved (docs/PROFILES.md, P9). */

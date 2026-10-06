@@ -20,7 +20,7 @@ export function subBadge(months: number) {
   return `${step} ${step === 1 ? "month" : "months"}`;
 }
 type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean };
-type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null } | { type: "subs_only"; on: boolean };
+type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null } | { type: "subs_only"; on: boolean } | { type: "board_effect" } | { type: "board_input" } | { type: "board" };
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
@@ -146,6 +146,8 @@ export function Chat({ username, account, squad }: { username: string; account: 
         else if (data.type === "delete") remove(data.id);
         // The player on this page runs the raid countdown (LivePlayer listens for this).
         else if (data.type === "raid" || data.type === "raid_cancelled") window.dispatchEvent(new CustomEvent("sver:raid", { detail: { channel: username.toLowerCase(), raid: data.type === "raid" ? data.raid : null } }));
+        // Board presses, joystick moves and board changes go to the player's effects and the board panel.
+        else if (data.type === "board_effect" || data.type === "board_input" || data.type === "board") window.dispatchEvent(new CustomEvent("sver:board", { detail: { channel: username.toLowerCase(), event: data } }));
         else if (data.type === "system") setNotice(data.text);
         else setError(data.message);
       };

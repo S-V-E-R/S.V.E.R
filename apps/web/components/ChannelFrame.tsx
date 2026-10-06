@@ -4,6 +4,7 @@ import { PlatformIcon } from "./PlatformIcon";
 import { Avatar } from "./Avatar";
 import { ChannelActions } from "./ChannelActions";
 import { ChannelTabs } from "./ChannelTabs";
+import { Board } from "./Board";
 import { LivePlayer } from "./LivePlayer";
 import { SongPlayer } from "./SongPlayer";
 import { Crest } from "./Crest";
@@ -25,6 +26,7 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
       <span className="offline badge">Offline</span>
       </LivePlayer>
     </section>
+    {c.board && <Board username={c.username} />}
     <section className="identity panel frame">
       <Avatar sizes={c.avatar} name={c.display_name} size={112} />
       <div className="identity-text">

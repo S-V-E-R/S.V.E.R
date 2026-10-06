@@ -48,12 +48,16 @@ impl Default for Hub {
     }
 }
 pub struct Event {
-    channel: String,
-    author: Option<String>,
+    pub(crate) channel: String,
+    pub(crate) author: Option<String>,
     seq: i64,
-    payload: Value,
+    pub(crate) payload: Value,
 }
 impl Hub {
+    /// Every event on this instance; the board overlay socket filters its own channel's.
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<Arc<Event>> {
+        self.tx.subscribe()
+    }
     pub fn publish(&self, channel: &str, author: Option<&str>, seq: i64, payload: Value) {
         let _ = self.tx.send(Arc::new(Event {
             channel: channel.into(),

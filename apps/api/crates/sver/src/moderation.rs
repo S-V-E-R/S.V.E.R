@@ -255,21 +255,48 @@ pub async fn set_subs_only(
         .publish(&channel, None, 0, json!({"type":"subs_only","on":input.on}));
     Ok(Json(json!({"subs_only": input.on})))
 }
-pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<()> {
+/// A channel ban or an active timeout; shared by chat and board presses (docs/CROWDSYNC.md).
+pub(crate) async fn check_restriction(app: &App, channel: &str, user: &str) -> Res<()> {
     let restriction: Option<(String, Option<DateTime<Utc>>)> = sqlx::query_as("SELECT kind, until FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND (kind='ban' OR until>now()) ORDER BY kind='ban' DESC LIMIT 1")
-        .bind(channel).bind(&user.id).fetch_optional(&app.db).await?;
+        .bind(channel).bind(user).fetch_optional(&app.db).await?;
     match restriction {
-        Some((kind, _)) if kind == "ban" => {
-            return Err(Fail::denied("You're banned from this chat."));
-        }
-        Some((_, Some(until))) => {
-            return Err(Fail {
-                retry: Some((until - Utc::now()).num_seconds().max(1)),
-                ..Fail::denied("You're timed out in this chat.")
-            });
-        }
-        _ => {}
+        Some((kind, _)) if kind == "ban" => Err(Fail::denied("You're banned from this chat.")),
+        Some((_, Some(until))) => Err(Fail {
+            retry: Some((until - Utc::now()).num_seconds().max(1)),
+            ..Fail::denied("You're timed out in this chat.")
+        }),
+        _ => Ok(()),
     }
+}
+/// Banned words (no role exemption) and the link rule (channel roles exempt); shared by chat and
+/// board text inputs. Returns the slow-mode seconds that apply to `user` (0 when none).
+pub(crate) async fn check_words(
+    app: &App,
+    channel: &str,
+    user: &auth::User,
+    body: &str,
+) -> Res<i32> {
+    let settings: Option<(i32, bool, Vec<String>)> = sqlx::query_as(
+        "SELECT slow_mode_seconds, block_links, banned_words FROM chat_settings WHERE channel_id=$1",
+    )
+    .bind(channel)
+    .fetch_optional(&app.db)
+    .await?;
+    let Some((slow, links, words)) = settings else {
+        return Ok(0);
+    };
+    let folded = fold(body);
+    if words.iter().any(|w| folded.contains(w.as_str())) {
+        return Err(Fail::bad("That message isn't allowed in this chat."));
+    }
+    let exempt = role_of(app, channel, user).await?.is_some();
+    if links && !exempt && has_link(body) {
+        return Err(Fail::bad("Links aren't allowed in this chat."));
+    }
+    Ok(if exempt { 0 } else { slow })
+}
+pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<()> {
+    check_restriction(app, channel, &user.id).await?;
     // Spike protection: while followers-only chat is on, only people who followed at least 10
     // minutes ago (and channel roles) can chat, so a burst of new accounts can't flood it.
     if followers_only(app, channel).await?.is_some() && role_of(app, channel, user).await?.is_none()
@@ -298,25 +325,8 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
             None => Fail::denied("Chat is subscribers-only right now."),
         });
     }
-    let settings: Option<(i32, bool, Vec<String>)> = sqlx::query_as(
-        "SELECT slow_mode_seconds, block_links, banned_words FROM chat_settings WHERE channel_id=$1",
-    )
-    .bind(channel)
-    .fetch_optional(&app.db)
-    .await?;
-    let Some((slow, links, words)) = settings else {
-        return Ok(());
-    };
-    // Banned words have no role exemption.
-    let folded = fold(body);
-    if words.iter().any(|w| folded.contains(w.as_str())) {
-        return Err(Fail::bad("That message isn't allowed in this chat."));
-    }
-    let exempt = role_of(app, channel, user).await?.is_some();
-    if links && !exempt && has_link(body) {
-        return Err(Fail::bad("Links aren't allowed in this chat."));
-    }
-    if slow > 0 && !exempt {
+    let slow = check_words(app, channel, user, body).await?;
+    if slow > 0 {
         sec::reserve(
             app,
             vec![format!("chat-slow:{channel}:{}", user.id)],
