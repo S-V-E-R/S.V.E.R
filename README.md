@@ -58,6 +58,16 @@ Take It Down deployment also needs `MEDIA_CLOUDFLARE_ZONE_ID` and `MEDIA_CLOUDFL
 
 ## Contributing
 
+To publish a change, use a feature branch, run the relevant checks, and stage only the files you want to commit:
+
+```powershell
+git switch -c my-change
+git add -- path/to/changed-file
+./scripts/publish.ps1 -Message "Describe the change"
+```
+
+The script requires Git and the gitleaks CLI. It scans for secrets, commits staged files and pushes the current branch to `origin` (override with `-Remote`). With nothing staged, it scans and pushes existing commits. It refuses `main`, `master` and staged private configuration/documentation; it leaves unstaged work alone. It does not merge, pull, rebase or deploy. Open a pull request after publishing; deployment to OVH remains a separate action. Run `./scripts/check-publish.ps1` to check the script against a disposable local Git remote.
+
 S.V.E.R is open source. Read `CONTRIBUTING.md` to get started; outside contributors sign the CLA (`CLA.md`) once, through a bot on their first pull request. Report security problems privately as described in `SECURITY.md`.
 
 ## License

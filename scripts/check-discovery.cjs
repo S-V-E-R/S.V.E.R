@@ -51,7 +51,7 @@ const position = (html, id) => html.indexOf(`id="${id}"`);
   assert.match(html, /&lt;First&gt; playing/, "titles are text");
   assert.match(html, /New creator/);
   assert.match(html, /Community pick/);
-  assert.match(html, /src="https:\/\/media.example\/thumbs\/b-second\/1.webp"/, "live still on the card");
+  assert.match(html, /src="https:\/\/media.example\/thumbs\/b-second\/1.webp\?v=0"/, "live still on the card");
   assert.doesNotMatch(html, /<video/, "previews never start playback");
   // Signed in with a faction: following and own-faction shelves.
   account = { username: "Viewer", faction: "glint" };
@@ -86,6 +86,43 @@ const position = (html, id) => html.indexOf(`id="${id}"`);
   assert.equal(moved, null, "Cancel keeps the viewer here");
   assert.match(document.querySelector(".up-next").textContent, /Up next:/);
   global.setTimeout = realTimeout;
+
+  // Still refreshes are visible-only, failures fall back, and the next minute retries.
+  const { LiveThumbnail } = compile("apps/web/components/LiveThumbnail.tsx");
+  const realInterval = global.setInterval, realClear = global.clearInterval, realNow = Date.now;
+  let now = realNow(), tick, intersection, disconnected = false;
+  Date.now = () => now;
+  global.setInterval = fn => { tick = fn; return 1; };
+  global.clearInterval = () => {};
+  global.IntersectionObserver = class {
+    constructor(fn) { intersection = fn; }
+    observe() {}
+    disconnect() { disconnected = true; }
+  };
+  Object.defineProperty(document, "hidden", { value: false, configurable: true });
+  await act(async () => root.render(React.createElement(LiveThumbnail, { src: "/api/discovery/thumbnails/first", label: "Art" })));
+  const img = () => document.querySelector(".live-thumbnail img");
+  const initial = img().src;
+  await act(async () => img().dispatchEvent(new window.Event("error")));
+  assert(img().hidden, "failed image leaves the category fallback");
+  assert.match(document.querySelector(".live-thumbnail").textContent, /Art/);
+  now += 61000;
+  await act(async () => tick());
+  assert.equal(img().src, initial, "offscreen cards do not refresh");
+  await act(async () => intersection([{ isIntersecting: true }]));
+  assert.notEqual(img().src, initial, "entering the viewport refreshes an old card");
+  assert(!img().hidden, "a new minute retries a failed image");
+  const visible = img().src;
+  Object.defineProperty(document, "hidden", { value: true, configurable: true });
+  now += 61000;
+  await act(async () => tick());
+  assert.equal(img().src, visible, "hidden tabs do not refresh");
+  Object.defineProperty(document, "hidden", { value: false, configurable: true });
+  await act(async () => document.dispatchEvent(new window.Event("visibilitychange")));
+  assert.notEqual(img().src, visible, "returning to the tab refreshes");
+  assert.equal(document.querySelector("video"), null, "no playback for thumbnails");
   await act(async () => root.unmount());
-  console.log("Discovery UI passed: shelf order, personal shelves, safe text, stills, spotlights, empty and outage states, stream-end countdown and cancel.");
+  assert(disconnected, "observer is cleaned up");
+  global.setInterval = realInterval; global.clearInterval = realClear; Date.now = realNow;
+  console.log("Discovery UI passed: shelves, stills, fallback/retry, visible-only refresh, spotlights, empty/outage states, stream-end countdown and cancel.");
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => dom.window.close());

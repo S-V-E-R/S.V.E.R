@@ -156,6 +156,8 @@ In `/admin`: enable or disable each MAGNet channel, force a stream onto a channe
 
 Preview cards need a still image of each live stream. Generate one keyframe snapshot per live stream about once a minute. This decodes a single frame and never re-encodes or alters the stream.
 
+Cards and the homepage rotation show the full frame inside their 16:9 area, with letterboxing when needed. Visible stills refresh about once a minute; hidden tabs and offscreen cards do no refresh work. Missing, failed or stale captures show the category label. The image endpoint resolves the latest capture when requested, so a lazy image cannot refer to a previously deleted still. It serves only eligible live/reconnecting broadcasts and captures less than three minutes old, with no browser caching and no playback lease.
+
 ## Storage and API outline
 
 Chat messages gain an origin (channel or MAGNet channel) so merged messages can be shown, moderated and excluded from burst signals. Tables: MAGNet channels and their state (current, pending and forced stream; lock and hold times), per-stream feature history and cooldowns, the decision log, streamer MAGNet settings, flag moments, spotlights. Signals are computed from existing chat, follow and raid data plus playback-lease levels; no new tracking of viewers. A Postgres-backed job runs the engines; the realtime switch and countdown events go over the existing WebSocket. No Redis.

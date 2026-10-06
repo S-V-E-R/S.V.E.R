@@ -31,7 +31,7 @@
 .rotation-card { flex: 1 1 820px; min-width: 0; max-width: 900px; display: flex; flex-wrap: wrap; padding: 6px; }
 .rotation-stage { position: relative; flex: 999 1 520px; min-width: 0; aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; color: inherit; }
 .rotation-stage:hover { text-decoration: none; }
-.rotation-mark { padding: 0 24px; text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 44px; color: rgba(242, 240, 234, .1); }
+.rotation-stage .stream-thumb-mark { font-size: clamp(18px, 3vw, 44px); }
 .rotation-stage .stream-tags { left: 12px; top: 12px; }
 .rotation-info { flex: 1 1 260px; min-width: 0; padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 12px; }
 .rotation-who { display: flex; align-items: center; gap: 10px; }
@@ -90,7 +90,10 @@
 }
 
 /* Module 5 discovery. */
-.stream-still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.live-thumbnail { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.live-thumbnail img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #08090c; }
+.live-thumbnail img[hidden] { display: none; }
+.magnet-next-thumbnail { position: relative; flex: 0 0 160px; width: 160px; aspect-ratio: 16 / 9; }
 .tag-label { background: var(--surface); color: var(--text); padding: 1px 6px; font-size: .75rem; }
 .section-link { margin-left: auto; white-space: nowrap; }
 .spotlight-card { display: flex; flex-direction: column; gap: 6px; }
@@ -113,6 +116,5 @@
 .magnet-why { margin: 8px 0; }
 .magnet-mark-inline { font-size: .7rem; letter-spacing: .08em; padding: 1px 6px; border: 1px solid var(--accent); color: var(--accent-light); }
 .magnet-countdown { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
-.magnet-countdown img { object-fit: cover; }
 .magnet-holding { padding: 16px; }
 .magnet-badge { border-color: var(--accent); color: var(--accent-light); }
