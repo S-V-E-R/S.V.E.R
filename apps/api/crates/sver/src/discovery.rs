@@ -9,6 +9,8 @@ use crate::{
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -38,7 +40,6 @@ pub struct Stream {
     pub genre: Option<String>,
     pub started_at: DateTime<Utc>,
     pub viewers: i64,
-    pub thumbnail_key: Option<String>,
     /// The owner's first broadcast ever.
     pub first_stream: bool,
     /// Back after 30 or more days away.
@@ -54,7 +55,6 @@ pub async fn live_streams(db: &mut PgConnection) -> Res<Vec<Stream>> {
           (SELECT fm.faction FROM faction_members fm WHERE fm.user_id=b.owner_id) AS faction,
           coalesce(s.title,cu.username||'''s stream') AS title,c.id AS category_id,c.name AS category,c.genre,b.started_at,
           (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers,
-          b.thumbnail_key,
           NOT EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at) AS first_stream,
           coalesce((SELECT max(p.ended_at) FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at)<b.started_at-interval '30 days',false) AS returning,
           (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id) AS charity
@@ -125,8 +125,31 @@ pub fn card(app: &App, s: &Stream, now: DateTime<Utc>) -> Value {
     json!({"broadcast_id":s.broadcast_id,"username":s.username,"display_name":s.display_name,
         "avatar":profiles::avatar_json(app,s.avatar_key.as_deref()),"faction":s.faction,"title":s.title,
         "category":s.category,"category_id":s.category_id,"genre":s.genre,"started_at":s.started_at,"viewers":s.viewers,
-        "thumbnail":s.thumbnail_key.as_deref().map(|k|profiles::media_url(app,k)),"label":label,"charity":s.charity,
+        "thumbnail":format!("/api/discovery/thumbnails/{}",s.broadcast_id),"label":label,"charity":s.charity,
         "fresh":now-s.started_at<Duration::minutes(FRESH_MINUTES)})
+}
+
+/// Resolve at image-load time: a lazy card must not point at a still already replaced by capture.
+/// The shared row lock keeps rotation/sweeping from deleting the object during this short read.
+async fn thumbnail(State(app): State<App>, Path(id): Path<String>) -> Res<Response> {
+    if id.len() > 64 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+    let mut tx = app.db.begin().await?;
+    let key: Option<String> = sqlx::query_scalar("SELECT b.thumbnail_key FROM broadcasts b JOIN channel_users c ON c.id=b.owner_id AND c.eligible WHERE b.id=$1 AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>now())) AND b.thumbnail_key IS NOT NULL AND b.thumbnail_at>now()-interval '3 minutes' FOR SHARE OF b")
+        .bind(&id).fetch_optional(&mut *tx).await?;
+    let Some(key) = key else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    if crate::media::removal::held(&mut tx, &key).await? {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+    let bytes = app.config.media.storage.get(&app.http, &key).await?;
+    tx.commit().await?;
+    Ok(match bytes {
+        Some(bytes) => ([(header::CONTENT_TYPE, "image/webp")], bytes).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    })
 }
 
 /// The signed-in viewer's id and faction, if any.
@@ -429,7 +452,6 @@ async fn suggestions(
         genre,
         started_at: now,
         viewers: 0,
-        thumbnail_key: None,
         first_stream: false,
         returning: false,
         charity: None,
@@ -543,6 +565,7 @@ pub fn routes() -> Router<App> {
         .route("/api/discovery/home", get(home))
         .route("/api/discovery/live", get(live))
         .route("/api/discovery/browse", get(browse))
+        .route("/api/discovery/thumbnails/{id}", get(thumbnail))
         .route("/api/search", get(search))
         .route("/api/channels/{username}/suggestions", get(suggestions))
         .route("/api/admin/spotlights", get(admin_list).post(admin_create))
@@ -567,7 +590,6 @@ mod tests {
             genre: Some(genre.into()),
             started_at: Utc::now() - Duration::minutes(minutes_ago),
             viewers: 0,
-            thumbnail_key: None,
             first_stream: false,
             returning: false,
             charity: None,

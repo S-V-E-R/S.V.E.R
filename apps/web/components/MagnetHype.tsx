@@ -6,6 +6,7 @@ import { LivePlayer } from "./LivePlayer";
 import { HypeChat } from "./HypeChat";
 import { StreamCard } from "./home/StreamCard";
 import type { LiveCard } from "./home/types";
+import { LiveThumbnail } from "./LiveThumbnail";
 
 type Featured = { stream: LiveCard; kind: string; reason: string | null; since: string; moves_on_by: string | null; holding: boolean };
 type Lane = { id: string; name: string; enabled: boolean; featured: Featured | null; next: { stream: LiveCard; reason: string | null; switch_at: string } | null; others: LiveCard[] };
@@ -56,8 +57,7 @@ export function MagnetHype({ lane, account, viewerFaction }: { lane: string; acc
         : <div className="watch-player frame"><LivePlayer key={featured.stream.broadcast_id} username={featured.stream.username} focused signedIn={signedIn} magnetLane={lane} /></div>}
       <p className="magnet-why"><span className="magnet-mark-inline" aria-hidden="true">MAGNet</span> <Link href={`/${featured.stream.username}`}><strong>{featured.stream.display_name}</strong></Link> · {featured.stream.title}{featured.stream.category && <span className="muted"> · {featured.stream.category}</span>}{featured.stream.label && <span className="tag-label">{featured.stream.label}</span>}<br /><span className="muted">{featured.reason}</span></p>
       {state!.next && <div className="magnet-countdown panel" role="status">
-        {/* eslint-disable-next-line @next/next/no-img-element -- a still, never a second player */}
-        {state!.next.stream.thumbnail && <img src={state!.next.stream.thumbnail} alt="" width={160} height={90} />}
+        <span className="magnet-next-thumbnail"><LiveThumbnail src={state!.next.stream.thumbnail} label={state!.next.stream.category ?? state!.next.stream.display_name} /></span>
         <p>Up next in <strong>{left}</strong>: <strong>{state!.next.stream.display_name}</strong> · {state!.next.reason}</p>
         <Link className="button small" href={`/${featured.stream.username}/live`}>Stay with {featured.stream.display_name}</Link>
       </div>}

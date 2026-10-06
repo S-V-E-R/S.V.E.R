@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Crest } from "../Crest";
 import { factionOf } from "../../lib/factions";
 import { scene, type LiveCard } from "./types";
+import { LiveThumbnail } from "../LiveThumbnail";
 
 /**
  * The rotation carousel (Main mockup). Every live stream gets a turn; it never orders by viewer
@@ -29,7 +30,7 @@ export function Rotation({ streams, viewerFaction }: { streams: LiveCard[]; view
     {n > 1 && <span className="rotation-peek" style={{ background: scene(prev.username) }} aria-hidden="true" />}
     <div className="rotation-card frame" aria-live="polite">
       <Link href={`/${cur.username}`} className="rotation-stage" style={{ background: scene(cur.username) }} aria-label={`Watch ${cur.display_name}`}>
-        <span className="rotation-mark" aria-hidden="true">{cur.category ?? cur.display_name}</span>
+        <LiveThumbnail key={cur.broadcast_id ?? cur.username} src={cur.thumbnail} label={cur.category ?? cur.display_name} />
         <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}</span>
       </Link>
       <div className="rotation-info">

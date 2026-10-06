@@ -102,6 +102,7 @@ pub async fn exercise(e: &Env) {
             .unwrap()
     };
     assert_eq!(card(&after["live"], "DvShooter")["viewers"], 40);
+    thumbnails(e).await;
 
     // Signed in: following, own faction, no blocked channel; labels and spotlights.
     let (_, mine) = get(e, "/api/discovery/home", Some(&viewer)).await;
@@ -305,4 +306,126 @@ pub async fn exercise(e: &Env) {
     ] {
         e.sql(statement).await;
     }
+}
+
+async fn thumbnails(e: &Env) {
+    use axum::{body::Body, http::Request};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let dir = std::env::temp_dir().join(format!("sver-thumbnails-{}", uuid::Uuid::new_v4()));
+    let mut config = (*e.app.config).clone();
+    config.media.storage = sver::media::Storage::Filesystem(dir.clone());
+    let mut app = e.app.clone();
+    app.config = std::sync::Arc::new(config);
+    let request = || async {
+        sver::router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/discovery/thumbnails/dv-b-art?v=0")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        request().await.status(),
+        StatusCode::NOT_FOUND,
+        "no first capture yet"
+    );
+    // One URL follows replacements even when the page was loaded before either capture.
+    for n in 1..=2 {
+        let key = format!("thumbs/dv-b-art/{n}.webp");
+        let bytes = vec![n; 64];
+        app.config
+            .media
+            .storage
+            .put(&app.http, &key, bytes.clone())
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE broadcasts SET thumbnail_key=$1,thumbnail_at=now() WHERE id='dv-b-art'",
+        )
+        .bind(&key)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        if n == 2 {
+            app.config
+                .media
+                .storage
+                .delete(&app.http, "thumbs/dv-b-art/1.webp")
+                .await
+                .unwrap();
+        }
+        let response = request().await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["content-type"], "image/webp");
+        assert_eq!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .as_ref(),
+            bytes
+        );
+    }
+    e.sql("UPDATE broadcasts SET thumbnail_at=now()-interval '4 minutes' WHERE id='dv-b-art'")
+        .await;
+    assert_eq!(
+        request().await.status(),
+        StatusCode::NOT_FOUND,
+        "stale captures expire"
+    );
+    e.sql("UPDATE broadcasts SET thumbnail_at=now(),state='RECONNECTING',reconnect_deadline=now()+interval '30 seconds' WHERE id='dv-b-art'").await;
+    assert_eq!(
+        request().await.status(),
+        StatusCode::OK,
+        "last good frame during a short reconnect"
+    );
+    e.sql("UPDATE broadcasts SET reconnect_deadline=now()-interval '1 second' WHERE id='dv-b-art'")
+        .await;
+    assert_eq!(request().await.status(), StatusCode::NOT_FOUND);
+    e.sql("UPDATE broadcasts SET state='LIVE',reconnect_deadline=NULL WHERE id='dv-b-art'")
+        .await;
+    e.sql("INSERT INTO media_removal_holds(root,hidden_at) VALUES('thumbs/dv-b-art',now())")
+        .await;
+    assert_eq!(
+        request().await.status(),
+        StatusCode::NOT_FOUND,
+        "held media is hidden"
+    );
+    e.sql("DELETE FROM media_removal_holds WHERE root='thumbs/dv-b-art'")
+        .await;
+    e.sql("INSERT INTO profiles(user_id,display_name,restricted_until) VALUES('dv-art','DvArtist',now()+interval '1 hour') ON CONFLICT(user_id) DO UPDATE SET restricted_until=EXCLUDED.restricted_until")
+        .await;
+    assert_eq!(
+        request().await.status(),
+        StatusCode::NOT_FOUND,
+        "restricted channels are hidden"
+    );
+    e.sql("UPDATE profiles SET restricted_until=NULL WHERE user_id='dv-art'")
+        .await;
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now() WHERE id='dv-b-art'")
+        .await;
+    assert_eq!(
+        request().await.status(),
+        StatusCode::NOT_FOUND,
+        "ending hides the saved image URL"
+    );
+    sver::probe::sweep_thumbnails(&app).await.unwrap();
+    assert_eq!(
+        app.config
+            .media
+            .storage
+            .head(&app.http, "thumbs/dv-b-art/2.webp")
+            .await
+            .unwrap(),
+        None
+    );
+    e.sql("UPDATE broadcasts SET state='LIVE',ended_at=NULL,reconnect_deadline=NULL WHERE id='dv-b-art'").await;
+    std::fs::remove_dir_all(dir).unwrap();
 }
