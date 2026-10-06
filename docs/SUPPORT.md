@@ -1,6 +1,6 @@
 # Module 6: Support
 
-Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Started October 5, 2026; built October 6, 2026 (below). Live keys and the legacy connected-account import wait for launch.
+Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Started October 5, 2026; built and switched to live Stripe keys October 6, 2026 (below), with the lawyer-reviewed Terms of Service and refund policy. Done.
 
 This module lets viewers support streamers with money and loyalty, and gets streamers paid. It follows the closure rule: specify, build, then test against "Done when". All open items were decided by Joe on October 3, 2026.
 
@@ -174,7 +174,7 @@ Decided by Joe on October 3, 2026.
 - Merged co-streams: tributes in the shared chat, Valor months and gifts bought through the squad page are split equally among the members live then (members who can earn); a card subscription's first month is split equally and each part paid at that member's own tier split (renewals go to the chosen channel). Each payment stores its shares, so refunds and disputes reverse exactly.
 - Shine: Creator Studio → Shine sets a charity and its donation page (https only). A live stream with a charity gets a charity stream record; the channel shows a Shine banner with a donate link, browse cards and MAGNet reasons say "Charity stream", and past charity streams are listed. After the stream ends the streamer submits the amount raised with a proof link; staff verify it in `/admin/shine` into a Good Works badge (charity and amount), reject it, or later revoke it, each with an audited reason.
 
-**Still to build:** importing creators' legacy connected accounts at the live cutover (test mode can't see live accounts).
+**Live cutover (October 6, 2026):** test-mode payment data was cleared, live webhook destinations replaced the legacy billing webhook, and legacy creators' connected accounts were imported from the restored legacy backup (`Wallet.stripeAccountId`), so they don't onboard again.
 
 ## Done when
 
