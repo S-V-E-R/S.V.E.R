@@ -124,5 +124,31 @@ const position = (html, id) => html.indexOf(`id="${id}"`);
   await act(async () => root.unmount());
   assert(disconnected, "observer is cleaned up");
   global.setInterval = realInterval; global.clearInterval = realClear; Date.now = realNow;
-  console.log("Discovery UI passed: shelves, stills, fallback/retry, visible-only refresh, spotlights, empty/outage states, stream-end countdown and cancel.");
+
+  // MAGNet co-streams: a merged squad gets member tabs on one player; a separate one links out.
+  let lane = { id: "global", name: "Global", enabled: true, next: null, others: [], featured: { stream: first, kind: "fair", reason: "Fair turn", since: "2026-10-06T12:00:00Z", moves_on_by: null, holding: false, squad: { mode: "MERGED", members: [first, second] } } };
+  const { MagnetHype } = compile("apps/web/components/MagnetHype.tsx", {
+    "../lib/client-api": { send: async (_method, url) => ({ ok: true, data: url === "/api/magnet" ? { lanes: [] } : lane }), useLoad: load => React.useEffect(() => { void load(); }, [load]) },
+    "./LivePlayer": { LivePlayer: ({ username }) => React.createElement("div", { className: "player" }, username) },
+    "./HypeChat": { HypeChat: () => null },
+  });
+  const hype = createRoot(document.getElementById("root"));
+  await act(async () => hype.render(React.createElement(MagnetHype, { lane: "global", account: null, viewerFaction: null })));
+  const tabs = () => [...document.querySelectorAll('[role="tab"]')];
+  assert.deepEqual(tabs().map(t => t.textContent), ["First", "Second"]);
+  assert.equal(document.querySelectorAll(".player").length, 1, "one player for the squad");
+  assert.equal(document.querySelector(".player").textContent, "First");
+  await act(async () => tabs()[1].dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+  assert.equal(document.querySelector(".player").textContent, "Second", "a tab switches the player");
+  assert.equal(tabs()[1].getAttribute("aria-selected"), "true");
+  assert.match(document.querySelector(".magnet-why").innerHTML, /href="\/Second"/);
+  await act(async () => hype.unmount());
+  lane = { ...lane, featured: { ...lane.featured, squad: { mode: "SEPARATE", members: [second] } } };
+  const separate = createRoot(document.getElementById("root"));
+  await act(async () => separate.render(React.createElement(MagnetHype, { lane: "global", account: null, viewerFaction: null })));
+  assert.equal(tabs().length, 0);
+  assert.match(document.querySelector(".magnet-why").textContent, /Co-streaming with Second/);
+  assert.match(document.querySelector(".magnet-why").innerHTML, /href="\/Second\/live"/);
+  await act(async () => separate.unmount());
+  console.log("Discovery UI passed: shelves, stills, fallback/retry, visible-only refresh, spotlights, empty/outage states, stream-end countdown and cancel, MAGNet co-stream tabs and links.");
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => dom.window.close());
