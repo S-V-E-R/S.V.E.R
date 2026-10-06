@@ -87,7 +87,9 @@ async fn grant(
             paid_through=greatest(channel_subs.paid_through,now())+interval '1 month',
             months=channel_subs.months+1, updated_at=now()")
         .bind(channel).bind(user).bind(tier).bind(keep_higher)
-        .execute(tx).await?;
+        .execute(&mut *tx).await?;
+    // Subscribing counts toward Surge for a viewer who is watching (docs/CROWDSYNC.md).
+    crate::surge::participated(tx, channel, user).await?;
     Ok(())
 }
 

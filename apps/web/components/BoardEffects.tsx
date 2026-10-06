@@ -7,10 +7,39 @@ export type BoardEvent = {
   control?: string; label?: string; effect?: string; user?: { username: string }; text?: string | null;
   goal?: { progress: number; target: number; reached: boolean } | null;
   stream_ms?: number | null; at?: number; overlay?: boolean; test?: boolean; x?: number; y?: number;
+  /** Skills, emote combos and Surge levels carry their own caption; combos carry the emote image. */
+  caption?: string; image?: string; skill?: string; surge?: number;
 };
 type Shown = BoardEvent & { key: number };
 
 const PARTICLES: Record<string, string> = { confetti: "🎉", hearts: "❤️", fireworks: "🎆", stars: "⭐", rain: "💧" };
+const STICKERS: Record<string, string> = { "sticker-crown": "👑", "sticker-heart": "💖", "sticker-trophy": "🏆" };
+// Sound Skills are synthesized, so no audio files are needed: [frequency, start seconds].
+const TUNES: Record<string, [number, number][]> = {
+  "sound-chime": [[880, 0], [1320, 0.12]],
+  "sound-fanfare": [[523, 0], [659, 0.15], [784, 0.3], [1047, 0.45]],
+};
+let audio: AudioContext | null = null;
+function playSound(effect: string) {
+  const tune = TUNES[effect];
+  if (!tune) return;
+  try {
+    audio ??= new AudioContext();
+    const start = audio.currentTime;
+    for (const [frequency, at] of tune) {
+      const tone = audio.createOscillator();
+      const gain = audio.createGain();
+      tone.type = "triangle";
+      tone.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, start + at);
+      gain.gain.exponentialRampToValueAtTime(0.2, start + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + at + 0.4);
+      tone.connect(gain).connect(audio.destination);
+      tone.start(start + at);
+      tone.stop(start + at + 0.45);
+    }
+  } catch { /* audio unavailable */ }
+}
 export const REDUCE_KEY = "sver:reduce-effects";
 /** The viewer's "reduce effects" toggle or their system's reduced-motion setting. */
 export function reduced(): boolean {
@@ -23,9 +52,13 @@ export function EffectStage({ events, calm }: { events: Shown[]; calm: boolean }
     {events.map(e => {
       const animate = !calm && !!e.effect && e.effect !== "none" && (!e.goal || e.goal.reached);
       const particle = animate ? PARTICLES[e.effect!] : undefined;
+      const sticker = animate ? STICKERS[e.effect!] : undefined;
+      const shower = animate && e.effect === "emote-shower" && e.image;
       return <div key={e.key} className={animate ? `board-effect effect-${e.effect}` : "board-effect"}>
         {particle && <div className="board-particles" aria-hidden="true">{Array.from({ length: 18 }, (_, i) => <span key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i % 6) * 0.12}s` }}>{particle}</span>)}</div>}
-        <p className="board-caption"><strong>{e.user?.username}</strong> {e.goal ? (e.goal.reached ? `completed ${e.label}!` : `added to ${e.label} (${e.goal.progress}/${e.goal.target})`) : `used ${e.label}`}{e.text && <>: <q>{e.text}</q></>}</p>
+        {shower && <div className="board-particles" aria-hidden="true">{Array.from({ length: 18 }, (_, i) => <span key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i % 6) * 0.12}s`, backgroundImage: `url(${JSON.stringify(e.image)})` }} className="emote-particle" />)}</div>}
+        {sticker && <div className="board-sticker" aria-hidden="true">{sticker}</div>}
+        <p className="board-caption">{e.caption ?? <><strong>{e.user?.username}</strong> {e.goal ? (e.goal.reached ? `completed ${e.label}!` : `added to ${e.label} (${e.goal.progress}/${e.goal.target})`) : `used ${e.label}`}</>}{e.text && <>: <q>{e.text}</q></>}</p>
       </div>;
     })}
   </div>;
@@ -36,6 +69,7 @@ export function useShown() {
   const [shown, setShown] = useState<Shown[]>([]);
   const next = useRef(0);
   const add = useCallback((e: BoardEvent) => {
+    if (e.effect?.startsWith("sound-") && !reduced()) playSound(e.effect);
     const key = ++next.current;
     setShown(list => [...list.slice(-4), { ...e, key }]);
     setTimeout(() => setShown(list => list.filter(x => x.key !== key)), 4000);

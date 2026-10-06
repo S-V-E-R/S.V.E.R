@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { playerDelay } from "./BoardEffects";
@@ -10,7 +11,52 @@ export type PollState = {
   mine?: { option: number; stake: number; payout: number | null } | null;
 };
 export type Counter = { id: string; kind: "shiny" | "deaths" | "tally" | "custom"; label: string; value: number; extra: number; odds: number | null };
-type State = { poll: PollState | null; prediction: PollState | null; counters: Counter[]; balance: number | null; can_run: boolean; can_resolve: boolean; max_stake: number };
+export type Rally = { myria: number; aetheron: number; glint: number };
+export type Surge = { id: string; level: number; threshold: number; started_at: string; ends_at: string; ended_at: string | null; participants: number; awarded: number };
+type Skill = { id: string; name: string; category: string; valor: number; effect: string; enabled: boolean };
+type State = { poll: PollState | null; prediction: PollState | null; counters: Counter[]; balance: number | null; can_run: boolean; can_resolve: boolean; max_stake: number; rally: Rally | null; surge: Surge | null; faction: keyof Rally | null };
+const FACTIONS: [keyof Rally, string][] = [["myria", "Myria"], ["aetheron", "Aetheron"], ["glint", "Glint"]];
+
+/** Each faction's share of this stream's rallies. */
+export function RallyMeter({ rally }: { rally: Rally }) {
+  const total = rally.myria + rally.aetheron + rally.glint;
+  return <div className="rally-meter" aria-label="Faction rally">{FACTIONS.map(([key, name]) => {
+    const share = total ? Math.round((rally[key] / total) * 100) : 0;
+    return <div key={key} className="rally-row" data-theme={key}><span>{name}</span><progress max={100} value={share} aria-label={`${name}: ${share}%`} /><span>{share}%</span></div>;
+  })}</div>;
+}
+
+/** Skills: premium effects paid in Purchased Valor, sent as a chat message like a tribute. Loads when opened. */
+function Skills({ path }: { path: string }) {
+  const [data, setData] = useState<{ skills: Skill[]; valor: number | null; paused: boolean } | null>(null);
+  const [text, setText] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function toggle(opened: boolean) {
+    if (!opened || data) return;
+    const r = await send<{ skills: Skill[]; valor: number | null; paused: boolean }>("GET", `${path}/skills`);
+    if (r.ok) setData(r.data); else setNote(r.error);
+  }
+  async function play(skill: Skill) {
+    if (!window.confirm(`Play ${skill.name} for ${skill.valor.toLocaleString()} Valor?`)) return;
+    setBusy(true); setNote("");
+    const r = await send("POST", `${path}/chat`, { id: crypto.randomUUID(), body: text.trim() || skill.name, skill: skill.id });
+    setBusy(false);
+    if (!r.ok) { setNote(r.error); return; }
+    setText(""); setNote(`${skill.name} played.`);
+    setData(d => d && { ...d, valor: d.valor === null ? null : d.valor - skill.valor });
+  }
+  return <details className="crowd-skills frame" onToggle={e => void toggle(e.currentTarget.open)}>
+    <summary>Skills{data?.valor != null && <> · {data.valor.toLocaleString()} Valor</>}</summary>
+    {!data ? <p className="loading">{note || "Loading…"}</p> : data.valor === null ? <p className="muted">Sign in to play Skills. Streamers can&apos;t play Skills on their own channel.</p> : <>
+      <p className="muted small">Skills use your Purchased Valor, show on stream and in chat, and pay the streamer like a tribute. <Link href="/wallet">Get Valor</Link></p>
+      {data.paused && <p className="form-message">Effects are paused on this channel right now.</p>}
+      <label className="field"><span>Message (optional)</span><input value={text} maxLength={200} onChange={e => setText(e.target.value)} /></label>
+      <div className="crowd-options">{data.skills.filter(s => s.enabled).map(s => <button key={s.id} type="button" className="small" disabled={busy || data.paused || (data.valor ?? 0) < s.valor} onClick={() => play(s)}>{s.name} <small>{s.valor.toLocaleString()} Valor</small></button>)}</div>
+    </>}
+    {data && note && <p role="status" className="form-message">{note}</p>}
+  </details>;
+}
 
 /** How a counter reads: "12", "4–2", or a shiny hunt's encounters, phase and chance so far. */
 export function counterText(c: Counter) {
@@ -110,9 +156,11 @@ export function Crowd({ username }: { username: string }) {
   useLoad(load);
   useEffect(() => {
     const on = (event: Event) => {
-      const { channel, event: e } = (event as CustomEvent<{ channel: string; event: { type: string; poll?: PollState; counters?: Counter[] } }>).detail;
+      const { channel, event: e } = (event as CustomEvent<{ channel: string; event: { type: string; poll?: PollState; counters?: Counter[]; rally?: Rally | null; surge?: Surge } }>).detail;
       if (channel !== username.toLowerCase()) return;
       if (e.type === "counters" && e.counters) { const counters = e.counters; setState(s => s && { ...s, counters }); }
+      else if (e.type === "rally") { const rally = e.rally ?? null; setState(s => s && { ...s, rally }); }
+      else if (e.type === "surge" && e.surge) { const surge = e.surge.ended_at ? null : e.surge; setState(s => s && { ...s, surge }); }
       else if (e.type === "poll" && e.poll) {
         const poll = e.poll;
         // Live results; the viewer's own vote, stake and payout come from a reload when they change.
@@ -124,9 +172,16 @@ export function Crowd({ username }: { username: string }) {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => { window.removeEventListener("sver:board", on); clearInterval(tick); };
   }, [username, load]);
-  if (!state || (!state.poll && !state.prediction && !state.counters.length && !state.can_run)) return null;
+  if (!state) return null;
   const counter = async (id: string, body: unknown) => { await send("POST", `${path}/counters/${encodeURIComponent(id)}`, body); };
+  const surgeLeft = state.surge ? Math.max(0, Math.ceil((Date.parse(state.surge.ends_at) - now) / 1000)) : 0;
   return <div className="crowd">
+    {state.surge && <p className="surge-banner" role="status"><strong>Surge level {state.surge.level}</strong> · {state.surge.participants} taking part · next level at {state.surge.threshold * (state.surge.level + 1)} · {Math.floor(surgeLeft / 60)}:{String(surgeLeft % 60).padStart(2, "0")} left</p>}
+    {state.rally && <section className="crowd-card frame" aria-label="Faction rally">
+      <span className="eyebrow">Faction rally</span>
+      <RallyMeter rally={state.rally} />
+      {state.faction && <RallyButton path={path} faction={state.faction} />}
+    </section>}
     {state.counters.length > 0 && <ul className="crowd-counters" aria-label="Counters">{state.counters.map(c => <li key={c.id}>
       <span>{c.label}: <strong>{counterText(c)}</strong></span>
       {state.can_run && <span className="row">
@@ -137,5 +192,16 @@ export function Crowd({ username }: { username: string }) {
     {state.poll && <PollCard poll={state.poll} path={path} state={state} now={now} onChange={load} />}
     {state.prediction && <PollCard poll={state.prediction} path={path} state={state} now={now} onChange={load} />}
     {state.can_run && <StartForm path={path} onChange={load} />}
+    <Skills path={path} />
   </div>;
+}
+
+function RallyButton({ path, faction }: { path: string; faction: keyof Rally }) {
+  const [note, setNote] = useState("");
+  async function rally() {
+    const r = await send("POST", `${path}/rally`);
+    setNote(r.ok ? "Rallied! You can rally again in a minute." : r.error);
+  }
+  const name = FACTIONS.find(f => f[0] === faction)?.[1];
+  return <p className="row wrap"><button type="button" className="small" onClick={rally}>Rally for {name}</button>{note && <span role="status" className="muted small">{note}</span>}</p>;
 }

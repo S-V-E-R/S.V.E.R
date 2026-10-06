@@ -40,6 +40,8 @@ mod integrity;
 mod magnet;
 #[path = "streams/moderation.rs"]
 mod moderation;
+#[path = "streams/moments.rs"]
+mod moments;
 #[path = "streams/playback.rs"]
 mod playback;
 #[path = "streams/plays.rs"]
@@ -444,6 +446,7 @@ async fn exercise(e: &Env) {
     engagement::exercise(e).await;
     boards::exercise(e).await;
     crowd::exercise(e).await;
+    moments::exercise(e).await;
     rest::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;

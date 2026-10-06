@@ -42,7 +42,7 @@ pub const EFFECTS: &[&str] = &[
     "shake",
     "spotlight",
 ];
-const KINDS: &[&str] = &["button", "label", "text", "goal", "joystick"];
+const KINDS: &[&str] = &["button", "label", "text", "goal", "joystick", "rally"];
 const AUDIENCES: &[&str] = &["everyone", "followers", "subscribers", "moderators"];
 const MAX_SCREENS: usize = 4;
 const MAX_CONTROLS: usize = 24;
@@ -175,6 +175,9 @@ pub fn validate(board: &Board) -> Res<()> {
                 && c.effect == "none";
             match c.kind.as_str() {
                 "label" if !simple => return Err(bad(c, "labels can't be pressed.")),
+                "rally" if !simple => {
+                    return Err(bad(c, "rallies are free and have no effect or limits."));
+                }
                 "joystick" if !simple => {
                     return Err(bad(c, "joysticks are free and have no effect or limits."));
                 }
@@ -775,6 +778,10 @@ async fn press(
         return Err(Fail::denied("You can't use this board."));
     }
     audience(&app, &channel, &user, &control.audience).await?;
+    if control.kind == "rally" {
+        crate::surge::rally_for(&app, &channel, &user).await?;
+        return Ok(Json(json!({"rallied": true})));
+    }
     let author = json!({"username": user.username});
     let at = Utc::now().timestamp_millis();
 
@@ -871,6 +878,7 @@ async fn press(
             .execute(&mut *tx).await?;
     }
     tx.commit().await?;
+    crate::surge::participated(&mut *app.db.acquire().await?, &channel, &user.id).await?;
     // The effect plays once: in the video when the overlay is connected, otherwise over the player.
     app.chat.publish(&channel, Some(&user.id), 0, json!({"type": "board_effect", "control": control.id,
         "label": control.label, "effect": control.effect, "user": author, "text": text, "goal": goal,
@@ -883,6 +891,35 @@ async fn press(
     .fetch_one(&app.db)
     .await?;
     Ok(Json(json!({"balance": balance, "goal": goal})))
+}
+/// Whether the channel's effects are paused (panic) and whether its OBS overlay is connected.
+pub(crate) async fn effects_state(db: &mut sqlx::PgConnection, channel: &str) -> Res<(bool, bool)> {
+    Ok(sqlx::query_as("SELECT disabled, coalesce(overlay_seen_at>now()-interval '30 seconds',false) FROM boards WHERE channel_id=$1")
+        .bind(channel)
+        .fetch_optional(db)
+        .await?
+        .unwrap_or((false, false)))
+}
+/// Plays an effect that isn't a board press (Skills, emote combos, Surge levels) the same way:
+/// once, in the overlay when it's connected, otherwise over each player at its own delay; nothing
+/// while the channel's effects are paused.
+pub(crate) async fn play(
+    app: &App,
+    channel: &str,
+    author: Option<&str>,
+    mut effect: Value,
+) -> Res<()> {
+    let (paused, overlay) = effects_state(&mut *app.db.acquire().await?, channel).await?;
+    if paused {
+        return Ok(());
+    }
+    let stream_ms = live(app, channel).await?.map(|l| l.1);
+    effect["type"] = json!("board_effect");
+    effect["overlay"] = json!(overlay);
+    effect["stream_ms"] = json!(stream_ms);
+    effect["at"] = json!(Utc::now().timestamp_millis());
+    app.chat.publish(channel, author, 0, effect);
+    Ok(())
 }
 /// Only real viewers act (docs/CROWDSYNC.md "Rules that apply everywhere"): a verified account,
 /// not the owner, with a Counted or Trusted playback lease on the channel's live broadcast, not
@@ -1015,7 +1052,9 @@ fn forward(e: &Arc<Event>, channel: &str, test_room: &str) -> bool {
     (e.channel == channel || e.channel == test_room)
         && matches!(
             e.payload["type"].as_str(),
-            Some("board_effect" | "board_input" | "board" | "poll" | "counters")
+            Some(
+                "board_effect" | "board_input" | "board" | "poll" | "counters" | "rally" | "surge"
+            )
         )
 }
 

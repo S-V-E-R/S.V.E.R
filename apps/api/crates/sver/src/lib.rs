@@ -44,6 +44,7 @@ pub mod roadmap;
 pub mod safety;
 pub mod security;
 pub mod shine;
+pub mod skills;
 pub mod social;
 pub mod squads;
 pub mod staff_push;
@@ -53,6 +54,7 @@ pub mod stripe;
 pub mod studio;
 pub mod subs;
 pub mod support;
+pub mod surge;
 pub mod take_down;
 pub mod text;
 pub mod tiers;
@@ -413,6 +415,8 @@ pub fn router(app: App) -> Router {
         .merge(shine::routes())
         .merge(boards::routes())
         .merge(crowd::routes())
+        .merge(skills::routes())
+        .merge(surge::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

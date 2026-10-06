@@ -143,6 +143,19 @@ async fn state(
     out["balance"] = json!(balance);
     out["can_run"] = json!(role.is_some());
     out["can_resolve"] = json!(matches!(role, Some(Role::Owner | Role::Staff)));
+    // Phase 3: the rally meter, the running Surge and the viewer's faction (for the rally button).
+    let mut db = app.db.acquire().await?;
+    out["rally"] = crate::surge::rally_meter(&mut db, &channel).await?;
+    out["surge"] = crate::surge::current(&mut db, &channel).await?;
+    out["faction"] = match &viewer {
+        Some(v) => json!(
+            sqlx::query_scalar::<_, String>("SELECT faction FROM faction_members WHERE user_id=$1")
+                .bind(&v.id)
+                .fetch_optional(&mut *db)
+                .await?
+        ),
+        None => Value::Null,
+    };
     Ok(Json(out))
 }
 
