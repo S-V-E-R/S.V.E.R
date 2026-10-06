@@ -172,7 +172,8 @@ pub async fn snapshot(ts: Vec<u8>) -> Option<Vec<u8>> {
             "-quality",
             "70",
             "-f",
-            "webp",
+            // The WebP muxer needs seeking to finish its RIFF header; stdout cannot seek.
+            "image2pipe",
             "pipe:1",
         ])
         .stdin(std::process::Stdio::piped())
@@ -265,6 +266,27 @@ pub async fn sweep_thumbnails(app: &App) -> Res<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires ffmpeg with libwebp; run explicitly with --ignored"]
+    async fn snapshot_encodes_large_webp_to_pipe() {
+        // A detailed frame exceeds FFmpeg's output buffer, exposing muxers that need to seek.
+        let mut input = b"P6\n640 576\n255\n".to_vec();
+        let mut seed = 1u32;
+        for _ in 0..640 * 576 * 3 {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            input.push((seed >> 24) as u8);
+        }
+        let webp = snapshot(input).await.expect("ffmpeg snapshot");
+        assert!(webp.len() > 32 * 1024, "must exceed the output buffer");
+        assert_eq!(
+            u32::from_le_bytes(webp[4..8].try_into().unwrap()) as usize,
+            webp.len() - 8,
+            "WebP RIFF length must be complete on a non-seekable pipe"
+        );
+        let decoded = image::load_from_memory(&webp).expect("valid WebP");
+        assert_eq!((decoded.width(), decoded.height()), (640, 576));
+    }
 
     fn packet(pid: u16, start: bool, payload: &[u8]) -> Vec<u8> {
         let mut p = vec![
