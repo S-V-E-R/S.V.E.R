@@ -4,6 +4,9 @@ const {spawn} = require('node:child_process'), {createRequire} = require('node:m
 const webRequire = createRequire(path.resolve('apps/web/package.json'));
 const {chromium} = require(process.argv[2] || 'playwright');
 let settings = {title:'A new adventure',category_id:'coding',revision:0}, failed=false, saved, decision;
+let invited;
+const person=username=>({username,display_name:username,linked:true,deleted:false,avatar:null});
+const squad={id:'fixture',mode:'SEPARATE',ended:false,host:true,joined:true,invited:false,members:[{...person('Wren'),host:true}],pending:[{username:'Oak',expires_at:'2026-12-01T00:00:00Z'}]};
 const items=[{id:'coding',name:'Coding'},{id:'wikidata-q100',name:'Synthetic Frontier IV'}];
 const genres=[{id:'fps_battle_royale',name:'FPS & battle royale'},{id:'mmos_rpgs',name:'MMOs & RPGs'},{id:'education_coding',name:'Education & coding'}];
 let pending=[{id:'Q102',name:'Synthetic Hybrid',genres:['shooter game','role-playing video game'],description:'A game with two genres requiring review.'}];
@@ -17,8 +20,18 @@ const server=http.createServer(async(req,res)=>{
  else if(p==='/api/categories'){
   if(failed){res.writeHead(503,{'content-type':'application/json'});return res.end(JSON.stringify({error:'Catalog temporarily unavailable.'}));}
   const q=u.searchParams.get('q')?.toLowerCase()||'';
+  if(q==='old'){await new Promise(r=>setTimeout(r,700));res.writeHead(200,{'content-type':'application/json'});return res.end(JSON.stringify({categories:[{id:'old',name:'Stale game'}]}));}
   data={categories:items.filter(i=>i.id===u.searchParams.get('include')||i.name.toLowerCase().includes(q)||q==='sf4'&&i.id==='wikidata-q100')};
- } else if(p==='/api/me/stream'){
+ } else if(p==='/api/search'){
+  const q=u.searchParams.get('q');
+  if(q==='old'){await new Promise(r=>setTimeout(r,700));data={channels:[person('StaleStreamer')]};}
+  else data={channels:q==='va'?[person('Wren'),person('Oak'),{...person('Vale'),display_name:'The Cartographer'},person('Vapor')]:[]};
+ } else if(p==='/api/squads/fixture')data=squad;
+ else if(p==='/api/squads/fixture/invites'){invited=body;data={invited:true};}
+ else if(p.endsWith('/chat/moderation'))data={role:'owner',restrictions:[]};
+ else if(p.endsWith('/chat'))data={messages:[],pinned:null,emotes:[]};
+ else if(p.endsWith('/live'))data={live:false};
+ else if(p==='/api/me/stream'){
   if(req.method==='PATCH'){saved=body;settings={...body,revision:settings.revision+1};data={revision:settings.revision,category_id:settings.category_id};}
   else data={configured:true,eligible:true,settings,disconnect_pending:false,credential:null,broadcast:null};
  } else if(p==='/api/admin/categories')data={items:[{...items[0],genre:'education_coding',active:true,channels:1}]};
@@ -36,12 +49,25 @@ const server=http.createServer(async(req,res)=>{
  browser=await chromium.launch({headless:true,channel:'msedge'});
  for(const width of [1440,390]){
   settings={title:'A new adventure',category_id:'coding',revision:0};failed=false;pending=[{id:'Q102',name:'Synthetic Hybrid',genres:['shooter game','role-playing video game'],description:'A game with two genres requiring review.'}];
-  const context=await browser.newContext({viewport:{width,height:1000}}),page=await context.newPage(),errors=[];
+  saved=undefined;invited=undefined;
+  const context=await browser.newContext({viewport:{width,height:1000},hasTouch:width===390}),page=await context.newPage(),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await context.addCookies([{name:'sver_dev',value:'synthetic-catalog',url:'http://127.0.0.1:13004'}]);
   await page.goto('http://127.0.0.1:13004/studio/stream');
-  await page.getByLabel('Find a game or category').fill('sf4');
-  await page.getByRole('combobox',{name:/^Category/}).selectOption('wikidata-q100');
+  const games=page.getByRole('combobox',{name:'Find a game or category',exact:true});
+  const staleGame=page.waitForResponse(r=>r.url().includes('q=old'));
+  const oldGameRequest=page.waitForRequest(r=>r.url().includes('q=old'));
+  await games.fill('old');await oldGameRequest;
+  await games.fill('sf4');
+  await page.getByRole('listbox').getByRole('option',{name:'Synthetic Frontier IV',exact:true}).waitFor();
+  await staleGame;await page.waitForTimeout(60);
+  assert.equal(await page.getByRole('option',{name:'Stale game',exact:true}).count(),0);
+  await page.evaluate(()=>window.scrollTo(0,0));
+  await page.screenshot({path:`tmp/catalog-screenshots/autocomplete-stream-${width}.png`,fullPage:true});
+  if(width===390)await page.getByRole('listbox').getByRole('option',{name:'Synthetic Frontier IV',exact:true}).tap();
+  else{await games.press('ArrowDown');assert(await games.getAttribute('aria-activedescendant'));await games.press('Enter');}
+  assert.equal(saved,undefined,'Selecting a suggestion must not submit the form');
+  assert.equal(await page.getByRole('combobox',{name:/^Category/}).inputValue(),'wikidata-q100');
   await page.getByRole('textbox',{name:/^Title/}).fill('Unsaved title');
   await page.getByRole('button',{name:'Save details',exact:true}).click();
   await page.getByText('Stream details saved.',{exact:true}).waitFor();
@@ -63,6 +89,24 @@ const server=http.createServer(async(req,res)=>{
   await page.getByLabel('Reason for Synthetic Hybrid',{exact:true}).fill('Published primary genre reviewed.');
   await page.getByRole('button',{name:'Add game',exact:true}).click();
   await page.getByText('0 games need classification.').waitFor();assert.equal(decision.genre,'mmos_rpgs');
-  assert.deepEqual(errors,[]);await context.close();console.log(`${width}px: alias search, selection/save, failure recovery, staff classification, no overflow/errors.`);
+  await page.goto('http://127.0.0.1:13004/squads/fixture');
+  const names=page.getByRole('combobox',{name:'Live streamer username',exact:true});
+  const staleName=page.waitForResponse(r=>r.url().includes('/api/search?q=old'));
+  const oldNameRequest=page.waitForRequest(r=>r.url().includes('/api/search?q=old'));
+  await names.fill('old');await oldNameRequest;await names.fill('@va');
+  const match=page.getByRole('option',{name:'The Cartographer · @Vale',exact:true});await match.waitFor();
+  await staleName;await page.waitForTimeout(60);
+  assert.equal(await page.getByRole('option',{name:/StaleStreamer|@Wren|@Oak/}).count(),0);
+  await names.press('Escape');assert.equal(await names.getAttribute('aria-expanded'),'false');
+  await names.press('ArrowDown');await match.waitFor();
+  await page.evaluate(()=>window.scrollTo(0,0));
+  await page.screenshot({path:`tmp/catalog-screenshots/autocomplete-squad-${width}.png`,fullPage:true});
+  if(width===390)await match.tap();else await names.press('Enter');
+  assert.equal(await names.inputValue(),'Vale');assert.equal(invited,undefined,'Choosing a username must not send an invitation');
+  await page.getByRole('button',{name:'Send invitation',exact:true}).click();
+  await page.getByText('Saved.',{exact:true}).waitFor();assert.equal(invited.username,'Vale');
+  await names.fill('zz');await page.getByText('No other matching channels.',{exact:true}).waitFor();
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  assert.deepEqual(errors,[]);await context.close();console.log(`${width}px: game/username suggestions, keyboard/touch selection, stale responses, save/invite, recovery, no overflow/errors.`);
  }
 }finally{if(browser)await browser.close();if(next)next.kill();server.closeAllConnections();await new Promise(r=>server.close(r));}})().catch(e=>{console.error(e);process.exitCode=1;});
