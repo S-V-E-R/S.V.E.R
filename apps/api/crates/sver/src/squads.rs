@@ -207,7 +207,7 @@ async fn invite(
     let target = profiles::eligible_by_name(&mut tx, input.username.trim().trim_start_matches('@'))
         .await?
         .ok_or_else(Fail::channel_missing)?;
-    available(&mut tx, &target.id).await?;
+    let target_broadcast = available(&mut tx, &target.id).await?;
     let busy: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM squad_members WHERE user_id=$1)")
             .bind(&target.id)
@@ -234,6 +234,17 @@ async fn invite(
                 "A block or channel ban prevents this invitation.",
             ));
         }
+    }
+    // The Plays channel has nobody to accept for it: it joins at once, from its one host only.
+    if crate::plays::accepts_costream(&mut tx, &target.id, &user.id).await? {
+        sqlx::query("INSERT INTO squad_members(squad_id,user_id,broadcast_id) VALUES($1,$2,$3)")
+            .bind(&id)
+            .bind(&target.id)
+            .bind(target_broadcast)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(Json(json!({"invited":true,"accepted":true})));
     }
     let invite = profiles::new_id();
     let added=sqlx::query("INSERT INTO squad_invites(id,squad_id,user_id) VALUES($1,$2,$3) ON CONFLICT(squad_id,user_id) DO NOTHING").bind(&invite).bind(&id).bind(&target.id).execute(&mut *tx).await?.rows_affected();
