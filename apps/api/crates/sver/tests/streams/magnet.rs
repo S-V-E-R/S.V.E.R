@@ -370,6 +370,130 @@ pub async fn exercise(e: &Env) {
     assert_eq!(audited, 3);
     e.sql("UPDATE magnet_lanes SET enabled=true").await;
 
+    // Co-streams (docs/MAGNET.md "Co-streams on MAGNet"): a merged squad is one candidate.
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-%'").await;
+    let guest = person(e, "mg-sq-guest", "MgSqGuest", true).await;
+    for (id, name) in [
+        ("mg-sq-host", "MgSqHost"),
+        ("mg-sq-out", "MgSqOut"),
+        ("mg-sq-solo", "MgSqSolo"),
+    ] {
+        person(e, id, name, true).await;
+    }
+    live(e, "mg-sq-b-host", "mg-sq-host", "art", 20).await;
+    live(e, "mg-sq-b-guest", "mg-sq-guest", "art", 20).await;
+    live(e, "mg-sq-b-out", "mg-sq-out", "art", 20).await;
+    live(e, "mg-sq-b-solo", "mg-sq-solo", "art", 20).await;
+    e.sql("INSERT INTO squads(id,host_id,mode,created_at) VALUES('mg-squad','mg-sq-host','MERGED',now()-interval '20 minutes')").await;
+    e.sql("INSERT INTO squad_members(squad_id,user_id,broadcast_id) VALUES('mg-squad','mg-sq-host','mg-sq-b-host'),('mg-squad','mg-sq-guest','mg-sq-b-guest'),('mg-squad','mg-sq-out','mg-sq-b-out')").await;
+    // An opted-out member is left out of the featured squad.
+    e.sql("INSERT INTO magnet_settings(user_id,opt_out) VALUES('mg-sq-out',true)")
+        .await;
+    tick(e, "global").await;
+    let (showing, kind, _) = current(e, "global").await;
+    assert_eq!(
+        (showing.as_deref(), kind.as_deref()),
+        (Some("mg-sq-b-host"), Some("fair"))
+    );
+    let units: Value = sqlx::query_scalar(
+        "SELECT candidates FROM magnet_decisions WHERE lane='global' ORDER BY at DESC LIMIT 1",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    let units = units.as_array().unwrap();
+    assert_eq!(units.len(), 2, "the squad and the solo stream: {units:?}");
+    assert!(
+        units
+            .iter()
+            .any(|u| u["members"] == json!(["mg-sq-b-host", "mg-sq-b-guest"]))
+    );
+    // Every featured member is on the feature (shared cooldown) and sees it in Studio.
+    let featured: Vec<String> = sqlx::query_scalar("SELECT owner_id FROM magnet_features WHERE lane='global' AND ended_at IS NULL ORDER BY owner_id")
+        .fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(featured, ["mg-sq-guest", "mg-sq-host"]);
+    let (_, studio) = get(e, "/api/me/magnet", Some(&guest)).await;
+    assert_eq!(studio["featured_now"][0]["lane"], "global");
+    // Viewers get tabs for the featured members; any member's ban holds the viewer.
+    let (_, page) = get(e, "/api/magnet/global", None).await;
+    assert_eq!(page["featured"]["squad"]["mode"], "MERGED");
+    let tabs: Vec<&str> = page["featured"]["squad"]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["username"].as_str().unwrap())
+        .collect();
+    assert_eq!(tabs, ["MgSqHost", "MgSqGuest"]);
+    e.sql("INSERT INTO channel_restrictions(channel_id,user_id,kind) VALUES('mg-sq-guest','mg-banned','ban')").await;
+    let (_, held) = get(e, "/api/magnet/global", Some(&banned)).await;
+    assert_eq!(held["featured"]["holding"], true);
+    // MAGNet chat merges with the squad's shared chat, under its rules and with the MAGNet mark.
+    e.sql("DELETE FROM rate_limits WHERE key LIKE 'hype-slow:%' OR key LIKE 'chat-%:mg-hype'")
+        .await;
+    let (status, sent) = say(hyper.clone(), "hello co-stream").await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    let stored: (Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT channel_id,squad_id,origin FROM chat_messages WHERE id=$1")
+            .bind(sent["message"]["id"].as_str().unwrap())
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored,
+        (
+            Some("mg-sq-host".into()),
+            Some("mg-squad".into()),
+            Some("global".into())
+        )
+    );
+    let (_, shared) = get(e, "/api/squads/mg-squad/chat", None).await;
+    assert!(
+        shared["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["body"] == "hello co-stream")
+    );
+    let (_, room) = get(e, "/api/magnet/global/chat", Some(&banned)).await;
+    assert_eq!(
+        (&room["co_stream"], &room["can_send"]),
+        (&json!(true), &json!(false))
+    );
+    // A fair turn to the solo stream; the squad then cools down as a whole, so a burst in its
+    // shared chat waits until the cooldown passes.
+    e.sql("UPDATE magnet_lanes SET current_since=now()-interval '9 minutes' WHERE id='global'")
+        .await;
+    tick(e, "global").await;
+    e.sql("UPDATE magnet_lanes SET switch_at=now()-interval '1 second' WHERE id='global'")
+        .await;
+    tick(e, "global").await;
+    assert_eq!(
+        current(e, "global").await.0.as_deref(),
+        Some("mg-sq-b-solo")
+    );
+    for author in ["mg-c1", "mg-c2", "mg-c3", "mg-c4"] {
+        sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,squad_id) VALUES(gen_random_uuid()::text,'mg-sq-host',$1,'what a play','mg-squad')")
+            .bind(author).execute(&e.app.db).await.unwrap();
+    }
+    // Outside the 2-minute gap after the earlier moment, so only the cooldown can hold it back.
+    e.sql("UPDATE magnet_lanes SET current_since=now()-interval '50 seconds',last_moment_at=NULL WHERE id='global'")
+        .await;
+    tick(e, "global").await;
+    assert_eq!(
+        current(e, "global").await.2,
+        None,
+        "the squad is cooling down"
+    );
+    e.sql("UPDATE magnet_features SET started_at=now()-interval '45 minutes',ended_at=now()-interval '40 minutes' WHERE owner_id IN ('mg-sq-host','mg-sq-guest')").await;
+    tick(e, "global").await;
+    assert_eq!(
+        current(e, "global").await.2.as_deref(),
+        Some("mg-sq-b-host"),
+        "a burst in the shared chat is the squad's moment"
+    );
+    e.sql("DELETE FROM squads WHERE id='mg-squad'").await;
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-%'").await;
+
     for statement in [
         "DELETE FROM moderation_actions WHERE actor_id='mg-staff'",
         "DELETE FROM staff_roles WHERE user_id='mg-staff'",

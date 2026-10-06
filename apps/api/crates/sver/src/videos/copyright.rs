@@ -242,8 +242,13 @@ async fn decide(
     let status = match input.action.as_str() {
         "remove" if case.status == "OPEN" => {
             review::hold(&mut tx, &case.video_id, "COPYRIGHT", &id, true).await?;
+            sqlx::query("UPDATE copyright_cases SET removed_at=now() WHERE id=$1")
+                .bind(&id)
+                .execute(&mut *tx)
+                .await?;
             if let Some(owner) = &case.owner_id {
                 crate::safety::queue_notice(&app,&mut tx,owner,"Copyright removal",&format!("Access to a recording and its cuts was disabled following a copyright notice. Read case {id} at {}/studio/copyright. You may submit a counter-notice if this was a mistake or misidentification.",app.config.origin)).await?;
+                repeat_infringer(&app, &mut tx, &actor, owner, &id).await?;
             }
             "REMOVED"
         }
@@ -333,6 +338,51 @@ async fn decide(
     Ok(Json(json!({"saved":true})))
 }
 /// Shared mail worker reports provider acceptance, including failures that must block restoration.
+/// Repeat-infringer policy (docs/VODS_CLIPS.md, approved October 6, 2026): each upheld notice is a
+/// strike for 12 months unless a counter-notice restores the material. The third active strike
+/// restricts the channel indefinitely through account standing, where it can be appealed.
+pub(crate) const STRIKE_LIMIT: i64 = 3;
+async fn repeat_infringer(
+    app: &App,
+    db: &mut PgConnection,
+    actor: &crate::auth::User,
+    owner: &str,
+    case: &str,
+) -> Res<()> {
+    // The case being upheld is still OPEN inside this transaction.
+    let active: i64 = sqlx::query_scalar("SELECT count(*) FROM copyright_cases WHERE owner_id=$1 AND removed_at>now()-interval '12 months' AND (id=$2 OR status IN ('REMOVED','COUNTER_PENDING','COUNTER','LITIGATION'))")
+        .bind(owner).bind(case).fetch_one(&mut *db).await?;
+    if active < STRIKE_LIMIT {
+        return Ok(());
+    }
+    let restricted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM strikes WHERE user_id=$1 AND reason='copyright' AND severity='SEVERE' AND status='ACTIVE' AND expires_at>now() AND penalty_lifted_at IS NULL)")
+        .bind(owner).fetch_one(&mut *db).await?;
+    let internal = profiles::channel_user_by_id(db, owner)
+        .await?
+        .is_none_or(|u| u.internal);
+    if restricted || internal {
+        return Ok(());
+    }
+    let input = crate::safety::StrikeInput {
+        reason: "copyright".into(),
+        severity: "SEVERE".into(),
+        message_to_user: "Your channel has three upheld copyright notices in the last 12 months, so it is restricted under the repeat-infringer policy. You can appeal in Account standing.".into(),
+        interim_restriction_id: None,
+    };
+    crate::safety::issue_strike(
+        app,
+        db,
+        actor,
+        owner,
+        &input,
+        &[],
+        json!({"copyright_case": case, "active_copyright_strikes": active}),
+        json!([]),
+        "Repeat-infringer policy: third active copyright strike",
+    )
+    .await?;
+    Ok(())
+}
 pub async fn mail_result(db: &mut PgConnection, id: &str, state: &str) -> crate::Result<()> {
     sqlx::query("UPDATE copyright_cases SET forward_state=$2 WHERE forward_mail_id=$1")
         .bind(id)

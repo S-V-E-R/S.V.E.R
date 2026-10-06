@@ -1,8 +1,9 @@
 //! Module 3 stream credentials and persisted ingest lifecycle.
+pub mod catalog;
 use crate::{App, Error, Result, auth, profiles, security as sec};
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
@@ -264,9 +265,26 @@ async fn disconnect(db: &mut PgConnection, b: &Broadcast) -> Result<()> {
     }
     Ok(())
 }
-pub async fn categories(State(app): State<App>) -> Result<Json<Value>> {
-    let categories: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name,'genre',genre) FROM stream_categories WHERE active ORDER BY name")
-        .fetch_all(&app.db).await?;
+#[derive(Deserialize, Default)]
+pub struct CategoryQuery {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    include: String,
+}
+pub async fn categories(
+    State(app): State<App>,
+    Query(query): Query<CategoryQuery>,
+) -> Result<Json<Value>> {
+    if query.q.chars().count() > 80
+        || query.include.len() > 80
+        || query.q.chars().any(char::is_control)
+    {
+        return Err(Error::bad("Use a search of up to 80 characters."));
+    }
+    let tokens: Vec<_> = query.q.split_whitespace().map(str::to_lowercase).collect();
+    let categories: Vec<Value> = sqlx::query_scalar("WITH choices AS (SELECT c.id,c.name,c.genre,coalesce((SELECT string_agg(g.name||' '||array_to_string(g.aliases,' '),' ') FROM game_catalog g WHERE g.category_id=c.id),'') AS aliases FROM stream_categories c WHERE c.active UNION ALL SELECT 'wikidata-'||lower(g.source_id),g.name,g.suggested_genre,array_to_string(g.aliases,' ') FROM game_catalog g WHERE g.category_id IS NULL AND g.suggested_genre IS NOT NULL AND NOT g.reviewed AND NOT EXISTS(SELECT 1 FROM stream_categories c WHERE lower(c.name)=lower(g.name))) SELECT jsonb_build_object('id',id,'name',name,'genre',genre) FROM choices WHERE id=$2 OR NOT EXISTS(SELECT 1 FROM unnest($1::text[]) t WHERE position(t IN lower(name||' '||aliases))=0) ORDER BY (id=$2) DESC,lower(name),id LIMIT 50")
+        .bind(tokens).bind(query.include).fetch_all(&app.db).await?;
     Ok(Json(json!({"categories":categories})))
 }
 /// Confirmed advancing media and its current genre; callers cannot award to a client-picked genre.
@@ -363,9 +381,12 @@ pub async fn save(
     auth::authorize_streaming(&user, &session)?;
     require_eligible(&mut tx, &user).await?;
     settings(&mut tx, &user).await?;
+    let category_id = catalog::select(&mut tx, &input.category_id)
+        .await
+        .map_err(|e| Error(e.status, "Choose an available stream category.", None))?;
     let active: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM stream_categories WHERE id=$1 AND active)")
-            .bind(&input.category_id)
+            .bind(&category_id)
             .fetch_one(&mut *tx)
             .await?;
     if !active {
@@ -377,12 +398,12 @@ pub async fn save(
             .fetch_one(&mut *tx)
             .await?;
     let revision: Option<i64> = sqlx::query_scalar("UPDATE stream_settings SET title=$2,category_id=$3,revision=revision+1,updated_at=clock_timestamp() WHERE owner_id=$1 AND revision=$4 RETURNING revision")
-        .bind(&user.id).bind(title).bind(&input.category_id).bind(input.revision).fetch_optional(&mut *tx).await?;
+        .bind(&user.id).bind(title).bind(&category_id).bind(input.revision).fetch_optional(&mut *tx).await?;
     let revision = revision
         .ok_or_else(|| conflict("This changed in another tab. Reload to see the latest."))?;
-    if previous.as_deref() != Some(&input.category_id) {
+    if previous.as_deref() != Some(category_id.as_str()) {
         let label: String = sqlx::query_scalar("SELECT name FROM stream_categories WHERE id=$1")
-            .bind(&input.category_id)
+            .bind(&category_id)
             .fetch_one(&mut *tx)
             .await?;
         crate::videos::chapter(
@@ -396,7 +417,9 @@ pub async fn save(
         .map_err(|_| Error::internal())?;
     }
     tx.commit().await?;
-    Ok(Json(json!({"saved":true,"revision":revision})))
+    Ok(Json(
+        json!({"saved":true,"revision":revision,"category_id":category_id}),
+    ))
 }
 #[derive(Deserialize)]
 pub struct Proof {

@@ -1338,4 +1338,71 @@ async fn copyright_flow(e: &Env, video: &str, staff: &str) {
             .0,
         StatusCode::OK
     );
+
+    // Repeat infringers: an upheld notice is a strike for 12 months unless a counter-notice
+    // restored it (the case above); the third active strike restricts the channel.
+    let owner: String = sqlx::query_scalar("SELECT owner_id FROM copyright_cases WHERE id=$1")
+        .bind(id)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    for (case, status, removed) in [
+        ("cr-active", "REMOVED", Some("30 days")),
+        ("cr-expired", "REMOVED", Some("13 months")),
+        ("cr-open-1", "OPEN", None),
+        ("cr-open-2", "OPEN", None),
+    ] {
+        sqlx::query("INSERT INTO copyright_cases(id,video_id,owner_id,status,notice,contact_hash,removed_at) SELECT $1,video_id,owner_id,$2,notice,contact_hash,now()-$3::interval FROM copyright_cases WHERE id=$4")
+            .bind(case).bind(status).bind(removed).bind(id).execute(&e.app.db).await.unwrap();
+    }
+    let uphold = |case: &'static str| async move {
+        call(
+            e,
+            "POST",
+            &format!("/api/admin/copyright/{case}"),
+            Some(staff),
+            json!({"action":"remove","reason":"Valid test notice"}),
+        )
+        .await
+        .0
+    };
+    let copyright_strikes = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM strikes WHERE user_id=$1 AND reason='copyright' AND severity='SEVERE' AND status='ACTIVE'")
+            .bind(&owner).fetch_one(&e.app.db).await.unwrap()
+    };
+    assert_eq!(uphold("cr-open-1").await, StatusCode::OK);
+    assert_eq!(
+        copyright_strikes().await,
+        0,
+        "two active strikes: the restored and the expired case don't count"
+    );
+    assert_eq!(uphold("cr-open-2").await, StatusCode::OK);
+    assert_eq!(copyright_strikes().await, 1, "the third active strike");
+    let restricted: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT restricted_until FROM profiles WHERE user_id=$1")
+            .bind(&owner)
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert!(restricted.is_some_and(|until| until > chrono::Utc::now()));
+    // Later steps reuse this channel and recording: lift the synthetic strike and holds.
+    sqlx::query("UPDATE strikes SET status='OVERTURNED' WHERE user_id=$1 AND reason='copyright'")
+        .bind(&owner)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    let mut tx = e.app.db.begin().await.unwrap();
+    sver::safety::recompute(&mut tx, &owner).await.unwrap();
+    sver::videos::review::release(
+        &mut tx,
+        "COPYRIGHT",
+        &["cr-open-1".to_string(), "cr-open-2".to_string()],
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    sqlx::query("DELETE FROM copyright_cases WHERE id LIKE 'cr-%'")
+        .execute(&e.app.db)
+        .await
+        .unwrap();
 }

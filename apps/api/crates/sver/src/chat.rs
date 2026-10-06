@@ -48,12 +48,16 @@ impl Default for Hub {
     }
 }
 pub struct Event {
-    channel: String,
-    author: Option<String>,
+    pub(crate) channel: String,
+    pub(crate) author: Option<String>,
     seq: i64,
-    payload: Value,
+    pub(crate) payload: Value,
 }
 impl Hub {
+    /// Every event on this instance; the board overlay socket filters its own channel's.
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<Arc<Event>> {
+        self.tx.subscribe()
+    }
     pub fn publish(&self, channel: &str, author: Option<&str>, seq: i64, payload: Value) {
         let _ = self.tx.send(Arc::new(Event {
             channel: channel.into(),
@@ -91,6 +95,8 @@ pub(crate) struct Row {
     highlighted: bool,
     /// The author's creator tier (1-3), for their badge.
     creator_tier: Option<i16>,
+    /// The Skill this paid message played.
+    skill: Option<String>,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -100,12 +106,12 @@ impl Row {
     }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier, "skill":self.skill})
     }
 }
 pub(crate) fn select() -> String {
     format!(
-        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,
+        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,m.skill,
         (SELECT t.tier FROM creator_tiers t WHERE t.user_id=m.author_id AND t.tier>0) AS creator_tier,
         (SELECT jsonb_build_object('tier',s.tier,'months',s.months) FROM channel_subs s WHERE s.channel_id=m.channel_id AND s.user_id=m.author_id AND s.paid_through>now()) AS sub,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
@@ -313,6 +319,9 @@ pub struct Send {
     /// Spend the channel's Engagement Valor on "highlight my message".
     #[serde(default)]
     highlight: bool,
+    /// Play a Skill (docs/CROWDSYNC.md "Skills"), paid in Valor like a tribute.
+    #[serde(default)]
+    skill: Option<String>,
 }
 
 /// Persists one message to a channel's own chat and fans it out.
@@ -417,7 +426,20 @@ pub(crate) async fn send_from(
     // Who a tribute pays: the channel, or in a merged co-stream every member who can earn,
     // split equally (docs/SUPPORT.md "Co-streams").
     let mut earners: Vec<String> = Vec::new();
-    if let Some(valor) = input.tribute {
+    let skill = match (&input.skill, channel) {
+        (Some(_), _) if input.tribute.is_some() => {
+            return Err(Fail::field("skill", "A Skill is its own payment."));
+        }
+        (Some(id), Some(channel)) if origin.is_none() && squad.is_none() => {
+            Some(crate::skills::check(app, channel, id).await?)
+        }
+        (Some(_), _) => {
+            return Err(Fail::field("skill", "Skills play in a channel's own chat."));
+        }
+        (None, _) => None,
+    };
+    let tribute = input.tribute.or(skill.map(|s| s.valor));
+    if let Some(valor) = tribute {
         if channel.is_none() || origin.is_some() {
             return Err(Fail::field("tribute", "Tributes go to a channel's chat."));
         }
@@ -479,12 +501,12 @@ pub(crate) async fn send_from(
     .bind(mention_names(body))
     .fetch_all(&mut *tx)
     .await?;
-    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO NOTHING")
-        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(input.tribute.map(|v| v as i32)).bind(input.highlight).execute(&mut *tx).await?.rows_affected();
+    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted,skill) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO NOTHING")
+        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.map(|s| s.id)).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
-    if let (Some(valor), Some(channel)) = (input.tribute, channel) {
+    if let (Some(valor), Some(channel)) = (tribute, channel) {
         // The message and the Valor move commit together; the lock serializes the buyer's spends.
         let wallet = format!("valor:{}", user.id);
         crate::ledger::lock(&mut tx, &wallet).await?;
@@ -513,11 +535,14 @@ pub(crate) async fn send_from(
             &mut tx,
             "tribute",
             &format!("tribute:{}", input.id),
-            json!({"message": input.id, "channel": channel, "earners": earners, "from": user.id, "valor": valor}),
+            json!({"message": input.id, "channel": channel, "earners": earners, "from": user.id, "valor": valor, "skill": skill.map(|s| s.id)}),
             &entries,
         )
         .await?;
     }
+    // A moderator's counter command (`!deaths`) changed a counter; viewers are told after commit.
+    let mut counters = false;
+    let mut rallied = false;
     if let Some(channel) = channel
         && squad.is_none()
     {
@@ -539,8 +564,27 @@ pub(crate) async fn send_from(
                 .await?;
             }
         }
+        counters = crate::crowd::chat_command(app, &mut tx, channel, &user, body).await?;
+        // Surge counts each real viewer once a minute; "!rally" also rallies for their faction.
+        crate::surge::participated(&mut tx, channel, &user.id).await?;
+        rallied = body.eq_ignore_ascii_case("!rally")
+            && crate::surge::rally_in(&mut tx, channel, &user.id).await?;
     }
     tx.commit().await?;
+    if counters && let Some(channel) = channel {
+        crate::crowd::publish_counters(app, channel).await?;
+    }
+    if let Some(channel) = channel.filter(|_| squad.is_none()) {
+        if rallied {
+            crate::surge::publish_rally(app, channel).await?;
+        }
+        if let Some(skill) = skill {
+            crate::skills::played(app, channel, &user, skill).await?;
+        }
+        if origin.is_none() {
+            crate::surge::combo(app, channel, &user.id, body).await?;
+        }
+    }
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1", select())))
         .bind(&input.id)
@@ -877,13 +921,55 @@ async fn session(
     }
 }
 
-/// The featured channel a Hype lane's chat is merged with right now, and since when. Merging stops
-/// when MAGNet moves on, when the lane stops, or when the streamer turns chat merging off.
-async fn hype_merge(app: &App, lane: &str) -> Res<Option<(String, DateTime<Utc>)>> {
-    Ok(sqlx::query_as("SELECT b.owner_id,l.current_since FROM magnet_lanes l JOIN broadcasts b ON b.id=l.current_broadcast WHERE l.id=$1 AND l.enabled AND l.current_since IS NOT NULL AND coalesce((SELECT chat_merge FROM magnet_settings WHERE user_id=b.owner_id),true)")
+/// What a Hype lane's chat is merged with right now: the featured channel's chat, or a merged
+/// co-stream's shared chat (stored under its host), and since when.
+struct Merge {
+    channel: String,
+    squad: Option<String>,
+    /// Every streamer whose chat rules and bans apply.
+    owners: Vec<String>,
+    since: DateTime<Utc>,
+}
+impl Merge {
+    /// The broadcast room its messages arrive on.
+    fn room(&self) -> &str {
+        self.squad.as_deref().unwrap_or(&self.channel)
+    }
+}
+/// Merging stops when MAGNet moves on, when the lane stops, or when a streamer whose chat it would
+/// join turns chat merging off.
+async fn hype_merge(app: &App, lane: &str) -> Res<Option<Merge>> {
+    let featured: Option<(String, DateTime<Utc>)> = sqlx::query_as("SELECT b.owner_id,l.current_since FROM magnet_lanes l JOIN broadcasts b ON b.id=l.current_broadcast WHERE l.id=$1 AND l.enabled AND l.current_since IS NOT NULL")
         .bind(lane)
         .fetch_optional(&app.db)
-        .await?)
+        .await?;
+    let Some((owner, since)) = featured else {
+        return Ok(None);
+    };
+    let squad = crate::squads::active_of(&mut *app.db.acquire().await?, &owner)
+        .await?
+        .filter(|q| q.mode == "MERGED");
+    let merge = match squad {
+        Some(q) => Merge {
+            channel: q.members[0].0.clone(),
+            squad: Some(q.id),
+            owners: q.members.into_iter().map(|m| m.0).collect(),
+            since,
+        },
+        None => Merge {
+            channel: owner.clone(),
+            squad: None,
+            owners: vec![owner],
+            since,
+        },
+    };
+    let off: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM magnet_settings WHERE user_id=ANY($1) AND NOT chat_merge)",
+    )
+    .bind(&merge.owners)
+    .fetch_one(&app.db)
+    .await?;
+    Ok((!off).then_some(merge))
 }
 async fn hype_lane(app: &App, lane: &str) -> Res<()> {
     let found: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM magnet_lanes WHERE id=$1)")
@@ -892,10 +978,11 @@ async fn hype_lane(app: &App, lane: &str) -> Res<()> {
         .await?;
     if found { Ok(()) } else { Err(Fail::missing()) }
 }
-/// Banned from, timed out in, or blocked by (or blocking) the featured channel: read-only while merged.
-async fn hype_holding(app: &App, owner: &str, viewer: &str) -> Res<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND (kind='ban' OR until>now())) OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$2 AND blocked_id=$1) OR (blocker_id=$1 AND blocked_id=$2))")
-        .bind(owner).bind(viewer).fetch_one(&app.db).await?)
+/// Banned from, timed out in, or blocked by (or blocking) a featured channel, or restricted in the
+/// merged co-stream's shared chat: read-only while merged.
+async fn hype_holding(app: &App, merge: &Merge, viewer: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=ANY($1) AND user_id=$2 AND (kind='ban' OR until>now())) OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$2 AND blocked_id=ANY($1)) OR (blocker_id=ANY($1) AND blocked_id=$2)) OR EXISTS(SELECT 1 FROM squad_restrictions WHERE squad_id=$3 AND user_id=$2 AND (kind='ban' OR until>now()))")
+        .bind(&merge.owners).bind(viewer).bind(&merge.squad).fetch_one(&app.db).await?)
 }
 /// The room's latest 100: its own messages, plus the featured channel's chat since the feature
 /// began while merged. Messages from either side stay in both histories after a switch.
@@ -908,13 +995,14 @@ async fn hype_snapshot(
     let hidden = hidden(app, viewer).await?;
     // select() contains only fixed SQL and a literal chip alias; values are bound.
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1) OR (m.channel_id=$2 AND m.created_at>=$3)) AND m.squad_id IS NULL AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
+        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1 AND m.squad_id IS NULL) OR (m.channel_id=$2 AND m.squad_id IS NOT DISTINCT FROM $5 AND m.created_at>=$3)) AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
         select()
     )))
     .bind(lane)
-    .bind(merge.as_ref().map(|m| m.0.as_str()))
-    .bind(merge.as_ref().map(|m| m.1))
+    .bind(merge.as_ref().map(|m| m.channel.as_str()))
+    .bind(merge.as_ref().map(|m| m.since))
     .bind(HISTORY)
+    .bind(merge.as_ref().and_then(|m| m.squad.as_deref()))
     .fetch_all(&app.db)
     .await?;
     let mut messages: Vec<Value> = rows
@@ -925,13 +1013,13 @@ async fn hype_snapshot(
         .collect();
     crate::guilds::hydrate_badges(app, &mut messages).await?;
     let (merged_with, holding) = match &merge {
-        Some((owner, _)) => {
+        Some(m) => {
             let mut db = app.db.acquire().await?;
-            let chip = profiles::channel_user_by_id(&mut db, owner)
+            let chip = profiles::channel_user_by_id(&mut db, &m.channel)
                 .await?
                 .map(|u| profiles::chip(app, &u));
             let holding = match viewer {
-                Some(v) => hype_holding(app, owner, v).await?,
+                Some(v) => hype_holding(app, m, v).await?,
                 None => false,
             };
             (chip, holding)
@@ -939,8 +1027,8 @@ async fn hype_snapshot(
         None => (None, false),
     };
     Ok((
-        json!({"type":"snapshot","messages":messages,"merged_with":merged_with,"holding":holding,"can_send":viewer.is_some() && !holding}),
-        merge.map(|m| m.0),
+        json!({"type":"snapshot","messages":messages,"merged_with":merged_with,"co_stream":merge.as_ref().is_some_and(|m| m.squad.is_some()),"holding":holding,"can_send":viewer.is_some() && !holding}),
+        merge.map(|m| m.room().to_string()),
     ))
 }
 /// GET /api/magnet/{lane}/chat
@@ -968,11 +1056,19 @@ async fn hype_post(
     hype_lane(&app, &lane).await?;
     let user = profiles::signed_in(&app, &jar).await?;
     let message = match hype_merge(&app, &lane).await? {
-        Some((owner, _)) => {
-            if hype_holding(&app, &owner, &user.id).await? {
+        Some(m) => {
+            if hype_holding(&app, &m, &user.id).await? {
                 return Err(Fail::denied("Chat resumes when MAGNet moves on."));
             }
-            send_from(&app, &jar, Some(&owner), input, Some(&lane), None).await?
+            send_from(
+                &app,
+                &jar,
+                Some(&m.channel),
+                input,
+                Some(&lane),
+                m.squad.as_deref(),
+            )
+            .await?
         }
         None => send_from(&app, &jar, None, input, Some(&lane), None).await?,
     };

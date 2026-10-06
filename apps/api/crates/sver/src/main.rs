@@ -52,6 +52,18 @@ async fn main() -> Result<(), String> {
         );
         return Ok(());
     }
+    // Catalog networking cannot delay ingest, playback, mail or startup.
+    if std::env::var("GAME_CATALOG_SYNC").as_deref() == Ok("1") {
+        let catalog = app.clone();
+        tokio::spawn(async move {
+            loop {
+                if sver::streams::catalog::tick(&catalog).await.is_err() {
+                    eprintln!("catalog_event=refresh outcome=retry");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        });
+    }
     let jobs = app.clone();
     tokio::spawn(async move {
         loop {
@@ -59,6 +71,16 @@ async fn main() -> Result<(), String> {
                 eprintln!("Login maintenance will retry.");
             }
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        }
+    });
+    // Board webhooks have their own loop, so a slow endpoint never holds up stream maintenance.
+    let outbox = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::boards::deliver_due(&outbox).await.is_err() {
+                eprintln!("boards_event=outbox outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     });
     let media_jobs = app.clone();
@@ -107,6 +129,12 @@ async fn main() -> Result<(), String> {
             }
             if sver::engagement::tick(&media_jobs).await.is_err() {
                 eprintln!("engagement_event=watch outcome=retry");
+            }
+            if sver::crowd::tick(&media_jobs).await.is_err() {
+                eprintln!("crowd_event=polls outcome=retry");
+            }
+            if sver::surge::tick(&media_jobs).await.is_err() {
+                eprintln!("surge_event=tick outcome=retry");
             }
             if sver::tiers::tick(&media_jobs).await.is_err() {
                 eprintln!("tiers_event=tick outcome=retry");

@@ -207,7 +207,7 @@ async fn invite(
     let target = profiles::eligible_by_name(&mut tx, input.username.trim().trim_start_matches('@'))
         .await?
         .ok_or_else(Fail::channel_missing)?;
-    available(&mut tx, &target.id).await?;
+    let target_broadcast = available(&mut tx, &target.id).await?;
     let busy: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM squad_members WHERE user_id=$1)")
             .bind(&target.id)
@@ -234,6 +234,17 @@ async fn invite(
                 "A block or channel ban prevents this invitation.",
             ));
         }
+    }
+    // The Plays channel has nobody to accept for it: it joins at once, from its one host only.
+    if crate::plays::accepts_costream(&mut tx, &target.id, &user.id).await? {
+        sqlx::query("INSERT INTO squad_members(squad_id,user_id,broadcast_id) VALUES($1,$2,$3)")
+            .bind(&id)
+            .bind(&target.id)
+            .bind(target_broadcast)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(Json(json!({"invited":true,"accepted":true})));
     }
     let invite = profiles::new_id();
     let added=sqlx::query("INSERT INTO squad_invites(id,squad_id,user_id) VALUES($1,$2,$3) ON CONFLICT(squad_id,user_id) DO NOTHING").bind(&invite).bind(&id).bind(&target.id).execute(&mut *tx).await?.rows_affected();
@@ -386,6 +397,39 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     Ok(Json(
         json!({"current":current,"invites":invites,"live":live}),
     ))
+}
+
+/// A live co-stream: its id, mode and members (host first) with their broadcasts.
+pub struct Active {
+    pub id: String,
+    pub mode: String,
+    pub members: Vec<(String, String)>,
+}
+/// Every live co-stream (MAGNet, docs/MAGNET.md "Co-streams on MAGNet"). Membership is repaired
+/// by the worker tick; callers still check each member's own eligibility.
+pub async fn active(db: &mut PgConnection) -> Res<Vec<Active>> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as("SELECT s.id,s.mode,m.user_id,m.broadcast_id FROM squads s JOIN squad_members m ON m.squad_id=s.id WHERE s.ended_at IS NULL ORDER BY s.id,m.user_id IS DISTINCT FROM s.host_id,m.joined_at,m.user_id")
+        .fetch_all(db)
+        .await?;
+    let mut out: Vec<Active> = Vec::new();
+    for (id, mode, user, broadcast) in rows {
+        match out.last_mut() {
+            Some(a) if a.id == id => a.members.push((user, broadcast)),
+            _ => out.push(Active {
+                id,
+                mode,
+                members: vec![(user, broadcast)],
+            }),
+        }
+    }
+    Ok(out)
+}
+/// The live co-stream a channel is in, if any.
+pub async fn active_of(db: &mut PgConnection, user: &str) -> Res<Option<Active>> {
+    Ok(active(db)
+        .await?
+        .into_iter()
+        .find(|a| a.members.iter().any(|m| m.0 == user)))
 }
 
 /// Chat calls this on reads, sends and socket refreshes. Channel bans apply across all members.

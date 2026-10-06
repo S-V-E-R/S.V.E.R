@@ -30,7 +30,7 @@ const reply = (data, status = 200) => ({ ok: status === 200, status, json: async
 global.fetch = async (url, options = {}) => {
   const body = options.body ? JSON.parse(options.body) : null;
   requests.push({ url, method: options.method, body });
-  if (url === "/api/categories") return reply({ categories: [{ id: "coding", name: "Coding" }] });
+  if (url.startsWith("/api/categories?")) return reply({ categories: [{ id: "coding", name: "Coding" }] });
   if (url === "/api/auth/me") return reply({ has_password: true, reauthenticated: false });
   if (url === "/api/auth/reauth") { assert.equal(body.password, "synthetic-password"); return reply({ confirmed: true }); }
   if (url === "/api/me/stream" && options.method === "GET") return reply(state);

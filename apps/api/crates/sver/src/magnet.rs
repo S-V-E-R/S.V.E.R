@@ -120,14 +120,23 @@ impl Signals {
     }
 }
 
-/// One eligible stream in a lane.
+/// One eligible stream in a lane, or a merged co-stream as one unit.
 #[derive(Clone, Debug)]
 pub struct Candidate {
+    /// The stream shown when the unit is featured (a merged co-stream's host when eligible).
     pub broadcast: String,
+    /// Every broadcast in the unit, `broadcast` included.
+    pub members: Vec<String>,
     pub score: f64,
     pub moment: Option<String>,
-    /// When it was last featured on this lane (still running counts as now).
+    /// When it was last featured on this lane (still running counts as now). For a merged
+    /// co-stream, the longest wait among its members.
     pub last_featured: Option<DateTime<Utc>>,
+}
+impl Candidate {
+    fn has(&self, broadcast: &str) -> bool {
+        self.members.iter().any(|m| m == broadcast)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -161,7 +170,7 @@ fn fair_pick<'a>(
 ) -> Option<&'a Candidate> {
     let others: Vec<&Candidate> = cands
         .iter()
-        .filter(|c| Some(c.broadcast.as_str()) != current)
+        .filter(|c| current.is_none_or(|id| !c.has(id)))
         .collect();
     let cooled = |c: &&Candidate| {
         c.last_featured
@@ -197,12 +206,12 @@ pub fn decide(lane: &LaneState, cands: &[Candidate], now: DateTime<Utc>, t: &Tun
     let current = lane
         .current
         .as_deref()
-        .and_then(|id| cands.iter().find(|c| c.broadcast == id));
+        .and_then(|id| cands.iter().find(|c| c.has(id)));
     // Staff force: show it as soon as it's eligible, and hold it until released.
     if let Some(forced) = lane.forced.as_deref()
-        && cands.iter().any(|c| c.broadcast == forced)
+        && let Some(unit) = cands.iter().find(|c| c.has(forced))
     {
-        return if lane.current.as_deref() == Some(forced) {
+        return if lane.current.as_deref().is_some_and(|id| unit.has(id)) {
             Decision::Hold
         } else {
             Decision::Switch {
@@ -246,7 +255,7 @@ pub fn decide(lane: &LaneState, cands: &[Candidate], now: DateTime<Utc>, t: &Tun
         };
         let best = cands
             .iter()
-            .filter(|c| c.broadcast != current.broadcast && c.moment.is_some())
+            .filter(|c| !c.has(&current.broadcast) && c.moment.is_some())
             .filter(cooled)
             .filter(|c| c.score >= t.moment_ratio && c.score >= current.score * t.beat_factor)
             .max_by(|a, b| {
@@ -353,6 +362,7 @@ async fn candidates(
         out.push((
             stream.clone(),
             Candidate {
+                members: vec![id.clone()],
                 broadcast: id,
                 score,
                 moment,
@@ -360,6 +370,58 @@ async fn candidates(
             },
             signals,
         ));
+    }
+    // A merged co-stream is one candidate (docs/MAGNET.md "Co-streams on MAGNet"): its eligible
+    // members only, moments from the shared chat and all members' follows, the longest wait.
+    for squad in crate::squads::active(&mut *db).await? {
+        if squad.mode != "MERGED" {
+            continue;
+        }
+        let (unit, rest): (Vec<_>, Vec<_>) = out
+            .into_iter()
+            .partition(|o| squad.members.iter().any(|m| m.1 == o.1.broadcast));
+        out = rest;
+        // Members are host first, so the first eligible one is shown.
+        let mut unit = unit;
+        unit.sort_by_key(|o| squad.members.iter().position(|m| m.1 == o.1.broadcast));
+        if unit.len() < 2 {
+            out.extend(unit);
+            continue;
+        }
+        let ids: Vec<String> = squad.members.iter().map(|m| m.0.clone()).collect();
+        let (chatters, chat_base): (f64, f64) = sqlx::query_as(
+            "SELECT
+              (SELECT coalesce(sum(CASE WHEN u.created_at>now()-interval '7 days' THEN 0.5 ELSE 1 END),0) FROM (SELECT DISTINCT m.author_id FROM chat_messages m WHERE m.squad_id=s.id AND m.author_id<>ALL($2) AND m.deleted_at IS NULL AND m.origin IS NULL AND m.created_at>now()-interval '60 seconds') a JOIN users u ON u.id=a.author_id AND u.email_verified)::float8,
+              (SELECT count(DISTINCT (m.author_id, date_trunc('minute', m.created_at))) FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.squad_id=s.id AND m.author_id<>ALL($2) AND m.origin IS NULL AND m.created_at<=now()-interval '60 seconds' AND m.created_at>greatest(s.created_at,now()-interval '31 minutes'))::float8
+                / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(s.created_at,now()-interval '31 minutes'))::float8/60.0)
+             FROM squads s WHERE s.id=$1",
+        )
+        .bind(&squad.id)
+        .bind(&ids)
+        .fetch_one(&mut *db)
+        .await?;
+        let signals = Signals {
+            chatters,
+            chat_base,
+            follows: unit.iter().map(|o| o.2.follows).sum(),
+            follow_base: unit.iter().map(|o| o.2.follow_base).sum(),
+            raided_by: unit.iter().find_map(|o| o.2.raided_by.clone()),
+            flagged: unit.iter().any(|o| o.2.flagged),
+        };
+        let (score, moment) = signals.score(t);
+        let last_featured = if unit.iter().any(|o| o.1.last_featured.is_none()) {
+            None
+        } else {
+            unit.iter().filter_map(|o| o.1.last_featured).min()
+        };
+        let candidate = Candidate {
+            broadcast: unit[0].1.broadcast.clone(),
+            members: unit.iter().map(|o| o.1.broadcast.clone()).collect(),
+            score,
+            moment,
+            last_featured,
+        };
+        out.push((unit[0].0.clone(), candidate, signals));
     }
     Ok(out)
 }
@@ -448,11 +510,12 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
     // A countdown in progress: switch when it ends, if the next stream is still eligible.
     if let (Some(next), Some(at)) = (&pending, switch_at) {
         if at <= now {
-            if cands.iter().any(|c| &c.broadcast == next) {
+            if let Some(unit) = cands.iter().find(|c| c.has(next)) {
                 commit(
                     &mut tx,
                     lane,
                     next,
+                    &unit.members,
                     pending_kind.as_deref().unwrap_or("fair"),
                     pending_reason.as_deref().unwrap_or(""),
                 )
@@ -478,7 +541,7 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
     let decision = decide(&state, &cands, now, t);
     let log = |kind: &str, chosen: Option<&str>, reason: &str| {
         json!({"kind":kind,"chosen":chosen,"reason":reason,"candidates":found.iter().map(|(s,c,g)| json!({
-            "broadcast":c.broadcast,"username":s.username,"score":c.score,"moment":c.moment,"last_featured":c.last_featured,
+            "broadcast":c.broadcast,"members":c.members,"username":s.username,"score":c.score,"moment":c.moment,"last_featured":c.last_featured,
             "signals":{"chatters":g.chatters,"chat_base":g.chat_base,"follows":g.follows,"follow_base":g.follow_base,"raided_by":g.raided_by,"flagged":g.flagged}})).collect::<Vec<_>>()})
     };
     match &decision {
@@ -504,13 +567,17 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
         } => {
             let showing = current
                 .as_deref()
-                .is_some_and(|c| cands.iter().any(|x| x.broadcast == c));
+                .is_some_and(|c| cands.iter().any(|x| x.has(c)));
             if showing {
                 // Viewers get a countdown with a still of the next stream and a Stay button.
                 sqlx::query("UPDATE magnet_lanes SET pending_broadcast=$2,pending_kind=$3,pending_reason=$4,switch_at=now()+make_interval(secs=>$5) WHERE id=$1")
                     .bind(lane).bind(broadcast).bind(kind).bind(reason).bind(t.countdown_seconds as f64).execute(&mut *tx).await?;
             } else {
-                commit(&mut tx, lane, broadcast, kind, reason).await?;
+                let members = cands
+                    .iter()
+                    .find(|c| c.has(broadcast))
+                    .map_or_else(|| vec![broadcast.clone()], |c| c.members.clone());
+                commit(&mut tx, lane, broadcast, &members, kind, reason).await?;
             }
             record(&mut tx, lane, &log(kind, Some(broadcast), reason)).await?;
         }
@@ -543,15 +610,20 @@ async fn commit(
     db: &mut PgConnection,
     lane: &str,
     broadcast: &str,
+    members: &[String],
     kind: &str,
     reason: &str,
 ) -> Res<()> {
     end_feature(&mut *db, lane).await?;
-    let feature = profiles::new_id();
-    let owner:Option<String>=sqlx::query_scalar("INSERT INTO magnet_features(id,lane,broadcast_id,owner_id,kind,reason) SELECT $1,$2,id,owner_id,$3,$4 FROM broadcasts WHERE id=$5 RETURNING owner_id")
-        .bind(&feature).bind(lane).bind(kind).bind(reason).bind(broadcast).fetch_optional(&mut *db).await?;
-    if let Some(owner) = owner {
-        crate::videos::spotlight(db, &owner, &feature).await?;
+    // One row per member of a merged co-stream: all share the cooldown and see it in history,
+    // and each gets its own spotlight clip suggestion.
+    for member in members {
+        let feature = profiles::new_id();
+        let owner:Option<String>=sqlx::query_scalar("INSERT INTO magnet_features(id,lane,broadcast_id,owner_id,kind,reason) SELECT $1,$2,id,owner_id,$3,$4 FROM broadcasts WHERE id=$5 RETURNING owner_id")
+            .bind(&feature).bind(lane).bind(kind).bind(reason).bind(member).fetch_optional(&mut *db).await?;
+        if let Some(owner) = owner {
+            crate::videos::spotlight(db, &owner, &feature).await?;
+        }
     }
     sqlx::query("UPDATE magnet_lanes SET current_broadcast=$2,current_kind=$3,current_reason=$4,current_since=now(),pending_broadcast=NULL,pending_kind=NULL,pending_reason=NULL,switch_at=NULL,
         last_kind=CASE WHEN $3 IN ('moment','fair') THEN $3 ELSE last_kind END,
@@ -626,11 +698,43 @@ async fn lane(
         if features <= 1 {
             card["label"] = json!("First feature");
         }
+        // Co-streams: a merged one is featured as a unit with tabs for its featured members; a
+        // separate one links to the other members ("Co-streaming with …").
+        let squad = crate::squads::active_of(&mut db, &s.owner_id).await?;
+        let unit: Vec<String> = sqlx::query_scalar(
+            "SELECT broadcast_id FROM magnet_features WHERE lane=$1 AND ended_at IS NULL",
+        )
+        .bind(&lane)
+        .fetch_all(&mut *db)
+        .await?;
+        let merged = squad.as_ref().is_some_and(|q| q.mode == "MERGED");
+        let owners: Vec<String> = match &squad {
+            Some(q) if merged => q.members.iter().map(|m| m.0.clone()).collect(),
+            _ => vec![s.owner_id.clone()],
+        };
+        let squad_id = squad.as_ref().filter(|_| merged).map(|q| q.id.clone());
+        let squad = squad.map(|q| {
+            let members: Vec<Value> = q
+                .members
+                .iter()
+                .filter(|m| {
+                    if merged {
+                        unit.contains(&m.1)
+                    } else {
+                        m.1 != s.broadcast_id
+                    }
+                })
+                .filter_map(|m| streams.iter().find(|x| x.broadcast_id == m.1))
+                .map(|x| discovery::card(&app, x, now))
+                .collect();
+            json!({"mode":q.mode,"members":members})
+        });
         // A channel ban, a timeout or a block hides the stream (no playback session) and pauses
-        // sending in Hype chat until MAGNet moves on. Signed-out viewing can't be blocked.
+        // sending in MAGNet chat until MAGNet moves on. In a merged co-stream any member's counts,
+        // as in its shared chat. Signed-out viewing can't be blocked.
         let holding = match &viewer {
-            Some(v) => sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND (kind='ban' OR until>now())) OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$2 AND blocked_id=$1) OR (blocker_id=$1 AND blocked_id=$2))")
-                .bind(&s.owner_id).bind(&v.id).fetch_one(&mut *db).await?,
+            Some(v) => sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=ANY($1) AND user_id=$2 AND (kind='ban' OR until>now())) OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$2 AND blocked_id=ANY($1)) OR (blocker_id=ANY($1) AND blocked_id=$2)) OR EXISTS(SELECT 1 FROM squad_restrictions WHERE squad_id=$3 AND user_id=$2 AND (kind='ban' OR until>now()))")
+                .bind(&owners).bind(&v.id).bind(squad_id.as_deref()).fetch_one(&mut *db).await?,
             None => false,
         };
         let moves_on_by = since.map(|at| at + Duration::seconds(app.config.magnet.max_seconds));
@@ -641,7 +745,7 @@ async fn lane(
             (None, r) => r,
         };
         featured = json!({"stream":card,"kind":kind,"reason":reason,"since":since,
-            "moves_on_by":moves_on_by,"holding":holding});
+            "moves_on_by":moves_on_by,"holding":holding,"squad":squad});
     }
     let next = find(&pending).map(|s| {
         json!({"stream":discovery::card(&app, s, now),"reason":pending_reason,"switch_at":switch_at})
@@ -665,7 +769,7 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let mut db = app.db.acquire().await?;
     let (opt_out, chat_merge): (bool, bool) = sqlx::query_as("SELECT coalesce(s.opt_out,false),coalesce(s.chat_merge,true) FROM (SELECT 1) one LEFT JOIN magnet_settings s ON s.user_id=$1")
         .bind(&user.id).fetch_one(&mut *db).await?;
-    let now: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('lane',l.id,'name',CASE WHEN l.id='global' THEN 'Global' ELSE g.name END,'reason',l.current_reason,'since',l.current_since) FROM magnet_lanes l JOIN broadcasts b ON b.id=l.current_broadcast LEFT JOIN faction_genres g ON g.id=l.id WHERE b.owner_id=$1")
+    let now: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('lane',l.id,'name',CASE WHEN l.id='global' THEN 'Global' ELSE g.name END,'reason',l.current_reason,'since',l.current_since) FROM magnet_features f JOIN magnet_lanes l ON l.id=f.lane LEFT JOIN faction_genres g ON g.id=l.id WHERE f.owner_id=$1 AND f.ended_at IS NULL")
         .bind(&user.id).fetch_all(&mut *db).await?;
     // What happened during each feature is shown to the streamer only, never used for scoring.
     let history: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('lane',f.lane,'name',CASE WHEN f.lane='global' THEN 'Global' ELSE g.name END,'kind',f.kind,'reason',f.reason,'started_at',f.started_at,'ended_at',f.ended_at,
@@ -882,6 +986,7 @@ mod tests {
     fn c(id: &str, score: f64, last: Option<i64>, now: DateTime<Utc>) -> Candidate {
         Candidate {
             broadcast: id.into(),
+            members: vec![id.into()],
             score,
             moment: (score >= 3.0).then(|| "Chat is going off".to_string()),
             last_featured: last.map(|m| now - Duration::minutes(m)),
@@ -1049,6 +1154,33 @@ mod tests {
     }
 
     #[test]
+    fn a_merged_co_stream_is_one_unit() {
+        let now = Utc::now();
+        let t = t();
+        let mut squad = c("host", 0.0, Some(0), now);
+        squad.members = vec!["host".into(), "guest".into()];
+        let cands = [squad, c("solo", 0.0, Some(60), now)];
+        // Showing any member is showing the unit: it holds, and a fair turn skips the whole unit.
+        assert_eq!(
+            decide(&lane("guest", 100, "fair", now), &cands, now, &t),
+            Decision::Hold
+        );
+        assert_eq!(
+            switched(&decide(&lane("guest", 480, "fair", now), &cands, now, &t)),
+            Some(("solo", "fair"))
+        );
+        // Staff forcing one member shows that member and holds while any member is showing.
+        let mut forced = lane("solo", 10, "fair", now);
+        forced.forced = Some("guest".into());
+        assert_eq!(
+            switched(&decide(&forced, &cands, now, &t)),
+            Some(("guest", "forced"))
+        );
+        forced.current = Some("host".into());
+        assert_eq!(decide(&forced, &cands, now, &t), Decision::Hold);
+    }
+
+    #[test]
     fn every_eligible_stream_is_featured_within_the_bound() {
         // Six quiet streams and one that is always having a moment.
         let t = t();
@@ -1066,6 +1198,7 @@ mod tests {
                 .iter()
                 .map(|id| Candidate {
                     broadcast: id.to_string(),
+                    members: vec![id.to_string()],
                     score: if *id == "loud" { 50.0 } else { 0.0 },
                     moment: (*id == "loud").then(|| "Chat is going off".to_string()),
                     last_featured: last.get(*id).copied(),

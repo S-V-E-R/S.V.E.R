@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
+import { PlayerEffects } from "./BoardEffects";
 import { ReportButton, TakeDownLink } from "./Report";
 import { Turnstile } from "./Turnstile";
 import { UpNext } from "./UpNext";
@@ -79,6 +80,8 @@ function playingWithin(video: HTMLVideoElement, ms: number) {
 export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, muted, onUnmute, followRaids = true, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; muted?: boolean; onUnmute?: () => void; followRaids?: boolean; children?: React.ReactNode }) {
   const [live, setLive] = useState<Live | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
+  // Which transport is playing, so board effects wait for this player's own delay.
+  const [transport, setTransport] = useState<"webrtc" | "hls" | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [rewind, setRewind] = useState<string | null>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -166,7 +169,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
           const started = playingWithin(element, 8000);
           await element.play().catch(() => { if (!cancelled) setPhase("blocked"); });
           await started;
-          if (!cancelled) setPhase("playing");
+          if (!cancelled) { setPhase("playing"); setTransport(url === webrtc ? "webrtc" : "hls"); }
           return;
         } catch {
           stop?.();
@@ -216,6 +219,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
   return <div className={focused ? "live-player focused" : "live-player"}>
     {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={onUnmute ? event => { if (!event.currentTarget.muted) onUnmute(); } : undefined} aria-label={`${live.title}, live`} />}
+    {!rewind && <PlayerEffects username={username} video={video} transport={transport} />}
     {!rewind && status && <p className="player-status" role="status">{status}</p>}
     {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {!rewind && phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}

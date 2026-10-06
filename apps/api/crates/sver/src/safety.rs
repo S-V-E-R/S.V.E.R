@@ -609,11 +609,11 @@ pub async fn staff_confirm(
 
 #[derive(Deserialize, Clone)]
 pub struct StrikeInput {
-    reason: String,
-    severity: String,
+    pub(crate) reason: String,
+    pub(crate) severity: String,
     #[serde(default)]
-    message_to_user: String,
-    interim_restriction_id: Option<String>,
+    pub(crate) message_to_user: String,
+    pub(crate) interim_restriction_id: Option<String>,
 }
 /// Issues a strike and applies its penalty; returns the strike ID, level and queued notice ID.
 pub async fn issue_strike(

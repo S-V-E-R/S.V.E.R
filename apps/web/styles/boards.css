@@ -1,0 +1,57 @@
+/* Module 7 CrowdSync boards (docs/CROWDSYNC.md): effects over the player and in the OBS overlay, the board panel. */
+.board-stage{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:2}
+.board-effect{position:absolute;inset:0}
+.board-caption{position:absolute;left:50%;bottom:14%;transform:translateX(-50%);margin:0;padding:8px 14px;max-width:80%;background:rgba(8,10,14,.82);border:1px solid var(--line,#888);color:#fff;font-size:15px;text-align:center;overflow-wrap:anywhere;animation:board-pop .3s ease-out}
+.board-caption q{font-style:italic}
+.board-particles span{position:absolute;top:-10%;font-size:28px;animation:board-fall 2.6s ease-in forwards}
+.effect-fireworks .board-particles span{top:auto;bottom:-10%;animation-name:board-rise}
+.effect-shake{animation:board-shake .5s ease-in-out 2}
+.effect-spotlight .board-caption{bottom:40%;font-size:22px;border-color:var(--accent,#fff);box-shadow:0 0 40px var(--accent,#fff)}
+@keyframes board-fall{to{transform:translateY(120vh) rotate(240deg);opacity:.2}}
+@keyframes board-rise{to{transform:translateY(-110vh) scale(1.6);opacity:0}}
+@keyframes board-shake{25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+@keyframes board-pop{from{transform:translateX(-50%) scale(.8);opacity:0}}
+@media (prefers-reduced-motion:reduce){.board-particles{display:none}.board-effect,.board-caption{animation:none}}
+
+.board-panel{margin:12px 0;padding:12px 16px}
+.board-panel summary{cursor:pointer;font-weight:600}
+.board-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+.board-grid>*{min-width:0}
+.board-grid button{width:100%}
+.board-grid .board-label{margin:0;align-self:center}
+.board-goal progress{width:100%}
+.board-stick{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.board-stick button:nth-child(1){grid-column:2}
+.board-stick button:nth-child(4){grid-column:2}
+.board-screens{display:flex;flex-wrap:wrap;gap:6px}
+.board-run{display:flex;flex-wrap:wrap;align-items:end;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+@media (max-width:600px){.board-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.board-grid>*{grid-column:auto!important}}
+
+.board-builder fieldset{display:flex;flex-wrap:wrap;align-items:end;gap:8px;border:1px solid var(--line);padding:10px;margin:0 0 8px}
+.board-builder legend{font-weight:600}
+.board-preview{position:relative;aspect-ratio:16/9;max-width:560px;background:#000;border:1px solid var(--line)}
+.overlay-page{position:fixed;inset:0;background:transparent}
+
+/* Phase 2: polls, predictions and counters. */
+.crowd{display:grid;gap:10px;margin:12px 0}
+.crowd-card{padding:12px 16px}
+.crowd-card h3{margin:4px 0}
+.crowd-options{display:flex;flex-wrap:wrap;align-items:end;gap:8px}
+.crowd-results li{display:grid;grid-template-columns:1fr auto;gap:2px 10px}
+.crowd-results progress{grid-column:1/-1;width:100%}
+.crowd-counters{display:flex;flex-wrap:wrap;gap:8px 16px;list-style:none;margin:0;padding:8px 12px;border:1px solid var(--line)}
+.crowd-counters li{display:flex;align-items:center;gap:8px}
+.overlay-widgets{position:fixed;top:24px;left:24px;display:grid;gap:10px;max-width:420px;font-size:20px;color:#fff}
+.overlay-counter,.overlay-poll{margin:0;padding:8px 14px;background:rgba(8,10,14,.82);border:1px solid rgba(255,255,255,.3)}
+.overlay-poll .list{margin:6px 0 0;padding:0;list-style:none}
+
+/* Phase 3: Skills, rallies and Surge. */
+.board-sticker{position:absolute;right:6%;top:10%;font-size:96px;animation:board-pop .4s ease-out}
+.rally-meter{display:grid;gap:4px}
+.rally-row{display:grid;grid-template-columns:80px 1fr 42px;align-items:center;gap:8px}
+.rally-row progress{width:100%;accent-color:var(--accent)}
+.surge-banner{margin:0;padding:8px 14px;border:1px solid var(--accent);background:var(--tint)}
+.skill-badge{border-color:var(--accent);color:var(--accent);margin-right:.3rem}
+.crowd-skills{padding:10px 16px}
+.crowd-skills summary{cursor:pointer;font-weight:600}
+.board-particles .emote-particle{width:40px;height:40px;background-size:contain;background-repeat:no-repeat}

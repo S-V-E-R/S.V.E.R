@@ -14,11 +14,14 @@ pub mod activity;
 pub mod alerts;
 pub mod auth;
 pub mod bans;
+pub mod boards;
 pub mod chat;
+pub mod crowd;
 pub mod discovery;
 pub mod emotes;
 pub mod engagement;
 pub mod factions;
+pub mod gateway;
 pub mod guilds;
 pub mod integrity;
 pub mod jobs;
@@ -42,6 +45,7 @@ pub mod roadmap;
 pub mod safety;
 pub mod security;
 pub mod shine;
+pub mod skills;
 pub mod social;
 pub mod squads;
 pub mod staff_push;
@@ -51,6 +55,7 @@ pub mod stripe;
 pub mod studio;
 pub mod subs;
 pub mod support;
+pub mod surge;
 pub mod take_down;
 pub mod text;
 pub mod tiers;
@@ -414,6 +419,11 @@ pub fn router(app: App) -> Router {
         .merge(tiers::routes())
         .merge(payouts::routes())
         .merge(shine::routes())
+        .merge(boards::routes())
+        .merge(crowd::routes())
+        .merge(skills::routes())
+        .merge(surge::routes())
+        .merge(gateway::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

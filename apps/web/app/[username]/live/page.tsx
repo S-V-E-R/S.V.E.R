@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { Board } from "../../../components/Board";
 import { Chat } from "../../../components/Chat";
+import { Crowd } from "../../../components/Crowd";
 import { LivePlayer } from "../../../components/LivePlayer";
 import { PlaysControls } from "../../../components/PlaysControls";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../../lib/channel";
@@ -39,6 +41,8 @@ export default async function Live({ params }: { params: ChannelParams }) {
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
     </section>
     {c.plays && <PlaysControls username={c.username} />}
+    <Crowd username={c.username} />
+    {c.board && <Board username={c.username} />}
     <section className="watch-next" aria-labelledby="up-next"><SectionHead id="up-next" title="Up next" note="Same genre first, then same faction" href="/browse" link="Browse" />{next.length ? <StreamGrid streams={next} viewerFaction={account?.faction ?? null} /> : <p className="shelf-empty frame">{suggestions.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>
     </div>
     <Chat username={c.username} account={account?.username ?? null} />

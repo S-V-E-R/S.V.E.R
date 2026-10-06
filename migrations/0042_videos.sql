@@ -158,7 +158,10 @@ CREATE TABLE copyright_cases (
     forward_mail_id text,
     forward_state text,
     reason text,
-    reviewer_id text REFERENCES users(id) ON DELETE SET NULL
+    reviewer_id text REFERENCES users(id) ON DELETE SET NULL,
+    -- When staff upheld the notice: a copyright strike for 12 months unless a counter-notice restores it.
+    removed_at timestamptz
 );
+CREATE INDEX copyright_cases_strikes ON copyright_cases (owner_id, removed_at);
 ALTER TABLE reports DROP CONSTRAINT IF EXISTS reports_target_type_check;
 ALTER TABLE reports ADD CONSTRAINT reports_target_type_check CHECK (target_type IN ('profile','wall_post','wall_reply','fan_art','setup_photo','chat_message','live_stream','emote','faction_post','guild','guild_emblem','vod','highlight','clip'));

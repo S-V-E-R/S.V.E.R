@@ -8,9 +8,31 @@ import { LivePlayer } from "./LivePlayer";
 import { Chat } from "./Chat";
 import { Subscribe } from "./Subscribe";
 import { Crest } from "./FactionIdentity";
+import { Autocomplete } from "./Autocomplete";
 
 export type Squad = { id: string; mode: "SEPARATE" | "MERGED"; ended: boolean; members: (Chip & { host: boolean })[]; host: boolean; joined: boolean; invited: boolean; pending: { username: string; expires_at: string }[] };
 export type MySquads = { current: string | null; live: boolean; invites: { id: string; host: string; mode: string; expires_at: string }[] };
+function UsernamePicker({ disabled, exclude }: { disabled: boolean; exclude: (string | null)[] }) {
+  const [username, setUsername] = useState("");
+  const [result, setResult] = useState<{ query: string; channels: Chip[]; error: string } | null>(null);
+  const query = username.trim().replace(/^@/, "");
+  useEffect(() => {
+    if (query.length < 2 || disabled) return;
+    let stopped = false;
+    const timer = setTimeout(async () => {
+      const response = await send<{ channels: Chip[] }>("GET", `/api/search?q=${encodeURIComponent(query)}`);
+      if (!stopped) setResult({ query, channels: response.ok ? response.data.channels : [], error: response.ok ? "" : response.error });
+    }, 200);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [query, disabled]);
+  const current = result?.query === query ? result : null;
+  const options = (current?.channels ?? []).filter(channel => channel.username && !exclude.some(name => name?.toLowerCase() === channel.username?.toLowerCase()))
+    .slice(0, 10).map(channel => ({ value: channel.username!, label: channel.display_name === channel.username ? `@${channel.username}` : `${channel.display_name} · @${channel.username}` }));
+  return <>
+    <Autocomplete label="Live streamer username" name="username" required maxLength={26} disabled={disabled} value={username} onChange={setUsername} options={options} onPick={option => setUsername(option.value)} />
+    <p className="small-print" role="status">{query.length < 2 ? "Type at least 2 characters to find a streamer. Both streamers must be live to invite." : !current ? "Searching…" : current.error || (!options.length ? "No other matching channels." : "Choose a streamer, then send the invitation.")}</p>
+  </>;
+}
 export function SquadStudio({ initial }: { initial: MySquads }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,7 +68,7 @@ export function SquadView({ initial, account }: { initial: Squad; account: strin
     {notice && <p role="status" className="form-message">{notice}</p>}
     {squad.ended ? <section className="panel section"><h2>This co-stream has ended</h2><p><Link href="/">Find a live stream</Link></p></section> : <>
       {squad.invited && <section className="panel section"><h2>You&apos;re invited</h2><p>Joining adds your live stream to this page with {squad.mode.toLowerCase()} chat.</p><div className="row"><button disabled={busy} onClick={() => act("answer", { accept: true })}>Accept invitation</button><button disabled={busy} className="quiet" onClick={() => act("answer", { accept: false })}>Decline</button></div></section>}
-      {squad.host && <details className="panel section" open={squad.members.length < 2}><summary>Invite streamers · {squad.members.length} of 4 streams</summary><form onSubmit={invite}><label className="field">Live streamer username<input name="username" required maxLength={25} /></label><button disabled={busy || squad.members.length + squad.pending.length >= 4}>Send invitation</button></form>{squad.pending.map(p => <div className="row" key={p.username}><span>{p.username} · expires {new Date(p.expires_at).toLocaleTimeString()}</span><button className="quiet small" disabled={busy} onClick={() => act(`invites/${encodeURIComponent(p.username)}`, undefined, "DELETE")}>Cancel invitation</button></div>)}</details>}
+      {squad.host && <details className="panel section" open={squad.members.length < 2}><summary>Invite streamers · {squad.members.length} of 4 streams</summary><form onSubmit={invite}><UsernamePicker disabled={busy || squad.members.length + squad.pending.length >= 4} exclude={[...squad.members.map(member => member.username), ...squad.pending.map(invite => invite.username)]} /><button disabled={busy || squad.members.length + squad.pending.length >= 4}>Send invitation</button></form>{squad.pending.map(p => <div className="row" key={p.username}><span>{p.username} · expires {new Date(p.expires_at).toLocaleTimeString()}</span><button className="quiet small" disabled={busy} onClick={() => act(`invites/${encodeURIComponent(p.username)}`, undefined, "DELETE")}>Cancel invitation</button></div>)}</details>}
       <div className="squad-layout section"><div className="squad-streams">{squad.members.map(m => m.username && <section key={m.username} className="squad-stream panel"><div className="row">{m.faction && <Crest faction={m.faction} size={24} />}<h2><Link href={`/${m.username}/live`}>{m.display_name}</Link>{m.host && " · Host"}</h2></div><LivePlayer username={m.username} signedIn={!!account} nested focused followRaids={false} muted={audio !== m.username} onUnmute={() => setAudio(m.username)} /><button className="quiet small" aria-pressed={audio === m.username} onClick={() => setAudio(audio === m.username ? null : m.username)}>{audio === m.username ? "Mute audio" : `Listen to ${m.display_name}`}</button>{account && !squad.joined && <Subscribe username={m.username} squad={squad.mode === "MERGED" ? squad.id : undefined} />}</section>)}</div>
       <aside className="squad-chat">{squad.mode === "SEPARATE" && <label className="field">Channel chat<select value={chosen ?? ""} onChange={e => setChat(e.target.value)}>{squad.members.map(m => m.username && <option key={m.username} value={m.username}>{m.display_name}</option>)}</select></label>}{squad.mode === "MERGED" ? host && <Chat key={squad.id} username={host} squad={squad.id} account={account} /> : chosen && <Chat key={chosen} username={chosen} account={account} />}</aside></div>
     </>}

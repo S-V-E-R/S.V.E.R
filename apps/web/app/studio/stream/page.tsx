@@ -3,6 +3,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { send } from "../../../lib/client-api";
+import { GamePicker } from "../../../components/GamePicker";
 
 type Settings = { title: string; category_id: string | null; revision: number };
 type Health = { video_codec?: string | null; audio_codec?: string | null; width?: number | null; height?: number | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean; keyframe_seconds?: number | null; keyframe_warning?: boolean; b_frames?: boolean | null };
@@ -20,7 +21,6 @@ export default function StreamStudio() {
   // When data last arrived; staleness is judged against it so render stays pure.
   const [seenAt, setSeenAt] = useState(0);
   const [form, setForm] = useState<Settings | null>(null);
-  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [account, setAccount] = useState<Account | null>(null);
   const [status, setStatus] = useState<SaveState>({});
   const [loadError, setLoadError] = useState("");
@@ -47,9 +47,8 @@ export default function StreamStudio() {
     active.current = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load awaits the network before setting state
     load();
-    Promise.all([send<{ categories: { id: string; name: string }[] }>("GET", "/api/categories"), send<Account>("GET", "/api/auth/me")]).then(([catalog, me]) => {
+    send<Account>("GET", "/api/auth/me").then(me => {
       if (!active.current) return;
-      if (catalog.ok) setCategories(catalog.data.categories);
       if (me.ok) setAccount(me.data);
     });
     let pending = false;
@@ -71,9 +70,9 @@ export default function StreamStudio() {
     event.preventDefault();
     if (!form || busy) return;
     setBusy(true); setStatus({});
-    const result = await send<{ revision: number }>("PATCH", "/api/me/stream", form);
+    const result = await send<{ revision: number; category_id: string }>("PATCH", "/api/me/stream", form);
     if (result.ok) {
-      setForm(previous => previous && { ...previous, revision: result.data.revision });
+      setForm(previous => previous && { ...previous, revision: result.data.revision, category_id: result.data.category_id ?? previous.category_id });
       setStatus({ saved: "Stream details saved." }); await load();
     } else setStatus(result);
     setBusy(false);
@@ -137,11 +136,12 @@ export default function StreamStudio() {
     <Section title="Stream details" intro="Choose a title and category before connecting OBS. You can change them while live.">
       <form onSubmit={save}>
         <label className="field"><span>Title</span><input required maxLength={280} value={form.title} disabled={busy || !data.eligible} aria-describedby="stream-title-count" onChange={event => setForm({ ...form, title: event.target.value })} /><small id="stream-title-count">{count}/140 characters</small></label>
-        <label className="field"><span>Category</span><select required value={form.category_id ?? ""} disabled={busy || !data.eligible} onChange={event => setForm({ ...form, category_id: event.target.value })}><option value="">Choose a category</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+        <GamePicker value={form.category_id ?? ""} disabled={busy || !data.eligible} onChange={category_id => setForm({ ...form, category_id })} />
         <div className="row"><button disabled={busy || !data.eligible || count < 1 || count > 140}>Save details</button><button type="button" className="quiet" disabled={busy} onClick={reloadDetails}>Reload saved details</button></div>
       </form>
     </Section>
     <Section title="OBS connection" intro="Use Custom in OBS's Stream settings. Keep your stream key private.">
+      {(!data.settings.title.trim() || !data.settings.category_id) && <p role="alert">Save a title and category in Stream details first. Until then S.V.E.R refuses the connection and OBS only reports “Failed to connect to server”.</p>}
       <p>Viewing or replacing a key requires a sign-in confirmation from the last five minutes and a fresh authenticator or recovery code.</p>
       {account?.has_password ? <label className="field"><span>Current password {account.reauthenticated ? "(optional while recently confirmed)" : ""}</span><input type="password" autoComplete="current-password" value={password} disabled={busy || !usable} onChange={event => setPassword(event.target.value)} /></label> : <p><Link href="/account">Confirm your linked sign-in method in Account security</Link>, then return here.</p>}
       <label className="field"><span>Authenticator or recovery code</span><input autoComplete="one-time-code" maxLength={64} value={code} disabled={busy || !usable} onChange={event => setCode(event.target.value)} /></label>
@@ -156,7 +156,7 @@ export default function StreamStudio() {
       </div>}
     </Section>
     <Section title="OBS setup and input health" intro="Use H.264 video and AAC audio, turn B-frames off, and set a one-second keyframe interval.">
-      <p>Start testing at 6 Mbps video and 160 Kbps audio, up to 1080p60. The bitrate recommendation is provisional while delivery testing continues.</p>
+      <p>Start testing at 6 Mbps video and 160 Kbps audio, up to 1080p60. The bitrate recommendation is provisional while delivery testing continues. Step-by-step OBS setup and fixes for common problems are in <Link href="/help#obs-setup">Help</Link>.</p>
       <dl className="setup">
         <div><dt>Video / audio</dt><dd>{health.video_codec ?? "Not measured"} / {health.audio_codec ?? "Not measured"}</dd></div>
         <div><dt>Resolution</dt><dd>{health.width && health.height ? health.width + " × " + health.height : "Not measured"}</dd></div>

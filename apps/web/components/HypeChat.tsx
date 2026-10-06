@@ -7,7 +7,7 @@ import { Crest } from "./FactionIdentity";
 import { GuildChatBadge } from "./Guilds";
 
 type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: string | null; origin?: string | null };
-type Snapshot = { type: "snapshot"; messages: Message[]; merged_with: Chip | null; holding: boolean; can_send: boolean };
+type Snapshot = { type: "snapshot"; messages: Message[]; merged_with: Chip | null; co_stream?: boolean; holding: boolean; can_send: boolean };
 type Event = Snapshot | { type: "message"; message: Message } | { type: "delete"; id: string };
 
 /**
@@ -58,7 +58,7 @@ export function HypeChat({ lane, account, upNext }: { lane: string; account: str
   }
   return <section className="chat panel" aria-label="MAGNet chat">
     <h2>MAGNet chat</h2>
-    {state?.merged_with ? <p className="chat-system" role="status">Chatting with <Link href={`/${state.merged_with.username}`}>{state.merged_with.display_name}</Link>&apos;s chat; their rules apply.</p>
+    {state?.merged_with ? <p className="chat-system" role="status">Chatting with <Link href={`/${state.merged_with.username}`}>{state.merged_with.display_name}</Link>&apos;s {state.co_stream ? "co-stream chat; its streamers' rules apply" : "chat; their rules apply"}.</p>
       : <p className="chat-system muted">MAGNet&apos;s own room.</p>}
     {upNext && <p className="chat-system" role="status">Chat joins {upNext.name} in {upNext.seconds}…</p>}
     <ol className="chat-messages" ref={list} aria-live="polite">

@@ -74,6 +74,8 @@ jobs:
       - run: pnpm build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+      # The board SDK and OBS bridge (integrations/) have no dependencies; plain node runs them.
+      - run: node ../../integrations/sdk-js/test.mjs && node ../../integrations/bridge/test.mjs
 
   secrets:
     name: Secret scan

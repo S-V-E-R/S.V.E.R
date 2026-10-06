@@ -144,6 +144,9 @@ async fn create(
     }
     let mut tx = app.db.begin().await?;
     crate::factions::validate_genre(&mut tx, genre).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('stream-catalog'))")
+        .execute(&mut *tx)
+        .await?;
     let inserted = sqlx::query(
         "INSERT INTO stream_categories(id,name,genre) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
     )
@@ -300,6 +303,14 @@ async fn merge_category(
 }
 pub fn routes() -> Router<App> {
     Router::new()
+        .route(
+            "/api/admin/game-catalog",
+            get(crate::streams::catalog::review_queue),
+        )
+        .route(
+            "/api/admin/game-catalog/{id}",
+            post(crate::streams::catalog::review),
+        )
         .route("/api/admin/streams", get(list))
         .route("/api/admin/streams/{id}/stop", post(stop))
         .route("/api/admin/categories", get(categories).post(create))

@@ -20,6 +20,8 @@ export default function SiteShell({ account, alerts, actions, sidebar, children 
 }) {
   const pathname = usePathname();
   if (pathname?.startsWith("/embed/")) return <main id="main">{children}</main>;
+  // The OBS board overlay is a bare, transparent browser source.
+  if (pathname?.startsWith("/overlay/")) return <>{children}</>;
   const publicPage = siteLinks.some(([href]) => href === pathname);
   const footer = <SiteFooter />;
   if (!publicPage) return <><a className="skip" href="#main">Skip to content</a><Chrome actions={actions} sidebar={sidebar} footer={footer}>{children}</Chrome></>;

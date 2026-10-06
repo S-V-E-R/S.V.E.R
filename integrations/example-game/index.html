@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crowd Runner · S.V.E.R board example</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+  body { margin: 0; background: #0b0d12; color: #e8eaf0; display: grid; place-items: center; min-height: 100vh; }
+  main { width: min(960px, 100vw - 32px); }
+  canvas { width: 100%; aspect-ratio: 16 / 9; background: #12151c; border: 1px solid #2a2f3a; display: block; }
+  p { margin: 8px 0; }
+  .muted { color: #9aa1ad; }
+  code { background: #1b1f28; padding: 1px 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Crowd Runner</h1>
+  <canvas id="game" width="960" height="540" aria-label="Crowd Runner game"></canvas>
+  <p id="status" role="status">Playing locally: Space jumps, arrow keys steer.</p>
+  <p class="muted">Connect it to your board: open this page as <code>index.html#token=sver_g_…</code> (the token stays in your browser).
+    Your board needs a button <code>jump</code>, a goal <code>coins</code>, a text input <code>shout</code> and a joystick <code>move</code>.</p>
+</main>
+<script type="module">
+import { SverBoard } from "../sdk-js/sver-board.mjs";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const status = document.getElementById("status");
+const GROUND = 440;
+const runner = { x: 160, y: GROUND, vy: 0, speed: 4 };
+let coins = [], walls = [], collected = 0, shout = null, frame = 0, board = null, airborne = false;
+
+// Game → board: only send changes, which stays far under the 10-a-second limit.
+function syncJump(inAir) {
+  if (!board || inAir === airborne) return;
+  airborne = inAir;
+  board.setState({ jump: { disabled: inAir, label: inAir ? "Jump (in the air)" : null } }).catch(() => {});
+}
+function jump(who) {
+  if (runner.y < GROUND) return;
+  runner.vy = -15;
+  syncJump(true);
+  if (who) shout = { text: `${who} says jump!`, until: frame + 90 };
+}
+
+// Board → game.
+const params = new URLSearchParams(location.hash.slice(1));
+if (params.get("token")) {
+  board = new SverBoard({ token: params.get("token"), url: params.get("gateway") ?? undefined });
+  board.on("press", press => {
+    if (press.control === "jump") jump(press.user.username);
+    if (press.control === "shout" && press.text) shout = { text: `${press.user.username}: ${press.text}`, until: frame + 240 };
+  });
+  board.on("input", move => { if (move.control === "move") runner.speed = Math.max(2, Math.min(9, runner.speed + move.x)); });
+  board.on("close", () => { status.textContent = "Disconnected from S.V.E.R; reconnecting…"; });
+  board.on("hello", hello => { status.textContent = `Connected to ${hello.channel}'s board. Viewers are in control.`; });
+  board.connect().catch(error => { status.textContent = error.message; });
+}
+addEventListener("keydown", e => {
+  if (e.code === "Space") { e.preventDefault(); jump(); }
+  if (e.code === "ArrowRight") runner.speed = Math.min(9, runner.speed + 1);
+  if (e.code === "ArrowLeft") runner.speed = Math.max(2, runner.speed - 1);
+});
+
+function coinTarget() {
+  return board?.current?.board?.screens.flatMap(s => s.controls).find(k => k.id === "coins")?.target ?? Infinity;
+}
+function tick() {
+  frame++;
+  runner.vy += 0.8;
+  runner.y = Math.min(GROUND, runner.y + runner.vy);
+  if (runner.y === GROUND) { runner.vy = 0; syncJump(false); }
+  if (frame % 90 === 0) coins.push({ x: 980, y: GROUND - 60 - Math.random() * 120 });
+  if (frame % 150 === 0) walls.push({ x: 980 });
+  for (const c of coins) c.x -= runner.speed;
+  for (const w of walls) w.x -= runner.speed;
+  coins = coins.filter(c => {
+    if (Math.abs(c.x - runner.x) < 24 && Math.abs(c.y - (runner.y - 20)) < 34) {
+      collected++;
+      if (collected <= coinTarget()) board?.progress("coins", collected).catch(() => {});
+      return false;
+    }
+    return c.x > -20;
+  });
+  walls = walls.filter(w => {
+    if (Math.abs(w.x - runner.x) < 22 && runner.y > GROUND - 40) { runner.speed = 4; shout = { text: "Bonk!", until: frame + 45 }; return false; }
+    return w.x > -20;
+  });
+  draw();
+  requestAnimationFrame(tick);
+}
+function draw() {
+  ctx.fillStyle = "#12151c"; ctx.fillRect(0, 0, 960, 540);
+  ctx.fillStyle = "#2a2f3a"; ctx.fillRect(0, GROUND, 960, 100);
+  ctx.fillStyle = "#e9c35a"; for (const c of coins) { ctx.beginPath(); ctx.arc(c.x, c.y, 10, 0, 7); ctx.fill(); }
+  ctx.fillStyle = "#a68bff"; for (const w of walls) ctx.fillRect(w.x - 12, GROUND - 40, 24, 40);
+  ctx.fillStyle = "#ff9a1f"; ctx.fillRect(runner.x - 16, runner.y - 40, 32, 40);
+  ctx.fillStyle = "#e8eaf0"; ctx.font = "20px system-ui";
+  ctx.fillText(`Coins ${collected} · speed ${runner.speed.toFixed(1)}`, 20, 34);
+  // Viewer text is drawn on the canvas, never inserted as HTML.
+  if (shout && frame < shout.until) ctx.fillText(shout.text.slice(0, 60), runner.x - 20, runner.y - 60);
+}
+tick();
+</script>
+</body>
+</html>

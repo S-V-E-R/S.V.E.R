@@ -231,6 +231,15 @@ async fn bridge(
         json!({"round":round-1,"command":command,"viewers":viewers,"live":ready}),
     ))
 }
+/// Nobody signs in as the Plays channel, so it accepts co-stream invitations itself, but only
+/// from its configured host (`plays_runtime.costream_host_id`, set by an operator).
+pub async fn accepts_costream(db: &mut PgConnection, channel: &str, host: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM plays_runtime WHERE enabled AND channel_id=$1 AND costream_host_id=$2)")
+        .bind(channel)
+        .bind(host)
+        .fetch_one(db)
+        .await?)
+}
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/channels/{username}/plays", get(state).post(vote))

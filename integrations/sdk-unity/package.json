@@ -1,0 +1,9 @@
+{
+  "name": "tv.sver.board",
+  "version": "0.1.0",
+  "displayName": "S.V.E.R Board",
+  "description": "Receive S.V.E.R board presses, joystick moves and text in your game, and update the board.",
+  "unity": "2021.3",
+  "license": "AGPL-3.0-or-later",
+  "dependencies": { "com.unity.nuget.newtonsoft-json": "3.2.1" }
+}
