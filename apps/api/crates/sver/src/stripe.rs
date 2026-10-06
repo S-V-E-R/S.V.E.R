@@ -95,12 +95,26 @@ async fn respond(response: reqwest::Result<reqwest::Response>) -> Res<Value> {
     if status.is_success() {
         Ok(body)
     } else {
+        let code = body["error"]["code"].as_str().unwrap_or("");
         eprintln!(
-            "stripe_event=api_error status={} type={}",
+            "stripe_event=api_error status={} type={} code={code}",
             status.as_u16(),
             body["error"]["type"].as_str().unwrap_or("")
         );
-        Err(Fail::unavailable("Payments are having trouble. Try again."))
+        Err(Fail::unavailable(message(code)))
+    }
+}
+
+/// What to tell the user for a Stripe error code (Stripe's own text is logged, not shown).
+fn message(code: &str) -> &'static str {
+    match code {
+        "balance_insufficient" => {
+            "S.V.E.R's Stripe balance doesn't have enough available funds for this payout yet. Try again later."
+        }
+        "instant_payouts_unsupported" | "instant_payouts_limit_exceeded" => {
+            "Instant payout isn't available for this account right now."
+        }
+        _ => "Payments are having trouble. Try again.",
     }
 }
 

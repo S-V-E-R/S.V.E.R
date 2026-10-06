@@ -45,7 +45,7 @@ export default function StudioPayouts() {
   async function early(method: "standard" | "instant") {
     if (!summary) return;
     const fee = method === "instant" ? Math.ceil(summary.early.limit_cents * summary.early.instant_fee_percent / 100) : 0;
-    if (!window.confirm(method === "instant" ? `Withdraw ${money(summary.early.limit_cents - fee)} instantly? Stripe's ${summary.early.instant_fee_percent}% fee (${money(fee)}) comes out of it.` : `Withdraw ${money(summary.early.limit_cents)}? It arrives in about 2 business days.`)) return;
+    if (!window.confirm(method === "instant" ? `Withdraw ${money(summary.early.limit_cents)} instantly? Stripe's ${summary.early.instant_fee_percent}% fee (${money(fee)}) comes out of it, so ${money(summary.early.limit_cents - fee)} arrives in minutes.` : `Withdraw ${money(summary.early.limit_cents)}? It arrives in about 2 business days.`)) return;
     setBusy(true); setError("");
     const result = await send<Summary>("POST", "/api/me/payouts/early", { method });
     setBusy(false);
