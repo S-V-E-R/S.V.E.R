@@ -82,6 +82,9 @@ async fn main() -> Result<(), String> {
             if sver::magnet::tick(&media_jobs).await.is_err() {
                 eprintln!("magnet_event=tick outcome=retry");
             }
+            if sver::engagement::tick(&media_jobs).await.is_err() {
+                eprintln!("engagement_event=watch outcome=retry");
+            }
         }
     });
     let bind = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8080".into());

@@ -87,6 +87,8 @@ pub(crate) struct Row {
     tribute: Option<i32>,
     /// The author's active subscription to this channel: tier and months, for the badge.
     sub: Option<Value>,
+    /// Paid for with the channel's "highlight my message" reward.
+    highlighted: bool,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -96,12 +98,12 @@ impl Row {
     }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted})
     }
 }
 pub(crate) fn select() -> String {
     format!(
-        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,
+        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,
         (SELECT jsonb_build_object('tier',s.tier,'months',s.months) FROM channel_subs s WHERE s.channel_id=m.channel_id AND s.user_id=m.author_id AND s.paid_through>now()) AS sub,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
         CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
@@ -288,6 +290,9 @@ pub struct Send {
     /// Valor to pay with the message (at least 10); the channel must be able to earn.
     #[serde(default)]
     tribute: Option<i64>,
+    /// Spend the channel's Engagement Valor on "highlight my message".
+    #[serde(default)]
+    highlight: bool,
 }
 
 /// Persists one message to a channel's own chat and fans it out.
@@ -383,6 +388,12 @@ pub(crate) async fn send_from(
         }
         None => None,
     };
+    if input.highlight && (channel.is_none() || origin.is_some() || squad.is_some()) {
+        return Err(Fail::field(
+            "highlight",
+            "Highlights work in a channel's own chat.",
+        ));
+    }
     if let Some(valor) = input.tribute {
         // Squad chat money (pooled splits) comes with co-streams; tributes stay in a channel's own chat.
         let Some(channel) = channel.filter(|_| origin.is_none() && squad.is_none()) else {
@@ -444,8 +455,8 @@ pub(crate) async fn send_from(
     .bind(mention_names(body))
     .fetch_all(&mut *tx)
     .await?;
-    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO NOTHING")
-        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(input.tribute.map(|v| v as i32)).execute(&mut *tx).await?.rows_affected();
+    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO NOTHING")
+        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(input.tribute.map(|v| v as i32)).bind(input.highlight).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
@@ -488,6 +499,10 @@ pub(crate) async fn send_from(
     if let Some(channel) = channel
         && squad.is_none()
     {
+        if input.highlight {
+            crate::engagement::highlight(&mut tx, channel, &user.id, &input.id).await?;
+        }
+        crate::engagement::chatted(&mut tx, &app.config.engagement, channel, &user.id).await?;
         crate::factions::chat(app, &mut tx, channel, &user.id, &input.id).await?;
         crate::plays::chat_vote(&mut tx, channel, &user, body).await?;
     }

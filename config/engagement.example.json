@@ -1,0 +1,8 @@
+{
+  "watch_points": 10,
+  "watch_seconds": 300,
+  "chat_points": 5,
+  "chat_cooldown_seconds": 300,
+  "follow_bonus": 300,
+  "highlight_cost": 500
+}

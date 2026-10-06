@@ -77,6 +77,7 @@ pub async fn follow(
         .execute(&mut *tx)
         .await?;
         refresh_counts(&mut tx, &[&user.id, &target.id]).await?;
+        crate::engagement::followed(&mut tx, &app.config.engagement, &target.id, &user.id).await?;
         crate::activity::record(
             &mut tx,
             &user.id,

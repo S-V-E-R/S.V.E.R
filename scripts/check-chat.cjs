@@ -56,6 +56,7 @@ const { Chat } = compile("apps/web/components/Chat.tsx", {
   "./Emote": compile("apps/web/components/Emote.tsx"),
   "./FactionIdentity": { Crest: () => null },
   "./Guilds": { GuildChatBadge: () => null },
+  "./Rewards": { Rewards: () => null },
   "../styles/teams.css": {},
 });
 const root = createRoot(document.getElementById("root"));
