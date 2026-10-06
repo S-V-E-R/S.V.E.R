@@ -16,6 +16,7 @@ pub mod auth;
 pub mod bans;
 pub mod boards;
 pub mod chat;
+pub mod crowd;
 pub mod discovery;
 pub mod emotes;
 pub mod engagement;
@@ -411,6 +412,7 @@ pub fn router(app: App) -> Router {
         .merge(payouts::routes())
         .merge(shine::routes())
         .merge(boards::routes())
+        .merge(crowd::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

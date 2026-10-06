@@ -505,6 +505,8 @@ pub(crate) async fn send_from(
         )
         .await?;
     }
+    // A moderator's counter command (`!deaths`) changed a counter; viewers are told after commit.
+    let mut counters = false;
     if let Some(channel) = channel
         && squad.is_none()
     {
@@ -514,8 +516,12 @@ pub(crate) async fn send_from(
         crate::engagement::chatted(&mut tx, &app.config.engagement, channel, &user.id).await?;
         crate::factions::chat(app, &mut tx, channel, &user.id, &input.id).await?;
         crate::plays::chat_vote(&mut tx, channel, &user, body).await?;
+        counters = crate::crowd::chat_command(app, &mut tx, channel, &user, body).await?;
     }
     tx.commit().await?;
+    if counters && let Some(channel) = channel {
+        crate::crowd::publish_counters(app, channel).await?;
+    }
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1", select())))
         .bind(&input.id)

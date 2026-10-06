@@ -1,6 +1,6 @@
 # Module 7: CrowdSync
 
-Scoped October 3, 2026 by Joe. Builds after Module 6 (Support), which brings the Engagement Valor that board presses spend. **Status: phase 1 (Boards) built October 6, 2026; see "Implementation status". Skills, polls and predictions, rallies, Surge, counters, the OBS bridge and the Game SDK follow.**
+Scoped October 3, 2026 by Joe. Builds after Module 6 (Support), which brings the Engagement Valor that board presses spend. **Status: phase 1 (Boards) and phase 2 (polls, predictions, counters) built October 6, 2026; see "Implementation status". Skills, rallies, emote combos, Surge, the OBS bridge and the Game SDK follow.**
 
 CrowdSync is how viewers change what happens on stream. It brings back the idea of interactive boards and Skills from an earlier platform, rebuilt from the legacy CrowdSync design (whose in-page board worked) without its flaws: game and bridge access to server internals, no protection against bots, no account for video delay, and money that could buy attention.
 
@@ -95,6 +95,14 @@ Phase 1, Boards (October 6, 2026; migration 0034, `boards.rs`, `tests/streams/bo
 - **Webhooks:** the streamer's HTTPS endpoint receives `board.press` events signed like Stripe's (`SVER-Signature: t=…,v1=HMAC-SHA256("t.body")`; the secret is shown once). Delivery goes through the Postgres outbox on its own worker loop. It checks every resolved address and refuses private, loopback, link-local, CGNAT, benchmark, documentation, multicast and NAT64 ranges, then connects to the address it checked (no re-resolution and no redirects). It retries with doubling backoff up to 8 attempts.
 - **Running the board:** the owner, staff and (when allowed) channel moderators can pause all effects (panic) and block viewers from the board; each action is in the channel moderation log.
 - **Not yet:** effect sounds and streamer-uploaded effects come with Skills (they need the emote-style review); the OBS scene bridge and the Game SDK are later phases. Effects sync to an estimated player delay; exact sync to the HLS program date-time is a later refinement if measurements call for it.
+
+Phase 2, polls, predictions and counters (October 6, 2026; migration 0035, `crowd.rs`, `tests/streams/crowd.rs`):
+
+- **Polls:** the owner or a moderator asks a question with 2 to 5 options for 15 seconds to 30 minutes while live, one at a time. Each real viewer (the same rule as pressing: verified, Counted or Trusted lease, not banned, timed out or blocked) votes once; results update live for everyone. The owner can't vote in their own poll.
+- **Predictions:** 2 to 10 outcomes, one at a time. Viewers stake 1 to 10,000 of the channel's Engagement Valor (never Purchased Valor or money), charged in the same transaction as the vote. A prediction locks at its stream time; only the owner (or staff) resolves it. Winners split the whole pool in proportion to their stakes; rounding leftovers go one each to the largest stakes, so nothing is lost or created. If nobody picked the winning outcome, or it is cancelled, every stake is refunded. Predictions left unresolved for a day are cancelled and refunded automatically.
+- **Stream-time windows:** votes are accepted 8 seconds after a window ends, and each player closes its own window when its video reaches the end (its measured delay, capped at the grace), so CDN viewers get the same window as WebRTC viewers.
+- **Counters:** up to 10 per channel (death counter, shiny counter with encounters, phase and odds, win/loss tally, custom). Managed in Studio → Counters; the owner and moderators update them from the page or in chat (`!deaths`, `!deaths -`, `!deaths +5`, `!deaths =10`, `!record win`, `!record loss`, `!shiny phase`). A viewer's `!deaths` is just a message. Values never go below zero.
+- **Display:** a panel under the player shows counters, the running poll and prediction (with live results) and, for the owner and moderators, the controls. The OBS overlay shows counters and live poll results too. Starting, ending, resolving and cancelling are in the channel moderation log.
 
 ## Not in this module
 
