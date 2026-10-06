@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 import { reasons } from "../../../lib/types";
+import { RecordingEvidence } from "../../../components/RecordedPlayer";
 
 type Report = { id: string; reason: string; note: string; field: string | null; snapshot: { field: string | null; value: unknown }; created_at: string };
 type Group = { target_type: string; target_id: string; username: string; count: number; reasons: string[]; reports: Report[]; oldest: string; current: unknown; history: { action: string; note: string; created_at: string; actor: string | null }[] };
@@ -76,6 +77,7 @@ export default function QueuePage() {
       <p className="muted">{g.count} report(s) since {when(g.oldest)} · {g.reasons.join(", ")} · <Link href={`/admin/users/${g.username}`}>Standing</Link></p>
       <details open><summary>Reports and snapshots</summary><ul className="list">{g.reports.map(r => <li key={r.id}><strong>{r.reason}</strong>{r.field && ` · ${r.field}`} · {when(r.created_at)}{r.note && <p>{r.note}</p>}<pre className="snapshot">{JSON.stringify(r.snapshot.value, null, 2)}</pre></li>)}</ul></details>
       <details><summary>Current content</summary><pre className="snapshot">{JSON.stringify(g.current, null, 2)}</pre></details>
+      {["vod","highlight","clip"].includes(g.target_type) && <RecordingEvidence id={g.target_id} />}
       {g.history.length > 0 && <details><summary>History</summary><ul className="list">{g.history.map((h, i) => <li key={i}>{h.action} · {h.actor ? `@${h.actor}` : "system"} · {when(h.created_at)}{h.note && ` — ${h.note}`}</li>)}</ul></details>}
       <Action group={g} onDone={load} />
     </Section>)}

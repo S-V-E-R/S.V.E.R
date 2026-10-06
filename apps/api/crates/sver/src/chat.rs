@@ -143,6 +143,17 @@ pub(crate) fn visible_message(mut message: Value, hidden: &HashSet<String>) -> V
 }
 
 pub(crate) const VISIBLE: &str = "m.deleted_at IS NULL AND (m.expires_at>now() OR EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id))";
+/// Public read projection for recording replay. The chat module retains ownership of its
+/// visibility rules; recordings supply their segment-to-wall-clock mapping around this query.
+pub fn replay_source_sql() -> String {
+    format!(
+        "SELECT m.id,m.author_id,m.channel_id,m.created_at,jsonb_build_object('id',m.id,'body',m.body,'author',{},'role',m.role,'created_at',m.created_at) AS message FROM chat_messages m JOIN channel_users a ON a.id=m.author_id WHERE {VISIBLE} AND a.eligible",
+        profiles::chip_sql("a")
+    )
+}
+pub async fn replay_redacted(db: &mut sqlx::PgConnection, ids: &[String]) -> Res<HashSet<String>> {
+    Ok(sqlx::query_scalar::<_,String>("SELECT m.id FROM chat_messages m LEFT JOIN channel_users u ON u.id=m.author_id WHERE m.id=ANY($1) AND (m.deleted_at IS NOT NULL OR NOT coalesce(u.eligible,false))").bind(ids).fetch_all(db).await?.into_iter().collect())
+}
 
 async fn pinned(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Value> {
     let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
@@ -179,6 +190,12 @@ pub async fn expire(app: &App) -> crate::Result<()> {
     // cleanup was waiting on a message must not disappear with that message's ordinary expiry.
     let ids: Vec<String> = sqlx::query_scalar("SELECT m.id FROM chat_messages m WHERE expires_at<=now() AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED")
         .fetch_all(&mut *tx).await?;
+    let redacted = replay_redacted(&mut tx, &ids)
+        .await
+        .map_err(|_| crate::Error::internal())?;
+    crate::videos::redact_messages(&mut tx, &redacted.into_iter().collect::<Vec<_>>())
+        .await
+        .map_err(|_| crate::Error::internal())?;
     let removed: Vec<(Option<String>, Option<String>, String)> = sqlx::query_as("DELETE FROM chat_messages m WHERE id=ANY($1) AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) RETURNING coalesce(squad_id,channel_id),origin,id")
         .bind(ids).fetch_all(&mut *tx).await?;
     tx.commit().await?;
@@ -535,6 +552,18 @@ pub(crate) async fn send_from(
         crate::engagement::chatted(&mut tx, &app.config.engagement, channel, &user.id).await?;
         crate::factions::chat(app, &mut tx, channel, &user.id, &input.id).await?;
         crate::plays::chat_vote(&mut tx, channel, &user, body).await?;
+        if role.is_some() && origin.is_none() {
+            let mut command = body.splitn(2, char::is_whitespace);
+            if command.next() == Some("!marker") {
+                crate::videos::marker(
+                    &mut tx,
+                    channel,
+                    command.next().unwrap_or(""),
+                    Some(&input.id),
+                )
+                .await?;
+            }
+        }
         counters = crate::crowd::chat_command(app, &mut tx, channel, &user, body).await?;
         // Surge counts each real viewer once a minute; "!rally" also rallies for their faction.
         crate::surge::participated(&mut tx, channel, &user.id).await?;

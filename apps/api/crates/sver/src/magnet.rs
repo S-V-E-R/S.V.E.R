@@ -615,10 +615,15 @@ async fn commit(
     reason: &str,
 ) -> Res<()> {
     end_feature(&mut *db, lane).await?;
-    // One row per member of a merged co-stream: all share the cooldown and see it in history.
+    // One row per member of a merged co-stream: all share the cooldown and see it in history,
+    // and each gets its own spotlight clip suggestion.
     for member in members {
-        sqlx::query("INSERT INTO magnet_features(id,lane,broadcast_id,owner_id,kind,reason) SELECT $1,$2,id,owner_id,$3,$4 FROM broadcasts WHERE id=$5")
-            .bind(profiles::new_id()).bind(lane).bind(kind).bind(reason).bind(member).execute(&mut *db).await?;
+        let feature = profiles::new_id();
+        let owner:Option<String>=sqlx::query_scalar("INSERT INTO magnet_features(id,lane,broadcast_id,owner_id,kind,reason) SELECT $1,$2,id,owner_id,$3,$4 FROM broadcasts WHERE id=$5 RETURNING owner_id")
+            .bind(&feature).bind(lane).bind(kind).bind(reason).bind(member).fetch_optional(&mut *db).await?;
+        if let Some(owner) = owner {
+            crate::videos::spotlight(db, &owner, &feature).await?;
+        }
     }
     sqlx::query("UPDATE magnet_lanes SET current_broadcast=$2,current_kind=$3,current_reason=$4,current_since=now(),pending_broadcast=NULL,pending_kind=NULL,pending_reason=NULL,switch_at=NULL,
         last_kind=CASE WHEN $3 IN ('moment','fair') THEN $3 ELSE last_kind END,

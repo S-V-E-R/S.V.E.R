@@ -2,6 +2,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
 import { EnableStaffPush } from "../../../components/StaffRemovalAlerts";
+import { RecordingEvidence } from "../../../components/RecordedPlayer";
 
 type Request = { number: string; status: string; received_at: string; deadline: string; resolved_at: string | null; reason: string; media_pending: number; target_count: number };
 type Queue = { requests: Request[]; monthly: { received: number; removed: number; overdue: number; median_hours: number | null; longest_hours: number | null } };
@@ -41,6 +42,7 @@ function Review({ item, refresh }: { item: Request; refresh: () => Promise<void>
       {detail.minor && <p><strong>Person shown was under 18. Preserve evidence.</strong></p>}
       {detail.preservation_reference && <p>Preservation reference: {detail.preservation_reference}</p>}
       <p>{detail.targets.length} located content item(s); {item.media_pending} image group(s) still awaiting storage/cache hiding.</p>
+      {detail.targets.filter(t => ["vod","highlight","clip"].includes(t.kind)).map(t => <RecordingEvidence key={t.id} id={t.id} />)}
       {detail.evidence.length>0 && <details><summary>Quarantined media — restricted staff access</summary><p>Viewing requires a recent sign-in and is recorded. Open only the evidence needed for this review.</p><ul>{detail.evidence.map((key,i)=><li key={key}><a href={`/api/admin/take-it-down/${item.number}/media/${key}`} target="_blank" rel="noreferrer">Review stored image {i+1}</a></li>)}</ul></details>}
       {!item.resolved_at && <form className="editor" onSubmit={locate}><label className="field"><span>Add a precise content location from your review</span><input name="location" type="text" inputMode="url" placeholder="sver.tv/username or a full link" required maxLength={2048} /></label><button type="submit" className="small quiet" disabled={busy}>Locate and hide</button></form>}
       {!item.resolved_at && <form className="editor" onSubmit={act}>

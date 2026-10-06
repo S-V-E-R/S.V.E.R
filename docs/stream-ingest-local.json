@@ -1,6 +1,6 @@
 {
   "authenticated_real_callbacks": true,
-  "checked_at": "2026-10-05T17:01:21.577481400Z",
+  "checked_at": "2026-10-06T05:42:51.906565100Z",
   "hls_audio_video_decode": true,
   "key_rejection": true,
   "latency_acceptance": false,
@@ -15,6 +15,10 @@
   "playback_denies_when_authorization_unavailable": true,
   "reconnect_preserves_broadcast": true,
   "reconnect_publish_attempts": 1,
+  "recording_callbacks": true,
+  "recording_decodes_across_reconnect": true,
+  "recording_mp4_reconnect_timeline": true,
+  "recording_ready_within_one_minute": true,
   "rotation_disconnects_and_rejects_old_key": true,
   "scope": "isolated Rust API, Postgres, SRS and FFmpeg",
   "single_publisher": true,

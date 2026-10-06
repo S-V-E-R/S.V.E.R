@@ -77,7 +77,16 @@ pub async fn locate(
 pub async fn hide(db: &mut PgConnection, target: &Located) -> Res<Value> {
     if matches!(
         target.kind.as_str(),
-        "profile" | "fan_art" | "setup_photo" | "live_stream" | "emote" | "guild" | "guild_emblem"
+        "profile"
+            | "fan_art"
+            | "setup_photo"
+            | "live_stream"
+            | "emote"
+            | "guild"
+            | "guild_emblem"
+            | "vod"
+            | "highlight"
+            | "clip"
     ) {
         return Ok(Value::Null);
     }

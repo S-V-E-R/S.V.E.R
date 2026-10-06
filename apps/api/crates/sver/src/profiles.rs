@@ -396,6 +396,16 @@ pub fn hydrate(app: &App, value: &mut Value) {
     }
 }
 
+pub async fn follows(db: &mut PgConnection, viewer: &str, channel: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2)",
+    )
+    .bind(viewer)
+    .bind(channel)
+    .fetch_one(db)
+    .await?)
+}
+
 pub async fn follower_counts(db: &mut PgConnection, user_id: &str) -> Res<(i64, i64)> {
     // Exact counts excluding internal, deleted and held accounts.
     Ok(sqlx::query_as("SELECT (SELECT count(*) FROM follows f JOIN channel_users c ON c.id=f.follower_id WHERE f.following_id=$1 AND NOT c.internal AND c.deleted_at IS NULL),(SELECT count(*) FROM follows f JOIN channel_users c ON c.id=f.following_id WHERE f.follower_id=$1 AND NOT c.internal AND c.deleted_at IS NULL)")

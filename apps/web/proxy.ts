@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 // canonical casing (308) and rename-hold redirects (302, no-store). Static routes are excluded
 // by the matcher; reserved names guarantee no user shadows them.
 const STATIC = new Set(["api", "_next", "login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "account", "settings", "studio", "admin", "following", "about", "factions", "roadmap", "help", "terms", "privacy", "guidelines", "dmca", "contact", "favicon.ico", "robots.txt"]);
-const TABS: Record<string, string> = { wall: "/wall", schedule: "/schedule", about: "/about" };
+const TABS: Record<string, string> = { wall: "/wall", schedule: "/schedule", about: "/about", videos: "/videos" };
 const NAME = /^[A-Za-z0-9_]{1,40}$/;
 const api = () => process.env.API_INTERNAL_ORIGIN || "http://127.0.0.1:8080";
 
@@ -19,6 +19,7 @@ function to(request: NextRequest, path: string, status: 302 | 308, query = reque
 
 export async function proxy(request: NextRequest) {
   const segments = request.nextUrl.pathname.split("/").filter(Boolean);
+  if (["videos", "clips", "embed"].includes(segments[0])) return NextResponse.next();
   if (segments.length === 0 || STATIC.has(segments[0])) return NextResponse.next();
   const [first, ...rest] = segments;
   // Aliases: /s/{name}, /u/{name} and /@{name} are permanent; /watch/{name} goes to the live view.

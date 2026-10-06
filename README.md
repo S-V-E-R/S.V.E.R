@@ -30,6 +30,8 @@ Open http://localhost:3000. Postgres is bound only to `127.0.0.1:15432`. Develop
 
 ## Checks
 
+Install FFmpeg and ffprobe on the test machine. Module 8's integration test generates synthetic H.264/AAC segments and verifies the assembled MP4; it does not skip media validation when those tools are missing.
+
 ```powershell
 ./scripts/dev.ps1 test                      # reserved routes, login, profiles, streams, unit tests
 cd apps/api; cargo fmt --check; cargo clippy --all-targets -- -D warnings

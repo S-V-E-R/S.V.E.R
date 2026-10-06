@@ -125,6 +125,16 @@ impl Rig {
             docker(&["network", "rm", &self.name])?;
             self.network = false;
         }
+        let recordings = self.directory.join("recordings");
+        if recordings.exists() {
+            assert!(
+                recordings
+                    .canonicalize()
+                    .unwrap()
+                    .starts_with(self.directory.canonicalize().unwrap())
+            );
+            fs::remove_dir_all(recordings).map_err(|_| "Recording fixture cleanup failed")?;
+        }
         for name in ["srs.conf", "nginx.conf", "secret.conf"] {
             let file = self.directory.join(name);
             if file.exists() {
@@ -261,7 +271,7 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let secret = sec::token();
-    fs::write(rig.directory.join("srs.conf"), "listen 1935;\ndaemon off;\nsrs_log_tank console;\nsrs_log_level error;\nhttp_api { enabled on; listen 1985; }\nhttp_server { enabled on; listen 8080; dir /media; }\nvhost __defaultVhost__ {\n play { gop_cache off; }\n hls { enabled on; hls_path /media; hls_ctx off; hls_fragment 1; hls_window 6; hls_wait_keyframe on; hls_ts_file [app]/[stream]-[timestamp]-[seq].ts; }\n http_hooks { enabled on; on_publish http://hooks:8089/publish; on_unpublish http://hooks:8089/unpublish; }\n}\n").unwrap();
+    fs::write(rig.directory.join("srs.conf"), "listen 1935;\ndaemon off;\nsrs_log_tank console;\nsrs_log_level error;\nhttp_api { enabled on; listen 1985; }\nhttp_server { enabled on; listen 8080; dir /media; }\nvhost __defaultVhost__ {\n play { gop_cache off; }\n hls { enabled on; hls_path /media; hls_ctx off; hls_fragment 1; hls_window 6; hls_wait_keyframe on; hls_ts_file [app]/[stream]-[timestamp]-[seq].ts; }\n http_hooks { enabled on; on_publish http://hooks:8089/publish; on_unpublish http://hooks:8089/unpublish; on_hls http://hooks:8089/segment; }\n}\n").unwrap();
     let playback_config = fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../../../infra/media/nginx-stream-playback.conf"),
@@ -349,6 +359,8 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
     config.staff_push = Default::default();
     config.turnstile_secret = "1x000-synthetic-local-turnstile".into();
     config.turnstile_url = format!("http://{address}/synthetic/turnstile");
+    config.videos.storage = sver::media::Storage::Filesystem(rig.directory.join("recordings"));
+    config.videos.segment_base = origin.clone();
     config.streaming = Some(streams::Config {
         api_url: api.clone(),
         ingest_url: ingest.clone(),
@@ -432,9 +444,54 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
         eprintln!("Real media: reconnect is LIVE");
         assert_eq!(first["id"], second["id"]);
         assert_eq!(first["started_at"], second["started_at"]);
+        tokio::time::sleep(Duration::from_secs(4)).await;
         let rotated = e.key("rotate").await;
         resumed.rejected().await;
         wait_state(&e, "ENDED").await;
+        let vod: String = sqlx::query_scalar("SELECT id FROM videos WHERE broadcast_id=$1 AND kind='VOD'").bind(first["id"].as_str().unwrap()).fetch_one(&e.app.db).await.expect("Real SRS on_hls callbacks must record the broadcast");
+        let recording_deadline = Instant::now() + Duration::from_secs(55);
+        loop {
+            while sver::videos::worker::run_one(&e.app,true).await.unwrap() {}
+            sver::videos::worker::maintain(&e.app).await.unwrap();
+            while sver::videos::worker::run_one(&e.app,false).await.unwrap() {}
+            let page = e.call("GET", &format!("/api/videos/{vod}"),Value::Null).await;
+            if page["video"]["status"] == "READY" { break; }
+            assert!(Instant::now()<recording_deadline,"VOD did not become ready within a minute");
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        let (status,page)=chat::call(&e,"GET",&format!("/api/videos/{vod}"),None,Value::Null).await;
+        assert_eq!(status,StatusCode::OK);
+        let playback=format!("http://{address}{}",page["playback"].as_str().unwrap());
+        let manifest=e.app.http.get(&playback).send().await.unwrap().text().await.unwrap();
+        assert!(manifest.contains("#EXT-X-DISCONTINUITY"),"Reconnect marks its changed media timestamps");
+        assert!(manifest.contains("#EXT-X-ENDLIST"));
+        let output=command("ffmpeg").args(["-hide_banner","-loglevel","error","-i",&playback,"-map","0:v:0","-map","0:a:0","-f","null","-"]).stdout(Stdio::null()).spawn().unwrap();
+        let mut output=Encoder(output);
+        let deadline=Instant::now()+Duration::from_secs(30);
+        loop {
+            if let Some(status)=output.0.try_wait().unwrap() { assert!(status.success(),"Private VOD must decode across a real reconnect"); break; }
+            assert!(Instant::now()<deadline,"VOD decoding timed out");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        eprintln!("Real media: private recording ready within a minute and decoded across reconnect");
+        let cut_end=page["video"]["duration_ms"].as_i64().unwrap().min(60000);
+        let cut=e.call("POST",&format!("/api/videos/{vod}/cuts"),json!({"kind":"CLIP","title":"Reconnect moment","start_ms":0,"end_ms":cut_end,"request_id":uuid::Uuid::new_v4().to_string()})).await;
+        while sver::videos::worker::run_one(&e.app,false).await.unwrap() {}
+        let (_,clip)=chat::call(&e,"GET",&format!("/api/videos/{}",cut["id"].as_str().unwrap()),None,Value::Null).await;
+        assert_eq!(clip["video"]["status"],"READY");
+        let file=format!("http://{address}{}",clip["playback"].as_str().unwrap());
+        let mut probe=tokio::process::Command::new("ffprobe");
+        probe.args(["-v","error","-show_entries","format=duration","-of","json",&file])
+            .stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+        #[cfg(windows)]
+        probe.creation_flags(0x08000000);
+        let probe=tokio::time::timeout(Duration::from_secs(20),probe.output()).await.expect("Reconnect clip probe timed out").unwrap();
+        assert!(probe.status.success(),"Reconnect clip must be a readable MP4");
+        let probe:Value=serde_json::from_slice(&probe.stdout).unwrap();
+        let seconds:f64=probe["format"]["duration"].as_str().unwrap().parse().unwrap();
+        let expected=clip["video"]["duration_ms"].as_i64().unwrap() as f64/1000.0;
+        assert!((seconds-expected).abs()<1.0,"Reconnect MP4 timeline {seconds} differs from selected segment duration {expected}");
+        eprintln!("Real media: MP4 cut preserves the reconnect timeline");
         let mut old = Encoder::new(&format!("{ingest}/{key}")); old.rejected().await;
         let mut final_publisher = Encoder::new(&format!("{ingest}/{rotated}"));
         let third = wait_state(&e, "LIVE").await;
@@ -489,8 +546,15 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
         let origin_saved=e.app.http.get(format!("{origin}/rebuild/{saved_segment}")).send().await.unwrap();
         assert_eq!(origin_saved.status(),StatusCode::OK,"The check must prove denial before SRS deletes its rolling files");
         removal_publisher.rejected().await;
-        let (status,body)=chat::call(&e,"POST",&decision,Some(&staff),json!({"action":"remove","reason":"Synthetic valid removal"})).await;
-        assert_eq!(status,StatusCode::OK,"{body}");
+        let disconnect_deadline=Instant::now()+Duration::from_secs(30);
+        loop {
+            let (status,body)=chat::call(&e,"POST",&decision,Some(&staff),json!({"action":"remove","reason":"Synthetic valid removal"})).await;
+            if status==StatusCode::OK { break; }
+            assert_eq!(status,StatusCode::SERVICE_UNAVAILABLE,"{body}");
+            assert!(Instant::now()<disconnect_deadline,"Removal never confirmed the SRS disconnect: {body}");
+            streams::tick(&e.app).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
         let (status,outcome)=chat::call(&e,"POST","/api/take-it-down/status",None,json!({"number":receipt["number"],"email":"requester@example.invalid","turnstile_token":"synthetic"})).await;
         assert_eq!(status,StatusCode::OK);
         assert_eq!(outcome["status"],"removed");
@@ -505,7 +569,7 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
             "reconnect_publish_attempts":reconnect_attempts,
             "rotation_disconnects_and_rejects_old_key":true,"stop_confirms_disconnect_and_rejects_reconnect":true,
             "take_down_stops_publisher":true,"take_down_blocks_saved_hls_and_whep":true,"take_down_rejects_republish":true,
-            "playback_denies_when_authorization_unavailable":true,
+            "playback_denies_when_authorization_unavailable":true,"recording_callbacks":true,"recording_ready_within_one_minute":true,"recording_decodes_across_reconnect":true,"recording_mp4_reconnect_timeline":true,
             "latency_acceptance":false,"not_established":["OBS UI","browser playback","CDN","capacity","live deployment"]})
     }).await;
     abort.abort();

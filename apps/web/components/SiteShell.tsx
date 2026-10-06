@@ -19,6 +19,7 @@ export default function SiteShell({ account, alerts, actions, sidebar, children 
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  if (pathname?.startsWith("/embed/")) return <main id="main">{children}</main>;
   // The OBS board overlay is a bare, transparent browser source.
   if (pathname?.startsWith("/overlay/")) return <>{children}</>;
   const publicPage = siteLinks.some(([href]) => href === pathname);
