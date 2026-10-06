@@ -54,6 +54,7 @@ pub mod support;
 pub mod take_down;
 pub mod text;
 pub mod tiers;
+pub mod videos;
 pub mod wall;
 
 #[derive(Clone)]
@@ -83,6 +84,7 @@ pub struct Config {
     pub take_down: take_down::Config,
     pub staff_push: staff_push::Config,
     pub stripe: stripe::Config,
+    pub videos: videos::Config,
 }
 impl Config {
     pub fn from_env() -> std::result::Result<Self, String> {
@@ -151,6 +153,7 @@ impl Config {
             take_down: take_down::Config::from_env(),
             staff_push: staff_push::Config::from_env(),
             stripe: stripe::Config::from_env(production)?,
+            videos: videos::Config::from_env(production)?,
             youtube_oembed_url: "https://www.youtube.com/oembed".into(),
             soundcloud_oembed_url: "https://soundcloud.com/oembed".into(),
             thumbnail_hosts: vec!["ytimg.com".into(), "sndcdn.com".into()],
@@ -271,6 +274,7 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         req.uri().path(),
         "/api/internal/srs/publish"
             | "/api/internal/srs/unpublish"
+            | "/api/internal/srs/segment"
             | "/api/internal/streams/playback"
     );
     if media_hook {
@@ -336,6 +340,7 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
 }
 pub fn router(app: App) -> Router {
     Router::new()
+        .merge(videos::routes())
         .route(
             "/api/health",
             get(|| async { Json(json!({"status":"ok"})) }),

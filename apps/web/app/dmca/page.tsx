@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { PolicyPage } from "../../components/SitePage";
+import { CopyrightForm } from "../../components/CopyrightForm";
+import { apiGet } from "../../lib/server-api";
 
 export const metadata: Metadata = {
   title: "Copyright & DMCA | S.V.E.R",
@@ -7,7 +9,8 @@ export const metadata: Metadata = {
   alternates: { canonical: "https://sver.tv/dmca" },
 };
 
-export default function DmcaPage() {
+export default async function DmcaPage() {
+  const config = await apiGet<{ turnstile_site_key: string }>("/api/auth/config");
   return <PolicyPage path="/dmca" title="Copyright & DMCA" intro="Respecting creators’ work and handling copyright concerns." summary={[
     "Share only content you have the right to use.",
     "Copyright owners or authorized representatives can email an infringement notice.",
@@ -19,6 +22,7 @@ export default function DmcaPage() {
       <p>Identify the copyrighted work and the material on S.V.E.R, with links precise enough for us to find it. Include your signature and contact details, a good-faith statement that the use is unauthorized by the owner, their agent or the law, and a statement of accuracy and authority made under penalty of perjury.</p>
       <p>Consult the <a href="https://www.copyright.gov/512/">U.S. Copyright Office’s notice requirements</a> for the full legal requirements, including the contact information a notice must contain. Consider whether permission or a legal exception applies before sending a notice.</p>
     </> },
+    { title: "Submit a video copyright notice", content: config.data?.turnstile_site_key ? <CopyrightForm sitekey={config.data.turnstile_site_key} /> : <p>The form could not load. Please email <a href="mailto:dmca@sver.tv">dmca@sver.tv</a> with your notice.</p> },
     { title: "What happens next", content: <>
       <p>We review notices and act expeditiously on valid claims, which may include removing material or disabling access. We may request missing information and notify the uploader of the claim. A notice may be shared with the uploader, including the information necessary to understand and respond to it.</p>
       <p>S.V.E.R terminates accounts of repeat infringers in appropriate circumstances. Copyright notices must not be used to harass people or remove content you do not own.</p>

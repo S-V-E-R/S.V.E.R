@@ -230,7 +230,10 @@ async fn end(db: &mut PgConnection, owner: &str, reason: &str) -> Result<()> {
     sqlx::query("UPDATE stream_publishers SET retired_at=coalesce(retired_at,clock_timestamp()) WHERE broadcast_id IN (SELECT id FROM broadcasts WHERE owner_id=$1 AND state<>'ENDED')")
         .bind(owner).execute(&mut *db).await?;
     sqlx::query("UPDATE broadcasts SET state='ENDED',ended_at=clock_timestamp(),end_reason=$2,reconnect_deadline=NULL WHERE owner_id=$1 AND state<>'ENDED'")
-        .bind(owner).bind(reason).execute(db).await?;
+        .bind(owner).bind(reason).execute(&mut *db).await?;
+    crate::videos::ended(db, owner)
+        .await
+        .map_err(|_| Error::internal())?;
     Ok(())
 }
 /// Public security interface. Takes the account lifecycle lock in the caller's transaction.
@@ -293,6 +296,27 @@ pub async fn live_broadcast(db: &mut PgConnection, owner: &str) -> profiles::Res
             .await?,
     )
 }
+#[derive(FromRow)]
+pub struct RecordingContext {
+    pub broadcast_id: String,
+    pub owner_id: String,
+    pub title: String,
+    pub category_id: Option<String>,
+    pub category: Option<String>,
+    pub genre: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+}
+/// SRS media callbacks can resolve only an accepted publisher, including its final segments.
+pub async fn recording_context(
+    db: &mut PgConnection,
+    server: &str,
+    client: &str,
+    stream: &str,
+) -> profiles::Res<Option<RecordingContext>> {
+    Ok(sqlx::query_as("SELECT b.id AS broadcast_id,b.owner_id,s.title,s.category_id,c.name AS category,c.genre,b.started_at,b.ended_at FROM stream_publishers p JOIN broadcasts b ON b.id=p.broadcast_id JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE p.server_id=$1 AND p.client_id=$2 AND p.public_id=$3 AND (p.retired_at IS NULL OR p.retired_at>now()-interval '30 seconds') AND (b.ended_at IS NULL OR b.ended_at>now()-interval '30 seconds') ORDER BY p.retired_at NULLS FIRST LIMIT 1")
+        .bind(server).bind(client).bind(stream).fetch_optional(db).await?)
+}
 pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>> {
     let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
     settings(&mut tx, &user).await?;
@@ -347,10 +371,30 @@ pub async fn save(
     if !active {
         return Err(Error::bad("Choose an available stream category."));
     }
+    let previous: Option<String> =
+        sqlx::query_scalar("SELECT category_id FROM stream_settings WHERE owner_id=$1")
+            .bind(&user.id)
+            .fetch_one(&mut *tx)
+            .await?;
     let revision: Option<i64> = sqlx::query_scalar("UPDATE stream_settings SET title=$2,category_id=$3,revision=revision+1,updated_at=clock_timestamp() WHERE owner_id=$1 AND revision=$4 RETURNING revision")
-        .bind(&user.id).bind(title).bind(input.category_id).bind(input.revision).fetch_optional(&mut *tx).await?;
+        .bind(&user.id).bind(title).bind(&input.category_id).bind(input.revision).fetch_optional(&mut *tx).await?;
     let revision = revision
         .ok_or_else(|| conflict("This changed in another tab. Reload to see the latest."))?;
+    if previous.as_deref() != Some(&input.category_id) {
+        let label: String = sqlx::query_scalar("SELECT name FROM stream_categories WHERE id=$1")
+            .bind(&input.category_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        crate::videos::chapter(
+            &mut tx,
+            &user.id,
+            "CATEGORY",
+            Some(&revision.to_string()),
+            &label,
+        )
+        .await
+        .map_err(|_| Error::internal())?;
+    }
     tx.commit().await?;
     Ok(Json(json!({"saved":true,"revision":revision})))
 }

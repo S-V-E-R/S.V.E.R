@@ -125,6 +125,18 @@ pub async fn hold(db: &mut PgConnection, roots: &[String]) -> Res<Vec<String>> {
 }
 
 async fn purge(app: &App, keys: &[String]) -> Res<()> {
+    let urls: Vec<String> = keys
+        .iter()
+        .flat_map(|key| {
+            [
+                media_url(app, key),
+                format!("{}/api/media/{key}", app.config.origin),
+            ]
+        })
+        .collect();
+    purge_urls(app, &urls).await
+}
+pub async fn purge_urls(app: &App, urls: &[String]) -> Res<()> {
     if !app.config.production
         && matches!(app.config.media.storage, Storage::Filesystem(_))
         && app.config.take_down.purge_url.is_empty()
@@ -137,16 +149,7 @@ async fn purge(app: &App, keys: &[String]) -> Res<()> {
             "Media cache removal is not configured. Staff have been alerted.",
         ));
     }
-    for chunk in keys.chunks(25) {
-        let urls: Vec<String> = chunk
-            .iter()
-            .flat_map(|key| {
-                [
-                    media_url(app, key),
-                    format!("{}/api/media/{key}", app.config.origin),
-                ]
-            })
-            .collect();
+    for urls in urls.chunks(25) {
         let response = app
             .http
             .post(&config.purge_url)

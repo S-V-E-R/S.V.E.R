@@ -19,6 +19,7 @@ export default function SiteShell({ account, alerts, actions, sidebar, children 
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  if (pathname?.startsWith("/embed/")) return <main id="main">{children}</main>;
   const publicPage = siteLinks.some(([href]) => href === pathname);
   const footer = <SiteFooter />;
   if (!publicPage) return <><a className="skip" href="#main">Skip to content</a><Chrome actions={actions} sidebar={sidebar} footer={footer}>{children}</Chrome></>;

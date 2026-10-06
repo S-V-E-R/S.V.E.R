@@ -12,7 +12,7 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff | In progress |
 | 6 | Support | Subscriptions, Valor and tributes, channel rewards, co-streams, payouts. Live on Stripe since October 6, 2026. | Done |
 | 7 | CrowdSync | Interactive boards, Skills, polls and predictions, faction rallies | Planned |
-| 8 | VODs and clips | Past broadcasts and clipping | Planned |
+| 8 | VODs and clips | Past broadcasts, permanent Highlights, clipping and chat replay | Started |
 | 9 | Beacons | Short vertical videos that lead to live streams | Planned |
 
 Modules 1 to 5 make the site usable. After all nine: Progression (levels, XP, daily orders) and the remaining anti-abuse systems.

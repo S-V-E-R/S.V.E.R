@@ -175,7 +175,7 @@ pub fn network(ip: IpAddr) -> String {
     }
 }
 /// Keyed hash, re-keyed every 30 days so it can't be reversed or linked across months.
-fn keyed(app: &App, label: &str, value: &str) -> String {
+pub fn keyed(app: &App, label: &str, value: &str) -> String {
     let epoch = Utc::now().timestamp().div_euclid(30 * 86_400);
     let mut mac =
         Hmac::<Sha256>::new_from_slice(&app.config.key).expect("HMAC accepts any key length");

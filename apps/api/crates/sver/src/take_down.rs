@@ -194,6 +194,16 @@ async fn locate(
     location: &str,
 ) -> Res<(Vec<String>, Option<safety::take_down::Located>)> {
     let url = parse_location(app, location)?;
+    let path: Vec<_> = url.path().trim_matches('/').split('/').collect();
+    if path.len() == 2 && matches!(path[0], "videos" | "clips") {
+        if let Ok(video) = crate::videos::load(db, path[1]).await {
+            let target =
+                safety::take_down::locate(db, &video.kind.to_ascii_lowercase(), &video.id, None)
+                    .await?;
+            return Ok((vec![], target));
+        }
+        return Ok((vec![], None));
+    }
     let media_base = format!("{}/", app.config.media.public_base.trim_end_matches('/'));
     let key = location
         .strip_prefix(&media_base)
@@ -229,6 +239,9 @@ async fn locate(
         "setup_photo",
         "chat_message",
         "live_stream",
+        "vod",
+        "highlight",
+        "clip",
     ]
     .contains(&kind)
     {
@@ -277,6 +290,10 @@ async fn attach(
         let (media, target) = locate(app, db, location).await?;
         roots.extend(media);
         if let Some(target) = target {
+            if crate::videos::review::is_video(&target.kind) {
+                crate::videos::review::hold(db, &target.id, "TAKE_DOWN", &id.to_string(), true)
+                    .await?;
+            }
             let previous: Option<String> = sqlx::query_scalar("SELECT t.snapshot FROM take_down_targets t JOIN take_down_requests r ON r.id=t.request_id WHERE t.kind=$1 AND t.target_id=$2 AND r.status<>'not_removed' ORDER BY t.request_id LIMIT 1")
                 .bind(&target.kind).bind(&target.id).fetch_optional(&mut *db).await?;
             let snapshot = match previous {
@@ -547,6 +564,8 @@ async fn decide(
         for (kind, target, _) in &targets {
             if kind == "live_stream" {
                 safety::take_down::remove(&mut tx, kind, target).await?;
+            } else if crate::videos::review::is_video(kind) {
+                crate::videos::review::remove(&mut tx, target, true, true).await?;
             }
         }
         sqlx::query("UPDATE take_down_requests SET status='under_review' WHERE id=$1")
@@ -554,6 +573,17 @@ async fn decide(
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        // The removal worker does storage work. Staff can close only after every descendant's
+        // objects and cache have actually gone; a retry never reports a queued delete as done.
+        for (kind, target, _) in &targets {
+            if crate::videos::review::is_video(kind)
+                && !crate::videos::review::removed(&mut *app.db.acquire().await?, target).await?
+            {
+                return Err(Fail::unavailable(
+                    "Video removal is processing. Keep this request open and retry shortly.",
+                ));
+            }
+        }
         for root in &roots {
             media::removal::quarantine(&app, root).await?;
         }
@@ -659,6 +689,7 @@ async fn restore_request(app: &App, id: i64) -> Res<()> {
     let Some((number, sealed, received)) = row else {
         return Ok(());
     };
+    crate::videos::review::release(&mut tx, "TAKE_DOWN", &[id.to_string()]).await?;
     let targets: Vec<(String,String,String)> = sqlx::query_as("SELECT t.kind,t.target_id,t.snapshot FROM take_down_targets t WHERE t.request_id=$1 AND NOT EXISTS(SELECT 1 FROM take_down_targets other JOIN take_down_requests r ON r.id=other.request_id WHERE other.kind=t.kind AND other.target_id=t.target_id AND r.status<>'not_removed')")
         .bind(id).fetch_all(&mut *tx).await?;
     for (kind, target, snapshot) in targets {

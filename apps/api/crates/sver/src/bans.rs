@@ -30,6 +30,8 @@ fn allowed_while_banned(path: &str) -> bool {
     path.starts_with("/api/auth/")
         || path == "/api/take-it-down"
         || path == "/api/take-it-down/status"
+        || path == "/api/copyright"
+        || (path.starts_with("/api/me/copyright/")&&path.ends_with("/counter"))
         || path.starts_with("/api/me/strikes/")
         || path.starts_with("/api/me/bans/")
         || path == "/api/me/reports/seen"

@@ -63,6 +63,9 @@ pub async fn tick(app: &App) -> Result<()> {
         eprintln!("alerts_event=fan_out outcome=retry");
     }
     deliver_mail(app).await?;
+    if crate::videos::copyright::tick(app).await.is_err() {
+        eprintln!("copyright_event=maintenance outcome=retry");
+    }
     if crate::alerts::deliver(app).await.is_err() {
         eprintln!("alerts_event=push outcome=retry");
     }
@@ -93,6 +96,7 @@ pub async fn tick(app: &App) -> Result<()> {
             .await?;
     for id in expired {
         crate::take_down::notice_result(&mut tx, &id, "expired", false).await?;
+        crate::videos::copyright::mail_result(&mut tx, &id, "expired").await?;
     }
     tx.commit().await?;
     for table in [
@@ -143,6 +147,7 @@ async fn deliver_mail(app: &App) -> Result<()> {
             "retrying"
         };
         crate::take_down::notice_result(&mut tx, &mail.id, state, true).await?;
+        crate::videos::copyright::mail_result(&mut tx, &mail.id, state).await?;
         if delivered {
             sqlx::query("DELETE FROM mail_jobs WHERE id=$1")
                 .bind(mail.id)

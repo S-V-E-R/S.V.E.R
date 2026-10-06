@@ -5,6 +5,8 @@ import { send, useLoad } from "../lib/client-api";
 import { ReportButton, TakeDownLink } from "./Report";
 import { Turnstile } from "./Turnstile";
 import { UpNext } from "./UpNext";
+import { RecordedPlayer } from "./RecordedPlayer";
+import { LiveVideoTools } from "./LiveVideoTools";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string } };
@@ -78,6 +80,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const [live, setLive] = useState<Live | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [attempt, setAttempt] = useState(0);
+  const [rewind, setRewind] = useState<string | null>(null);
   const video = useRef<HTMLVideoElement>(null);
   // Guests pass a security check once per session before they count (viewer integrity).
   const [sitekey, setSitekey] = useState<string | null>(null);
@@ -148,7 +151,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   // Start (or restart, on `attempt`) playback for the current broadcast; the cleanup stops the retired transport.
   useEffect(() => {
     const element = video.current;
-    if (!broadcast || !element || (!webrtc && !hls)) return;
+    if (rewind || !broadcast || !element || (!webrtc && !hls)) return;
     let stop: (() => void) | null = null;
     let cancelled = false;
     const fail = () => { if (!cancelled) setPhase("reconnecting"); };
@@ -173,7 +176,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       if (!cancelled) setPhase("failed");
     })();
     return () => { cancelled = true; stop?.(); };
-  }, [broadcast, webrtc, hls, preferred, attempt]);
+  }, [broadcast, webrtc, hls, preferred, attempt, rewind]);
 
   // Retry a dropped transport a few seconds later; the broadcast's 60-second reconnect grace keeps it live meanwhile.
   useEffect(() => {
@@ -212,10 +215,11 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
   return <div className={focused ? "live-player focused" : "live-player"}>
-    <video ref={video} controls playsInline muted={muted} onVolumeChange={onUnmute ? event => { if (!event.currentTarget.muted) onUnmute(); } : undefined} aria-label={`${live.title}, live`} />
-    {status && <p className="player-status" role="status">{status}</p>}
-    {phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
-    {phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
+    {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={onUnmute ? event => { if (!event.currentTarget.muted) onUnmute(); } : undefined} aria-label={`${live.title}, live`} />}
+    {!rewind && status && <p className="player-status" role="status">{status}</p>}
+    {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
+    {!rewind && phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
+    <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} />}
     {counting && <div className="raid-countdown" role="status">
       {isOwner ? <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s <button type="button" className="small quiet" onClick={() => void send("DELETE", "/api/me/raids").then(r => { if (r.ok) setPushed(null); })}>Cancel raid</button></>

@@ -307,15 +307,8 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
     let Some((slow, links, words)) = settings else {
         return Ok(());
     };
-    // Banned words have no role exemption.
-    let folded = fold(body);
-    if words.iter().any(|w| folded.contains(w.as_str())) {
-        return Err(Fail::bad("That message isn't allowed in this chat."));
-    }
     let exempt = role_of(app, channel, user).await?.is_some();
-    if links && !exempt && has_link(body) {
-        return Err(Fail::bad("Links aren't allowed in this chat."));
-    }
+    check_content(body, &words, links, exempt)?;
     if slow > 0 && !exempt {
         sec::reserve(
             app,
@@ -335,6 +328,40 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
 pub async fn banned(app: &App, channel: &str, user: &str) -> Res<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND kind='ban')")
         .bind(channel).bind(user).fetch_one(&app.db).await?)
+}
+/// Clip titles share chat's ban/timeout, banned-word and link checks, without consuming a
+/// chat slow-mode turn or inheriting subscribers-only chat as a separate clipping permission.
+pub async fn check_clip(app: &App, channel: &str, user: &auth::User, title: &str) -> Res<()> {
+    let restricted:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND (kind='ban' OR until>now()))").bind(channel).bind(&user.id).fetch_one(&app.db).await?;
+    if restricted {
+        return Err(Fail::denied(
+            "You can't clip while banned or timed out on this channel.",
+        ));
+    }
+    let settings: Option<(bool, Vec<String>)> =
+        sqlx::query_as("SELECT block_links,banned_words FROM chat_settings WHERE channel_id=$1")
+            .bind(channel)
+            .fetch_optional(&app.db)
+            .await?;
+    if let Some((links, words)) = settings {
+        check_content(
+            title,
+            &words,
+            links,
+            role_of(app, channel, user).await?.is_some(),
+        )?;
+    }
+    Ok(())
+}
+fn check_content(body: &str, words: &[String], links: bool, exempt: bool) -> Res<()> {
+    let folded = fold(body);
+    if words.iter().any(|word| folded.contains(word)) {
+        return Err(Fail::bad("That message isn't allowed in this chat."));
+    }
+    if links && !exempt && has_link(body) {
+        return Err(Fail::bad("Links aren't allowed in this chat."));
+    }
+    Ok(())
 }
 
 pub async fn view(

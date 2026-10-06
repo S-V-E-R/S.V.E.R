@@ -62,6 +62,29 @@ async fn main() -> Result<(), String> {
         }
     });
     let media_jobs = app.clone();
+    if app.config.videos.storage.available() {
+        // Segment archival cannot wait behind a long MP4 download or retention sweep.
+        for segments in [true, false] {
+            let videos = app.clone();
+            tokio::spawn(async move {
+                loop {
+                    match sver::videos::worker::run_one(&videos, segments).await {
+                        Ok(true) => {}
+                        _ => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+                    }
+                }
+            });
+        }
+        let videos = app.clone();
+        tokio::spawn(async move {
+            loop {
+                if sver::videos::worker::maintain(&videos).await.is_err() {
+                    eprintln!("video_event=maintenance outcome=retry");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+    }
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

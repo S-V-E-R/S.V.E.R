@@ -1,0 +1,8 @@
+{
+  "clips_per_viewer_hour": 10,
+  "clips_per_channel_hour": 60,
+  "queued_segment_bytes": 268435456,
+  "clip_watch_seconds": 3.0,
+  "beats_per_viewer_minute": 60,
+  "beats_per_ip_minute": 600
+}

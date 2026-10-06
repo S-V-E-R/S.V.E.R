@@ -179,3 +179,9 @@ The dedicated game channel adds a framed Play together panel below its streamer 
 These routes have no dedicated mockup. They reuse the channel header, plain content panels, Creator Studio navigation, existing live player and chat patterns. Only the guild header uses corner brackets. The viewer's theme stays in place across a cross-faction guild; each member keeps their own crest. Guild emblems appear at 18 px after the faction crest in chat, with an accessible tag label and a text fallback.
 
 The squad page uses a two-column stream grid and a 340 px chat column on wide screens. Chat follows the players on smaller screens, and players stack on phones. Each stream has a labeled audio button; selecting it mutes every other stream. Guild management uses native forms and disclosure controls. Screenshots from `scripts/check-teams.cjs` cover desktop and phone layouts, plus overflow checks at 320 px.
+
+### Recordings and clips
+
+VODs, Highlights and clips reuse the site shell, 16:9 player, plain action buttons and chat-column layout. Chapters are keyboard-reachable timestamp buttons beneath the player. On phones, playback and actions precede chat replay; the clip editor uses labeled native range inputs. Recording management and copyright cases reuse Creator Studio and staff-console panels. These pages have no dedicated mockups.
+
+The channel Videos tab groups Highlights, Past broadcasts and Clips. The homepage Latest clips shelf uses real public clip thumbnails and duration labels in the approved position; empty libraries show a short explanation. Private signed thumbnails bypass the public image optimizer. Copyright notices extend the existing legal-page layout and form patterns.

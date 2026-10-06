@@ -8,6 +8,8 @@ import { apiGet } from "../lib/server-api";
 import { crestSrc, factionOf, FACTIONS } from "../lib/factions";
 import { currentAccount } from "./session";
 import "../styles/home.css";
+import { VideoGrid } from "../components/VideoGrid";
+import type { VideoCard } from "../lib/videos";
 
 type Spotlight = { kind: "staff" | "first_stream" | "returning"; reason: string; stream: LiveCard | null; user?: { username: string; display_name: string } };
 type Home = { live: LiveCard[]; following: LiveCard[]; faction: LiveCard[] | null; fresh: LiveCard[]; spotlights: Spotlight[]; recent: Recent[] };
@@ -19,6 +21,7 @@ type Home = { live: LiveCard[]; following: LiveCard[]; faction: LiveCard[] | nul
 export default async function Home() {
   const account = await currentAccount();
   const home = (await apiGet<Home>("/api/discovery/home")).data;
+  const clips = (await apiGet<{ clips: VideoCard[] }>("/api/clips/latest")).data?.clips ?? [];
   const mine = factionOf(account?.faction);
   const viewerFaction = account?.faction ?? null;
   const live = home?.live ?? [];
@@ -79,5 +82,6 @@ export default async function Home() {
       <SectionHead id="new-h" title="Just went live" note="Fresh streams get a head start." />
       <StreamGrid streams={home!.fresh} viewerFaction={viewerFaction} />
     </section>}
+    {clips.length > 0 && <section aria-labelledby="clips-h" className="home-section"><SectionHead id="clips-h" title="Latest clips" note="Moments worth sharing" /><VideoGrid items={clips} /></section>}
   </div>;
 }

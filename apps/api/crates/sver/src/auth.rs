@@ -34,6 +34,11 @@ pub struct Session {
     pub authenticated_at: DateTime<Utc>,
     pub mfa_verified: bool,
 }
+/// Age gate for restricted playback; a missing birth date never passes.
+pub async fn is_adult(db: &mut PgConnection, user: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT coalesce(date_of_birth<=current_date-interval '18 years',false) FROM users WHERE id=$1")
+        .bind(user).fetch_optional(db).await?.unwrap_or(false))
+}
 #[derive(FromRow)]
 pub struct Challenge {
     pub user_id: String,

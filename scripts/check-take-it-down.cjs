@@ -30,6 +30,13 @@ const turnstile = compile("apps/web/components/Turnstile.tsx", {
   "next/script": function Script({ onReady }) { React.useEffect(onReady, []); return null; },
 });
 const client = compile("apps/web/lib/client-api.ts");
+dom.window.HTMLMediaElement.prototype.load = () => {};
+const recordings = compile("apps/web/components/RecordedPlayer.tsx", {
+  "../lib/client-api": client,
+  "../lib/videos": { duration: ms => String(ms) },
+  "./Turnstile": turnstile,
+  "../styles/videos.css": {},
+});
 const { default: Forms } = compile("apps/web/app/take-it-down/request-forms.tsx", { "../../lib/client-api": client, "../../components/Turnstile": turnstile });
 const calls = [];
 let fail = true;
@@ -94,18 +101,25 @@ async function submit(node) { await act(async () => node.dispatchEvent(new Event
     const { default: Queue } = compile("apps/web/app/admin/take-it-down/page.tsx", {
       "../../../lib/client-api": client,
       "../../../components/StaffRemovalAlerts": { EnableStaffPush: () => null },
+      "../../../components/RecordedPlayer": recordings,
     });
     const now = new Date().toISOString();
     const item = { number: "TID-2026-000123", status: "under_review", received_at: now, deadline: now, resolved_at: null, reason: "", media_pending: 0, target_count: 1 };
     let detail = { number: item.number, minor: true, preservation_reference: "Synthetic preservation reference", details: { name: "Synthetic Requester", email: "synthetic@example.invalid", capacity: "shown", authority: "", locations: [], description: "", extra: "", signature: "Synthetic Requester", signed_on: "2026-10-04", good_faith: true }, events: [{ at: now, action: "under_review", actor: "synthetic-staff", detail: "<script>not executable</script>" }], targets: [{kind:"profile",id:"synthetic"}], evidence: [], notices: [{ audience: "requester", channel: "email", state: "expired", queued_at: now, last_attempt_at: null, attempts: 0, accepted_at: null }] };
     const staffCalls = [];
+    detail.targets.push({kind:"clip",id:"synthetic-clip"});
     global.fetch = async (url, options) => {
       staffCalls.push({url,method:options.method,body:options.body && JSON.parse(options.body)});
+      if (url.endsWith("/review")) return { ok:false, status:503, json:async()=>({error:"Synthetic playback unavailable"}) };
       return { ok: true, status: 200, json: async () => options.method === "POST" ? {saved:true} : url.endsWith(item.number) ? detail : {requests:[item],monthly:{received:1,removed:0,overdue:0,median_hours:null,longest_hours:null}} };
     };
     await act(async () => root.render(React.createElement(Queue)));
     const button = text => [...document.querySelectorAll("button")].find(node => node.textContent === text);
     await act(async () => button(`Review ${item.number}`).click());
+    assert.equal(staffCalls.some(call=>call.url.endsWith("/review")),false,"Recording evidence is never fetched just by opening the case");
+    await act(async () => button("Review recording evidence").click());
+    assert.equal(staffCalls.filter(call=>call.url.endsWith("/review")).length,1,"Staff explicitly open evidence before playback authorization");
+    await act(async () => button("Close recording evidence").click());
     assert.equal(document.querySelector('input[name="minor"]').checked,true);
     assert.equal(document.querySelector('input[name="minor"]').disabled,true);
     assert.equal(document.querySelector('input[name="preservation_reference"]').value,"Synthetic preservation reference");
@@ -144,6 +158,19 @@ async function submit(node) { await act(async () => node.dispatchEvent(new Event
     assert.equal(rerun[0].body.reason, "Synthetic dismissal");
     assert.equal(document.querySelector('input[name="secret"]'), null, "step-up prompt closes");
     await act(async () => promptRoot.unmount());
+    // Clips shorter than the periodic heartbeat interval still report start and finish.
+    const beats=[];
+    global.fetch=async(url,options)=>{
+      if(options.method==="POST") beats.push(JSON.parse(options.body));
+      return {ok:true,status:200,json:async()=>options.method==="POST"?{needs_turnstile:false}:{video:{kind:"CLIP"},playback:"/synthetic.mp4",thumbnail:null}};
+    };
+    await act(async()=>root.render(React.createElement(recordings.RecordedPlayer,{id:"synthetic-clip"})));
+    const video=document.querySelector("video");
+    Object.defineProperty(video,"readyState",{value:2});
+    await act(async()=>video.dispatchEvent(new Event("playing")));
+    video.currentTime=5;
+    await act(async()=>video.dispatchEvent(new Event("ended")));
+    assert.deepEqual(beats.map(b=>b.media_time),[0,5],"Short playback reports real boundary positions");
     console.log("Take It Down form checks passed: anonymous required fields, location prefill, independent challenges, error recovery, receipt and private status lookup.");
     console.log("Staff removal checks passed: saved minor flag and preservation reference, safe audit text, notice failures and refreshed provider acceptance.");
   } finally {

@@ -60,6 +60,8 @@ mod subs;
 mod support;
 #[path = "streams/teams.rs"]
 mod teams;
+#[path = "streams/videos.rs"]
+mod videos;
 
 #[derive(Default)]
 struct Media {

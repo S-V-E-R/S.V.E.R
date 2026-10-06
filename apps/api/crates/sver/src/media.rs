@@ -32,6 +32,8 @@ use std::{io::Cursor, path::PathBuf};
 pub const UPLOAD_LIMIT: usize = 11 * 1024 * 1024;
 #[path = "media_removal.rs"]
 pub mod removal;
+#[path = "media_stream.rs"]
+pub mod streaming;
 
 #[derive(Clone, Debug)]
 pub struct S3 {
@@ -168,7 +170,27 @@ impl S3 {
         key: &str,
         body: &[u8],
     ) -> Result<reqwest::RequestBuilder, Fail> {
-        let url = url::Url::parse(&self.object_url(key)).map_err(|_| Fail::internal())?;
+        self.request_query(http, method, key, body, &[])
+    }
+    fn request_query(
+        &self,
+        http: &reqwest::Client,
+        method: reqwest::Method,
+        key: &str,
+        body: &[u8],
+        query: &[(&str, String)],
+    ) -> Res<reqwest::RequestBuilder> {
+        let mut url = url::Url::parse(&self.object_url(key)).map_err(|_| Fail::internal())?;
+        if !query.is_empty() {
+            let mut query = query.to_vec();
+            query.sort();
+            let encoded = query
+                .iter()
+                .map(|(k, v)| format!("{}={}", aws_encode(k), aws_encode(v)))
+                .collect::<Vec<_>>()
+                .join("&");
+            url.set_query(Some(&encoded));
+        }
         let host = match url.port() {
             Some(port) => format!("{}:{port}", url.host_str().unwrap_or_default()),
             None => url.host_str().unwrap_or_default().to_string(),
@@ -178,9 +200,10 @@ impl S3 {
         let date = now.format("%Y%m%d").to_string();
         let payload = hex(&Sha256::digest(body));
         let canonical = format!(
-            "{}\n{}\n\nhost:{host}\nx-amz-content-sha256:{payload}\nx-amz-date:{amz_date}\n\nhost;x-amz-content-sha256;x-amz-date\n{payload}",
+            "{}\n{}\n{}\nhost:{host}\nx-amz-content-sha256:{payload}\nx-amz-date:{amz_date}\n\nhost;x-amz-content-sha256;x-amz-date\n{payload}",
             method.as_str(),
-            url.path()
+            url.path(),
+            url.query().unwrap_or("")
         );
         let scope = format!("{date}/{}/s3/aws4_request", self.region);
         let to_sign = format!(
@@ -199,11 +222,41 @@ impl S3 {
             .header("authorization", format!("AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature={signature}", self.access_key)))
     }
 }
+fn aws_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
 impl Storage {
     pub fn available(&self) -> bool {
         !matches!(self, Storage::Disabled)
     }
     pub async fn put(&self, http: &reqwest::Client, key: &str, bytes: Vec<u8>) -> Res<()> {
+        self.put_typed(
+            http,
+            key,
+            bytes,
+            "image/webp",
+            "public, max-age=31536000, immutable",
+        )
+        .await
+    }
+    /// Recordings use a separate private store and must never inherit public image caching.
+    pub async fn put_typed(
+        &self,
+        http: &reqwest::Client,
+        key: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+        cache_control: &str,
+    ) -> Res<()> {
         if !valid_key(key) {
             return Err(Fail::internal());
         }
@@ -220,8 +273,8 @@ impl Storage {
             Storage::S3(s3) => {
                 let ok = s3
                     .request(http, reqwest::Method::PUT, key, &bytes)?
-                    .header("content-type", "image/webp")
-                    .header("cache-control", "public, max-age=31536000, immutable")
+                    .header("content-type", content_type)
+                    .header("cache-control", cache_control)
                     .body(bytes)
                     .send()
                     .await
@@ -266,10 +319,11 @@ impl Storage {
     /// Stored byte length, or None when the object doesn't exist.
     pub async fn head(&self, http: &reqwest::Client, key: &str) -> Res<Option<u64>> {
         match self {
-            Storage::Filesystem(dir) => Ok(tokio::fs::metadata(dir.join(key))
-                .await
-                .ok()
-                .map(|m| m.len())),
+            Storage::Filesystem(dir) => match tokio::fs::metadata(dir.join(key)).await {
+                Ok(metadata) => Ok(Some(metadata.len())),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(_) => Err(Fail::unavailable("Media storage is unavailable.")),
+            },
             Storage::S3(s3) => {
                 let response = s3
                     .request(http, reqwest::Method::HEAD, key, b"")?
@@ -279,11 +333,16 @@ impl Storage {
                 if response.status() == StatusCode::NOT_FOUND {
                     return Ok(None);
                 }
-                Ok(response
+                if !response.status().is_success() {
+                    return Err(Fail::unavailable("Media storage is unavailable."));
+                }
+                response
                     .headers()
                     .get("content-length")
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse().ok()))
+                    .and_then(|v| v.parse().ok())
+                    .map(Some)
+                    .ok_or_else(|| Fail::unavailable("Invalid media storage response."))
             }
             Storage::Disabled => Ok(None),
         }

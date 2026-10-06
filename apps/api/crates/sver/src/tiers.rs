@@ -127,6 +127,7 @@ pub async fn check(db: &mut PgConnection, owner: &str) -> Res<i16> {
         ON CONFLICT(user_id) DO UPDATE SET tier=greatest(creator_tiers.tier,EXCLUDED.tier),
             promoted_at=CASE WHEN EXCLUDED.tier>creator_tiers.tier THEN now() ELSE creator_tiers.promoted_at END, checked_at=now()")
         .bind(owner).bind(target).execute(&mut *db).await?;
+    crate::videos::extend_retention(db, owner, target).await?;
     Ok(target)
 }
 

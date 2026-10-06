@@ -1,0 +1,10 @@
+# Add this override only when the private recording bucket is ready.
+services:
+  api:
+    env_file:
+      - ${SVER_VOD_ENV:?Set the absolute external recording environment path}
+    environment:
+      VOD_STORAGE: s3
+      VOD_TUNING_FILE: /run/sver/vods-tuning.json
+    volumes:
+      - ${SVER_VOD_TUNING_FILE:?Set the absolute external recording tuning path}:/run/sver/vods-tuning.json:ro

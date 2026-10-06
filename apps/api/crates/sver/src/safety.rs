@@ -51,6 +51,9 @@ pub const FIELDS: &[&str] = &[
     "header",
 ];
 const TARGETS: &[&str] = &[
+    "vod",
+    "highlight",
+    "clip",
     "guild",
     "guild_emblem",
     "faction_post",
@@ -196,6 +199,7 @@ async fn target(
     reporter: &str,
 ) -> Res<Target> {
     let row: Option<(String, String, Value)> = match kind {
+        "vod"|"highlight"|"clip"=>crate::videos::review::target(db,kind,id).await?,
         "guild" | "guild_emblem" => crate::guilds::target(db,id,reporter,kind=="guild_emblem").await?,
         "faction_post" => crate::factions::target(db,id,reporter).await?,
         "emote" => crate::emotes::target(db, id).await?,
@@ -251,6 +255,10 @@ pub async fn report(
     if text::count(&note) > 500 {
         return Err(Fail::field("note", "Notes can be up to 500 characters."));
     }
+    if crate::videos::review::is_video(&input.target_type) {
+        let video = crate::videos::load(&mut tx, &input.target_id).await?;
+        crate::videos::accessible(&app, &video, Some(&user), true).await?;
+    }
     let target = target(
         &mut tx,
         &input.target_type,
@@ -269,7 +277,7 @@ pub async fn report(
         None
     };
     // A repeat report on the same open target only updates the note.
-    sqlx::query("INSERT INTO reports(id,reporter_id,target_type,target_id,target_user_id,target_username,field,reason,note,snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (reporter_id,target_type,target_id) WHERE status='OPEN' DO UPDATE SET note=EXCLUDED.note")
+    let report:String=sqlx::query_scalar("INSERT INTO reports(id,reporter_id,target_type,target_id,target_user_id,target_username,field,reason,note,snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (reporter_id,target_type,target_id) WHERE status='OPEN' DO UPDATE SET note=EXCLUDED.note RETURNING id")
         .bind(new_id())
         .bind(&user.id)
         .bind(&input.target_type)
@@ -280,8 +288,11 @@ pub async fn report(
         .bind(&input.reason)
         .bind(&note)
         .bind(&target.snapshot)
-        .execute(&mut *tx)
+        .fetch_one(&mut *tx)
         .await?;
+    if crate::videos::review::is_video(&input.target_type) {
+        crate::videos::review::hold(&mut tx, &target.target_id, "REPORT", &report, false).await?;
+    }
     tx.commit().await?;
     log("report_filed", "ok");
     Ok(Json(json!({"message": "Thanks. We'll review this."})))
@@ -864,6 +875,9 @@ async fn reset_field(
 }
 /// Hides a wall post, reply or fan art item; returns the reference used to restore it on overturn.
 async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Value> {
+    if crate::videos::review::is_video(kind) {
+        return crate::videos::review::remove(db, id, false, false).await;
+    }
     if matches!(kind, "guild" | "guild_emblem") {
         return crate::guilds::remove(db, id, kind == "guild_emblem").await;
     }
@@ -943,6 +957,7 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
 }
 async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
     let owner: Option<String> = match kind {
+        "vod" | "highlight" | "clip" => crate::videos::review::owner(db, id).await?,
         "guild" | "guild_emblem" => crate::guilds::owner(db, id).await?,
         "faction_post" => crate::factions::owner(db, id).await?,
         "emote" => crate::emotes::owner(db, id).await?,
@@ -1010,6 +1025,7 @@ async fn current_content(
     field: Option<&str>,
 ) -> Res<Value> {
     Ok(match kind {
+        "vod"|"highlight"|"clip"=>crate::videos::review::snapshot(db,id).await?,
         "guild" | "guild_emblem" => crate::guilds::snapshot(db, id).await?,
         "emote" => crate::emotes::current(db, id).await?,
         "profile" => match profile_snapshot(db, id, field).await {
@@ -1185,6 +1201,9 @@ pub async fn admin_action(
         strike_id = Some(sid);
     }
     let actioned = input.action != "dismiss";
+    if crate::videos::review::is_video(&kind) {
+        crate::videos::review::release(&mut tx, "REPORT", &report_ids).await?;
+    }
     if kind == "emote" && matches!(input.action.as_str(), "dismiss" | "remove_content") {
         crate::emotes::reviewed(&mut tx, &id).await?;
     }
