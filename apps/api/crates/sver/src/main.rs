@@ -61,6 +61,16 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         }
     });
+    // Board webhooks have their own loop, so a slow endpoint never holds up stream maintenance.
+    let outbox = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::boards::deliver_due(&outbox).await.is_err() {
+                eprintln!("boards_event=outbox outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    });
     let media_jobs = app.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));

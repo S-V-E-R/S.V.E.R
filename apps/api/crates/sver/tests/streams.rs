@@ -22,6 +22,8 @@ use tower::ServiceExt;
 mod alerts;
 #[path = "streams/bans.rs"]
 mod bans;
+#[path = "streams/boards.rs"]
+mod boards;
 #[path = "streams/chat.rs"]
 mod chat;
 #[path = "streams/chat_social.rs"]
@@ -73,6 +75,22 @@ struct Media {
     account: Value,
     /// What GET /v1/checkout/sessions/{id} returns.
     session: Value,
+    /// Board webhooks received: (signature header, body); `hook_fail` answers 500.
+    hooks: Vec<(String, String)>,
+    hook_fail: bool,
+}
+async fn board_hook(
+    State(fake): State<Fake>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> StatusCode {
+    let mut m = fake.lock().unwrap();
+    if m.hook_fail {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    let signature = headers["sver-signature"].to_str().unwrap().to_string();
+    m.hooks.push((signature, body));
+    StatusCode::NO_CONTENT
 }
 type Fake = Arc<Mutex<Media>>;
 async fn versions(State(fake): State<Fake>) -> (StatusCode, Json<Value>) {
@@ -354,6 +372,7 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/payouts", post(stripe))
         .route("/v1/subscriptions/{id}", get(stripe).post(stripe))
         .route("/v1/accounts/{id}/login_links", post(stripe))
+        .route("/hook", post(board_hook))
         .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -421,6 +440,7 @@ async fn exercise(e: &Env) {
     support::exercise(e).await;
     subs::exercise(e).await;
     engagement::exercise(e).await;
+    boards::exercise(e).await;
     rest::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;

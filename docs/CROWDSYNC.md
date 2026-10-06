@@ -1,6 +1,6 @@
 # Module 7: CrowdSync
 
-Scoped October 3, 2026 by Joe. Builds after Module 6 (Support), which brings the Engagement Valor that board presses spend. Not started.
+Scoped October 3, 2026 by Joe. Builds after Module 6 (Support), which brings the Engagement Valor that board presses spend. **Status: phase 1 (Boards) built October 6, 2026; see "Implementation status". Skills, polls and predictions, rallies, Surge, counters, the OBS bridge and the Game SDK follow.**
 
 CrowdSync is how viewers change what happens on stream. It brings back the idea of interactive boards and Skills from an earlier platform, rebuilt from the legacy CrowdSync design (whose in-page board worked) without its flaws: game and bridge access to server internals, no protection against bots, no account for video delay, and money that could buy attention.
 
@@ -80,6 +80,21 @@ Decided October 3, 2026: Surge comes back driven by **participation, not money**
 - Games connect only through a scoped, token-authenticated WebSocket gateway on S.V.E.R. They never connect to S.V.E.R's database, Redis or internal services.
 - First SDKs: JavaScript/TypeScript, Unity (C#) and Unreal (C++), with an example game. Other languages follow on request.
 - S.V.E.R Plays can move its votes onto a CrowdSync board once the SDK exists.
+
+## Implementation status
+
+Phase 1, Boards (October 6, 2026; migration 0034, `boards.rs`, `tests/streams/boards.rs`):
+
+- **Studio → Board:** four templates (Hype buttons, Community goal, Shout-outs, Arcade), a builder of up to 4 screens × 24 controls on a 4-column grid, drafts, test mode and a publish checklist. Publishing makes a new version and starts goals over; editing never changes the live board.
+- **Controls:** button, label, text input (1–200 characters, through the channel's banned-word and link rules), goal (each press adds its cost, or 1 when free; it closes when full) and joystick (free, relayed live, not stored). Each has a cost in Engagement Valor (0–100,000), a per-viewer cooldown (up to an hour), an optional per-stream limit (counted across everyone), an audience (everyone signed in, followers, subscribers, moderators) and an effect from the library: confetti, hearts, fireworks, stars, rain, shake, spotlight.
+- **Who can press:** a verified account with a Counted or Trusted playback lease on the channel's live broadcast. Guests, unverified accounts, excluded sessions, banned or timed-out viewers, viewers blocked from the board and blocked users can't. The owner uses test mode.
+- **Reliability:** a press (idempotent by its client ID), its Engagement Valor charge, goal progress and webhook delivery are written in one transaction, under a per-control lock, so a crash never charges without a press.
+- **Rate limits:** 10 presses per 10 seconds per account and 50 per network; joystick moves 10 a second per account and 50 per network.
+- **Effects:** sent over the existing chat socket with the stream time. Each player waits for its own delay before drawing them (about 0.5 seconds on WebRTC; the distance from the live edge plus 2 seconds on HLS). Captions always show; animations respect reduced motion and the viewer's "Reduce effects" toggle.
+- **OBS overlay:** a private browser-source URL (`/overlay/<token>`, only the token's digest is stored, and a new URL replaces the old). While it is connected (checked in within 30 seconds), effects appear only in the video, never also over the player. Test-mode effects reach it too.
+- **Webhooks:** the streamer's HTTPS endpoint receives `board.press` events signed like Stripe's (`SVER-Signature: t=…,v1=HMAC-SHA256("t.body")`; the secret is shown once). Delivery goes through the Postgres outbox on its own worker loop. It checks every resolved address and refuses private, loopback, link-local, CGNAT, benchmark, documentation, multicast and NAT64 ranges, then connects to the address it checked (no re-resolution and no redirects). It retries with doubling backoff up to 8 attempts.
+- **Running the board:** the owner, staff and (when allowed) channel moderators can pause all effects (panic) and block viewers from the board; each action is in the channel moderation log.
+- **Not yet:** effect sounds and streamer-uploaded effects come with Skills (they need the emote-style review); the OBS scene bridge and the Game SDK are later phases. Effects sync to an estimated player delay; exact sync to the HLS program date-time is a later refinement if measurements call for it.
 
 ## Not in this module
 
