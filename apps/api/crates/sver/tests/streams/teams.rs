@@ -638,6 +638,56 @@ pub async fn exercise(e: &Env) {
         .0,
         StatusCode::FORBIDDEN
     );
+    // The Plays channel joins at once, from its configured host only (docs/PLAYS.md).
+    e.sql("INSERT INTO plays_runtime(channel_id,game,bridge_hash,costream_host_id) VALUES('team-3','Synthetic game',repeat('0',64),'team-1')").await;
+    let other = ok(
+        e,
+        &tokens[4],
+        "POST",
+        "/api/me/squads",
+        json!({"mode":"SEPARATE"}),
+    )
+    .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let waiting = ok(
+        e,
+        &tokens[4],
+        "POST",
+        &format!("/api/squads/{other}/invites"),
+        json!({"username":"TeamPerson3"}),
+    )
+    .await;
+    assert_eq!(
+        waiting["accepted"],
+        Value::Null,
+        "anyone else's invitation waits"
+    );
+    ok(
+        e,
+        &tokens[4],
+        "POST",
+        &format!("/api/squads/{other}/leave"),
+        Value::Null,
+    )
+    .await;
+    let joined = ok(
+        e,
+        b,
+        "POST",
+        &format!("{path}/invites"),
+        json!({"username":"TeamPerson3"}),
+    )
+    .await;
+    assert_eq!(joined["accepted"], true);
+    assert_eq!(
+        ok(e, b, "GET", &path, Value::Null).await["members"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     ok(e, b, "POST", &format!("{path}/leave"), Value::Null).await;
     for n in 1..6 {
         end(e, &format!("team-{n}")).await;
