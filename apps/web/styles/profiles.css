@@ -209,3 +209,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .chat-rewards summary { cursor: pointer; }
 .chat-rewards li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.4rem; }
 .reward-form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.6rem; }
+.tier-badge { border-color: var(--accent); color: var(--accent); margin: 0 0.3rem; }
+.shine-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.5rem 0.75rem; border: 1px solid #e8c25a; border-radius: 6px; background: color-mix(in srgb, #e8c25a 14%, transparent); }
+.good-works { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.good-works-badge { border-color: #e8c25a; color: #e8c25a; }

@@ -58,6 +58,7 @@ const { Chat } = compile("apps/web/components/Chat.tsx", {
   "./Guilds": { GuildChatBadge: () => null },
   "./Rewards": { Rewards: () => null },
   "../styles/teams.css": {},
+  "../lib/types": { CREATOR_TIERS: ["Scout", "Trailblazer", "Pioneer", "Pathfinder"] },
 });
 const root = createRoot(document.getElementById("root"));
 const click = async node => { assert.ok(node); await act(async () => node.click()); };

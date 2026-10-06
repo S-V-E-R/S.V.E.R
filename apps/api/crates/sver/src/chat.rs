@@ -89,6 +89,8 @@ pub(crate) struct Row {
     sub: Option<Value>,
     /// Paid for with the channel's "highlight my message" reward.
     highlighted: bool,
+    /// The author's creator tier (1-3), for their badge.
+    creator_tier: Option<i16>,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -98,12 +100,13 @@ impl Row {
     }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier})
     }
 }
 pub(crate) fn select() -> String {
     format!(
         "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,
+        (SELECT t.tier FROM creator_tiers t WHERE t.user_id=m.author_id AND t.tier>0) AS creator_tier,
         (SELECT jsonb_build_object('tier',s.tier,'months',s.months) FROM channel_subs s WHERE s.channel_id=m.channel_id AND s.user_id=m.author_id AND s.paid_through>now()) AS sub,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
         CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
@@ -394,22 +397,26 @@ pub(crate) async fn send_from(
             "Highlights work in a channel's own chat.",
         ));
     }
+    // Who a tribute pays: the channel, or in a merged co-stream every member who can earn,
+    // split equally (docs/SUPPORT.md "Co-streams").
+    let mut earners: Vec<String> = Vec::new();
     if let Some(valor) = input.tribute {
-        // Squad chat money (pooled splits) comes with co-streams; tributes stay in a channel's own chat.
-        let Some(channel) = channel.filter(|_| origin.is_none() && squad.is_none()) else {
-            return Err(Fail::field(
-                "tribute",
-                "Tributes go to a channel's own chat.",
-            ));
-        };
+        if channel.is_none() || origin.is_some() {
+            return Err(Fail::field("tribute", "Tributes go to a channel's chat."));
+        }
         if !(10..=1_000_000).contains(&valor) {
             return Err(Fail::field("tribute", "A tribute is at least 10 Valor."));
         }
-        if channel == user.id {
+        if members.contains(&user.id) {
             return Err(Fail::field("tribute", "You can't pay tribute to yourself."));
         }
         let mut db = app.db.acquire().await?;
-        if !crate::support::can_earn(&mut db, channel).await? {
+        for member in &members {
+            if crate::support::can_earn(&mut db, member).await? {
+                earners.push(member.clone());
+            }
+        }
+        if earners.is_empty() {
             return Err(Fail::field(
                 "tribute",
                 "This channel can't receive tributes yet.",
@@ -474,25 +481,23 @@ pub(crate) async fn send_from(
         if balance < valor {
             return Err(Fail::field("tribute", "You don't have enough Valor."));
         }
+        let earned = valor * crate::ledger::EARN_PER_VALOR;
+        let shares: Vec<(String, i64)> = crate::support::split_equally(&earners, earned)
+            .into_iter()
+            .map(|(m, s)| (format!("usd:earnings:{m}"), s))
+            .collect();
+        let mut entries = vec![
+            (wallet.as_str(), "valor", -valor),
+            ("valor:spent", "valor", valor),
+            ("usd:platform", "usd", -earned),
+        ];
+        entries.extend(shares.iter().map(|(a, s)| (a.as_str(), "usd", *s)));
         crate::ledger::post(
             &mut tx,
             "tribute",
             &format!("tribute:{}", input.id),
-            json!({"message": input.id, "channel": channel, "from": user.id, "valor": valor}),
-            &[
-                (&wallet, "valor", -valor),
-                ("valor:spent", "valor", valor),
-                (
-                    &format!("usd:earnings:{channel}"),
-                    "usd",
-                    valor * crate::ledger::EARN_PER_VALOR,
-                ),
-                (
-                    "usd:platform",
-                    "usd",
-                    -valor * crate::ledger::EARN_PER_VALOR,
-                ),
-            ],
+            json!({"message": input.id, "channel": channel, "earners": earners, "from": user.id, "valor": valor}),
+            &entries,
         )
         .await?;
     }

@@ -43,6 +43,8 @@ pub struct Stream {
     pub first_stream: bool,
     /// Back after 30 or more days away.
     pub returning: bool,
+    /// A charity stream's charity (Shine).
+    pub charity: Option<String>,
 }
 
 /// Every public live stream: LIVE, or RECONNECTING inside its grace window, on an eligible channel.
@@ -54,7 +56,8 @@ pub async fn live_streams(db: &mut PgConnection) -> Res<Vec<Stream>> {
           (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers,
           b.thumbnail_key,
           NOT EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at) AS first_stream,
-          coalesce((SELECT max(p.ended_at) FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at)<b.started_at-interval '30 days',false) AS returning
+          coalesce((SELECT max(p.ended_at) FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at)<b.started_at-interval '30 days',false) AS returning,
+          (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id) AS charity
          FROM broadcasts b JOIN channel_users cu ON cu.id=b.owner_id AND cu.eligible
          LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id
          WHERE b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>now())",
@@ -110,7 +113,9 @@ async fn home_genres(db: &mut PgConnection, faction: Option<&str>) -> Res<Vec<St
 
 /// The card shape used everywhere in discovery.
 pub fn card(app: &App, s: &Stream, now: DateTime<Utc>) -> Value {
-    let label = if s.first_stream {
+    let label = if s.charity.is_some() {
+        Some("Charity stream")
+    } else if s.first_stream {
         Some("New creator")
     } else if s.returning {
         Some("Returning creator")
@@ -120,7 +125,7 @@ pub fn card(app: &App, s: &Stream, now: DateTime<Utc>) -> Value {
     json!({"broadcast_id":s.broadcast_id,"username":s.username,"display_name":s.display_name,
         "avatar":profiles::avatar_json(app,s.avatar_key.as_deref()),"faction":s.faction,"title":s.title,
         "category":s.category,"category_id":s.category_id,"genre":s.genre,"started_at":s.started_at,"viewers":s.viewers,
-        "thumbnail":s.thumbnail_key.as_deref().map(|k|profiles::media_url(app,k)),"label":label,
+        "thumbnail":s.thumbnail_key.as_deref().map(|k|profiles::media_url(app,k)),"label":label,"charity":s.charity,
         "fresh":now-s.started_at<Duration::minutes(FRESH_MINUTES)})
 }
 
@@ -427,6 +432,7 @@ async fn suggestions(
         thumbnail_key: None,
         first_stream: false,
         returning: false,
+        charity: None,
     };
     let items: Vec<Value> = suggest(&rotation, &current, 8)
         .iter()
@@ -564,6 +570,7 @@ mod tests {
             thumbnail_key: None,
             first_stream: false,
             returning: false,
+            charity: None,
         }
     }
     fn ids(v: &[Stream]) -> Vec<String> {

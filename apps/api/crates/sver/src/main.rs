@@ -85,6 +85,15 @@ async fn main() -> Result<(), String> {
             if sver::engagement::tick(&media_jobs).await.is_err() {
                 eprintln!("engagement_event=watch outcome=retry");
             }
+            if sver::tiers::tick(&media_jobs).await.is_err() {
+                eprintln!("tiers_event=tick outcome=retry");
+            }
+            if sver::shine::tick(&media_jobs).await.is_err() {
+                eprintln!("shine_event=tick outcome=retry");
+            }
+            if sver::payouts::tick(&media_jobs).await.is_err() {
+                eprintln!("payout_event=tick outcome=retry");
+            }
         }
     });
     let bind = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8080".into());

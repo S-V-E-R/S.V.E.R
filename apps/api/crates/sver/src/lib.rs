@@ -28,6 +28,7 @@ pub mod media;
 pub mod moderation;
 pub mod oauth;
 pub mod parts;
+pub mod payouts;
 pub mod playback;
 pub mod plays;
 pub mod probe;
@@ -40,6 +41,7 @@ pub mod reserved;
 pub mod roadmap;
 pub mod safety;
 pub mod security;
+pub mod shine;
 pub mod social;
 pub mod squads;
 pub mod staff_push;
@@ -51,6 +53,7 @@ pub mod subs;
 pub mod support;
 pub mod take_down;
 pub mod text;
+pub mod tiers;
 pub mod wall;
 
 #[derive(Clone)]
@@ -403,6 +406,9 @@ pub fn router(app: App) -> Router {
         .merge(support::routes())
         .merge(subs::routes())
         .merge(engagement::routes())
+        .merge(tiers::routes())
+        .merge(payouts::routes())
+        .merge(shine::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

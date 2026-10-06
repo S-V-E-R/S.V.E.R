@@ -5,7 +5,8 @@ use crate::{
     App, ledger,
     profiles::{self, Fail, Res},
     security as sec, stripe,
-    support::{self, card_pairs, post_pairs},
+    support::{self, post_pairs, share_pairs, split_equally},
+    tiers,
 };
 use axum::{
     Json, Router,
@@ -19,10 +20,6 @@ use sqlx::PgConnection;
 
 /// Monthly price in cents per tier; a Valor month costs the same number of Valor.
 pub const PRICES: [i64; 3] = [499, 999, 2_499];
-/// The streamer's share of card subscription and gift revenue.
-// ponytail: every creator is Scout (65%) until weekly creator-tier checks ship; read the owner's
-// tier here then.
-pub const SPLIT_PERCENT: i64 = 65;
 const GIFT_COUNTS: [i64; 4] = [1, 5, 10, 20];
 
 fn tier(value: i16) -> Res<i16> {
@@ -94,12 +91,46 @@ async fn grant(
     Ok(())
 }
 
-/// Spends the viewer's Purchased Valor on a channel inside `tx` (0.8¢ per Valor to the streamer).
-/// Returns false when `reference` was already spent, so a retried request changes nothing.
+/// Card revenue shares (tenths of a cent): each streamer at their own tier split, the money split
+/// equally among a merged co-stream's members.
+async fn card_shares(
+    db: &mut PgConnection,
+    members: &[String],
+    cents: i64,
+) -> Res<Vec<(String, i64)>> {
+    let mut shares = Vec::new();
+    for (member, part) in split_equally(members, cents * 10) {
+        let split = tiers::split(db, &member).await?;
+        shares.push((member, part * split / 100));
+    }
+    Ok(shares)
+}
+fn shares_json(shares: &[(String, i64)]) -> Value {
+    shares.iter().map(|(m, s)| json!([m, s])).collect()
+}
+/// Who shares money spent on `channel`: the channel alone, or, through a merged co-stream's page,
+/// its members live now (docs/SUPPORT.md "Co-streams"). Members can't pay their own squad.
+async fn pool(app: &App, squad: &Option<String>, channel: &str, payer: &str) -> Res<Vec<String>> {
+    let Some(squad) = squad else {
+        return Ok(vec![channel.to_string()]);
+    };
+    let members = crate::squads::chat_context(app, squad, None).await?;
+    if !members.iter().any(|m| m == channel) {
+        return Err(Fail::conflict("That channel isn't in this co-stream."));
+    }
+    if members.iter().any(|m| m == payer) {
+        return Err(Fail::bad("You can't pay a co-stream you're part of."));
+    }
+    Ok(members)
+}
+
+/// Spends the viewer's Purchased Valor inside `tx`: 0.8¢ per Valor, split equally among
+/// `earners` (one channel, or a merged co-stream's members). Returns false when `reference` was
+/// already spent, so a retried request changes nothing.
 async fn spend(
     tx: &mut PgConnection,
     user: &str,
-    channel: &str,
+    earners: &[String],
     valor: i64,
     kind: &str,
     reference: &str,
@@ -117,17 +148,22 @@ async fn spend(
         return Err(Fail::field("pay", "You don't have enough Valor."));
     }
     let earned = valor * ledger::EARN_PER_VALOR;
+    let shares: Vec<(String, i64)> = split_equally(earners, earned)
+        .into_iter()
+        .map(|(m, s)| (format!("usd:earnings:{m}"), s))
+        .collect();
+    let mut entries = vec![
+        (wallet.as_str(), "valor", -valor),
+        ("valor:spent", "valor", valor),
+        ("usd:platform", "usd", -earned),
+    ];
+    entries.extend(shares.iter().map(|(a, s)| (a.as_str(), "usd", *s)));
     ledger::post(
         tx,
         kind,
         reference,
-        json!({"channel": channel, "from": user, "valor": valor}),
-        &[
-            (&wallet, "valor", -valor),
-            ("valor:spent", "valor", valor),
-            (&format!("usd:earnings:{channel}"), "usd", earned),
-            ("usd:platform", "usd", -earned),
-        ],
+        json!({"earners": earners, "from": user, "valor": valor}),
+        &entries,
     )
     .await
 }
@@ -213,6 +249,8 @@ pub struct Subscribe {
     id: Option<String>,
     #[serde(default)]
     guardian_consent: bool,
+    /// Bought through a merged co-stream's page: the first month is pooled.
+    squad: Option<String>,
 }
 /// POST /api/channels/{username}/subscription: a card subscription (Stripe Checkout, renews
 /// monthly) or one Valor month.
@@ -232,6 +270,7 @@ async fn subscribe(
         ));
     }
     sec::reserve(&app, vec![format!("subscribe:{}", user.id)], 20, 3600).await?;
+    let pool = pool(&app, &input.squad, &channel, &user.id).await?;
     let mut tx = app.db.begin().await?;
     ledger::lock(&mut tx, &format!("checkout:{}", user.id)).await?;
     match input.pay.as_str() {
@@ -240,7 +279,7 @@ async fn subscribe(
             if spend(
                 &mut tx,
                 &user.id,
-                &channel,
+                &pool,
                 price(tier),
                 "valor_sub",
                 &format!("valor-sub:{id}"),
@@ -256,32 +295,36 @@ async fn subscribe(
             let cents = price(tier);
             support::card_gate(&mut tx, &user.id, cents, input.guardian_consent).await?;
             let origin = &app.config.origin;
+            let mut form = vec![
+                ("mode", "subscription".into()),
+                ("line_items[0][quantity]", "1".into()),
+                ("line_items[0][price_data][currency]", "usd".into()),
+                ("line_items[0][price_data][unit_amount]", cents.to_string()),
+                (
+                    "line_items[0][price_data][recurring][interval]",
+                    "month".into(),
+                ),
+                (
+                    "line_items[0][price_data][product_data][name]",
+                    format!("{username} subscription, Tier {tier}"),
+                ),
+                ("subscription_data[metadata][sver_channel]", channel.clone()),
+                ("subscription_data[metadata][sver_user]", user.id.clone()),
+                ("subscription_data[metadata][sver_tier]", tier.to_string()),
+                ("success_url", format!("{origin}/{username}?subscribed=1")),
+                ("cancel_url", format!("{origin}/{username}")),
+            ];
+            if pool.len() > 1 {
+                form.push(("subscription_data[metadata][sver_pool]", pool.join(",")));
+            }
             let url = start_checkout(
                 &app,
                 &mut tx,
                 &user.id,
                 "sub",
                 cents,
-                vec![
-                    ("mode", "subscription".into()),
-                    ("line_items[0][quantity]", "1".into()),
-                    ("line_items[0][price_data][currency]", "usd".into()),
-                    ("line_items[0][price_data][unit_amount]", cents.to_string()),
-                    (
-                        "line_items[0][price_data][recurring][interval]",
-                        "month".into(),
-                    ),
-                    (
-                        "line_items[0][price_data][product_data][name]",
-                        format!("{username} subscription, Tier {tier}"),
-                    ),
-                    ("subscription_data[metadata][sver_channel]", channel.clone()),
-                    ("subscription_data[metadata][sver_user]", user.id.clone()),
-                    ("subscription_data[metadata][sver_tier]", tier.to_string()),
-                    ("success_url", format!("{origin}/{username}?subscribed=1")),
-                    ("cancel_url", format!("{origin}/{username}")),
-                ],
-                json!({"channel": channel, "tier": tier}),
+                form,
+                json!({"channel": channel, "tier": tier, "pool": pool}),
             )
             .await?;
             tx.commit().await?;
@@ -397,6 +440,8 @@ pub struct Gift {
     id: Option<String>,
     #[serde(default)]
     guardian_consent: bool,
+    /// Bought through a merged co-stream's page: the money is pooled.
+    squad: Option<String>,
 }
 /// POST /api/channels/{username}/gifts: one month to a named viewer, or 5, 10 or 20 months to
 /// random signed-in chatters from the last day who allow gifts. Gifted months never renew.
@@ -412,6 +457,7 @@ async fn gift(
         return Err(Fail::field("count", "Gift 1, 5, 10 or 20 subscriptions."));
     }
     sec::reserve(&app, vec![format!("gift:{}", user.id)], 20, 3600).await?;
+    let pool = pool(&app, &input.squad, &channel, &user.id).await?;
     let mut tx = app.db.begin().await?;
     ledger::lock(&mut tx, &format!("checkout:{}", user.id)).await?;
     let recipients: Vec<String> = if input.count == 1 {
@@ -465,7 +511,7 @@ async fn gift(
             if spend(
                 &mut tx,
                 &user.id,
-                &channel,
+                &pool,
                 count * price(tier),
                 "valor_gift",
                 &format!("valor-gift:{id}"),
@@ -482,6 +528,7 @@ async fn gift(
         "card" => {
             let cents = count * price(tier);
             support::card_gate(&mut tx, &user.id, cents, input.guardian_consent).await?;
+            let shares = card_shares(&mut tx, &pool, cents).await?;
             let origin = &app.config.origin;
             let what = if count == 1 {
                 "1 gift subscription".to_string()
@@ -509,7 +556,7 @@ async fn gift(
                     ("cancel_url", format!("{origin}/{username}")),
                 ],
                 json!({"channel": channel, "tier": tier, "recipients": recipients,
-                    "share_tenths": cents * 10 * SPLIT_PERCENT / 100}),
+                    "shares": shares_json(&shares), "share_tenths": shares.iter().map(|s| s.1).sum::<i64>()}),
             )
             .await?;
             tx.commit().await?;
@@ -572,14 +619,24 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
     } else {
         None
     };
-    let share = cents * 10 * SPLIT_PERCENT / 100;
-    let inserted = sqlx::query("INSERT INTO sub_invoices(id,channel_id,user_id,tier,payment_intent,amount_cents,share_tenths) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING")
-        .bind(id).bind(channel).bind(user).bind(tier).bind(&intent).bind(cents as i32).bind(share)
+    let reason = invoice["billing_reason"].as_str().unwrap_or_default();
+    // A merged co-stream's first month is pooled among its members then; renewals go to the
+    // channel the viewer picked.
+    let pooled: Vec<String> = match meta["sver_pool"].as_str() {
+        Some(pool) if reason == "subscription_create" => {
+            pool.split(',').map(str::to_owned).collect()
+        }
+        _ => vec![channel.to_string()],
+    };
+    let shares = card_shares(tx, &pooled, cents).await?;
+    let share: i64 = shares.iter().map(|s| s.1).sum();
+    let stored = (pooled.len() > 1).then(|| shares_json(&shares));
+    let inserted = sqlx::query("INSERT INTO sub_invoices(id,channel_id,user_id,tier,payment_intent,amount_cents,share_tenths,shares) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING")
+        .bind(id).bind(channel).bind(user).bind(tier).bind(&intent).bind(cents as i32).bind(share).bind(&stored)
         .execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Ok(());
     }
-    let reason = invoice["billing_reason"].as_str().unwrap_or_default();
     let month = i32::from(matches!(
         reason,
         "subscription_create" | "subscription_cycle"
@@ -600,7 +657,7 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
             "sub_payment",
             &format!("invoice:{id}"),
             json!({"invoice": id, "payment_intent": intent, "channel": channel, "user": user, "tier": tier, "cents": cents}),
-            &card_pairs(channel, cents, share),
+            &share_pairs(cents, &shares),
             |amount| amount,
         )
         .await?;
@@ -681,7 +738,14 @@ mod tests {
     fn tiers_and_prices() {
         assert!(tier(0).is_err() && tier(4).is_err());
         assert_eq!((price(1), price(2), price(3)), (499, 999, 2_499));
-        // The streamer's 65% of a $4.99 month, in tenths of a cent: $3.2435 → 3243.
-        assert_eq!(499 * 10 * SPLIT_PERCENT / 100, 3_243);
+        // A Scout's 65% of a $4.99 month, in tenths of a cent: $3.2435 → 3243.
+        assert_eq!(499 * 10 * tiers::SPLITS[0] / 100, 3_243);
+        // Pooled money splits exactly.
+        let members = ["a".to_string(), "b".to_string(), "c".to_string()];
+        let parts = split_equally(&members, 100);
+        assert_eq!(
+            parts.iter().map(|p| p.1).collect::<Vec<_>>(),
+            vec![34, 33, 33]
+        );
     }
 }

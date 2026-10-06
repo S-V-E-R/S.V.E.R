@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { joined, linkHost, platformNames, type Channel } from "../lib/types";
+import { CREATOR_TIERS, joined, linkHost, platformNames, type Channel } from "../lib/types";
 import { PlatformIcon } from "./PlatformIcon";
 import { Avatar } from "./Avatar";
 import { ChannelActions } from "./ChannelActions";
@@ -30,7 +30,9 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
       <div className="identity-text">
         {data.header?.label && <span className="page-label">{data.header.label}</span>}
         <h1>{c.display_name}</h1>
-        <p className="handle">@{c.username}</p>
+        <p className="handle">@{c.username}{!!c.creator_tier && <span className="badge tier-badge" title="Creator tier">{CREATOR_TIERS[c.creator_tier]}</span>}</p>
+        {c.shine?.live && <p className="shine-banner" role="note">Charity stream for <strong>{c.shine.live.name}</strong> <a className="button small" href={c.shine.live.url} target="_blank" rel="noopener noreferrer">Donate to {c.shine.live.name}</a></p>}
+        {c.shine && c.shine.badges.length > 0 && <p className="good-works">{c.shine.badges.map(b => <span key={b.charity + b.verified_at} className="badge good-works-badge" title="Good Works, verified by S.V.E.R staff">Good Works · {b.charity} · ${(b.raised_cents / 100).toLocaleString()}</span>)}</p>}
         {data.header?.welcome && <p className="welcome-line">{data.header.welcome}</p>}
         {(c.mood_emoji || c.status_text) && <p className="status-line">{c.mood_emoji && <span aria-label="Mood">{c.mood_emoji}</span>} {c.status_text}</p>}
         {faction && <p className="faction-line"><Link href={`/factions/${faction.slug}`}><Crest faction={faction.slug} initial="" size={22} />{faction.name} · {faction.title}</Link></p>}

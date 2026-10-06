@@ -1,6 +1,6 @@
 # Module 6: Support
 
-Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Started October 5, 2026: parts 1 to 3 (below) are built.
+Scoped October 3, 2026 by Joe. Builds after Module 5 (MAGNet), so the launch set (live, stable, chat, factions, MAGNet) isn't held up by payments work. Started October 5, 2026; built October 6, 2026 (below). Live keys and the legacy connected-account import wait for launch.
 
 This module lets viewers support streamers with money and loyalty, and gets streamers paid. It follows the closure rule: specify, build, then test against "Done when". All open items were decided by Joe on October 3, 2026.
 
@@ -167,7 +167,14 @@ Decided by Joe on October 3, 2026.
 - Redemptions wait in the Studio queue; the owner or a moderator marks each done or refunds it, which returns the points. Retried redemptions are idempotent by request ID.
 - A channel ban freezes earning and spending in that channel.
 
-**Still to build:** importing creators' legacy connected accounts at the live cutover (test mode can't see live accounts), creator tiers, pooled money in merged co-streams, Shine, paydays and Early Pay.
+**Part 4: creator tiers, payouts, pooled co-stream money and Shine.**
+
+- Creator tiers are checked every Monday at 00:01 Eastern (once per week, recorded in `support_runs`) against the last 90 days: streams, stream hours, average Trusted viewers (integrity snapshots), followers, active subscribers, unique Trusted viewers (recorded once a minute while live) and days active. A streamer moves to the highest tier whose every requirement is met; tiers never go down, and an open integrity case holds promotion. The tier sets the split for card subscriptions and gifts (65/70/75/80%) and shows as a badge on the channel and in chat. Creator Studio → Payouts shows progress toward the next tier.
+- Payouts: payday every 2 weeks (Fridays at noon Eastern, from October 9, 2026) transfers each creator's whole available balance to their Express account. Early Pay withdraws up to 75% of what was earned since the last payday, less earlier Early Pay, once per Eastern day: standard (free) or instant (an instant payout from the Express balance; the 1% fee is withheld, and refunded if the instant payout isn't available). Pending payouts count against the balance; ledger entries post only after Stripe accepts the transfer. An open integrity case with "hold payouts" pauses them. A negative balance is recovered from later earnings before anything is paid.
+- Merged co-streams: tributes in the shared chat, Valor months and gifts bought through the squad page are split equally among the members live then (members who can earn); a card subscription's first month is split equally and each part paid at that member's own tier split (renewals go to the chosen channel). Each payment stores its shares, so refunds and disputes reverse exactly.
+- Shine: Creator Studio → Shine sets a charity and its donation page (https only). A live stream with a charity gets a charity stream record; the channel shows a Shine banner with a donate link, browse cards and MAGNet reasons say "Charity stream", and past charity streams are listed. After the stream ends the streamer submits the amount raised with a proof link; staff verify it in `/admin/shine` into a Good Works badge (charity and amount), reject it, or later revoke it, each with an audited reason.
+
+**Still to build:** importing creators' legacy connected accounts at the live cutover (test mode can't see live accounts).
 
 ## Done when
 

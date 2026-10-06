@@ -630,6 +630,12 @@ async fn lane(
             None => false,
         };
         let moves_on_by = since.map(|at| at + Duration::seconds(app.config.magnet.max_seconds));
+        // Charity streams say so in MAGNet's reason (Shine); it never changes scoring.
+        let reason = match (&s.charity, reason.clone()) {
+            (Some(_), Some(r)) => Some(format!("{r} · Charity stream")),
+            (Some(_), None) => Some("Charity stream".to_string()),
+            (None, r) => r,
+        };
         featured = json!({"stream":card,"kind":kind,"reason":reason,"since":since,
             "moves_on_by":moves_on_by,"holding":holding});
     }

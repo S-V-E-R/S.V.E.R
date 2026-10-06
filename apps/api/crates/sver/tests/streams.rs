@@ -48,6 +48,8 @@ mod real_media;
 mod reports;
 #[path = "streams/resets.rs"]
 mod resets;
+#[path = "streams/rest.rs"]
+mod rest;
 #[path = "streams/staff_streams.rs"]
 mod staff_streams;
 #[path = "streams/staff_window.rs"]
@@ -113,13 +115,20 @@ async fn stripe(
     State(fake): State<Fake>,
     method: axum::http::Method,
     uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
     body: String,
 ) -> Json<Value> {
     let mut m = fake.lock().unwrap();
     let path = uri.path().to_string();
     // Only calls that create something are logged (and number the synthetic ids).
     if method == axum::http::Method::POST {
-        m.stripe.push((path.clone(), body));
+        // Calls made on behalf of a connected account carry it, for the assertions.
+        let account = headers
+            .get("stripe-account")
+            .and_then(|v| v.to_str().ok())
+            .map(|a| format!("|account={a}"))
+            .unwrap_or_default();
+        m.stripe.push((path.clone(), format!("{body}{account}")));
     }
     let n = m.stripe.len();
     Json(match path.as_str() {
@@ -127,6 +136,8 @@ async fn stripe(
             json!({"id": format!("cs_test_{n}"), "url": format!("https://checkout.stripe.test/{n}")})
         }
         "/v1/accounts" => json!({"id": "acct_test_owner"}),
+        "/v1/transfers" => json!({"id": format!("tr_test_{n}")}),
+        "/v1/payouts" => json!({"id": format!("po_test_{n}")}),
         "/v1/account_links" => json!({"url": "https://connect.stripe.test/onboarding"}),
         p if p.ends_with("/login_links") => json!({"url": "https://connect.stripe.test/express"}),
         "/v1/invoice_payments" => {
@@ -339,6 +350,8 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/accounts/{id}", get(stripe))
         .route("/v1/checkout/sessions/{id}", get(stripe))
         .route("/v1/invoice_payments", get(stripe))
+        .route("/v1/transfers", post(stripe))
+        .route("/v1/payouts", post(stripe))
         .route("/v1/subscriptions/{id}", get(stripe).post(stripe))
         .route("/v1/accounts/{id}/login_links", post(stripe))
         .with_state(fake.clone());
@@ -408,6 +421,7 @@ async fn exercise(e: &Env) {
     support::exercise(e).await;
     subs::exercise(e).await;
     engagement::exercise(e).await;
+    rest::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;
     reports::exercise(e).await;
