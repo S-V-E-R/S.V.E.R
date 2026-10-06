@@ -7,7 +7,8 @@ use crate::{
 use axum::{
     Json, Router,
     extract::{ConnectInfo, Path, State},
-    http::HeaderMap,
+    http::{HeaderMap, header},
+    response::IntoResponse,
     routing::{get, post},
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -139,6 +140,29 @@ pub async fn live(
     })))
 }
 
+/// GET /api/channels/{username}/overlay: public numbers for a creator's own OBS browser source.
+/// Those load from local files, so any origin may read it; it uses no cookies and returns only
+/// what the channel page already shows.
+pub async fn overlay(State(app): State<App>, Path(name): Path<String>) -> Res<impl IntoResponse> {
+    let owner = owner_id(&app, &name).await?;
+    let mut db = app.db.acquire().await?;
+    let stream: Option<(String, Option<String>, i64)> = sqlx::query_as("SELECT coalesce(s.title,u.username||'''s stream'),c.name,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
+        .bind(&owner).fetch_optional(&mut *db).await?;
+    let (followers, _) = profiles::follower_counts(&mut db, &owner).await?;
+    let stream = stream.map(
+        |(title, category, viewers)| json!({"title":title,"category":category,"viewerCount":viewers}),
+    );
+    Ok((
+        [
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Json(
+            json!({"isLive":stream.is_some(),"stream":stream,"stats":{"followerCount":followers}}),
+        ),
+    ))
+}
+
 #[derive(Deserialize)]
 pub struct Beat {
     broadcast_id: String,
@@ -257,5 +281,6 @@ pub async fn faction_streams(
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/channels/{username}/live", get(live))
+        .route("/api/channels/{username}/overlay", get(overlay))
         .route("/api/channels/{username}/live/beat", post(beat))
 }

@@ -33,6 +33,28 @@ pub async fn exercise(e: &Env) {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (_, offline) = guest(e, "GET", "/api/channels/Streamer/live", Value::Null).await;
     assert_eq!(offline, json!({"live":false}));
+    // The OBS overlay feed: public, readable from a local file, nothing but page-level numbers.
+    let overlay = || async {
+        let response = sver::router(e.app.clone())
+            .oneshot(
+                Request::get("/api/channels/streamer/overlay")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["access-control-allow-origin"], "*");
+        let bytes = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        serde_json::from_slice::<Value>(&bytes).unwrap()
+    };
+    assert_eq!(
+        overlay().await,
+        json!({"isLive":false,"stream":null,"stats":{"followerCount":0}})
+    );
 
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('play-1','stream-owner','pub-play',1,'STARTING','s','v','c',now(),now(),now()+interval '15 seconds')").await;
     let (_, starting) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
@@ -49,6 +71,11 @@ pub async fn exercise(e: &Env) {
         .await;
     let (_, live) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(live["live"], true);
+    let on_air = overlay().await;
+    assert_eq!(
+        (&on_air["isLive"], &on_air["stream"]["title"]),
+        (&json!(true), &live["title"])
+    );
     assert_eq!(live["title"], "Streamer's stream");
     assert_eq!(live["viewers"], 0);
     let (status, directory) = guest(e, "GET", "/api/discovery/home", Value::Null).await;
