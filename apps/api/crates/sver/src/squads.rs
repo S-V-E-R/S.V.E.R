@@ -388,6 +388,39 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     ))
 }
 
+/// A live co-stream: its id, mode and members (host first) with their broadcasts.
+pub struct Active {
+    pub id: String,
+    pub mode: String,
+    pub members: Vec<(String, String)>,
+}
+/// Every live co-stream (MAGNet, docs/MAGNET.md "Co-streams on MAGNet"). Membership is repaired
+/// by the worker tick; callers still check each member's own eligibility.
+pub async fn active(db: &mut PgConnection) -> Res<Vec<Active>> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as("SELECT s.id,s.mode,m.user_id,m.broadcast_id FROM squads s JOIN squad_members m ON m.squad_id=s.id WHERE s.ended_at IS NULL ORDER BY s.id,m.user_id IS DISTINCT FROM s.host_id,m.joined_at,m.user_id")
+        .fetch_all(db)
+        .await?;
+    let mut out: Vec<Active> = Vec::new();
+    for (id, mode, user, broadcast) in rows {
+        match out.last_mut() {
+            Some(a) if a.id == id => a.members.push((user, broadcast)),
+            _ => out.push(Active {
+                id,
+                mode,
+                members: vec![(user, broadcast)],
+            }),
+        }
+    }
+    Ok(out)
+}
+/// The live co-stream a channel is in, if any.
+pub async fn active_of(db: &mut PgConnection, user: &str) -> Res<Option<Active>> {
+    Ok(active(db)
+        .await?
+        .into_iter()
+        .find(|a| a.members.iter().any(|m| m.0 == user)))
+}
+
 /// Chat calls this on reads, sends and socket refreshes. Channel bans apply across all members.
 pub async fn lock_chat(db: &mut PgConnection, id: &str, expected: &[String]) -> Res<()> {
     lock(db).await?;

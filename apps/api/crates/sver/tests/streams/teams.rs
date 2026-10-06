@@ -494,12 +494,16 @@ pub async fn exercise(e: &Env) {
         super::chat::next_json(&mut socket).await["message"]["body"],
         "Shared room"
     );
+    // A featured merged co-stream: MAGNet chat merges with its shared room (docs/MAGNET.md).
+    let room = ok(e, &fan, "GET", "/api/magnet/global/chat", Value::Null).await;
+    assert_eq!(room["co_stream"], true);
     assert!(
-        ok(e, &fan, "GET", "/api/magnet/global/chat", Value::Null).await["messages"]
+        room["messages"]
             .as_array()
             .unwrap()
-            .is_empty(),
-        "Shared squad messages never enter MAGNet history"
+            .iter()
+            .any(|m| m["body"] == "Shared room"),
+        "MAGNet chat shows the featured squad's shared room"
     );
     assert_eq!(
         ok(e, &fan, "GET", &chat, Value::Null).await["messages"]
