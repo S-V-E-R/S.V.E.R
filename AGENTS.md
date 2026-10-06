@@ -59,7 +59,7 @@ Each module is closed before the next starts:
 8. VODs and clips (`docs/VODS_CLIPS.md`)
 9. Beacons (`docs/BEACONS.md`)
 
-Modules 1 to 5 make the site functional. Phase 2 (Progression, Raven's Eye) starts only after all nine close.
+Modules 1 to 5 make the site functional. Phase 2 (Progression, Raven's Eye) starts only after all nine close. Phase 3 opens with the developer platform (`docs/DEVELOPER_PLATFORM.md`: apps and OAuth, `sver.tv/go` device sign-in, the live events API, and compatibility with streamers' existing tools), then overlays and alerts. Two parts of it come sooner: the CrowdSync "game confirms" hold-and-capture rule ships with CrowdSync's remaining work, and WHIP and SRT ingest follow the load test.
 
 ## The closure rule
 

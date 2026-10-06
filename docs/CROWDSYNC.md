@@ -119,6 +119,10 @@ Part 2, the integration gateway, OBS bridge and Game SDKs (October 6, 2026; migr
 - **The S.V.E.R bridge** (`integrations/bridge`): a small open-source Node app on the streamer's PC that connects to OBS's own WebSocket server (v5, password handshake) and runs configured steps per control, Skill or Surge: switch scenes, show, hide or toggle sources, enable filters, wait, with per-control cooldowns.
 - **SDKs:** JavaScript/TypeScript (no dependencies; browsers and Node 22+), Unity (`tv.sver.board`, events on the main thread) and Unreal Engine 5 (`SverBoard` plugin, Blueprint events). The example game, Crowd Runner, uses the JavaScript SDK: viewers make the runner jump, steer it and shout; the game disables Jump while airborne and fills the coins goal. The JavaScript SDK and the bridge are tested in CI against fake servers that speak the real protocols, and the gateway by the API suite; the example game was checked in a browser. The Unity and Unreal SDKs are written against those engines' APIs but have not been compiled yet (no engine on the build machine), and the engine example games are still to come.
 
+## Additions from the Mixer review (October 6, 2026)
+
+Hold-then-capture charging for controls a game or the bridge must confirm, viewer groups, an input cap and a game ready state are specified in [DEVELOPER_PLATFORM.md](DEVELOPER_PLATFORM.md), Section 3. They ship with this module's remaining work.
+
 ## Not in this module
 
 - Quests, achievements, XP and levels (Progression, Phase 2).
