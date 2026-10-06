@@ -235,6 +235,87 @@ pub async fn exercise(e: &Env) {
                 && c["active"] == false)
     );
 
+    e.sql("INSERT INTO game_catalog(source_id,name,genres) VALUES('Q900000001','Synthetic Unmapped',ARRAY['action-adventure game']),('Q900000002','Synthetic Dismissed','{}')").await;
+    assert_eq!(
+        call(
+            e,
+            "GET",
+            "/api/admin/game-catalog",
+            Some(&owner),
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, queue) = call(
+        e,
+        "GET",
+        "/api/admin/game-catalog",
+        Some(&admin),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(queue["status"]["pending"], 2);
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/admin/game-catalog/Q900000001",
+            Some(&owner),
+            json!({"genre":"mmos_rpgs","note":"No access"})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/admin/game-catalog/Q900000001",
+            Some(&admin),
+            json!({"genre":"invented","note":"Invalid genre"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(call(e,"POST","/api/admin/game-catalog/Q900000001",Some(&admin),json!({"genre":"mmos_rpgs","name":"Synthetic Unmapped (2026)","note":"Published genre reviewed"})).await.0,StatusCode::OK);
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/admin/game-catalog/Q900000002",
+            Some(&admin),
+            json!({"genre":null,"note":"Not appropriate for this catalog"})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let row: (String, String) =
+        sqlx::query_as("SELECT name,genre FROM stream_categories WHERE id='wikidata-q900000001'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        row,
+        ("Synthetic Unmapped (2026)".into(), "mmos_rpgs".into())
+    );
+    let (_, queue) = call(
+        e,
+        "GET",
+        "/api/admin/game-catalog",
+        Some(&admin),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(queue["status"]["pending"], 0);
+    e.sql("DELETE FROM game_catalog WHERE source_id IN ('Q900000001','Q900000002')")
+        .await;
+    e.sql("DELETE FROM stream_categories WHERE id='wikidata-q900000001'")
+        .await;
     e.sql("DELETE FROM stream_categories WHERE id='music-workshop'")
         .await;
     for statement in [

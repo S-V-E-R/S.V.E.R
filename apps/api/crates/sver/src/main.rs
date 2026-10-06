@@ -52,6 +52,18 @@ async fn main() -> Result<(), String> {
         );
         return Ok(());
     }
+    // Catalog networking cannot delay ingest, playback, mail or startup.
+    if std::env::var("GAME_CATALOG_SYNC").as_deref() == Ok("1") {
+        let catalog = app.clone();
+        tokio::spawn(async move {
+            loop {
+                if sver::streams::catalog::tick(&catalog).await.is_err() {
+                    eprintln!("catalog_event=refresh outcome=retry");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        });
+    }
     let jobs = app.clone();
     tokio::spawn(async move {
         loop {

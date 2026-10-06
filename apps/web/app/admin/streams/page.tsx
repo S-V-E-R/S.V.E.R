@@ -3,6 +3,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
+import { GameCatalogReview } from "../../../components/GameCatalogReview";
 
 type Stream = { id: string; state: string; started_at: string; title: string; category: string | null; open_reports: number; followers_only_until: string | null;
   channel: { username: string; display_name: string };
@@ -65,6 +66,7 @@ export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boo
         </li>)}</ul>}
     </Section>}
     {!catalogOnly && <Spotlights />}
+    {catalogOnly && <GameCatalogReview genres={genres} changed={load} />}
     <Section title="Categories" intro="Creators pick from active categories. Hiding one keeps it on channels that already use it until they change it. Genre changes and merges across genres are allowed only between seasons.">
       <form className="row" onSubmit={add}>
         <label className="field"><span>Name</span><input name="name" required maxLength={60} /></label>
