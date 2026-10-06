@@ -1,0 +1,12 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "S.V.E.R Board",
+  "Description": "Receive S.V.E.R board presses, joystick moves and text in your game, and update the board.",
+  "Category": "Networking",
+  "CreatedBy": "S.V.E.R",
+  "CanContainContent": false,
+  "Modules": [{ "Name": "SverBoard", "Type": "Runtime", "LoadingPhase": "Default" }],
+  "Plugins": []
+}

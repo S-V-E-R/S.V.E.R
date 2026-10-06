@@ -21,6 +21,7 @@ pub mod discovery;
 pub mod emotes;
 pub mod engagement;
 pub mod factions;
+pub mod gateway;
 pub mod guilds;
 pub mod integrity;
 pub mod jobs;
@@ -417,6 +418,7 @@ pub fn router(app: App) -> Router {
         .merge(crowd::routes())
         .merge(skills::routes())
         .merge(surge::routes())
+        .merge(gateway::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .with_state(app)

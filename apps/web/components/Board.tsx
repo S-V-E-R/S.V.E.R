@@ -7,7 +7,7 @@ import "../styles/boards.css";
 
 export type Control = { id: string; kind: "button" | "label" | "text" | "goal" | "joystick" | "rally"; label: string; cost: number; cooldown_seconds: number; per_stream_limit: number | null; audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number };
 export type BoardDef = { screens: { name: string; controls: Control[] }[] };
-type View = { board: BoardDef | null; version: number; disabled: boolean; live: boolean; overlay: boolean; goals: Record<string, number>; used: Record<string, number>; last_press: Record<string, string>; balance: number | null; signed_in: boolean; can_run: boolean; blocks: string[] | null };
+type View = { board: BoardDef | null; version: number; disabled: boolean; live: boolean; overlay: boolean; goals: Record<string, number>; used: Record<string, number>; last_press: Record<string, string>; balance: number | null; signed_in: boolean; can_run: boolean; blocks: string[] | null; state?: Record<string, { label?: string; disabled?: boolean }> };
 const AUDIENCE = { everyone: "", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
 const STICK: [string, number, number][] = [["↑", 0, -1], ["←", -1, 0], ["→", 1, 0], ["↓", 0, 1]];
 
@@ -45,6 +45,11 @@ export function Board({ username }: { username: string }) {
       const { channel, event: e } = (event as CustomEvent<{ channel: string; event: BoardEvent }>).detail;
       if (channel !== username.toLowerCase()) return;
       if (e.type === "board") void load();
+      // A connected game changed labels, availability or goal progress.
+      else if ((e as { type: string }).type === "board_state") {
+        const update = e as unknown as { state: View["state"]; goals: Record<string, number> };
+        setView(v => v && { ...v, state: update.state, goals: update.goals });
+      }
       else if (e.type === "board_effect" && e.goal && e.control) {
         const id = e.control, progress = e.goal.progress;
         setView(v => v && { ...v, goals: { ...v.goals, [id]: progress } });
@@ -92,6 +97,7 @@ export function Board({ username }: { username: string }) {
     const last = view.last_press[c.id];
     const ready = last ? Date.parse(last) + c.cooldown_seconds * 1000 : 0;
     if (c.cooldown_seconds && ready > now) return `${Math.ceil((ready - now) / 1000)}s`;
+    if (view.state?.[c.id]?.disabled) return "Unavailable";
     if (c.per_stream_limit && (view.used[c.id] ?? 0) >= c.per_stream_limit) return "Limit reached";
     if (c.target && (view.goals[c.id] ?? 0) >= c.target) return "Complete";
     if (c.cost && (view.balance ?? 0) < c.cost) return "Not enough";
@@ -104,7 +110,7 @@ export function Board({ username }: { username: string }) {
     {!view ? <p className="loading">{note || "Loading…"}</p> : !board ? <p className="muted">This channel has no board right now.</p> : <>
       <p className="muted small">{view.disabled ? "The board is paused." : !view.live ? "The board works while the stream is live." : !view.signed_in ? <><Link href="/login">Sign in</Link> and watch to use the board.</> : view.balance === null ? "This is your board. Try it in Creator Studio's test mode." : "Presses spend this channel's Engagement Valor, earned by watching and chatting."}</p>
       {board.screens.length > 1 && <div className="board-screens" role="tablist">{board.screens.map((s, i) => <button key={s.name + i} type="button" role="tab" aria-selected={i === screen} className={i === screen ? "small" : "small quiet"} onClick={() => setScreen(i)}>{s.name}</button>)}</div>}
-      {current && <div className="board-grid">{current.controls.map(c => {
+      {current && <div className="board-grid">{current.controls.map(base => ({ ...base, label: view.state?.[base.id]?.label ?? base.label })).map(c => {
         const span = { gridColumn: `span ${c.width}` };
         const why = blocker(c);
         const off = !canPress || busy || !!why;

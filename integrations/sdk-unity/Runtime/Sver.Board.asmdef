@@ -1,0 +1,8 @@
+{
+  "name": "Sver.Board",
+  "rootNamespace": "Sver.Board",
+  "references": [],
+  "overrideReferences": true,
+  "precompiledReferences": ["Newtonsoft.Json.dll"],
+  "autoReferenced": true
+}

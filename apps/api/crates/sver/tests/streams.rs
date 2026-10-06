@@ -34,6 +34,8 @@ mod crowd;
 mod discovery;
 #[path = "streams/engagement.rs"]
 mod engagement;
+#[path = "streams/gateway.rs"]
+mod gateway;
 #[path = "streams/integrity.rs"]
 mod integrity;
 #[path = "streams/magnet.rs"]
@@ -447,6 +449,7 @@ async fn exercise(e: &Env) {
     boards::exercise(e).await;
     crowd::exercise(e).await;
     moments::exercise(e).await;
+    gateway::exercise(e).await;
     rest::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;
