@@ -123,11 +123,11 @@ fn query(cursor: &str, recent: bool) -> Res<String> {
         return Err(Fail::internal());
     }
     let releases = if recent {
-        let year = chrono::Datelike::year(&chrono::Utc::now());
+        let today = chrono::Utc::now().date_naive();
         format!(
-            r#"?game wdt:P577 ?release. FILTER(?release >= "{}-01-01T00:00:00Z"^^xsd:dateTime && ?release < "{}-01-01T00:00:00Z"^^xsd:dateTime)"#,
-            year - 1,
-            year + 3
+            r#"?game wdt:P577 ?release. FILTER(?release >= "{}T00:00:00Z"^^xsd:dateTime && ?release < "{}T00:00:00Z"^^xsd:dateTime)"#,
+            today - chrono::Duration::days(30),
+            today + chrono::Duration::days(730)
         )
     } else {
         String::new()
