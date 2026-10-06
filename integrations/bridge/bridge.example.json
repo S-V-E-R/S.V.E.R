@@ -1,0 +1,12 @@
+{
+  "token": "sver_b_paste-your-bridge-token-here",
+  "gateway": "wss://sver.tv/api/integrations/ws",
+  "obs": { "url": "ws://127.0.0.1:4455", "password": "your OBS WebSocket password" },
+  "actions": {
+    "brb": [{ "scene": "Be right back" }],
+    "confetti": { "steps": [{ "source": "Confetti", "scene": "Main", "visible": true }, { "wait": 5000 }, { "source": "Confetti", "scene": "Main", "visible": false }], "cooldown": 15000 },
+    "camera": [{ "source": "Camera", "scene": "Main", "visible": "toggle" }],
+    "skill:quake": [{ "filter": "Shake", "source": "Camera", "enabled": true }, { "wait": 2000 }, { "filter": "Shake", "source": "Camera", "enabled": false }],
+    "surge": [{ "source": "Surge banner", "scene": "Main", "visible": true }, { "wait": 8000 }, { "source": "Surge banner", "scene": "Main", "visible": false }]
+  }
+}

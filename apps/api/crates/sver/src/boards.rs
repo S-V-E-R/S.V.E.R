@@ -302,9 +302,11 @@ struct Row {
     overlay: bool,
     overlay_set: bool,
     webhook_url: Option<String>,
+    /// What a connected game set: per-control label overrides and availability.
+    live_state: Value,
 }
 const ROW: &str = "SELECT draft,published,version,published_at,disabled,moderators_run,
-    coalesce(overlay_seen_at>now()-interval '30 seconds',false) AS overlay, overlay_token_hash IS NOT NULL AS overlay_set, webhook_url FROM boards";
+    coalesce(overlay_seen_at>now()-interval '30 seconds',false) AS overlay, overlay_token_hash IS NOT NULL AS overlay_set, webhook_url, live_state FROM boards";
 async fn row(app: &App, channel: &str) -> Res<Option<Row>> {
     // ROW is fixed SQL; the channel is bound.
     Ok(
@@ -359,6 +361,7 @@ async fn studio(app: &App, user: &auth::User) -> Res<Value> {
             overlay: false,
             overlay_set: false,
             webhook_url: None,
+            live_state: json!({}),
         },
     };
     let templates: Vec<Value> = templates()
@@ -416,7 +419,7 @@ async fn publish(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         )));
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("UPDATE boards SET published=draft, version=version+1, published_at=now() WHERE channel_id=$1")
+    sqlx::query("UPDATE boards SET published=draft, version=version+1, published_at=now(), live_state='{}' WHERE channel_id=$1")
         .bind(&user.id)
         .execute(&mut *tx)
         .await?;
@@ -711,7 +714,7 @@ async fn view(
         }
     }
     Ok(Json(json!({
-        "board": board.0, "version": row.version, "disabled": row.disabled, "live": live.is_some(),
+        "board": board.0, "version": row.version, "disabled": row.disabled, "live": live.is_some(), "state": row.live_state,
         "overlay": row.overlay, "goals": goals, "used": used, "last_press": last,
         "balance": balance, "signed_in": viewer.is_some(), "can_run": can_run, "blocks": blocks,
     })))
@@ -757,6 +760,9 @@ async fn press(
         .control(&input.control)
         .filter(|c| pressable(c))
         .ok_or_else(Fail::missing)?;
+    if row.live_state[&control.id]["disabled"] == true {
+        return Err(Fail::conflict("That control is unavailable right now."));
+    }
     let (broadcast, stream_ms, net) = real_viewer(&app, &channel, &user).await?;
     // Per account and per network, across all controls; joystick moves have their own budget
     // (at most 10 a second per viewer).
@@ -891,6 +897,101 @@ async fn press(
     .fetch_one(&app.db)
     .await?;
     Ok(Json(json!({"balance": balance, "goal": goal})))
+}
+/// The published board as integrations see it: definition, version, pause, game-set state and
+/// goal progress (null board when nothing is published).
+pub(crate) async fn snapshot(db: &mut sqlx::PgConnection, channel: &str) -> Res<Value> {
+    let row: Option<(Option<sqlx::types::Json<Board>>, i32, bool, Value)> = sqlx::query_as(
+        "SELECT published, version, disabled, live_state FROM boards WHERE channel_id=$1",
+    )
+    .bind(channel)
+    .fetch_optional(&mut *db)
+    .await?;
+    let goals: Value = sqlx::query_scalar(
+        "SELECT coalesce(jsonb_object_agg(control_id,progress),'{}') FROM board_goals WHERE channel_id=$1",
+    )
+    .bind(channel)
+    .fetch_one(&mut *db)
+    .await?;
+    Ok(match row {
+        Some((Some(board), version, disabled, state)) => {
+            json!({"board": board.0, "version": version, "disabled": disabled, "state": state, "goals": goals})
+        }
+        _ => json!({"board": null, "version": 0, "disabled": false, "state": {}, "goals": {}}),
+    })
+}
+/// A game's update to the published board (docs/CROWDSYNC.md "Game SDK"): per control, a label
+/// override ("label": text, or null to restore), availability ("disabled") and, for goals,
+/// progress (0 to the target). Applied together or not at all; returns the new snapshot.
+pub(crate) async fn apply_state(
+    db: &mut sqlx::PgConnection,
+    channel: &str,
+    changes: &serde_json::Map<String, Value>,
+) -> Res<Value> {
+    if changes.is_empty() || changes.len() > MAX_SCREENS * MAX_CONTROLS {
+        return Err(Fail::bad("Send 1 to 96 control changes."));
+    }
+    let row: Option<(Option<sqlx::types::Json<Board>>, Value)> =
+        sqlx::query_as("SELECT published, live_state FROM boards WHERE channel_id=$1 FOR UPDATE")
+            .bind(channel)
+            .fetch_optional(&mut *db)
+            .await?;
+    let Some((Some(board), mut state)) = row else {
+        return Err(Fail::conflict("Publish a board first."));
+    };
+    let mut goals = Vec::new();
+    for (id, change) in changes {
+        let control = board
+            .0
+            .control(id)
+            .ok_or_else(|| Fail::bad(format!("No control {id} on the published board.")))?;
+        let change = change
+            .as_object()
+            .ok_or_else(|| Fail::bad("Each change is an object."))?;
+        let entry = state
+            .as_object_mut()
+            .ok_or_else(Fail::internal)?
+            .entry(id.clone())
+            .or_insert_with(|| json!({}));
+        for (field, value) in change {
+            match (field.as_str(), value) {
+                ("label", Value::Null) => {
+                    entry.as_object_mut().map(|e| e.remove("label"));
+                }
+                ("label", Value::String(label)) => {
+                    let label = label.trim();
+                    if !(1..=40).contains(&label.chars().count()) {
+                        return Err(Fail::bad("Labels are 1–40 characters."));
+                    }
+                    text::filter(label, "label")?;
+                    entry["label"] = json!(label);
+                }
+                ("disabled", Value::Bool(off)) => entry["disabled"] = json!(off),
+                ("progress", Value::Number(n)) if control.target.is_some() => {
+                    let target = i64::from(control.target.unwrap_or(0));
+                    let progress = n
+                        .as_i64()
+                        .filter(|p| (0..=target).contains(p))
+                        .ok_or_else(|| Fail::bad("Progress is 0 to the goal's target."))?;
+                    goals.push((id.clone(), progress as i32));
+                }
+                _ => {
+                    return Err(Fail::bad(format!("Unsupported change {field} for {id}.")));
+                }
+            }
+        }
+    }
+    sqlx::query("UPDATE boards SET live_state=$2 WHERE channel_id=$1")
+        .bind(channel)
+        .bind(&state)
+        .execute(&mut *db)
+        .await?;
+    for (id, progress) in goals {
+        sqlx::query("INSERT INTO board_goals(channel_id,control_id,progress) VALUES($1,$2,$3) ON CONFLICT(channel_id,control_id) DO UPDATE SET progress=EXCLUDED.progress")
+            .bind(channel).bind(id).bind(progress)
+            .execute(&mut *db).await?;
+    }
+    snapshot(db, channel).await
 }
 /// Whether the channel's effects are paused (panic) and whether its OBS overlay is connected.
 pub(crate) async fn effects_state(db: &mut sqlx::PgConnection, channel: &str) -> Res<(bool, bool)> {

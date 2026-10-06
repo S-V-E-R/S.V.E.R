@@ -151,7 +151,50 @@ export default function StudioBoard() {
       {secret && <p className="form-message">Signing secret, shown once: <code>{secret}</code> <CopyButton value={secret} label="signing secret" /></p>}
     </Section>
     <SkillSettings />
+    <Connections />
   </>;
+}
+
+type Connection = { id: string; kind: "bridge" | "game"; name: string; created_at: string; last_used_at: string | null };
+/**
+ * Scoped tokens for the S.V.E.R bridge (OBS on your PC) and for games (docs/CROWDSYNC.md "Game
+ * SDK"). They connect only to the integration gateway; the token is shown once.
+ */
+function Connections() {
+  const [data, setData] = useState<{ tokens: Connection[]; gateway: string } | null>(null);
+  const [draft, setDraft] = useState({ kind: "bridge" as Connection["kind"], name: "" });
+  const [fresh, setFresh] = useState<string | null>(null);
+  const [state, setState] = useState<SaveState>({});
+  const load = useCallback(async () => {
+    const r = await send<{ tokens: Connection[]; gateway: string }>("GET", "/api/me/integrations");
+    if (r.ok) setData(r.data);
+  }, []);
+  useLoad(load);
+  if (!data) return null;
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    const r = await send<{ tokens: Connection[]; gateway: string; token: string }>("POST", "/api/me/integrations", draft);
+    if (r.ok) { setData(r.data); setFresh(r.data.token); setDraft({ ...draft, name: "" }); setState({}); } else setState({ error: r.error });
+  }
+  async function revoke(c: Connection) {
+    if (!window.confirm(`Disconnect ${c.name}? Its token stops working.`)) return;
+    const r = await send<{ tokens: Connection[] }>("DELETE", `/api/me/integrations/${c.id}`);
+    if (r.ok) setData({ ...data!, tokens: r.data.tokens }); else setState({ error: r.error });
+  }
+  return <Section title="Connections" intro="Connect the S.V.E.R bridge to switch OBS scenes and sources from board presses, or a game to receive presses, joystick moves and text, and update the board. Each connection has its own private token; disconnect it any time.">
+    {data.tokens.length > 0 && <ul className="list">{data.tokens.map(c => <li key={c.id}>
+      <span><strong>{c.name}</strong> · {c.kind === "bridge" ? "OBS bridge" : "Game"} · {c.last_used_at ? `last connected ${new Date(c.last_used_at).toLocaleString()}` : "never connected"}</span>
+      <button type="button" className="link-button" onClick={() => revoke(c)}>Disconnect</button>
+    </li>)}</ul>}
+    {fresh && <p className="form-message">Copy this token now; it won&apos;t be shown again. <code>{fresh}</code> <CopyButton value={fresh} label="connection token" /><br />Gateway: <code>{data.gateway}</code></p>}
+    <form className="reward-form" onSubmit={create}>
+      <label className="field narrow"><span>Type</span><select value={draft.kind} onChange={e => setDraft({ ...draft, kind: e.target.value as Connection["kind"] })}><option value="bridge">OBS bridge</option><option value="game">Game</option></select></label>
+      <label className="field"><span>Name</span><input value={draft.name} maxLength={40} required placeholder={draft.kind === "bridge" ? "Streaming PC" : "My game"} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label>
+      <button className="small">Create token</button>
+    </form>
+    <p className="muted small">The bridge app and the game SDKs (JavaScript, Unity, Unreal) are in the S.V.E.R repository under <code>integrations/</code>.</p>
+    <Status state={state} />
+  </Section>;
 }
 
 const CATEGORY_NAMES: Record<string, string> = { sticker: "Stickers", fullscreen: "Full-screen moments", sound: "Sounds" };
