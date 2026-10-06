@@ -5,7 +5,7 @@ import { send } from "../lib/client-api";
 import { REDUCE_KEY, type BoardEvent } from "./BoardEffects";
 import "../styles/boards.css";
 
-export type Control = { id: string; kind: "button" | "label" | "text" | "goal" | "joystick"; label: string; cost: number; cooldown_seconds: number; per_stream_limit: number | null; audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number };
+export type Control = { id: string; kind: "button" | "label" | "text" | "goal" | "joystick" | "rally"; label: string; cost: number; cooldown_seconds: number; per_stream_limit: number | null; audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number };
 export type BoardDef = { screens: { name: string; controls: Control[] }[] };
 type View = { board: BoardDef | null; version: number; disabled: boolean; live: boolean; overlay: boolean; goals: Record<string, number>; used: Record<string, number>; last_press: Record<string, string>; balance: number | null; signed_in: boolean; can_run: boolean; blocks: string[] | null };
 const AUDIENCE = { everyone: "", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };

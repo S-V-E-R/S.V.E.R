@@ -95,6 +95,8 @@ pub(crate) struct Row {
     highlighted: bool,
     /// The author's creator tier (1-3), for their badge.
     creator_tier: Option<i16>,
+    /// The Skill this paid message played.
+    skill: Option<String>,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -104,12 +106,12 @@ impl Row {
     }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier, "skill":self.skill})
     }
 }
 pub(crate) fn select() -> String {
     format!(
-        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,
+        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,m.skill,
         (SELECT t.tier FROM creator_tiers t WHERE t.user_id=m.author_id AND t.tier>0) AS creator_tier,
         (SELECT jsonb_build_object('tier',s.tier,'months',s.months) FROM channel_subs s WHERE s.channel_id=m.channel_id AND s.user_id=m.author_id AND s.paid_through>now()) AS sub,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
@@ -300,6 +302,9 @@ pub struct Send {
     /// Spend the channel's Engagement Valor on "highlight my message".
     #[serde(default)]
     highlight: bool,
+    /// Play a Skill (docs/CROWDSYNC.md "Skills"), paid in Valor like a tribute.
+    #[serde(default)]
+    skill: Option<String>,
 }
 
 /// Persists one message to a channel's own chat and fans it out.
@@ -404,7 +409,20 @@ pub(crate) async fn send_from(
     // Who a tribute pays: the channel, or in a merged co-stream every member who can earn,
     // split equally (docs/SUPPORT.md "Co-streams").
     let mut earners: Vec<String> = Vec::new();
-    if let Some(valor) = input.tribute {
+    let skill = match (&input.skill, channel) {
+        (Some(_), _) if input.tribute.is_some() => {
+            return Err(Fail::field("skill", "A Skill is its own payment."));
+        }
+        (Some(id), Some(channel)) if origin.is_none() && squad.is_none() => {
+            Some(crate::skills::check(app, channel, id).await?)
+        }
+        (Some(_), _) => {
+            return Err(Fail::field("skill", "Skills play in a channel's own chat."));
+        }
+        (None, _) => None,
+    };
+    let tribute = input.tribute.or(skill.map(|s| s.valor));
+    if let Some(valor) = tribute {
         if channel.is_none() || origin.is_some() {
             return Err(Fail::field("tribute", "Tributes go to a channel's chat."));
         }
@@ -466,12 +484,12 @@ pub(crate) async fn send_from(
     .bind(mention_names(body))
     .fetch_all(&mut *tx)
     .await?;
-    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO NOTHING")
-        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(input.tribute.map(|v| v as i32)).bind(input.highlight).execute(&mut *tx).await?.rows_affected();
+    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted,skill) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO NOTHING")
+        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.map(|s| s.id)).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
-    if let (Some(valor), Some(channel)) = (input.tribute, channel) {
+    if let (Some(valor), Some(channel)) = (tribute, channel) {
         // The message and the Valor move commit together; the lock serializes the buyer's spends.
         let wallet = format!("valor:{}", user.id);
         crate::ledger::lock(&mut tx, &wallet).await?;
@@ -500,13 +518,14 @@ pub(crate) async fn send_from(
             &mut tx,
             "tribute",
             &format!("tribute:{}", input.id),
-            json!({"message": input.id, "channel": channel, "earners": earners, "from": user.id, "valor": valor}),
+            json!({"message": input.id, "channel": channel, "earners": earners, "from": user.id, "valor": valor, "skill": skill.map(|s| s.id)}),
             &entries,
         )
         .await?;
     }
     // A moderator's counter command (`!deaths`) changed a counter; viewers are told after commit.
     let mut counters = false;
+    let mut rallied = false;
     if let Some(channel) = channel
         && squad.is_none()
     {
@@ -517,10 +536,25 @@ pub(crate) async fn send_from(
         crate::factions::chat(app, &mut tx, channel, &user.id, &input.id).await?;
         crate::plays::chat_vote(&mut tx, channel, &user, body).await?;
         counters = crate::crowd::chat_command(app, &mut tx, channel, &user, body).await?;
+        // Surge counts each real viewer once a minute; "!rally" also rallies for their faction.
+        crate::surge::participated(&mut tx, channel, &user.id).await?;
+        rallied = body.eq_ignore_ascii_case("!rally")
+            && crate::surge::rally_in(&mut tx, channel, &user.id).await?;
     }
     tx.commit().await?;
     if counters && let Some(channel) = channel {
         crate::crowd::publish_counters(app, channel).await?;
+    }
+    if let Some(channel) = channel.filter(|_| squad.is_none()) {
+        if rallied {
+            crate::surge::publish_rally(app, channel).await?;
+        }
+        if let Some(skill) = skill {
+            crate::skills::played(app, channel, &user, skill).await?;
+        }
+        if origin.is_none() {
+            crate::surge::combo(app, channel, &user.id, body).await?;
+        }
     }
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1", select())))

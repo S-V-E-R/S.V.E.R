@@ -11,7 +11,7 @@ import { Rewards } from "./Rewards";
 import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
-type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean; creator_tier?: number | null };
+type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null };
 /** Subscriber badge milestones: 1, 3, 6, 9 and 12 months, then each further year (docs/SUPPORT.md). */
 export function subBadge(months: number) {
   if (months >= 24) return `${Math.floor(months / 12)} years`;
@@ -20,7 +20,7 @@ export function subBadge(months: number) {
   return `${step} ${step === 1 ? "month" : "months"}`;
 }
 type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean };
-type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null } | { type: "subs_only"; on: boolean } | { type: "board_effect" } | { type: "board_input" } | { type: "board" } | { type: "poll" } | { type: "counters" };
+type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null } | { type: "subs_only"; on: boolean } | { type: "board_effect" } | { type: "board_input" } | { type: "board" } | { type: "poll" } | { type: "counters" } | { type: "rally" } | { type: "surge" };
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
@@ -147,7 +147,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
         // The player on this page runs the raid countdown (LivePlayer listens for this).
         else if (data.type === "raid" || data.type === "raid_cancelled") window.dispatchEvent(new CustomEvent("sver:raid", { detail: { channel: username.toLowerCase(), raid: data.type === "raid" ? data.raid : null } }));
         // Board presses, joystick moves, board changes, polls and counters go to the player's effects and the CrowdSync panels.
-        else if (data.type === "board_effect" || data.type === "board_input" || data.type === "board" || data.type === "poll" || data.type === "counters") window.dispatchEvent(new CustomEvent("sver:board", { detail: { channel: username.toLowerCase(), event: data } }));
+        else if (data.type === "board_effect" || data.type === "board_input" || data.type === "board" || data.type === "poll" || data.type === "counters" || data.type === "rally" || data.type === "surge") window.dispatchEvent(new CustomEvent("sver:board", { detail: { channel: username.toLowerCase(), event: data } }));
         else if (data.type === "system") setNotice(data.text);
         else setError(data.message);
       };
@@ -244,6 +244,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
       {messages.map(m => <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
+        {m.skill && <span className="badge skill-badge">✨ {m.skill}</span>}
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}

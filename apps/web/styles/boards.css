@@ -44,3 +44,14 @@
 .overlay-widgets{position:fixed;top:24px;left:24px;display:grid;gap:10px;max-width:420px;font-size:20px;color:#fff}
 .overlay-counter,.overlay-poll{margin:0;padding:8px 14px;background:rgba(8,10,14,.82);border:1px solid rgba(255,255,255,.3)}
 .overlay-poll .list{margin:6px 0 0;padding:0;list-style:none}
+
+/* Phase 3: Skills, rallies and Surge. */
+.board-sticker{position:absolute;right:6%;top:10%;font-size:96px;animation:board-pop .4s ease-out}
+.rally-meter{display:grid;gap:4px}
+.rally-row{display:grid;grid-template-columns:80px 1fr 42px;align-items:center;gap:8px}
+.rally-row progress{width:100%;accent-color:var(--accent)}
+.surge-banner{margin:0;padding:8px 14px;border:1px solid var(--accent);background:var(--tint)}
+.skill-badge{border-color:var(--accent);color:var(--accent);margin-right:.3rem}
+.crowd-skills{padding:10px 16px}
+.crowd-skills summary{cursor:pointer;font-weight:600}
+.board-particles .emote-particle{width:40px;height:40px;background-size:contain;background-repeat:no-repeat}

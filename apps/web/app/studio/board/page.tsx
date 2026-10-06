@@ -13,7 +13,7 @@ type Mine = {
   checklist: { label: string; ok: boolean; required: boolean }[]; templates: { name: string; board: BoardDef }[];
   effects: string[]; kinds: Control["kind"][]; audiences: Control["audience"][]; webhook_secret?: string | null;
 };
-const KIND_NAMES: Record<Control["kind"], string> = { button: "Button", label: "Label", text: "Text input", goal: "Goal", joystick: "Joystick" };
+const KIND_NAMES: Record<Control["kind"], string> = { button: "Button", label: "Label", text: "Text input", goal: "Goal", joystick: "Joystick", rally: "Faction rally" };
 const AUDIENCE_NAMES: Record<Control["audience"], string> = { everyone: "Everyone signed in", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
 const num = (value: string) => (value === "" ? 0 : Number(value));
 
@@ -25,7 +25,7 @@ function fresh(kind: Control["kind"], taken: Set<string>): Control {
 
 function ControlEditor({ control, mine, onChange, onMove, onRemove, onTest, saved }: { control: Control; mine: Mine; onChange: (c: Control) => void; onMove: (by: number) => void; onRemove: () => void; onTest: () => void; saved: boolean }) {
   const c = control;
-  const simple = c.kind === "label" || c.kind === "joystick";
+  const simple = c.kind === "label" || c.kind === "joystick" || c.kind === "rally";
   return <fieldset>
     <legend>{KIND_NAMES[c.kind]} · <code>{c.id}</code></legend>
     <label className="field"><span>Label</span><input value={c.label} maxLength={40} required onChange={e => onChange({ ...c, label: e.target.value })} /></label>
@@ -150,5 +150,28 @@ export default function StudioBoard() {
       </form>
       {secret && <p className="form-message">Signing secret, shown once: <code>{secret}</code> <CopyButton value={secret} label="signing secret" /></p>}
     </Section>
+    <SkillSettings />
   </>;
+}
+
+const CATEGORY_NAMES: Record<string, string> = { sticker: "Stickers", fullscreen: "Full-screen moments", sound: "Sounds" };
+/** Skill categories viewers can play on this channel (docs/CROWDSYNC.md "Skills"). */
+function SkillSettings() {
+  const [data, setData] = useState<{ categories: string[]; disabled: string[] } | null>(null);
+  const [state, setState] = useState<SaveState>({});
+  const load = useCallback(async () => {
+    const r = await send<{ categories: string[]; disabled: string[] }>("GET", "/api/me/skills");
+    if (r.ok) setData(r.data);
+  }, []);
+  useLoad(load);
+  if (!data) return null;
+  async function toggle(category: string, on: boolean) {
+    const disabled = on ? data!.disabled.filter(c => c !== category) : [...data!.disabled, category];
+    const r = await send<{ categories: string[]; disabled: string[] }>("PUT", "/api/me/skills", { disabled });
+    if (r.ok) { setData(r.data); setState({ saved: "Saved." }); } else setState({ error: r.error });
+  }
+  return <Section title="Skills" intro="Viewers can play premium effects bought with Purchased Valor; you earn 0.8¢ per Valor, like a tribute. Switch off any kind you don't want on your stream. Pausing the board pauses Skills too.">
+    {data.categories.map(c => <label key={c} className="checkbox"><input type="checkbox" checked={!data.disabled.includes(c)} onChange={e => void toggle(c, e.target.checked)} /> {CATEGORY_NAMES[c] ?? c}</label>)}
+    <Status state={state} />
+  </Section>;
 }
