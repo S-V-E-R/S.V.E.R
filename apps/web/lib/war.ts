@@ -1,5 +1,5 @@
 import type { Faction } from "./factions";
-export type Genre = { id: string; name: string; home: Faction | null; holder: Faction | null; neighbors: string[]; position: number; scores: { faction: Faction; influence: number; score: number }[] };
+export type Genre = { id: string; name: string; home: Faction | null; holder: Faction | null; neighbors: string[]; position: number; map?: { q: number; r: number } | null; capital?: boolean; scores: { faction: Faction; influence: number; score: number }[] };
 export type War = {
   season: { number: number; starts_at: string; ends_at: string; next_starts_at: string; finished: boolean; winners: Faction[] } | null;
   week: { id: number; ends_at: string; completed: boolean } | null;
