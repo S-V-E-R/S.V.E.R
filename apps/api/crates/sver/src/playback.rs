@@ -182,6 +182,9 @@ pub struct Beat {
     /// The MAGNet Hype lane this viewer is watching from, for the streamer's feature history.
     #[serde(default)]
     magnet: Option<String>,
+    /// The Beacon whose Live now button brought this viewer (docs/BEACONS.md "Counts").
+    #[serde(default)]
+    beacon: Option<String>,
 }
 
 /// Sent every ten seconds by a player whose media is advancing. Signed-in viewers count once per
@@ -247,6 +250,11 @@ pub async fn beat(
     if let (Some(_), Some(lane)) = (&outcome, &input.magnet) {
         sqlx::query("UPDATE playback_leases SET magnet_lane=$3 WHERE broadcast_id=$1 AND viewer_key=$2 AND magnet_lane IS NULL AND EXISTS(SELECT 1 FROM magnet_lanes WHERE id=$3)")
             .bind(&input.broadcast_id).bind(&key).bind(lane).execute(&app.db).await?;
+    }
+    if let (Some((level, _)), Some(beacon)) = (&outcome, &input.beacon)
+        && matches!(level.name(), "counted" | "trusted")
+    {
+        crate::videos::beacons::live_join(&app, beacon, &owner, &key).await?;
     }
     Ok(Json(match outcome {
         None => json!({"recorded":false}),

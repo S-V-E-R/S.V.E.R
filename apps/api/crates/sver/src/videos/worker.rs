@@ -3,23 +3,24 @@ use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncWriteExt, process::Command};
 
 #[derive(sqlx::FromRow)]
-struct Job {
+pub(super) struct Job {
     id: String,
-    video_id: String,
+    pub(super) video_id: String,
     kind: String,
     object_key: Option<String>,
     payload: Option<Vec<u8>>,
-    input: Value,
-    lease_token: String,
+    pub(super) input: Value,
+    pub(super) lease_token: String,
+    pub(super) attempts: i32,
 }
-async fn put(app: &App, key: &str, bytes: Vec<u8>, kind: &str) -> Res<()> {
+pub(super) async fn put(app: &App, key: &str, bytes: Vec<u8>, kind: &str) -> Res<()> {
     app.config
         .videos
         .storage
         .put_typed(&app.http, key, bytes, kind, "private, no-store")
         .await
 }
-async fn object(app: &App, key: &str) -> Res<Vec<u8>> {
+pub(super) async fn object(app: &App, key: &str) -> Res<Vec<u8>> {
     app.config
         .videos
         .storage
@@ -30,7 +31,7 @@ async fn object(app: &App, key: &str) -> Res<Vec<u8>> {
 /// Deterministic destination keys and a fenced database publish make retries idempotent.
 pub async fn run_one(app: &App, segments: bool) -> Res<bool> {
     let token = profiles::new_id();
-    let job:Option<Job>=sqlx::query_as("UPDATE video_jobs SET lease_until=now()+interval '90 seconds',lease_token=$1,attempts=attempts+1 WHERE id=(SELECT id FROM video_jobs WHERE (kind='SEGMENT')=$2 AND available_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,video_id,kind,object_key,payload,input,lease_token")
+    let job:Option<Job>=sqlx::query_as("UPDATE video_jobs SET lease_until=now()+interval '90 seconds',lease_token=$1,attempts=attempts+1 WHERE id=(SELECT id FROM video_jobs WHERE (kind='SEGMENT')=$2 AND available_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,video_id,kind,object_key,payload,input,lease_token,attempts")
         .bind(&token).bind(segments).fetch_optional(&app.db).await?;
     let Some(job) = job else { return Ok(false) };
     let result = {
@@ -66,7 +67,7 @@ pub async fn run_one(app: &App, segments: bool) -> Res<bool> {
     result?;
     Ok(true)
 }
-async fn fence(db: &mut PgConnection, job: &Job) -> Res<()> {
+pub(super) async fn fence(db: &mut PgConnection, job: &Job) -> Res<()> {
     let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM video_jobs WHERE id=$1 AND lease_token=$2 AND lease_until>now())")
         .bind(&job.id).bind(&job.lease_token).fetch_one(db).await?;
     if !valid {
@@ -93,6 +94,7 @@ async fn process(app: &App, job: &Job) -> Res<bool> {
         "ASSEMBLE" => assemble(app, job).await.map(|_| true),
         "DOWNLOAD" => mp4(app, job, true).await.map(|_| true),
         "DELETE" => remove(app, job).await,
+        "BEACON" => super::render::beacon(app, job).await.map(|_| true),
         _ => Err(Fail::internal()),
     }
 }
@@ -409,6 +411,7 @@ async fn remove(app: &App, job: &Job) -> Res<bool> {
         &[
             format!("{}/videos/{}", app.config.origin, job.video_id),
             format!("{}/clips/{}", app.config.origin, job.video_id),
+            format!("{}/beacons/{}", app.config.origin, job.video_id),
         ],
     )
     .await?;

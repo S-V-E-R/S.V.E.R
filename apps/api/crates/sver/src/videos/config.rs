@@ -11,6 +11,10 @@ pub struct Tuning {
     pub clip_watch_seconds: f64,
     pub beats_per_viewer_minute: i32,
     pub beats_per_ip_minute: i32,
+    /// Beacon watermark (docs/BEACONS.md): seconds in each corner, varied per Beacon by up to
+    /// the jitter so there is no fixed pattern to mask.
+    pub beacon_mark_seconds: f64,
+    pub beacon_mark_jitter: f64,
 }
 impl Default for Tuning {
     fn default() -> Self {
@@ -22,6 +26,8 @@ impl Default for Tuning {
             clip_watch_seconds: 3.0,
             beats_per_viewer_minute: 60,
             beats_per_ip_minute: 600,
+            beacon_mark_seconds: 3.0,
+            beacon_mark_jitter: 1.0,
         }
     }
 }
@@ -30,13 +36,17 @@ pub struct Config {
     pub storage: Storage,
     pub segment_base: String,
     pub tuning: Tuning,
+    /// TrueType font for the Beacon watermark.
+    pub beacon_font: String,
 }
+const BEACON_FONT: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 impl Default for Config {
     fn default() -> Self {
         Self {
             storage: Storage::Disabled,
             segment_base: String::new(),
             tuning: Tuning::default(),
+            beacon_font: BEACON_FONT.into(),
         }
     }
 }
@@ -124,13 +134,20 @@ impl Config {
             || !(0.1..=60.0).contains(&tuning.clip_watch_seconds)
             || tuning.beats_per_viewer_minute < 1
             || tuning.beats_per_ip_minute < 1
+            || !(1.0..=30.0).contains(&tuning.beacon_mark_seconds)
+            || !(0.0..1.0).contains(&(tuning.beacon_mark_jitter / tuning.beacon_mark_seconds))
         {
             return Err("Invalid recording queue or clipping limits".into());
         }
+        let beacon_font = match env("BEACON_FONT_FILE") {
+            font if font.is_empty() => BEACON_FONT.into(),
+            font => font,
+        };
         Ok(Self {
             storage,
             segment_base,
             tuning,
+            beacon_font,
         })
     }
 }

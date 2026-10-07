@@ -8,7 +8,7 @@ WORKDIR /app/apps/api
 RUN cargo build --release --locked --bins
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/apps/api/target/release/sver /usr/local/bin/sver
 COPY --from=build /app/apps/api/target/release/sver-import-check /usr/local/bin/sver-import-check
 COPY --from=build /app/apps/api/target/release/sver-admin /usr/local/bin/sver-admin

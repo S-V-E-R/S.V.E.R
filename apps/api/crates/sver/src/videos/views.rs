@@ -121,7 +121,21 @@ async fn beat(
     lease.turnstile_ok |= passed;
     let same_network:i64=sqlx::query_scalar("SELECT count(*) FROM video_playback WHERE video_id=$1 AND network=$2 AND updated_at>now()-interval '30 seconds'").bind(&id).bind(&network).fetch_one(&mut *tx).await?;
     let mut tuning = app.config.integrity.clone();
-    if video.kind == "CLIP" {
+    // A Beacon counts each account or guest at most once per day.
+    if video.kind == "BEACON" && lease.updated_at < now - chrono::Duration::days(1) && lease.counted
+    {
+        lease.counted = false;
+        lease.watched_seconds = 0.0;
+        lease.interval_count = 0;
+        lease.interval_mean = 0.0;
+        lease.interval_m2 = 0.0;
+        sqlx::query("UPDATE video_playback SET counted=false WHERE video_id=$1 AND viewer_key=$2")
+            .bind(&id)
+            .bind(&key)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if matches!(video.kind.as_str(), "CLIP" | "BEACON") {
         // A short clip can finish before the live-stream observation window. Keep the
         // same identity/risk checks, with a privately tuned minimum of real watch time.
         tuning.pending_seconds = tuning

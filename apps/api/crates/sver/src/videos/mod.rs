@@ -1,9 +1,11 @@
 //! Module 8: private recordings, independent cuts and durable media work.
+pub mod beacons;
 mod config;
 pub use config::Config;
 mod delivery;
 mod manage;
 pub mod recording;
+mod render;
 mod routes;
 pub mod worker;
 pub use manage::marker;
@@ -170,6 +172,18 @@ async fn access(
             || moderation::banned(app, owner, &user.id).await?)
     {
         return Err(Fail::denied("This recording is unavailable."));
+    }
+    // An unpublished Beacon is visible only to its creator and channel staff.
+    if video.kind == "BEACON" && !privileged {
+        let published: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM beacons WHERE video_id=$1 AND published_at IS NOT NULL)",
+        )
+        .bind(&video.id)
+        .fetch_one(&mut *db)
+        .await?;
+        if !published {
+            return Err(Fail::missing());
+        }
     }
     if video.approval != "APPROVED"
         && !privileged

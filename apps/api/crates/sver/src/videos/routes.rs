@@ -537,6 +537,7 @@ pub fn routes() -> Router<App> {
         .merge(super::sharing::routes())
         .merge(super::copyright::routes())
         .merge(super::review::routes())
+        .merge(super::beacons::routes())
         .route("/api/me/videos", get(mine).put(save_settings))
         .route("/api/channels/{name}/videos", get(channel))
         .route("/api/clips/latest", get(latest))

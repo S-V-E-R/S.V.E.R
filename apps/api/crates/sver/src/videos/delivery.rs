@@ -12,6 +12,9 @@ use axum::{
 #[derive(Deserialize)]
 struct Link {
     ticket: String,
+    /// Beacons: `sd` for the 720p copy; 1080p otherwise.
+    #[serde(default)]
+    q: Option<String>,
 }
 #[derive(sqlx::FromRow)]
 struct Segment {
@@ -163,7 +166,27 @@ async fn file(
 ) -> Res<Response> {
     let (video, ticket) = verify_ticket(&app, &jar, &id, &link.ticket).await?;
     let download = ticket.scope == "download";
-    let key = if download {
+    let key = if video.kind == "BEACON" {
+        // Public copies carry the watermark; the clean copy is only for its creator's download.
+        let (hd, sd, clean): (Option<String>, Option<String>, Option<String>) =
+            sqlx::query_as("SELECT hd_key,sd_key,clean_key FROM beacons WHERE video_id=$1")
+                .bind(&id)
+                .fetch_one(&app.db)
+                .await?;
+        if download {
+            let user = crate::profiles::viewer(&app, &jar)
+                .await?
+                .ok_or_else(Fail::missing)?;
+            if video.owner_id.as_deref() != Some(&user.id) {
+                return Err(Fail::missing());
+            }
+            clean
+        } else if link.q.as_deref() == Some("sd") {
+            sd
+        } else {
+            hd
+        }
+    } else if download {
         if video.download_until.is_none_or(|at| at <= Utc::now()) {
             return Err(Fail::missing());
         }

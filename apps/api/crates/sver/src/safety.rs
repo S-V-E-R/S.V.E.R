@@ -54,6 +54,7 @@ const TARGETS: &[&str] = &[
     "vod",
     "highlight",
     "clip",
+    "beacon",
     "guild",
     "guild_emblem",
     "faction_post",
@@ -199,7 +200,7 @@ async fn target(
     reporter: &str,
 ) -> Res<Target> {
     let row: Option<(String, String, Value)> = match kind {
-        "vod"|"highlight"|"clip"=>crate::videos::review::target(db,kind,id).await?,
+        "vod"|"highlight"|"clip"|"beacon"=>crate::videos::review::target(db,kind,id).await?,
         "guild" | "guild_emblem" => crate::guilds::target(db,id,reporter,kind=="guild_emblem").await?,
         "faction_post" => crate::factions::target(db,id,reporter).await?,
         "emote" => crate::emotes::target(db, id).await?,
@@ -957,7 +958,7 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
 }
 async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
     let owner: Option<String> = match kind {
-        "vod" | "highlight" | "clip" => crate::videos::review::owner(db, id).await?,
+        "vod" | "highlight" | "clip" | "beacon" => crate::videos::review::owner(db, id).await?,
         "guild" | "guild_emblem" => crate::guilds::owner(db, id).await?,
         "faction_post" => crate::factions::owner(db, id).await?,
         "emote" => crate::emotes::owner(db, id).await?,
@@ -1025,7 +1026,7 @@ async fn current_content(
     field: Option<&str>,
 ) -> Res<Value> {
     Ok(match kind {
-        "vod"|"highlight"|"clip"=>crate::videos::review::snapshot(db,id).await?,
+        "vod"|"highlight"|"clip"|"beacon"=>crate::videos::review::snapshot(db,id).await?,
         "guild" | "guild_emblem" => crate::guilds::snapshot(db, id).await?,
         "emote" => crate::emotes::current(db, id).await?,
         "profile" => match profile_snapshot(db, id, field).await {

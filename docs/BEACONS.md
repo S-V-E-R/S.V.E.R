@@ -108,6 +108,17 @@ Beacons are short vertical videos that lead people to creators and their live st
 | "Beacon" also named the Shine boost and the viewer heartbeat | "Beacon" means only these videos. The heartbeat is called the viewer lease. |
 | Kept: approved clips only, the Live now rail, Watch live on every video, counting only visible playback (complete at 90%), the direct-to-storage upload flow, the fairness lane, the watermark with a clean master (now moving corner to corner) | Carried over as above. |
 
+## Implementation (October 7, 2026; backend, phase 1)
+
+- A Beacon is a `videos` row with kind `BEACON` and its source clip as parent (migration `0044_beacons`), plus a `beacons` row for the crop, renditions, publish time and creator-only counts. Storage, leased jobs, holds, Take It Down, reports and deletion are Module 8's, so a hold on a clip or its recording hides every Beacon made from it.
+- Source: the channel's own clips that its owner approved for Beacons (`beacon_approved`), at most 10 a day, for anyone who has streamed once. The creator picks where the 9:16 window sits (`crop`, 0–1 along the free axis); the last choice is offered next time.
+- One leased `BEACON` job (`videos/render.rs`) runs FFmpeg once: crop, pad (never stretch), watermarked 1080×1920 and 720×1280 copies, a clean 1080×1920 copy, a thumbnail; metadata and chapters stripped; fast-start MP4. The mark "@username · sver.tv" visits the four safe-area corners in a per-Beacon order and period (`beacon_mark_seconds` ± `beacon_mark_jitter` in the private tuning file). The font is `BEACON_FONT_FILE` (default DejaVu Sans Bold, installed in the API image). Three failed attempts mark the Beacon failed with a reason; the creator can retry.
+- Statuses: Processing, Ready, Published (`published_at`), Failed, and deletion through Module 8. The clean copy is served only to its creator; public copies need a play ticket.
+- Feed (`GET /api/beacons`): followed, faction and fair-rotation sources interleaved; the rotation gives every creator's newest Beacon before anyone's second, in an order that changes hourly. Ordering never reads views, likes or money. Signed-out visitors get the rotation only; mutes, blocks, channel bans and the 18+ gate apply. `GET /api/beacons/live` is the Live now row, `GET /api/channels/{name}/beacons` the channel tab.
+- Counts: views use Module 8's heartbeat (counted sessions, 3 seconds, once per viewer per day). Likes need a session, one per account, rate-limited. Completions (90% in a counted heartbeat), follows (a real follow within 15 minutes) and live joins (the live heartbeat's `beacon` field once the session counts) are recorded once per viewer, for the creator only.
+- Reports use target type `beacon`. Uploads stay off until the known-abuse matching service is chosen.
+- Still to build: the web feed and Studio pages, home shelf, channel tab, search results and link-preview tags.
+
 ## Done when
 
 1. An eligible creator turns an approved clip into a 9:16 Beacon with a chosen crop, and uploads a video that the server probes, re-encodes and strips of metadata.

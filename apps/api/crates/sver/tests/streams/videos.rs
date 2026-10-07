@@ -579,6 +579,8 @@ async fn recordings_retry_privacy_cuts_and_retention() {
         .0,
         StatusCode::OK
     );
+    // Beacons bump the clip revision, so this runs after the checks that reuse its old link.
+    beacons_flow(&e, &clip, &root).await;
     permissions_and_holds(&e, &highlight, &clip).await;
     server.abort();
     db.close().await;
@@ -1455,4 +1457,178 @@ async fn copyright_flow(e: &Env, video: &str, staff: &str) {
         .execute(&e.app.db)
         .await
         .unwrap();
+}
+
+/// Module 9: an owner-approved clip becomes a 9:16 Beacon in one leased render job, with a
+/// clean copy only its creator can download; feed, likes, counters, holds and deletion behave.
+async fn beacons_flow(e: &Env, clip: &str, root: &std::path::Path) {
+    use super::chat::call;
+    let create = |body: Value| e.request("POST", "/api/me/beacons", body, true, true, false);
+    assert_eq!(
+        create(json!({"clip_id":clip,"crop":0.5})).await.0,
+        StatusCode::BAD_REQUEST,
+        "only clips the streamer approved for Beacons"
+    );
+    e.call(
+        "POST",
+        &format!("/api/videos/{clip}/approval"),
+        json!({"approve":true,"reason":"Great moment"}),
+    )
+    .await;
+    let mine = e.call("GET", "/api/me/beacons", Value::Null).await;
+    assert_eq!(mine["eligible"], true);
+    assert!(
+        mine["clips"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == clip)
+    );
+    assert_eq!(
+        create(json!({"clip_id":clip,"crop":1.5})).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    let id = e
+        .call(
+            "POST",
+            "/api/me/beacons",
+            json!({"clip_id":clip,"crop":0.25,"title":"Beacon moment"}),
+        )
+        .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for _ in 0..4 {
+        if !sver::videos::worker::run_one(&e.app, false).await.unwrap() {
+            break;
+        }
+    }
+    let mine = e.call("GET", "/api/me/beacons", Value::Null).await;
+    let beacon = mine["beacons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == id.as_str())
+        .unwrap()
+        .clone();
+    assert_eq!(beacon["status"], "READY", "{beacon}");
+    assert_eq!(beacon["published"], false);
+    assert_eq!(
+        call(e, "GET", &format!("/api/beacons/{id}"), None, Value::Null)
+            .await
+            .0,
+        StatusCode::NOT_FOUND,
+        "an unpublished Beacon is the creator's alone"
+    );
+    // The public 720p copy is 9:16 and carries none of the source's metadata.
+    let (status, sd) = bytes(&e.app, beacon["play"].as_str().unwrap(), Some(&e.cookie)).await;
+    assert_eq!(status, StatusCode::OK);
+    std::fs::write(root.join("beacon-sd.mp4"), &sd).unwrap();
+    let probe = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-show_entries",
+            "format_tags",
+            "-of",
+            "json",
+        ])
+        .arg(root.join("beacon-sd.mp4"))
+        .output()
+        .unwrap();
+    let probe: Value = serde_json::from_slice(&probe.stdout).unwrap();
+    assert_eq!(
+        (
+            probe["streams"][0]["width"].as_i64(),
+            probe["streams"][0]["height"].as_i64()
+        ),
+        (Some(720), Some(1280))
+    );
+    assert!(probe["format"]["tags"].get("title").is_none());
+    // The clean copy downloads for its creator only.
+    let clean = e
+        .call("POST", &format!("/api/me/beacons/{id}/clean"), Value::Null)
+        .await;
+    let url = clean["url"].as_str().unwrap();
+    let (status, file) = bytes(&e.app, url, Some(&e.cookie)).await;
+    assert_eq!((status, &file[4..8]), (StatusCode::OK, &b"ftyp"[..]));
+    assert_ne!(bytes(&e.app, url, None).await.0, StatusCode::OK);
+    // Published: in the signed-out fair rotation and on the channel tab.
+    e.call(
+        "POST",
+        &format!("/api/me/beacons/{id}/publish"),
+        Value::Null,
+    )
+    .await;
+    let (status, feed) = call(e, "GET", "/api/beacons", None, Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{feed}");
+    assert!(
+        feed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["id"] == id.as_str() && b["from"] == "rotation"),
+        "{feed}"
+    );
+    let (_, tab) = call(
+        e,
+        "GET",
+        "/api/channels/streamer/beacons",
+        None,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(tab["items"][0]["id"], id.as_str());
+    // Likes: a session is required, one per account, and they can be taken back.
+    let like = format!("/api/beacons/{id}/like");
+    assert_eq!(
+        call(e, "POST", &like, None, Value::Null).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(e.call("POST", &like, Value::Null).await["likes"], 1);
+    assert_eq!(e.call("POST", &like, Value::Null).await["likes"], 1);
+    assert_eq!(e.call("DELETE", &like, Value::Null).await["likes"], 0);
+    // A completion without counted watch time is not recorded.
+    assert_eq!(
+        e.call(
+            "POST",
+            &format!("/api/beacons/{id}/events"),
+            json!({"kind":"complete"})
+        )
+        .await["recorded"],
+        false
+    );
+    // A Take It Down hold on the source clip hides the Beacon made from it.
+    let mut tx = e.app.db.begin().await.unwrap();
+    sver::videos::review::hold(&mut tx, clip, "TAKE_DOWN", "beacon-test", true)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        call(e, "GET", &format!("/api/beacons/{id}"), None, Value::Null)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let mut tx = e.app.db.begin().await.unwrap();
+    sver::videos::review::release(&mut tx, "TAKE_DOWN", &["beacon-test".to_string()])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    // Deleting removes every rendition, the thumbnail and the clean copy.
+    e.call("DELETE", &format!("/api/me/beacons/{id}"), Value::Null)
+        .await;
+    while sver::videos::worker::run_one(&e.app, false).await.unwrap() {}
+    let left: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM video_objects WHERE video_id=$1 AND deleted_at IS NULL",
+    )
+    .bind(&id)
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(left, 0);
 }

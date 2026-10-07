@@ -40,7 +40,7 @@ pub fn routes() -> Router<App> {
 }
 
 pub fn is_video(kind: &str) -> bool {
-    matches!(kind, "vod" | "highlight" | "clip")
+    matches!(kind, "vod" | "highlight" | "clip" | "beacon")
 }
 pub async fn owner(db: &mut PgConnection, id: &str) -> Res<Option<String>> {
     Ok(
