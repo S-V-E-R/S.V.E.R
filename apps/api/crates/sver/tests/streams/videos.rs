@@ -226,6 +226,47 @@ async fn recordings_retry_privacy_cuts_and_retention() {
             .unwrap(),
         8000
     );
+    // The 24/7 Plays channel is never captured: the callback is acknowledged, nothing is stored.
+    let plays: Option<String> = sqlx::query_scalar("SELECT channel_id FROM plays_runtime")
+        .fetch_optional(&db)
+        .await
+        .unwrap();
+    match &plays {
+        Some(_) => e.sql("UPDATE plays_runtime SET channel_id='stream-owner'").await,
+        None => e.sql("INSERT INTO plays_runtime(channel_id,game,bridge_hash) VALUES('stream-owner','Synthetic game',repeat('0',64))").await,
+    }
+    let payload = json!({"action":"on_hls","server_id":"test-server","client_id":"record-client","vhost":"__defaultVhost__","app":"rebuild","stream":public,"url":format!("rebuild/{public}-123456-8.ts"),"duration":1.0,"seq_no":8});
+    assert_eq!(
+        e.request(
+            "POST",
+            "/api/internal/srs/segment",
+            payload,
+            false,
+            false,
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM video_segments")
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        8,
+        "Plays segments are not recorded"
+    );
+    match plays {
+        Some(channel) => {
+            sqlx::query("UPDATE plays_runtime SET channel_id=$1")
+                .bind(channel)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        None => e.sql("DELETE FROM plays_runtime").await,
+    }
     // A process that died with a lease is reclaimed; it does not duplicate the private object.
     e.sql("UPDATE video_jobs SET lease_until=now()-interval '1 second',lease_token='dead-process'")
         .await;
@@ -1210,7 +1251,16 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
     .execute(&e.app.db)
     .await
     .unwrap();
+    // A live broadcast always has a new segment upload in flight; it must not block trimming.
+    let in_flight = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO video_jobs(id,video_id,kind,object_key,lease_until,lease_token) VALUES($1,$2,'SEGMENT','in-flight/new-segment.ts',now()+interval '1 minute','other-worker')")
+        .bind(&in_flight).bind(video).execute(&e.app.db).await.unwrap();
     sver::videos::worker::maintain(&e.app).await.unwrap();
+    sqlx::query("DELETE FROM video_jobs WHERE id=$1")
+        .bind(&in_flight)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM video_segments WHERE video_id=$1 AND start_ms<8000"

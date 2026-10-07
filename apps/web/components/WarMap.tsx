@@ -2,14 +2,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { send } from "../lib/client-api";
-import { factionInfo } from "../lib/factions";
+import { factionInfo, factionOf } from "../lib/factions";
 import { contest, type Genre, type War, utcDate } from "../lib/war";
 import { Crest } from "./FactionIdentity";
 import { TerritoryMap } from "./TerritoryMap";
 import { WarStanding } from "./WarStanding";
 
 export function GenreBoard({ genres }: { genres: Genre[] }) {
-  return <div className="genre-board">{genres.map(g => { const { top, lead, contested } = contest(g); return <article className="genre-card panel" id={`genre-${g.id}`} key={g.id} data-theme={g.holder ?? "neutral"}><div className="row">{g.holder && <Crest faction={g.holder} size={32} />}<h3>{g.name}</h3></div><p>Held by {g.holder ? <Link href={`/factions/${g.holder}`}>{factionInfo(g.holder).name}</Link> : "nobody · neutral"}{contested && <strong className="contested-tag">Contested</strong>}</p><p className="muted">{top?.score ? `${factionInfo(top.faction).name} leads · ${lead.toFixed(1)}% ahead of second` : "No influence this week."}</p><dl className="genre-scores">{g.scores.map(s => <div key={s.faction}><dt>{factionInfo(s.faction).name}</dt><dd><meter min={0} max={Math.max(1, ...g.scores.map(v => v.score))} value={s.score} aria-label={`${factionInfo(s.faction).name} balanced score`} />{s.score.toLocaleString("en-US", { maximumFractionDigits: 1 })}<span className="sr-only"> balanced score</span></dd></div>)}</dl>{g.neighbors.length > 0 && <p className="muted">Neighbors: {g.neighbors.map(id => genres.find(other => other.id === id)?.name ?? id.replaceAll("_", " ")).join(", ")}</p>}</article>; })}</div>;
+  return <div className="genre-board">{genres.map(g => { const { top, lead, contested } = contest(g); return <article className="genre-card panel" id={`genre-${g.id}`} key={g.id} data-theme={g.holder ?? "neutral"}><div className="row">{g.holder && <Crest faction={g.holder} size={32} />}<h3>{g.name}</h3></div><p>Held by {g.holder ? <Link href={`/factions/${g.holder}`}>{factionInfo(g.holder).name}</Link> : "nobody · neutral"}{contested && <strong className="contested-tag">Contested</strong>}</p><p className="muted">{top?.score ? `${factionInfo(top.faction).name} leads · ${lead.toFixed(1)}% ahead of second` : "No influence this week."}</p><dl className="genre-scores">{g.scores.map(s => <div key={s.faction}><dt>{factionInfo(s.faction).name}</dt><dd><meter min={0} max={Math.max(1, ...g.scores.map(v => v.score))} value={s.score} aria-label={`${factionInfo(s.faction).name} balanced score`} />{s.score.toLocaleString("en-US", { maximumFractionDigits: 1 })}<span className="sr-only"> balanced score</span></dd></div>)}</dl>{g.home && <p className="muted">In {factionOf(g.home)?.homeland}, {factionInfo(g.home).name}&rsquo;s homeland</p>}{g.neighbors.length > 0 && <p className="muted">Neighbors: {g.neighbors.map(id => genres.find(other => other.id === id)?.name ?? id.replaceAll("_", " ")).join(", ")}</p>}</article>; })}</div>;
 }
 export default function WarMap({ initial }: { initial: War }) {
   const [war, setWar] = useState(initial);

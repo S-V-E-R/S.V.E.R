@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import SitePage from "../../components/SitePage";
-import { FACTIONS } from "../../lib/factions";
+import { FACTIONS, WORLD } from "../../lib/factions";
 
 export const metadata: Metadata = {
   title: "Factions | S.V.E.R",
@@ -39,6 +39,13 @@ export default function FactionsPage() {
       <p>Every type of creator belongs here. Your faction is not about what you stream. It is about how you show up.</p>
       <p>No faction is better than another. Each is a different expression of the same drive to compete, grow, and build something that matters.</p>
       <p><strong>Myria grinds. Aetheron studies. Glint connects.</strong> None of them are wrong. All of them are necessary.</p>
+    </section>
+    <section className="site-prose" id="the-ashfall">
+      <h2>The Ashfall</h2>
+      <p>{WORLD.paragraph}</p>
+      <h3>The Accord</h3>
+      <p>Every faction swears to the Accord&rsquo;s five terms. They are also how S.V.E.R works.</p>
+      <ol>{WORLD.accord.map(term => <li key={term}>{term}</li>)}</ol>
     </section>
     <section className="site-prose" id="the-war">
       <h2>How the war works</h2>

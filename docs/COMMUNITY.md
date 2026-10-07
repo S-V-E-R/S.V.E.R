@@ -5,7 +5,7 @@ Decided by Joe on October 3, 2026. These are smaller features carried over from 
 | Feature | When |
 | --- | --- |
 | Download my data | Right after Live streams closes (with Linked chat) |
-| Chat commands and the faction bots (PYRE, ECHO, JINX, VOLK) | Right after Live streams closes |
+| Chat commands and the faction bots (PYRE, ECHO, FAVOR, VOLK) | Right after Live streams closes |
 | GIFs in chat | Right after Live streams closes |
 | Live captions from OBS | After Live streams closes, once a media test confirms captions pass through |
 | Direct messages | With Guilds, right after Factions |
@@ -38,7 +38,7 @@ Carried over from legacy: each faction has its own bot persona, and a neutral on
 | --- | --- | --- |
 | **PYRE** | Myria | Discipline is the flame that never dies. |
 | **ECHO** | Aetheron | The pattern persists. |
-| **JINX** | Glint | Fortune favors the bold. And the lucky. Mostly the lucky. |
+| **FAVOR** | Glint | Fortune favors the bold. And the generous. |
 | **VOLK** | Neutral (no faction, or the streamer prefers it) | The grey wolf watches. |
 
 - A channel gets its owner's faction bot by default; a streamer can switch to VOLK or to another faction's bot.
@@ -46,7 +46,7 @@ Carried over from legacy: each faction has its own bot persona, and a neutral on
 - **Moderation help:** the bot enforces the channel's AutoMod settings: excessive caps, repeated messages, symbol or emote spam, and the existing banned-word and link rules. It follows a ladder the streamer configures (warn, then a short timeout, then a longer one), announces actions in the bot's voice, and logs each action for moderators, who can reverse it. It never bans on its own; bans stay with people.
 - **Giveaways:** the streamer starts one with a keyword; the bot picks a random winner among eligible chatters (Counted session, not banned), shown publicly. Prizes are the streamer's responsibility; the Terms cover it.
 - **Starter timers:** new channels can add starter timed messages (social links, chat rules).
-- Bot lore and copy are original to S.V.E.R. Legacy PYRE lore borrowed names from a published novel series; that text is not carried over and gets rewritten.
+- Bot lore and copy are original to S.V.E.R and live in [LORE.md](LORE.md) ("The faction bots"), including sample lines per event. Legacy PYRE lore borrowed names from a published novel series; that text is not carried over. JINX was renamed FAVOR (Joe, October 6, 2026) because JINX is a well-known League of Legends champion.
 - Song requests from the legacy bot are not carried over (music licensing).
 
 - Commands and bot replies follow the channel's banned-word and link rules.

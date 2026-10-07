@@ -1,23 +1,14 @@
-import type { Faction } from "./factions";
+import { factions, WORLD, type Faction } from "./factions";
 
 /**
  * World lore used on the war map, from the S.V.E.R Faction Bible (approved October 6, 2026).
- * Keep wording in step with the bible; names, creeds and home turf stay in lib/factions.ts.
+ * Homelands, relics, battle cries and the Accord come from lib/factions.ts (docs/LORE.md); only the genre-to-founder map lives here.
  */
-export const homelands: Record<Faction, { city: string; about: string; relic: string; cry: string }> = {
-  myria: { city: "The Kiln", about: "The crater where the Beacon fell, rebuilt as a forge-city.", relic: "The Phoenix Flame", cry: "From ashes, we rise." },
-  aetheron: { city: "Selenne", about: "An observatory city on the cliffs, built to watch the second moon.", relic: "The Pale Moon", cry: "Knowledge ascends. Power follows." },
-  glint: { city: "Aurel", about: "A hall-city at the crossroads, where every road ends at an open door.", relic: "The Crown", cry: "Every hall starts with one open seat." },
-};
+const cap = (text: string) => text[0].toUpperCase() + text.slice(1);
+export const homelands = Object.fromEntries(factions.map(f => [f.slug, { city: cap(f.homeland), about: `${cap(f.homelandNote)}.`, relic: cap(f.relic), cry: f.battleCry }])) as Record<Faction, { city: string; about: string; relic: string; cry: string }>;
 
 /** The five terms every faction swears to, written by the Grey Wolf in 41 AF. */
-export const accord = [
-  "Ground may be taken. A voice may never be silenced.",
-  "Every light gets its turn.",
-  "No coin buys the light.",
-  "Only the living are counted.",
-  "When the season ends, the map is redrawn.",
-];
+export const accord: readonly string[] = WORLD.accord;
 
 /** Founders the bible says a genre's people claim, keyed by genre id. */
 export const founders: Record<string, { name: string; deed: string }> = {

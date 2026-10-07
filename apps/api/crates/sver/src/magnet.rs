@@ -658,6 +658,19 @@ async fn record(db: &mut PgConnection, lane: &str, entry: &Value) -> Res<()> {
     .await?;
     Ok(())
 }
+/// A committed handoff explains arrivals for two minutes, including every featured co-stream
+/// member. Pending switches and client-supplied lane labels are not evidence of a handoff.
+pub async fn explains_burst(db: &mut PgConnection, broadcast: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM magnet_features
+        WHERE owner_id=(SELECT owner_id FROM broadcasts WHERE id=$1) AND broadcast_id=$1
+        AND started_at>now()-interval '2 minutes' AND started_at<=now())",
+    )
+    .bind(broadcast)
+    .fetch_one(db)
+    .await?)
+}
+
 async fn end_feature(db: &mut PgConnection, lane: &str) -> Res<()> {
     sqlx::query("UPDATE magnet_features SET ended_at=now() WHERE lane=$1 AND ended_at IS NULL")
         .bind(lane)
