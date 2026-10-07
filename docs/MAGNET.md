@@ -173,6 +173,10 @@ Chat messages gain an origin (channel or MAGNet channel) so merged messages can 
 
 The legacy MAGNet was reviewed on October 3, 2026. Kept: hold, maximum-duration and no-cooldown-when-alone rules, public reasons, creator reasoning, opt-out, spotlight limits, and "game API first, vision second, audio never decides". Dropped: paid votes and money-weighted scoring, viewer-count inputs, the 120-setting configuration, the unused machine-learning model registry, two pre-buffered video players, and the vision pipeline that never ran in production.
 
+## Labels and language (October 6, 2026)
+
+The mature label and stream language ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)) never change rotation order. Language filters narrow a list; mature-labeled streams are removed after ordering for under-18 viewers only, the same way blocks are.
+
 ## Done when
 
 A signed-out visitor reaches a live stream in one click from the homepage; every live stream reaches the top row within a rotation cycle; the watch page and stream-end countdown move viewers to another live stream; search finds channels and categories; empty states show recent channels. On the Global MAGNet channel and each genre lane: a chat or follow burst on a small stream triggers a moment switch with a countdown and a reason; fair-turn switches alternate with moment switches and every eligible stream is featured within the bound; hold, maximum time and cooldowns work; opted-out, restricted and integrity-flagged streams never appear; MAGNet chat merges with the featured chat under the channel's rules and detaches on switch, viewers banned from the featured channel get the holding card and can't send until it switches, and merged messages don't count toward the burst signal; merged co-stream squads are featured as one unit; money and viewer count provably have no effect on selection; streamers see their feature history; staff can force, release and stop a channel.
