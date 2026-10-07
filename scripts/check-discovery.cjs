@@ -145,7 +145,7 @@ const position = (html, id) => html.indexOf(`id="${id}"`);
   await act(async () => tabs()[1].dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
   assert.equal(document.querySelector(".player").textContent, "Second", "a tab switches the player");
   assert.equal(tabs()[1].getAttribute("aria-selected"), "true");
-  assert.match(document.querySelector(".magnet-why").innerHTML, /href="\/Second"/);
+  assert.match(document.querySelector(".magnet-why").innerHTML, /href="\/Second\/live"/, "the selected member opens the watch page");
   await act(async () => hype.unmount());
   lane = { ...lane, featured: { ...lane.featured, squad: { mode: "SEPARATE", members: [second] } } };
   const separate = createRoot(document.getElementById("root"));
