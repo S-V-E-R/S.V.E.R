@@ -64,6 +64,7 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - Gift subs: one month to a named viewer, or 5, 10 or 20 one-month gifts to random signed-in chatters in that channel who allow gifts (a setting, default on). A gifted month never auto-renews; the recipient can choose to keep the subscription, with the first charge when the gift ends ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)).
 - Paid by card (auto-renews monthly) or by Purchased Valor (one month at a time).
 - Cancel anytime; benefits run to the end of the paid month. Upgrading tiers takes effect immediately with Stripe's proration.
+- **Renewal terms** (California's automatic renewal law; added October 7, 2026): the Subscribe panel states the monthly price and that card subscriptions renew until cancelled right beside each card button, the same terms sit above Stripe Checkout's pay button (`custom_text`), and a new card subscription gets an acknowledgment email with the terms, the next charge date and how to cancel. Renewals don't send it again. The "keep a gifted subscription" step ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)) must show the same terms when it's built.
 - Buyers aged 13 to 17: before their first purchase a parent or guardian confirms, at checkout, that they are the cardholder and consent to the purchase. Purchases by an account under 18 are capped at $50 a month. A parent can report an unauthorized purchase through support for a refund, which reverses the Valor or subscription.
 
 ## Purchased Valor

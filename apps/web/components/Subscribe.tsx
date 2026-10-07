@@ -59,11 +59,12 @@ export function Subscribe({ username, squad }: { username: string; squad?: strin
         {!mine.card && <div className="row wrap">{status.tiers.map(t => <button key={t.tier} type="button" className="small quiet" disabled={busy} onClick={() => subscribe(t.tier, "valor")}>Add a Tier {t.tier} month for {t.valor.toLocaleString()} Valor</button>)}</div>}
       </section> : <section>
         <h3>Subscribe to {username}</h3>
-        <p className="muted">A subscriber badge, subscriber emotes and subscriber-only chat. Cancel anytime.</p>
+        <p className="muted">A subscriber badge, subscriber emotes and subscriber-only chat. Cancel renewal anytime from this panel; benefits last to the end of the paid month.</p>
         <ul className="subscribe-tiers">{status.tiers.map(t => <li key={t.tier}>
           <strong>Tier {t.tier}</strong> <span>{dollars(t.cents)}/month</span>
           <button type="button" className="small" disabled={busy} onClick={() => subscribe(t.tier, "card")}>Subscribe by card</button>
           <button type="button" className="small quiet" disabled={busy} onClick={() => subscribe(t.tier, "valor")}>{t.valor.toLocaleString()} Valor for one month</button>
+          <span className="muted subscribe-terms">By card: renews automatically at {dollars(t.cents)} every month until you cancel. Valor months never renew.</span>
         </li>)}</ul>
       </section>}
       <section>

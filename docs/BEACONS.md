@@ -121,7 +121,7 @@ Beacons are short vertical videos that lead people to creators and their live st
 
 ## Implementation and activation
 
-Module 9 is in development (started October 7, 2026). The backend lives in `apps/api/crates/sver/src/beacons/` with migration `0044_beacons`, and the web pages are `/beacons`, `/beacons/{id}`, `/{username}/beacons` and `/studio/beacons`. Production activation and the full acceptance run remain open.
+Module 9 is in development (started October 7, 2026). The backend lives in `apps/api/crates/sver/src/beacons/` with migration `0045_beacons`, and the web pages are `/beacons`, `/beacons/{id}`, `/{username}/beacons` and `/studio/beacons`. Production activation and the full acceptance run remain open.
 
 - **Storage.** Beacons share the private recording store from [VODS_CLIPS.md](VODS_CLIPS.md) (`VOD_STORAGE`), under the `beacons/` key prefix. Every file plays through a five-minute ticket and `no-store`. The clean copy is served only on a `clean` ticket issued to its creator.
 - **Processing.** One `PROCESS` job per Beacon in `beacon_jobs`, with a 90-second renewed lease and a token fence before anything is published. Attempts back off, and after six the Beacon fails with a reason the creator can retry. A single FFmpeg pass crops or pads to 9:16 and writes the 1080×1920 and 720×1280 watermarked H.264/AAC renditions plus the clean 1080×1920 copy. Every output is fast-start, with global, stream and chapter metadata and the encoder's SEI units removed. A WebP thumbnail is taken from the watermarked copy. FFprobe reads every source; the container, codec, length, size and rotation come from the probe.
