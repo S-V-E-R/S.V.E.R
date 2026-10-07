@@ -26,7 +26,7 @@ const get = (path, cookie = "") => fetch(`${origin}${path}`, { headers: cookie ?
 // Header plus sidebar; sign-in screens have a minimal header and no sidebar (docs/DESIGN.md).
 const navigation = html => (html.match(/<header\b[\s\S]*?<\/header>/)?.[0] ?? "") + (html.match(/<aside\b[\s\S]*?<\/aside>/)?.[0] ?? "");
 try {
-  sql(`BEGIN; INSERT INTO users(id,email,username) VALUES('${id}','${id}@example.invalid','${username}'); INSERT INTO sessions(id,user_id,token_hash,auth_version,user_agent) VALUES('${randomUUID()}','${id}','${createHash("sha256").update(token).digest("hex")}',0,'Local navigation acceptance'); INSERT INTO username_holds(handle_canonical,user_id,released_at,redirect) VALUES('${oldName}','${id}',now()+interval '1 day',true); COMMIT;`);
+  sql(`BEGIN; INSERT INTO users(id,email,username) VALUES('${id}','${id}@example.invalid','${username}'); INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES('${id}','glint',now(),now()); INSERT INTO sessions(id,user_id,token_hash,auth_version,user_agent) VALUES('${randomUUID()}','${id}','${createHash("sha256").update(token).digest("hex")}',0,'Local navigation acceptance'); INSERT INTO username_holds(handle_canonical,user_id,released_at,redirect) VALUES('${oldName}','${id}',now()+interval '1 day',true); COMMIT;`);
   const guest = await get("/login");
   assert.equal(guest.status, 200);
   assert.match(navigation(await guest.text()), /href="\/signup"/);
@@ -40,7 +40,8 @@ try {
       assert.equal(response.status, 200, `${path} must be public and bypass channel routing`);
       const html = await response.text();
       assert.ok(html.includes(`<h1>${title}</h1>`), `${path} must render its own content`);
-      assert.match(html, /data-theme="neutral"/, "The current server-rendered theme is neutral");
+      // Guests are neutral; the synthetic account enlisted in Glint wears Glint (docs/DESIGN.md "Themes").
+      assert.match(html, cookie.includes(token) ? /data-theme="glint"/ : /data-theme="neutral"/, "The server-rendered theme follows the viewer's faction");
       assert.doesNotMatch(html, /<aside class="sidebar"/, `${path} must omit the application sidebar`);
       if (["/terms", "/privacy", "/guidelines", "/dmca", "/take-it-down"].includes(path)) {
         assert.match(html, /The short version/);

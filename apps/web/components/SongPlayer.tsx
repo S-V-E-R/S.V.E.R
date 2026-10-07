@@ -34,7 +34,7 @@ export function SongPlayer({ song }: { song: NonNullable<Song> }) {
     {loaded ? <iframe ref={frame} className="song-frame" src={src()} title={title} allow="autoplay; encrypted-media" onLoad={applyVolume} referrerPolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-popups" />
       : <button type="button" className="song-start quiet" onClick={() => setLoaded(true)}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        {song.thumbnail ? <img src={song.thumbnail} alt="" width={64} height={48} /> : <span className="song-icon" aria-hidden="true">♪</span>}
+        {song.thumbnail ? <img src={song.thumbnail} alt="" width={64} height={48} /> : <span className="song-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeLinecap="round"><path d="M4.5 9V2.5l5-1V8" /><circle cx="3.2" cy="9" r="1.3" /><circle cx="8.2" cy="8" r="1.3" /></svg></span>}
         <span><strong>{title}</strong>{song.artist && <small>{song.artist}</small>}<small>Play on {song.provider === "youtube" ? "YouTube" : "SoundCloud"}</small></span>
       </button>}
   </section>;

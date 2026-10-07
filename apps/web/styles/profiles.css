@@ -79,7 +79,7 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .settings-page{display:flex;gap:0;min-height:100%}
 .settings-page.single{display:block}
 .settings-nav{flex:0 0 210px;display:flex;flex-direction:column;gap:4px;padding:28px 16px;border-right:1px solid var(--line)}
-.settings-nav a{padding:9px 10px;color:#C8CAD0;font-size:14px;border-left:3px solid transparent}
+.settings-nav a{padding:9px 10px;color:var(--ink);font-size:14px;border-left:3px solid transparent}
 .settings-nav a:hover{color:var(--ink);background:var(--tint);text-decoration:none}
 .settings-nav a[aria-current=page]{color:var(--ink);background:var(--tint);border-left-color:var(--accent)}
 .settings-nav .eyebrow{padding:0 10px 12px}
@@ -185,9 +185,6 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .hosting-bar{margin:0;padding:6px 12px;background:var(--surface);border-bottom:1px solid var(--line)}
 .chat-system{margin:0 0 8px;padding:6px 10px;border-left:3px solid var(--accent);background:var(--surface)}
 /* Offline with no banner: a short strip with the owner's crest instead of an empty 3:1 box. */
-.player-slot.no-banner:not(:has(.live-player)){aspect-ratio:auto;height:150px}
-.player-slot .default-banner{display:flex;align-items:center;justify-content:center;background:radial-gradient(60% 120% at 50% 0%,var(--tint),transparent) ,var(--surface)}
-.default-banner img{opacity:.35}
 .faction-line{display:flex;align-items:center;gap:8px;margin:6px 0 0;font-family:var(--font-label);font-weight:700;font-size:14px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
 .channel[data-theme]{background:radial-gradient(80% 380px at 50% 0%,var(--accent-deep),transparent)}
 /* Creator Studio navigation groups */
@@ -208,11 +205,26 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .subscribe-panel h3 { margin: 0 0 0.3rem; }
 .subscribe-tiers { list-style: none; padding: 0; display: grid; gap: 0.5rem; }
 .subscribe-tiers li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-.chat-highlight { background: color-mix(in srgb, var(--accent-light) 16%, transparent); border-radius: 4px; padding: 0.15rem 0.4rem; }
+.chat-highlight { background: color-mix(in srgb, var(--accent-light) 16%, transparent); padding: 0.15rem 0.4rem; }
 .chat-rewards summary { cursor: pointer; }
 .chat-rewards li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.4rem; }
 .reward-form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.6rem; }
 .tier-badge { border-color: var(--accent); color: var(--accent); margin: 0 0.3rem; }
-.shine-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.5rem 0.75rem; border: 1px solid #e8c25a; border-radius: 6px; background: color-mix(in srgb, #e8c25a 14%, transparent); }
+.shine-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.5rem 0.75rem; border: 1px solid var(--accent); background: var(--tint); }
 .good-works { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.good-works-badge { border-color: #e8c25a; color: #e8c25a; }
+.good-works-badge { border-color: var(--accent); color: var(--accent-light); }
+
+/* Channel header (DESIGN.md "Channel page"): 16:5 banner inside the frame, 96 px avatar over its edge. */
+.channel-header{padding:0 0 20px}
+.channel-banner{position:relative;aspect-ratio:16/5;background:var(--surface);border-bottom:1px solid var(--line);overflow:hidden}
+.channel-banner.none{aspect-ratio:auto;height:96px}
+.channel-banner .banner{width:100%;height:100%;object-fit:cover;display:block}
+.banner-status{position:absolute;left:136px;bottom:10px;margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:13px;color:var(--ink)}
+.banner-status>span:not(.badge){padding:1px 8px;background:var(--scrim)}
+.channel-header .identity{padding:0 20px;gap:20px}
+.channel-header .identity>.avatar{margin-top:-48px;border:3px solid var(--bg);flex:none;position:relative}
+.channel-header .identity-text{padding-top:14px}
+.channel-stream:has(.live-player),.channel-stream:has(.hosting){margin-top:20px}
+.channel-stream:empty{display:none}
+@media(max-width:650px){.channel-banner{aspect-ratio:2/1}.banner-status{left:12px;top:10px;bottom:auto}.channel-header .identity{padding:0 14px}}
+.faction-line a{display:inline-flex;align-items:center;gap:8px}

@@ -1,4 +1,5 @@
 "use client";
+import { StatusMark } from "../../../components/shell/Icons";
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
@@ -60,7 +61,7 @@ export default function StudioPayouts() {
     {tier && <Section title={`Creator tier · ${tier.name}`} intro={`You keep ${tier.split}% of subscriptions and gift subs, and 0.8¢ per Valor at every tier. Tiers are checked every Monday against the last 90 days and never go down.`}>
       {tier.held && <p className="form-message">Promotion is paused while a staff review of your streams is open.</p>}
       {next ? <table className="table"><thead><tr><th>Last 90 days</th><th>You</th><th>{next.name} ({next.split}%)</th></tr></thead>
-        <tbody>{LABELS.map(([key, label]) => <tr key={key}><td>{label}</td><td>{tier.metrics[key].toLocaleString()}</td><td>{tier.metrics[key] >= next.requirements[key] ? "✓ " : ""}{next.requirements[key].toLocaleString()}</td></tr>)}</tbody></table>
+        <tbody>{LABELS.map(([key, label]) => <tr key={key}><td>{label}</td><td>{tier.metrics[key].toLocaleString()}</td><td>{tier.metrics[key] >= next.requirements[key] && <StatusMark ok />}{next.requirements[key].toLocaleString()}</td></tr>)}</tbody></table>
         : <p>You&apos;re at the top tier.</p>}
     </Section>}
     <Section title="Earnings" intro="Payday every two weeks pays your whole balance. Between paydays, Early Pay withdraws up to 75% of what you've earned since the last payday, once a day. Taxes aren't withheld; Stripe handles your tax forms.">
@@ -80,10 +81,10 @@ export default function StudioPayouts() {
     </Section>
     <Section title="Payout setup" intro="Payouts go through Stripe Connect. Stripe collects your identity, bank details and tax form; S.V.E.R never sees them.">
       <ul className="list">
-        <li>{r.email_verified ? "✓" : "✗"} Verified email</li>
-        <li>{r.mfa_enabled ? "✓" : "✗"} Authenticator two-factor authentication {!r.mfa_enabled && <Link href="/account">Turn it on</Link>}</li>
-        <li>{r.age_ok ? "✓" : "✗"} Age 13 or older</li>
-        <li>{a?.details_submitted ? "✓" : "✗"} Stripe onboarding, including the tax form</li>
+        <li><StatusMark ok={!!r.email_verified} />Verified email</li>
+        <li><StatusMark ok={!!r.mfa_enabled} />Authenticator two-factor authentication {!r.mfa_enabled && <Link href="/account">Turn it on</Link>}</li>
+        <li><StatusMark ok={!!r.age_ok} />Age 13 or older</li>
+        <li><StatusMark ok={!!a?.details_submitted} />Stripe onboarding, including the tax form</li>
       </ul>
       {data.guardian && <p className="form-message">You&apos;re under 18, so a parent or legal guardian must complete Stripe onboarding, accept Stripe&apos;s Connected Account Agreement and receive the payouts.</p>}
       {a && !a.details_submitted && a.requirements.length > 0 && <p className="muted">Stripe still needs {a.requirements.length} item{a.requirements.length === 1 ? "" : "s"}.</p>}

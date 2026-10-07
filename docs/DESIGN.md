@@ -138,15 +138,15 @@ While pages are being restored, navigation includes only working destinations. T
 
 **Phones (below 960 px).** The sidebar becomes a drawer opened from a menu button in the top bar; grids drop to one or two columns; the watch page stacks player, streamer bar, then chat.
 
-### Home and watch before the discovery modules
+### Home, sidebar and watch, as built (October 6, 2026)
 
-The homepage is public for guests and members; it never redirects to account security. Keep the approved section order. Until MAGNet, the featured frame is a manual **Live spotlight** carousel over real streams, ordered by start time, with an explicit note that rotation is coming. Previewing a card never starts a playback session. The live grid links directly to `/{username}/live`, and Just went live uses the API snapshot time and a one-hour window. When nothing is live, show recently live channels and the existing faction information page. Channel banners or category labels stand in for live thumbnails; never imply they are captured video frames.
+The discovery modules have shipped, so the earlier interim rules are retired. Where this file and [design/README.md](design/README.md) disagreed, the README's rules apply: no "Soon" rows or disabled links, and a section is left out until its module supplies real data (Beacons today). Leave a section out rather than show an empty one; the one exception is Live now, which shows recently live channels and the war map when nothing is live.
 
-The front-line banner links to the three faction explanations and offers Enlist to guests. Do not invent season standings, select a faction before enrollment exists, or show unearned XP, Valor or active daily orders. Beacons and Latest clips retain compact, plainly labeled empty sections with roadmap links until those modules supply content. Territories uses the real active category catalog and states that control opens with Factions. Search is visibly disabled until MAGNet.
-
-The sidebar keeps the reference's structure in every theme: signed-in player card, Home / Browse / Beacons / War map / Faction hub, framed Daily orders, then Following · live or Picked for you with the full MAGNet wordmark. Before their modules, planned destinations are noninteractive rows marked Soon and Daily orders states that it is coming with Progression. Account tools (My channel, Following, Creator Studio, Settings, Account security) live in the top-bar player menu. Use real profile avatars until factions supply crests; live rows show the creator, category and actual viewer count. Do not manufacture faction membership, ranks, levels, XP or quest progress to fill the reference.
-
-The focused watch page keeps a 16:9 player, the streamer identity and existing Follow/Share/report controls beneath it, a 340 px chat column, and an Up next shelf of other real live streams. Below 960 px, the order is player, streamer, chat, then Up next. Recommendations by genre/faction and the stream-end countdown remain part of MAGNet. Plays/CrowdSync controls are not reproduced before their systems exist. This layout work does not close or start those modules.
+- **Home:** front-line banner (the real season standing: leading faction, contested count and the three-part bar, which is left out until any territory is held), MAGNet rotation (spotlights first, with their reason), Live now, From your faction (signed in), Just went live, Territories (8 tiles, linking to Browse), Latest clips.
+- **Sidebar:** player card, then Home, Browse, MAGNet (the MAGNet mark as its icon), War map, and the faction hub (or Factions without a side). Then Following · live (signed in) or Picked for you (signed out, MAGNet's rotation), each row with crest, name, category and viewer count. Daily orders and Beacons join when their modules ship.
+- **Player menu:** the top-bar player chip opens My channel, Following, Creator Studio, Valor, Settings and Account security.
+- **Watch page:** grid areas player, streamer, interact (Plays, CrowdSync and board panels, plain panels), Up next, with chat in its own column. The title and category chip sit under the player with the LIVE tag; the streamer bar carries the faction tag.
+- **Take It Down:** every content surface keeps its "Report an intimate image" link, in small dim text so it never competes with the actions beside it. The footer link stays as it is.
 
 ## Copy
 

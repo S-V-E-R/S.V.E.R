@@ -1,4 +1,5 @@
 "use client";
+import { ArrowIcon } from "./shell/Icons";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { send } from "../lib/client-api";
@@ -9,7 +10,7 @@ export type Control = { id: string; kind: "button" | "label" | "text" | "goal" |
 export type BoardDef = { screens: { name: string; controls: Control[] }[] };
 type View = { board: BoardDef | null; version: number; disabled: boolean; live: boolean; overlay: boolean; goals: Record<string, number>; used: Record<string, number>; last_press: Record<string, string>; balance: number | null; signed_in: boolean; can_run: boolean; blocks: string[] | null; state?: Record<string, { label?: string; disabled?: boolean }> };
 const AUDIENCE = { everyone: "", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
-const STICK: [string, number, number][] = [["↑", 0, -1], ["←", -1, 0], ["→", 1, 0], ["↓", 0, 1]];
+const STICK: ["up" | "left" | "right" | "down", number, number][] = [["up", 0, -1], ["left", -1, 0], ["right", 1, 0], ["down", 0, 1]];
 
 /**
  * A channel's CrowdSync board under the player (docs/CROWDSYNC.md "Boards"). It loads only when
@@ -105,7 +106,7 @@ export function Board({ username }: { username: string }) {
   }
   const price = (c: Control) => (c.cost ? `${c.cost.toLocaleString()} EV` : "Free") + (AUDIENCE[c.audience] ? ` · ${AUDIENCE[c.audience]}` : "");
 
-  return <details className="board-panel frame" onToggle={e => toggle(e.currentTarget.open)}>
+  return <details className="board-panel panel" onToggle={e => toggle(e.currentTarget.open)}>
     <summary>Board{view?.balance != null && <> · <strong>{view.balance.toLocaleString()}</strong> Engagement Valor</>}</summary>
     {!view ? <p className="loading">{note || "Loading…"}</p> : !board ? <p className="muted">This channel has no board right now.</p> : <>
       <p className="muted small">{view.disabled ? "The board is paused." : !view.live ? "The board works while the stream is live." : !view.signed_in ? <><Link href="/login">Sign in</Link> and watch to use the board.</> : view.balance === null ? "This is your board. Try it in Creator Studio's test mode." : "Presses spend this channel's Engagement Valor, earned by watching and chatting."}</p>
@@ -115,7 +116,7 @@ export function Board({ username }: { username: string }) {
         const why = blocker(c);
         const off = !canPress || busy || !!why;
         if (c.kind === "label") return <p key={c.id} className="board-label" style={span}>{c.label}</p>;
-        if (c.kind === "joystick") return <div key={c.id} style={span}><span className="small">{c.label}</span><div className="board-stick" role="group" aria-label={c.label}>{STICK.map(([arrow, x, y]) => <button key={arrow} type="button" className="small quiet" disabled={!canPress} aria-label={`${c.label} ${arrow}`} onClick={e => move(c, x, y, e.timeStamp)}>{arrow}</button>)}</div></div>;
+        if (c.kind === "joystick") return <div key={c.id} style={span}><span className="small">{c.label}</span><div className="board-stick" role="group" aria-label={c.label}>{STICK.map(([arrow, x, y]) => <button key={arrow} type="button" className="small quiet" disabled={!canPress} aria-label={`${c.label} ${arrow}`} onClick={e => move(c, x, y, e.timeStamp)}><ArrowIcon dir={arrow} /></button>)}</div></div>;
         if (c.kind === "text") return <form key={c.id} style={span} onSubmit={e => { e.preventDefault(); void press(c, { text: texts[c.id] ?? "" }); }}>
           <label className="field"><span>{c.label} <small className="muted">{price(c)}</small></span><input value={texts[c.id] ?? ""} maxLength={200} disabled={!canPress} onChange={e => setTexts(t => ({ ...t, [c.id]: e.target.value }))} /></label>
           <button className="small" disabled={off || !(texts[c.id] ?? "").trim()}>{why ?? "Send"}</button>

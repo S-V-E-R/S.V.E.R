@@ -7,7 +7,7 @@ export type ReportTarget = { target_type: "profile" | "wall_post" | "wall_reply"
 export function TakeDownLink({ target }: { target: ReportTarget }) {
   const query = new URLSearchParams({ report: target.target_type, id: target.target_id, ...(target.field ? { field: target.field } : {}) });
   const location = `https://sver.tv/${target.target_type === "profile" ? encodeURIComponent(target.target_id) : "take-it-down"}?${query}`;
-  return <a className="link-button" href={`/take-it-down?${new URLSearchParams({ location })}`}>Intimate image (Take It Down)</a>;
+  return <a className="link-button takedown-link" href={`/take-it-down?${new URLSearchParams({ location })}`}>Report an intimate image</a>;
 }
 const fields: [string, string][] = [["display_name", "Display name"], ["username", "Username"], ["avatar", "Avatar"], ["banner", "Banner"], ["bio", "Bio"], ["status", "Status"], ["mood", "Mood"], ["links", "Links"], ["song", "Profile song"], ["war_council", "War Council"], ["sponsors", "Sponsors"], ["setup", "Streaming setup"], ["blocks", "About blocks"], ["header", "Page header text"]];
 
