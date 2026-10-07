@@ -407,6 +407,7 @@ async fn streaming_lifecycle_and_security() {
     config.playback = sver::playback::Config {
         hls_url: Some("https://media.example/rebuild".into()),
         whep_url: Some("https://media.example/rtc/v1/whep".into()),
+        ..Default::default()
     };
     let app = App::new(db.clone(), config).await.unwrap();
     let env = synthetic_owner(app, fake).await;

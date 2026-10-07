@@ -106,7 +106,9 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   }, [username]);
 
   const load = useCallback(async () => {
-    const result = await send<Live>("GET", path);
+    // `?transport=hls` on the page asks for HLS (the CDN path), e.g. for latency checks.
+    const hlsOnly = new URLSearchParams(window.location.search).get("transport") === "hls";
+    const result = await send<Live>("GET", hlsOnly ? `${path}?transport=hls` : path);
     if (result.ok) setLive(result.data);
   }, [path]);
   useLoad(load);
@@ -119,6 +121,10 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   // Plain strings so a poll returning the same URLs does not restart playback.
   const webrtc = live?.live ? live.playback?.webrtc ?? null : null;
   const hls = live?.live ? live.playback?.hls ?? null : null;
+  // A renewed CDN token changes the URL but not the stream: keep playing, use the newest on a restart.
+  const hlsKey = hls?.replace(/\/bcdn_token=[^/]*/, "") ?? null;
+  const hlsUrl = useRef(hls);
+  useEffect(() => { hlsUrl.current = hls; }, [hls]);
   const preferred = live?.live ? live.playback?.preferred ?? null : null;
   const isOwner = live?.live ? live.is_owner : false;
   // Remember that this page saw the stream live, so its end can offer the next stream.
@@ -154,13 +160,14 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   // Start (or restart, on `attempt`) playback for the current broadcast; the cleanup stops the retired transport.
   useEffect(() => {
     const element = video.current;
-    if (rewind || !broadcast || !element || (!webrtc && !hls)) return;
+    if (rewind || !broadcast || !element || (!webrtc && !hlsKey)) return;
     let stop: (() => void) | null = null;
     let cancelled = false;
     const fail = () => { if (!cancelled) setPhase("reconnecting"); };
     (async () => {
       setPhase("loading");
-      const order = preferred === "webrtc" ? [webrtc, hls] : [hls, webrtc];
+      const current = hlsUrl.current;
+      const order = preferred === "webrtc" ? [webrtc, current] : [current, webrtc];
       for (const url of order) {
         if (!url || cancelled) continue;
         try {
@@ -179,7 +186,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       if (!cancelled) setPhase("failed");
     })();
     return () => { cancelled = true; stop?.(); };
-  }, [broadcast, webrtc, hls, preferred, attempt, rewind]);
+  }, [broadcast, webrtc, hlsKey, preferred, attempt, rewind]);
 
   // Retry a dropped transport a few seconds later; the broadcast's 60-second reconnect grace keeps it live meanwhile.
   useEffect(() => {

@@ -25,6 +25,10 @@ pub struct Config {
     pub hls_url: Option<String>,
     /// SRS WHEP endpoint (`https://media.example/rtc/v1/whep`); `/?app=..&stream={id}` is appended.
     pub whep_url: Option<String>,
+    /// CDN base in front of the HLS origin (`https://cdn.example/rebuild`); replaces `hls_url`.
+    pub cdn_url: Option<String>,
+    /// Bunny token authentication key; CDN URLs are signed for one stream's files.
+    pub cdn_key: String,
 }
 impl Config {
     pub fn from_env(production: bool) -> std::result::Result<Self, String> {
@@ -47,11 +51,47 @@ impl Config {
             }
             Ok(Some(value.trim_end_matches('/').to_string()))
         };
+        let cdn_url = read("STREAM_CDN_URL")?;
+        let cdn_key = std::env::var("STREAM_CDN_TOKEN_KEY").unwrap_or_default();
+        if cdn_url.is_some() && cdn_key.is_empty() {
+            return Err("STREAM_CDN_URL needs STREAM_CDN_TOKEN_KEY".into());
+        }
         Ok(Self {
             hls_url: read("STREAM_HLS_URL")?,
             whep_url: read("STREAM_WHEP_URL")?,
+            cdn_url,
+            cdn_key,
         })
     }
+}
+
+/// Bunny directory token (docs: cdn/security/token-authentication/advanced) for one stream's
+/// playlist and segments, which share the `{path}/{id}` prefix. Expiry rounds up to a six-hour
+/// boundary so the URL stays the same between polls and a playing viewer never restarts.
+/// ponytail: not bound to the viewer's IP (IPv4/IPv6 can differ between site and CDN), so a shared
+/// URL works until it expires; bind the IP if restreaming abuse shows up.
+pub fn cdn_hls(base: &str, key: &str, id: &str, now: i64) -> String {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use hmac::{Hmac, KeyInit, Mac};
+    const WINDOW: i64 = 6 * 3600;
+    let (origin, path) = match base
+        .find("://")
+        .and_then(|i| base[i + 3..].find('/').map(|j| i + 3 + j))
+    {
+        Some(i) => (&base[..i], &base[i..]),
+        None => (base, ""),
+    };
+    let token_path = format!("{path}/{id}");
+    let expires = (now.div_euclid(WINDOW) + 2) * WINDOW;
+    let params = format!("token_ignore_params=true&token_path={token_path}");
+    let mut mac =
+        Hmac::<sha2::Sha256>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(format!("{token_path}{expires}{params}").as_bytes());
+    let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+    let encoded = url::form_urlencoded::byte_serialize(token_path.as_bytes()).collect::<String>();
+    format!(
+        "{origin}/bcdn_token=HS256-{signature}&expires={expires}&token_ignore_params=true&token_path={encoded}{token_path}.m3u8"
+    )
 }
 
 #[derive(sqlx::FromRow)]
@@ -88,10 +128,15 @@ async fn owner_id(app: &App, name: &str) -> Res<String> {
 }
 
 /// Only confirmed media (LIVE) or the reconnect grace (RECONNECTING) is public; STARTING is not.
+#[derive(Deserialize)]
+pub struct LiveQuery {
+    transport: Option<String>,
+}
 pub async fn live(
     State(app): State<App>,
     jar: CookieJar,
     Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<LiveQuery>,
 ) -> Res<Json<Value>> {
     let owner = owner_id(&app, &name).await?;
     let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,b.state,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
@@ -124,13 +169,26 @@ pub async fn live(
         .whep_url
         .as_ref()
         .map(|u| format!("{u}/?app={stream_app}&stream={}", b.public_id));
-    let hls = p
-        .hls_url
-        .as_ref()
-        .map(|u| format!("{u}/{}.m3u8", b.public_id));
-    // No automatic scale switching until both paths pass the media test: WebRTC first when
-    // offered, and the player falls back to HLS on failure.
-    let preferred = if webrtc.is_some() { "webrtc" } else { "hls" };
+    let hls = match &p.cdn_url {
+        Some(cdn) => Some(cdn_hls(
+            cdn,
+            &p.cdn_key,
+            &b.public_id,
+            Utc::now().timestamp(),
+        )),
+        None => p
+            .hls_url
+            .as_ref()
+            .map(|u| format!("{u}/{}.m3u8", b.public_id)),
+    };
+    // No automatic scale switching until the load test measures the WebRTC limit: WebRTC first
+    // when offered, the player falls back to HLS on failure, and `?transport=hls` (latency tests,
+    // or a viewer who prefers it) asks for HLS. Asking for HLS is always allowed.
+    let preferred = if webrtc.is_some() && query.transport.as_deref() != Some("hls") {
+        "webrtc"
+    } else {
+        "hls"
+    };
     Ok(Json(json!({
         "live": true, "broadcast_id": b.id, "state": b.state, "title": b.title,
         "category": b.category, "started_at": b.started_at, "viewers": b.viewers,
@@ -286,4 +344,42 @@ pub fn routes() -> Router<App> {
         .route("/api/channels/{username}/live", get(live))
         .route("/api/channels/{username}/overlay", get(overlay))
         .route("/api/channels/{username}/live/beat", post(beat))
+}
+
+#[cfg(test)]
+mod cdn_tests {
+    #[test]
+    fn signed_url_matches_bunny_directory_tokens() {
+        // Expected value from the legacy signer (same algorithm, same inputs).
+        let url = super::cdn_hls(
+            "https://cdn.example/rebuild",
+            "example-key",
+            "abc",
+            1_000_000_000,
+        );
+        assert_eq!(
+            url,
+            "https://cdn.example/bcdn_token=HS256-WdByBiFlvZtzVQxRRq9KW0QDxyWuflom-74Mllaz6Yk&expires=1000036800&token_ignore_params=true&token_path=%2Frebuild%2Fabc/rebuild/abc.m3u8"
+        );
+        // Stable within the window, so polling never restarts playback; at least six hours left.
+        assert_eq!(
+            url,
+            super::cdn_hls(
+                "https://cdn.example/rebuild",
+                "example-key",
+                "abc",
+                1_000_000_000 + 1500
+            )
+        );
+        let expires: i64 = url
+            .split("expires=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(expires - 1_000_000_000 >= 6 * 3600);
+    }
 }
