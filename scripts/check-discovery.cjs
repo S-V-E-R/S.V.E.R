@@ -154,5 +154,48 @@ const position = (html, id) => html.indexOf(`id="${id}"`);
   assert.match(document.querySelector(".magnet-why").textContent, /Co-streaming with Second/);
   assert.match(document.querySelector(".magnet-why").innerHTML, /href="\/Second\/live"/);
   await act(async () => separate.unmount());
-  console.log("Discovery UI passed: shelves, stills, fallback/retry, visible-only refresh, spotlights, empty/outage states, stream-end countdown and cancel, MAGNet co-stream tabs and links.");
+  // "You just watched": after a switch, only a viewer who watched the previous stream gets the card.
+  const polls = [];
+  global.setInterval = fn => polls.push(fn); global.clearInterval = () => {};
+  const calls = [];
+  const watched = { reason: "Fair turn", ended_at: "2026-10-07T12:00:00Z", members: [{ username: "First", display_name: "First", avatar: null, live: true, following: false, own: false }] };
+  const solo = stream => ({ stream, kind: "fair", reason: "Fair turn", since: "2026-10-07T12:00:00Z", moves_on_by: null, holding: false, squad: null });
+  let view = { id: "global", name: "Global", enabled: true, next: null, previous: null, others: [], featured: solo(first) };
+  const hypeClient = { send: async (method, url) => { calls.push(`${method} ${url}`); return { ok: true, data: url === "/api/magnet" ? { lanes: [] } : url.startsWith("/api/follows/") ? { following: method === "PUT" } : view }; }, useLoad: load => React.useEffect(() => { void load(); }, [load]) };
+  const { MagnetHype: Hype } = compile("apps/web/components/MagnetHype.tsx", {
+    "../lib/client-api": hypeClient,
+    "./JustWatched": compile("apps/web/components/JustWatched.tsx", { "../lib/client-api": hypeClient }),
+    "./LivePlayer": { LivePlayer: ({ username }) => React.createElement("div", { className: "player" }, username) },
+    "./HypeChat": { HypeChat: () => null },
+  });
+  const card = () => document.querySelector(".magnet-previous");
+  const switchTo = async next => { view = next; await act(async () => { for (const poll of polls) poll(); }); };
+  const watcher = createRoot(document.getElementById("root"));
+  await act(async () => watcher.render(React.createElement(Hype, { lane: "global", account: "viewer", viewerFaction: null })));
+  assert.equal(card(), null, "no card before a switch");
+  await switchTo({ ...view, featured: solo(second), previous: watched });
+  assert.match(card().textContent, /You just watched First/);
+  const follow = () => [...card().querySelectorAll("button")].find(b => /Follow/.test(b.textContent));
+  await act(async () => follow().dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+  assert(calls.includes("PUT /api/follows/First"), "one tap follows");
+  assert.equal(follow().textContent, "Following");
+  assert.equal(follow().getAttribute("aria-pressed"), "true");
+  assert.match(card().innerHTML, /href="\/First\/live"/, "a link back to the stream");
+  await act(async () => card().querySelector('[aria-label="Dismiss"]').dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+  assert.equal(card(), null, "dismissed");
+  await act(async () => watcher.unmount());
+  // A visitor who arrives after the switch never watched First; a held viewer never saw it either.
+  const late = createRoot(document.getElementById("root"));
+  await act(async () => late.render(React.createElement(Hype, { lane: "global", account: null, viewerFaction: null })));
+  assert.equal(card(), null, "no card for a stream this viewer didn't watch");
+  await act(async () => late.unmount());
+  polls.length = 0;
+  view = { ...view, featured: { ...solo(first), holding: true }, previous: null };
+  const held = createRoot(document.getElementById("root"));
+  await act(async () => held.render(React.createElement(Hype, { lane: "global", account: "viewer", viewerFaction: null })));
+  await switchTo({ ...view, featured: solo(second), previous: watched });
+  assert.equal(card(), null, "no card after a holding card");
+  await act(async () => held.unmount());
+  global.setInterval = realInterval; global.clearInterval = realClear;
+  console.log("Discovery UI passed: shelves, stills, fallback/retry, visible-only refresh, spotlights, empty/outage states, stream-end countdown and cancel, MAGNet co-stream tabs and links, You just watched.");
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => dom.window.close());
