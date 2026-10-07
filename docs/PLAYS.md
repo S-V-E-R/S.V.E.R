@@ -85,6 +85,7 @@ Plays is the **first CrowdSync board**. It is built in step 1 using CrowdSync's 
 - Alerts for a frozen picture, a stalled game or a stopped stream (Plays is the monitoring stream, so its own health must be watched).
 - Smoother picture (more frequent input steps) and game audio, once their timing is verified.
 - The username `sverplays` is no longer hardcoded; the Plays channel is a setting.
+- Recording: the 24/7 Plays channel is never recorded or clipped (Module 8). Its segments are acknowledged and discarded, whatever its channel settings say, so it cannot fill recording storage.
 - Co-streams: nobody signs in as the Plays channel, so it joins a co-stream as soon as it's invited, but only by the one streamer set in `plays_runtime.costream_host_id` (a user ID, set by an operator; migration `0041`). Invitations from anyone else stay pending and expire. Use separate chat: in a shared chat, game votes from chat don't count.
 
 ## Done when (step 1)

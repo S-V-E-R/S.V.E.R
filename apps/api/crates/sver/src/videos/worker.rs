@@ -465,9 +465,11 @@ pub async fn maintain(app: &App) -> Res<()> {
     // A recording-off broadcast owns only its rolling clipping buffer; pending cuts pin sources.
     sqlx::query("UPDATE video_objects o SET delete_after=now() FROM video_segments s JOIN videos v ON v.id=s.video_id WHERE o.key=s.object_key AND v.kind='VOD' AND NOT v.recording AND s.start_ms+s.duration_ms<v.duration_ms-120000 AND NOT EXISTS(SELECT 1 FROM video_copy_sources WHERE segment_id=s.id) AND NOT EXISTS(SELECT 1 FROM video_holds WHERE video_id=v.id)").execute(&mut *tx).await?;
     tx.commit().await?;
-    // Filter before LIMIT so held media or stalled uploads cannot starve unrelated cleanup.
+    // Filter before LIMIT so held media or stalled uploads cannot starve unrelated cleanup. A
+    // segment upload pins only its own object; cuts and thumbnails, which read the recording, pin it all.
+    // (Any lease used to pin the whole video, so a live recording-off broadcast never trimmed.)
     // Recheck under the video lock below, since a hold or a new cut can arrive meanwhile.
-    let keys:Vec<(String,String)>=sqlx::query_as("SELECT o.key,o.video_id FROM video_objects o JOIN videos v ON v.id=o.video_id WHERE o.delete_after<=now() AND (v.status IN ('DELETED','EXPIRED') OR NOT EXISTS(SELECT 1 FROM video_holds WHERE video_id=o.video_id)) AND NOT EXISTS(SELECT 1 FROM video_copy_sources c JOIN video_segments s ON s.id=c.segment_id WHERE s.object_key=o.key) AND NOT EXISTS(SELECT 1 FROM video_jobs j WHERE j.video_id=o.video_id AND (lease_until>now() OR (kind='SEGMENT' AND object_key=o.key))) ORDER BY o.delete_after LIMIT 100").fetch_all(&app.db).await?;
+    let keys:Vec<(String,String)>=sqlx::query_as("SELECT o.key,o.video_id FROM video_objects o JOIN videos v ON v.id=o.video_id WHERE o.delete_after<=now() AND (v.status IN ('DELETED','EXPIRED') OR NOT EXISTS(SELECT 1 FROM video_holds WHERE video_id=o.video_id)) AND NOT EXISTS(SELECT 1 FROM video_copy_sources c JOIN video_segments s ON s.id=c.segment_id WHERE s.object_key=o.key) AND NOT EXISTS(SELECT 1 FROM video_jobs j WHERE j.video_id=o.video_id AND ((kind='SEGMENT' AND object_key=o.key) OR (kind<>'SEGMENT' AND lease_until>now()))) ORDER BY o.delete_after LIMIT 100").fetch_all(&app.db).await?;
     for (key, video) in keys {
         let mut tx = app.db.begin().await?;
         // Cut creation and review holds take the same row lock before pinning a source.
@@ -475,7 +477,7 @@ pub async fn maintain(app: &App) -> Res<()> {
             .bind(&video)
             .execute(&mut *tx)
             .await?;
-        let safe:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM video_objects o WHERE o.key=$1 AND delete_after<=now() AND (EXISTS(SELECT 1 FROM videos v WHERE v.id=o.video_id AND v.status IN ('DELETED','EXPIRED')) OR NOT EXISTS(SELECT 1 FROM video_holds WHERE video_id=o.video_id)) AND NOT EXISTS(SELECT 1 FROM video_copy_sources c JOIN video_segments s ON s.id=c.segment_id WHERE s.object_key=o.key) AND NOT EXISTS(SELECT 1 FROM video_jobs j WHERE j.video_id=o.video_id AND (lease_until>now() OR (kind='SEGMENT' AND object_key=o.key))))").bind(&key).fetch_one(&mut *tx).await?;
+        let safe:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM video_objects o WHERE o.key=$1 AND delete_after<=now() AND (EXISTS(SELECT 1 FROM videos v WHERE v.id=o.video_id AND v.status IN ('DELETED','EXPIRED')) OR NOT EXISTS(SELECT 1 FROM video_holds WHERE video_id=o.video_id)) AND NOT EXISTS(SELECT 1 FROM video_copy_sources c JOIN video_segments s ON s.id=c.segment_id WHERE s.object_key=o.key) AND NOT EXISTS(SELECT 1 FROM video_jobs j WHERE j.video_id=o.video_id AND ((kind='SEGMENT' AND object_key=o.key) OR (kind<>'SEGMENT' AND lease_until>now()))))").bind(&key).fetch_one(&mut *tx).await?;
         if !safe {
             continue;
         }

@@ -103,7 +103,8 @@ async fn video_probe(storage: &Storage) -> Result<(), String> {
             .await
             .map_err(|_| "Anonymous S3 request failed")?
             .status();
-        if !matches!(public.as_u16(), 401 | 403) {
+        // Cloudflare R2 answers unsigned requests with 400 (missing authorization), others 401/403.
+        if !matches!(public.as_u16(), 400 | 401 | 403) {
             return Err(format!(
                 "Anonymous S3 request was not denied as expected (HTTP {})",
                 public.as_u16()
