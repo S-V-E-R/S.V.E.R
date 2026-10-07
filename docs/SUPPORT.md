@@ -61,7 +61,7 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
   - Subscriber emotes: 5 slots at tier 1, 5 more at tier 2, 5 more at tier 3, on top of the channel's 10 open emotes from Module 3.
   - Subscriber-only chat mode the owner or a moderator can switch on.
   - No ads on that channel once ads exist.
-- Gift subs: one month to a named viewer, or 5, 10 or 20 one-month gifts to random signed-in chatters in that channel who allow gifts (a setting, default on). A gifted month never auto-renews.
+- Gift subs: one month to a named viewer, or 5, 10 or 20 one-month gifts to random signed-in chatters in that channel who allow gifts (a setting, default on). A gifted month never auto-renews; the recipient can choose to keep the subscription, with the first charge when the gift ends ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)).
 - Paid by card (auto-renews monthly) or by Purchased Valor (one month at a time).
 - Cancel anytime; benefits run to the end of the paid month. Upgrading tiers takes effect immediately with Stripe's proration.
 - Buyers aged 13 to 17: before their first purchase a parent or guardian confirms, at checkout, that they are the cardholder and consent to the purchase. Purchases by an account under 18 are capped at $50 a month. A parent can report an unauthorized purchase through support for a refund, which reverses the Valor or subscription.

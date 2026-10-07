@@ -66,6 +66,7 @@ Defaults: **S** in-site, **P** push, **E** email. **Required** means always on f
 | Support | Guardian approval needed for an under-18 purchase or payout account | Guardian (by email) | E, Required |
 | Support | Payday sent, Early Pay sent, payout problem, chargeback | Streamer | S + E, Required |
 | Support | Creator tier promotion | Streamer | S + E |
+| Support | Your gifted month ends in 3 days; keep the subscription ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)) | Gift recipient | S |
 | CrowdSync | A prediction you joined was resolved | Participant | S |
 | VODs and clips | Clips waiting for approval (grouped) | Streamer and mods | S |
 | VODs and clips | Your clip was approved, published or removed | Clipper | S |

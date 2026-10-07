@@ -419,7 +419,7 @@ Remaining in this module: the integrity integrations that need outside services 
 
 - Any channel owner can upload up to **10** emotes usable by anyone in that channel's chat. Subscriber-only emote slots come with Support.
 - Static PNG or WebP, square, at least 112 px, at most 1 MB upload. Animated files use the first frame (same rule as Profiles images). Served at 28, 56 and 112 px from the media bucket.
-- Code: 3 to 20 ASCII letters and digits, case-sensitive, unique within the channel. A message token that exactly matches a code of the current channel renders as that emote; everything else stays text. No cross-channel use in this module.
+- Code: 3 to 20 ASCII letters and digits, case-sensitive, unique within the channel. A message token that exactly matches a code of the current channel renders as that emote; everything else stays text. No cross-channel use in this module; signature emotes ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)) add one approved emote per channel that works everywhere.
 - Emotes publish immediately. They can be reported (new report target EMOTE); staff can remove one, and removal is audited and can lead to a strike under the Profiles rules. Deleting an emote removes it from future rendering only.
 - Banned-word and link rules apply to codes.
 
