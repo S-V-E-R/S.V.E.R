@@ -113,6 +113,12 @@ pub async fn exercise(e: &Env) {
         "a countdown first"
     );
     assert_eq!(pending.as_deref(), Some("mg-b-small"));
+    assert!(
+        !sver::magnet::explains_burst(&mut e.app.db.acquire().await.unwrap(), "mg-b-small")
+            .await
+            .unwrap(),
+        "a countdown is not a committed handoff"
+    );
     let (_, page) = get(e, "/api/magnet/global", None).await;
     assert_eq!(page["next"]["stream"]["username"], "MgSmall");
     assert_eq!(page["next"]["reason"], "Chat is going off");
@@ -412,6 +418,61 @@ pub async fn exercise(e: &Env) {
     let featured: Vec<String> = sqlx::query_scalar("SELECT owner_id FROM magnet_features WHERE lane='global' AND ended_at IS NULL ORDER BY owner_id")
         .fetch_all(&e.app.db).await.unwrap();
     assert_eq!(featured, ["mg-sq-guest", "mg-sq-host"]);
+    // An ended feature still explains its recent arrivals, but the window is bounded even
+    // when the lane continues showing this broadcast. Use one DB clock for the exact boundary.
+    let mut tx = e.app.db.begin().await.unwrap();
+    sqlx::query("UPDATE magnet_features SET ended_at=now() WHERE broadcast_id='mg-sq-b-guest'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert!(
+        sver::magnet::explains_burst(&mut tx, "mg-sq-b-guest")
+            .await
+            .unwrap()
+    );
+    sqlx::query("UPDATE magnet_features SET ended_at=NULL,started_at=now()-interval '2 minutes' WHERE broadcast_id='mg-sq-b-guest'").execute(&mut *tx).await.unwrap();
+    assert!(
+        !sver::magnet::explains_burst(&mut tx, "mg-sq-b-guest")
+            .await
+            .unwrap()
+    );
+    sqlx::query("UPDATE magnet_features SET started_at=now()+interval '1 second' WHERE broadcast_id='mg-sq-b-guest'").execute(&mut *tx).await.unwrap();
+    assert!(
+        !sver::magnet::explains_burst(&mut tx, "mg-sq-b-guest")
+            .await
+            .unwrap()
+    );
+    tx.rollback().await.unwrap();
+    // A real MAGNet switch explains arrivals on every featured member, not on an opted-out
+    // member or an unrelated stream. A client-supplied lane label cannot grant this exemption.
+    for broadcast in [
+        "mg-sq-b-host",
+        "mg-sq-b-guest",
+        "mg-sq-b-out",
+        "mg-sq-b-solo",
+    ] {
+        sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,turnstile_ok,magnet_lane) SELECT $1,'b:handoff-'||g,now()+interval '2 minutes',true,'global' FROM generate_series(1,25) g")
+            .bind(broadcast).execute(&e.app.db).await.unwrap();
+    }
+    e.sql("UPDATE playback_leases SET hard_excluded=true WHERE broadcast_id='mg-sq-b-host' AND viewer_key='b:handoff-1'").await;
+    e.sql("UPDATE playback_leases SET provisional_until=now()+interval '5 minutes' WHERE broadcast_id='mg-sq-b-host' AND viewer_key='b:handoff-2'").await;
+    sver::integrity::tick(&e.app).await.unwrap();
+    let held: Vec<(String, i64)> = sqlx::query_as("SELECT broadcast_id,count(*) FROM playback_leases WHERE broadcast_id LIKE 'mg-sq-%' AND provisional_until>now() GROUP BY broadcast_id ORDER BY broadcast_id")
+        .fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(
+        held,
+        [
+            ("mg-sq-b-host".into(), 1),
+            ("mg-sq-b-out".into(), 25),
+            ("mg-sq-b-solo".into(), 25)
+        ],
+        "an existing provisional hold survives the handoff"
+    );
+    let hard: String = sqlx::query_scalar("SELECT level FROM playback_leases WHERE broadcast_id='mg-sq-b-host' AND viewer_key='b:handoff-1'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(hard, "excluded", "a handoff never overrides hard evidence");
+    e.sql("DELETE FROM playback_leases WHERE viewer_key LIKE 'b:handoff-%'")
+        .await;
     let (_, studio) = get(e, "/api/me/magnet", Some(&guest)).await;
     assert_eq!(studio["featured_now"][0]["lane"], "global");
     // Viewers get tabs for the featured members; any member's ban holds the viewer.
