@@ -381,7 +381,9 @@ Built since (October 4): a raid explains its burst for two minutes. Go-live aler
 
 MAGNet handoffs (October 7): a committed feature in any lane explains arrival bursts for two minutes, including every featured member of a merged co-stream. The exemption reads server-side feature history, not the viewer's lane label. A countdown alone grants nothing, and an ongoing feature does not renew the window. Only the arrival-spike hold is skipped; security checks, existing provisional holds and all other integrity scoring still apply.
 
-Not built yet, with hooks left for them: the IPinfo Lite network database (hosting/VPN risk; network signals are absent until it is installed, which needs an IPinfo account token), Bunny signed per-lease CDN URLs (with the CDN), SRS WebRTC connection matching and cohort detection beyond arrival rate. The Plays control gate is implemented below under "Dedicated SVER Plays test channel".
+Built October 7: the IPinfo Lite network database (`ipinfo.rs`, migration `0046`). The API downloads it daily, uses a download only after it opens and answers a known address, and stops using a copy older than three days, so stale data removes the signal instead of excluding anyone. A viewer on a hosting or VPN network (the private `hosting_asns` list in the tuning file) carries one soft signal: still counted, never Trusted, excluded only together with another signal. The lease stores only that yes/no, never the address or network. Bunny CDN URLs are signed directory tokens for one stream's files (`playback::cdn_hls`); the expiry rounds up to a six-hour boundary so the URL stays the same between the player's polls. They are signed per stream, not per lease: without binding the viewer's IP (which can differ between IPv4 and IPv6 across the site and CDN) a per-lease URL is no harder to share, and the heartbeat lease is what counts a viewer either way.
+
+Not built yet, with hooks left for them: SRS WebRTC connection matching and cohort detection beyond arrival rate. The Plays control gate is implemented below under "Dedicated SVER Plays test channel".
 
 ### S.V.E.R Plays
 

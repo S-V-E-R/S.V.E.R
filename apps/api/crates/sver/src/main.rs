@@ -64,6 +64,16 @@ async fn main() -> Result<(), String> {
             }
         });
     }
+    // The network file downloads on its own loop; integrity reads whatever copy is already loaded.
+    let networks = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::ipinfo::refresh(&networks).await.is_err() {
+                eprintln!("ipinfo_event=refresh outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        }
+    });
     let jobs = app.clone();
     tokio::spawn(async move {
         loop {

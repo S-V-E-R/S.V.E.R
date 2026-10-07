@@ -104,6 +104,17 @@ pub async fn exercise(e: &Env) {
         json!({"webrtc":"https://media.example/rtc/v1/whep/?app=rebuild&stream=pub-play","hls":"https://media.example/rebuild/pub-play.m3u8","preferred":"webrtc"})
     );
     assert!(!live.to_string().contains("key="), "no secret in playback");
+    let (_, hls_only) = guest(
+        e,
+        "GET",
+        "/api/channels/streamer/live?transport=hls",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        hls_only["playback"]["preferred"], "hls",
+        "a viewer may ask for HLS"
+    );
     let (_, channel) = guest(e, "GET", "/api/channels/streamer", Value::Null).await;
     assert_eq!(channel["channel"]["live"], true, "channel page shows live");
     let (_, card) = guest(e, "GET", "/api/users/streamer/card", Value::Null).await;

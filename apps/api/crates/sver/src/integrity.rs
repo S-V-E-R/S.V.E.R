@@ -34,6 +34,9 @@ pub struct Tuning {
     pub metronome_risk: f32,
     pub network_limit: i64,
     pub network_risk: f32,
+    /// Networks (IPinfo ASNs such as `AS16509`) that are hosting or VPN providers.
+    pub hosting_asns: Vec<String>,
+    pub hosting_risk: f32,
     pub exclude_risk: f32,
     pub trust_max_risk: f32,
     pub ahead_strikes_hard: i32,
@@ -55,6 +58,10 @@ impl Default for Tuning {
             metronome_risk: 0.6,
             network_limit: 8,
             network_risk: 0.6,
+            hosting_asns: ["AS16509", "AS14061", "AS24940", "AS20473"]
+                .map(String::from)
+                .into(),
+            hosting_risk: 0.6,
             exclude_risk: 1.0,
             trust_max_risk: 0.5,
             ahead_strikes_hard: 2,
@@ -114,6 +121,8 @@ pub struct Inputs {
     pub visible_seconds: f64,
     /// Live leases on the same broadcast from the same network prefix, this one included.
     pub same_network: i64,
+    /// The viewer's network is a hosting or VPN provider (IPinfo Lite).
+    pub hosting: bool,
 }
 
 /// No single soft signal excludes a viewer: exclusion needs risk from two signals (or hard
@@ -131,6 +140,10 @@ pub fn assess(t: &Tuning, i: &Inputs) -> (Level, f32, Vec<&'static str>) {
     if i.same_network > t.network_limit {
         risk += t.network_risk;
         flags.push("network_concentration");
+    }
+    if i.hosting {
+        risk += t.hosting_risk;
+        flags.push("hosting_network");
     }
     if i.hard {
         flags.push("media_ahead_of_clock");
@@ -281,9 +294,14 @@ pub async fn record(
     l.turnstile_ok |= passed;
     let net_hash = keyed(app, "net", &network(ip));
     let ip_hash = keyed(app, "ip", &ip.to_canonical().to_string());
-    sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,created_at,expires_at,signed_in,verified,turnstile_ok,hard_excluded,ip_hash,net_hash,beats,last_beat_at,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes) VALUES($1,$2,$3,$4+interval '30 seconds',$5,$6,$7,$8,$9,$10,1,$4,$11,$12,$13,$14,$15,$16) ON CONFLICT(broadcast_id,viewer_key) DO UPDATE SET expires_at=EXCLUDED.expires_at,signed_in=EXCLUDED.signed_in,verified=EXCLUDED.verified,turnstile_ok=EXCLUDED.turnstile_ok,hard_excluded=EXCLUDED.hard_excluded,ip_hash=EXCLUDED.ip_hash,net_hash=EXCLUDED.net_hash,beats=playback_leases.beats+1,last_beat_at=EXCLUDED.last_beat_at,interval_count=EXCLUDED.interval_count,interval_mean=EXCLUDED.interval_mean,interval_m2=EXCLUDED.interval_m2,visible_seconds=EXCLUDED.visible_seconds,last_media_time=EXCLUDED.last_media_time,ahead_strikes=EXCLUDED.ahead_strikes")
+    let hosting = app
+        .config
+        .networks
+        .asn(ip)
+        .is_some_and(|asn| t.hosting_asns.contains(&asn));
+    sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,created_at,expires_at,signed_in,verified,turnstile_ok,hard_excluded,ip_hash,net_hash,beats,last_beat_at,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,hosting) VALUES($1,$2,$3,$4+interval '30 seconds',$5,$6,$7,$8,$9,$10,1,$4,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(broadcast_id,viewer_key) DO UPDATE SET hosting=EXCLUDED.hosting, expires_at=EXCLUDED.expires_at,signed_in=EXCLUDED.signed_in,verified=EXCLUDED.verified,turnstile_ok=EXCLUDED.turnstile_ok,hard_excluded=EXCLUDED.hard_excluded,ip_hash=EXCLUDED.ip_hash,net_hash=EXCLUDED.net_hash,beats=playback_leases.beats+1,last_beat_at=EXCLUDED.last_beat_at,interval_count=EXCLUDED.interval_count,interval_mean=EXCLUDED.interval_mean,interval_m2=EXCLUDED.interval_m2,visible_seconds=EXCLUDED.visible_seconds,last_media_time=EXCLUDED.last_media_time,ahead_strikes=EXCLUDED.ahead_strikes")
         .bind(broadcast).bind(key).bind(l.created_at).bind(now).bind(signed_in).bind(verified).bind(l.turnstile_ok).bind(l.hard_excluded)
-        .bind(&ip_hash).bind(&net_hash).bind(l.interval_count).bind(l.interval_mean).bind(l.interval_m2).bind(l.visible_seconds).bind(report.media_time).bind(l.ahead_strikes)
+        .bind(&ip_hash).bind(&net_hash).bind(l.interval_count).bind(l.interval_mean).bind(l.interval_m2).bind(l.visible_seconds).bind(report.media_time).bind(l.ahead_strikes).bind(hosting)
         .execute(&mut *tx).await?;
     let same_network: i64 = sqlx::query_scalar("SELECT count(*) FROM playback_leases WHERE broadcast_id=$1 AND net_hash=$2 AND expires_at>now()")
         .bind(broadcast).bind(&net_hash).fetch_one(&mut *tx).await?;
@@ -299,6 +317,7 @@ pub async fn record(
         interval_m2: l.interval_m2,
         visible_seconds: l.visible_seconds,
         same_network,
+        hosting,
     };
     let (level, risk, flags) = assess(t, &inputs);
     save_level(&mut tx, broadcast, key, level, risk, &flags).await?;
@@ -364,6 +383,7 @@ struct Scored {
     interval_m2: f64,
     visible_seconds: f64,
     same_network: i64,
+    hosting: bool,
 }
 
 /// Background pass, run with the other jobs: spike windows, rescoring (so sessions can recover),
@@ -392,7 +412,7 @@ pub async fn tick(app: &App) -> Res<()> {
             }
         }
         // ponytail: one UPDATE per live lease every pass; batch it if audiences reach thousands.
-        let leases: Vec<Scored> = sqlx::query_as("SELECT l.viewer_key, extract(epoch FROM now()-l.created_at)::float8 AS age_seconds, l.signed_in, l.verified, l.turnstile_ok, l.hard_excluded, coalesce(l.provisional_until>now(),false) AS provisional, l.interval_count, l.interval_mean, l.interval_m2, l.visible_seconds, (SELECT count(*) FROM playback_leases n WHERE n.broadcast_id=l.broadcast_id AND n.net_hash=l.net_hash AND n.expires_at>now()) AS same_network FROM playback_leases l WHERE l.broadcast_id=$1 AND l.expires_at>now()")
+        let leases: Vec<Scored> = sqlx::query_as("SELECT l.viewer_key, extract(epoch FROM now()-l.created_at)::float8 AS age_seconds, l.signed_in, l.verified, l.turnstile_ok, l.hard_excluded, coalesce(l.provisional_until>now(),false) AS provisional, l.interval_count, l.interval_mean, l.interval_m2, l.visible_seconds, (SELECT count(*) FROM playback_leases n WHERE n.broadcast_id=l.broadcast_id AND n.net_hash=l.net_hash AND n.expires_at>now()) AS same_network, l.hosting FROM playback_leases l WHERE l.broadcast_id=$1 AND l.expires_at>now()")
             .bind(&broadcast).fetch_all(&mut *tx).await?;
         for l in &leases {
             let inputs = Inputs {
@@ -407,6 +427,7 @@ pub async fn tick(app: &App) -> Res<()> {
                 interval_m2: l.interval_m2,
                 visible_seconds: l.visible_seconds,
                 same_network: l.same_network,
+                hosting: l.hosting,
             };
             let (level, risk, flags) = assess(&t, &inputs);
             save_level(&mut tx, &broadcast, &l.viewer_key, level, risk, &flags).await?;
@@ -660,6 +681,43 @@ mod tests {
             ..metronomic
         };
         assert_eq!(assess(&t, &member).0, Level::Counted);
+    }
+
+    #[test]
+    fn hosting_network_is_one_soft_signal() {
+        let t = Tuning::default();
+        let hosted = Inputs {
+            hosting: true,
+            ..counted_guest()
+        };
+        let (level, _, flags) = assess(&t, &hosted);
+        assert_eq!(
+            (level, flags.contains(&"hosting_network")),
+            (Level::Counted, true),
+            "a VPN alone still counts"
+        );
+        let member = Inputs {
+            signed_in: true,
+            verified: true,
+            visible_seconds: 600.0,
+            ..hosted
+        };
+        assert_eq!(
+            assess(&t, &member).0,
+            Level::Counted,
+            "but is never Trusted"
+        );
+        let metronomic = Inputs {
+            interval_count: 10,
+            interval_mean: 10_000.0,
+            interval_m2: 9.0,
+            ..hosted
+        };
+        assert_eq!(
+            assess(&t, &metronomic).0,
+            Level::Excluded,
+            "two signals exclude"
+        );
     }
 
     #[test]

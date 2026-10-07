@@ -25,6 +25,7 @@ pub mod factions;
 pub mod gateway;
 pub mod guilds;
 pub mod integrity;
+pub mod ipinfo;
 pub mod jobs;
 pub mod ledger;
 pub mod magnet;
@@ -86,6 +87,7 @@ pub struct Config {
     pub streaming: Option<streams::Config>,
     pub playback: playback::Config,
     pub integrity: integrity::Tuning,
+    pub networks: ipinfo::Networks,
     pub magnet: magnet::Tuning,
     pub engagement: engagement::Tuning,
     pub factions: factions::Tuning,
@@ -164,6 +166,7 @@ impl Config {
             streaming: streams::Config::from_env()?,
             playback: playback::Config::from_env(production)?,
             integrity: integrity::Tuning::from_env()?,
+            networks: ipinfo::Networks::from_env()?,
             magnet: magnet::Tuning::from_env()?,
             engagement: engagement::Tuning::from_env()?,
             factions: factions::Tuning::from_env(production)?,
