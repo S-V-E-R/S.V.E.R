@@ -8,7 +8,7 @@ import { LiveThumbnail } from "../LiveThumbnail";
 export function StreamCard({ s, viewerFaction, fresh = false }: { s: LiveCard; viewerFaction: string | null; fresh?: boolean }) {
   const f = factionOf(s.faction);
   const ally = !!viewerFaction && s.faction === viewerFaction;
-  return <Link href={`/${s.username}`} className={ally ? "stream-card ally" : "stream-card"}>
+  return <Link href={`/${s.username}/live`} className={ally ? "stream-card ally" : "stream-card"}>
     <span className="stream-thumb">
       <LiveThumbnail src={s.thumbnail} label={s.category ?? s.display_name} />
       <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}{s.label && <span className="tag-label">{s.label}</span>}</span>

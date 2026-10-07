@@ -44,7 +44,7 @@ export function SquadStudio({ initial }: { initial: MySquads }) {
     setBusy(false);
   }
   return <><h1>Co-streams</h1><p>Invite up to three live streamers and watch together. Each channel keeps its own stream and viewer count.</p>
-    {initial.current ? <p><Link className="button" href={`/squads/${initial.current}`}>Open your co-stream</Link></p> : <section className="panel section"><h2>Start a co-stream</h2>{initial.live ? <form onSubmit={create}><fieldset><legend>Chat mode</legend><label className="checkbox"><input type="radio" name="mode" value="SEPARATE" defaultChecked /> Separate — viewers choose a channel&apos;s chat</label><label className="checkbox"><input type="radio" name="mode" value="MERGED" /> Merged — a shared room moderated by every member&apos;s moderators</label></fieldset><button disabled={busy}>Create co-stream</button></form> : <p><Link href="/studio/stream">Go live</Link> before creating or joining a co-stream.</p>}</section>}
+    {initial.current ? <p><Link className="button" href={`/squads/${initial.current}`}>Open your co-stream</Link></p> : <section className="panel section"><h2>Start a co-stream</h2>{initial.live ? <form onSubmit={create}><input type="hidden" name="mode" value="MERGED" /><p>Everyone shares one chat, moderated by every member&apos;s moderators.</p><button disabled={busy}>Create co-stream</button></form> : <p><Link href="/studio/stream">Go live</Link> before creating or joining a co-stream.</p>}</section>}
     <section className="panel section"><h2>Invitations</h2>{initial.invites.length === 0 ? <p className="muted">No pending invitations.</p> : <ul className="list">{initial.invites.map(i => <li key={i.id}><Link href={`/squads/${i.id}`}>{i.host}&apos;s co-stream</Link> · {i.mode.toLowerCase()} chat<p className="small muted">Expires {new Date(i.expires_at).toLocaleTimeString()}</p></li>)}</ul>}</section>
     <p><Link href="/studio/guilds">Guildmates &amp; team shortcuts</Link></p>{notice && <p role="alert" className="error">{notice}</p>}
   </>;
@@ -72,5 +72,29 @@ export function SquadView({ initial, account }: { initial: Squad; account: strin
       <div className="squad-layout section"><div className="squad-streams">{squad.members.map(m => m.username && <section key={m.username} className="squad-stream panel"><div className="row">{m.faction && <Crest faction={m.faction} size={24} />}<h2><Link href={`/${m.username}/live`}>{m.display_name}</Link>{m.host && " · Host"}</h2></div><LivePlayer username={m.username} signedIn={!!account} nested focused followRaids={false} muted={audio !== m.username} onUnmute={() => setAudio(m.username)} /><button className="quiet small" aria-pressed={audio === m.username} onClick={() => setAudio(audio === m.username ? null : m.username)}>{audio === m.username ? "Mute audio" : `Listen to ${m.display_name}`}</button>{account && !squad.joined && <Subscribe username={m.username} squad={squad.mode === "MERGED" ? squad.id : undefined} />}</section>)}</div>
       <aside className="squad-chat">{squad.mode === "SEPARATE" && <label className="field">Channel chat<select value={chosen ?? ""} onChange={e => setChat(e.target.value)}>{squad.members.map(m => m.username && <option key={m.username} value={m.username}>{m.display_name}</option>)}</select></label>}{squad.mode === "MERGED" ? host && <Chat key={squad.id} username={host} squad={squad.id} account={account} /> : chosen && <Chat key={chosen} username={chosen} account={account} />}</aside></div>
     </>}
+  </div>;
+}
+/** Watch-page view of a co-stream: every stream at once or just one, audio from one stream at a time. */
+export function CoStreamPlayers({ initial, focus, account }: { initial: Squad; focus: string; account: string | null }) {
+  const [squad, setSquad] = useState(initial);
+  const [solo, setSolo] = useState<string | null>(null);
+  const [audio, setAudio] = useState<string | null>(focus);
+  useEffect(() => {
+    const timer = setInterval(() => { if (!document.hidden) void send<Squad>("GET", `/api/squads/${squad.id}`).then(r => { if (r.ok) setSquad(r.data); }); }, 10000);
+    return () => clearInterval(timer);
+  }, [squad.id]);
+  const members = squad.ended ? [] : squad.members.filter(m => m.username);
+  const shown = solo && members.some(m => m.username === solo) ? members.filter(m => m.username === solo) : members.length > 1 ? [...members].sort((a, b) => Number(b.username === focus) - Number(a.username === focus)) : [];
+  if (!shown.length) return <div className="watch-player"><LivePlayer username={focus} focused signedIn={!!account} /></div>;
+  return <div className="watch-player costream">
+    <div className="costream-bar row"><span className="eyebrow">Co-stream · {members.length} streams</span>
+      <button type="button" className="small quiet" aria-pressed={!solo} onClick={() => setSolo(null)}>All streams</button>
+      {members.map(m => <button key={m.username} type="button" className="small quiet" aria-pressed={solo === m.username} onClick={() => { setSolo(m.username); setAudio(m.username); }}>Only {m.display_name}</button>)}
+    </div>
+    <div className={shown.length > 1 ? "costream-grid" : undefined}>{shown.map(m => m.username && <section key={m.username} className="squad-stream" aria-label={m.display_name}>
+      <LivePlayer username={m.username} signedIn={!!account} nested focused followRaids={false} muted={audio !== m.username} onUnmute={() => setAudio(m.username)} />
+      <div className="row">{m.faction && <Crest faction={m.faction} size={20} />}<Link href={`/${m.username}`}><strong>{m.display_name}</strong></Link>
+        <button type="button" className="small quiet" aria-pressed={audio === m.username} onClick={() => setAudio(audio === m.username ? null : m.username)}>{audio === m.username ? "Mute" : "Listen"}</button></div>
+    </section>)}</div>
   </div>;
 }

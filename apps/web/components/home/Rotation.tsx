@@ -29,7 +29,7 @@ export function Rotation({ streams, viewerFaction, reasons = {} }: { streams: Li
     <div className="rotation-row">
     {n > 1 && <span className="rotation-peek" aria-hidden="true"><LiveThumbnail src={prev.thumbnail} label={prev.category ?? prev.display_name} /></span>}
     <div className="rotation-card frame" role="group" aria-roledescription="slide" aria-label={`${index % n + 1} of ${n}: ${cur.display_name}`}>
-      <Link href={`/${cur.username}`} className="rotation-stage" aria-label={`Watch ${cur.display_name}`}>
+      <Link href={`/${cur.username}/live`} className="rotation-stage" aria-label={`Watch ${cur.display_name}`}>
         <LiveThumbnail key={cur.broadcast_id ?? cur.username} src={cur.thumbnail} label={cur.category ?? cur.display_name} />
         <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}</span>
       </Link>
@@ -41,7 +41,7 @@ export function Rotation({ streams, viewerFaction, reasons = {} }: { streams: Li
         {reasons[cur.username] && <p className="rotation-reason">{reasons[cur.username]}</p>}
         <p className="rotation-title">{cur.title}</p>
         <div className="chips">{cur.category && <span className="chip">{cur.category}</span>}<span className="chip">{cur.viewers.toLocaleString()} watching</span></div>
-        <div className="rotation-actions"><Link href={`/${cur.username}`} className="button">Watch</Link></div>
+        <div className="rotation-actions"><Link href={`/${cur.username}/live`} className="button">Watch</Link></div>
         {n > 1 && <p className="rotation-next">Up next in rotation: <strong>{next.display_name}</strong>{next.category ? ` · ${next.category}` : ""}</p>}
       </div>
     </div>

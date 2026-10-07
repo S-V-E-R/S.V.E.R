@@ -48,7 +48,7 @@ const position = (html, id) => html.indexOf(`id="${id}"`);
   assert(order.every(p => p > 0) && order.every((p, i) => i === 0 || p > order[i - 1]), "shelf order");
   assert.equal(position(html, "fol-h"), -1);
   assert.equal(position(html, "fac-h"), -1);
-  assert.match(html, /href="\/First"/);
+  assert.match(html, /href="\/First\/live"/, "live cards open the watch page");
   assert.match(html, /&lt;First&gt; playing/, "titles are text");
   assert.match(html, /New creator/);
   assert.match(html, /Community pick/);

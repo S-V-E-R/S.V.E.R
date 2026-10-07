@@ -30,7 +30,7 @@ export function NotificationList({ reports, strikes }: { reports: number; strike
       ? <p className="muted">No notifications yet.</p>
       : <ul className="list notifications">{items.map(item => <li key={item.id} className={item.read ? "row" : "row unread"}>
         {item.kind === "live" && <Avatar sizes={item.channel.avatar} name={item.channel.display_name} size={40} />}
-        <span>{item.kind === "live" ? <Link href={`/${item.channel.username}`}><strong>{item.channel.display_name}</strong> {item.live ? "is live" : "went live"}</Link> : <Link href={item.payload.url}><strong>{item.payload.title}</strong> · {item.payload.body}</Link>}
+        <span>{item.kind === "live" ? <Link href={`/${item.channel.username}${item.live ? "/live" : ""}`}><strong>{item.channel.display_name}</strong> {item.live ? "is live" : "went live"}</Link> : <Link href={item.payload.url}><strong>{item.payload.title}</strong> · {item.payload.body}</Link>}
           <br /><time className="muted" dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time></span>
         {!item.read && <span className="sr-only">New</span>}
       </li>)}</ul>}
