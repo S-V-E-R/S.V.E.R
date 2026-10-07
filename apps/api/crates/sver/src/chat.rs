@@ -969,7 +969,17 @@ async fn hype_merge(app: &App, lane: &str) -> Res<Option<Merge>> {
     .bind(&merge.owners)
     .fetch_one(&app.db)
     .await?;
-    Ok((!off).then_some(merge))
+    if off {
+        return Ok(None);
+    }
+    // Remember the merge, so this window's messages stay in the room's history after the switch.
+    sqlx::query(
+        "UPDATE magnet_features SET merged=true WHERE lane=$1 AND ended_at IS NULL AND NOT merged",
+    )
+    .bind(lane)
+    .execute(&app.db)
+    .await?;
+    Ok(Some(merge))
 }
 async fn hype_lane(app: &App, lane: &str) -> Res<()> {
     let found: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM magnet_lanes WHERE id=$1)")
@@ -995,7 +1005,7 @@ async fn hype_snapshot(
     let hidden = hidden(app, viewer).await?;
     // select() contains only fixed SQL and a literal chip alias; values are bound.
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1 AND m.squad_id IS NULL) OR (m.channel_id=$2 AND m.squad_id IS NOT DISTINCT FROM $5 AND m.created_at>=$3)) AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
+        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1 AND m.squad_id IS NULL) OR (m.channel_id=$2 AND m.squad_id IS NOT DISTINCT FROM $5 AND m.created_at>=$3) OR EXISTS(SELECT 1 FROM magnet_features f WHERE f.lane=$1 AND f.merged AND f.owner_id=m.channel_id AND m.created_at>=f.started_at AND (f.ended_at IS NULL OR m.created_at<f.ended_at))) AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
         select()
     )))
     .bind(lane)
