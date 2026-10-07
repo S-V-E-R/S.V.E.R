@@ -14,20 +14,24 @@ import { SectionHead, StreamGrid } from "../../../components/home/Shelves";
 import type { LiveCard } from "../../../components/home/types";
 import { apiGet } from "../../../lib/server-api";
 import "../../../styles/profiles.css";
+import "../../../styles/home.css";
 
 export async function generateMetadata({ params }: { params: ChannelParams }) {
   return channelMetadata((await params).username, "Live");
 }
 
-/** Focused watch layout: the player and chat, with the channel one link away. Chat stays open while offline. */
+/**
+ * Focused watch layout (docs/DESIGN.md "Watch page"): 16:9 player, streamer bar, the stream's
+ * interactive panels (Plays, CrowdSync, board), Up next, and chat at 340 px. Chat stays open while offline.
+ */
 export default async function Live({ params }: { params: ChannelParams }) {
   const data = await loadChannel((await params).username);
   const c = data.channel;
   const [account, suggestions] = await Promise.all([currentAccount(), apiGet<{ items: LiveCard[] }>(`/api/channels/${encodeURIComponent(c.username)}/suggestions`)]);
   const next = suggestions.data?.items.slice(0, 4) ?? [];
-  return <div className="channel watch" data-theme={c.faction ?? "neutral"} data-plays={c.plays ? "true" : undefined}>
+  return <div className="channel watch" data-theme={c.faction ?? "neutral"}>
     <div className="watch-main">
-    <div className="watch-player frame">
+    <div className="watch-player">
     <LivePlayer username={c.username} focused signedIn={!!account}>
       <section className="watch-offline" aria-label="Stream">
         <h2>{c.display_name} is offline</h2>
@@ -37,13 +41,15 @@ export default async function Live({ params }: { params: ChannelParams }) {
     </div>
     <section className="streamer-bar" aria-label="Streamer">
       <Link href={`/${c.username}`} aria-label={`${c.display_name}'s channel`}>{c.faction ? <Crest faction={c.faction} size={48} /> : <Avatar sizes={c.avatar} name={c.display_name} size={48} />}</Link>
-      <div className="streamer-name"><h1><Link href={`/${c.username}`}>{c.display_name}</Link></h1><p className="handle">@{c.username}</p>{c.faction && <Link href={`/factions/${c.faction}`}>{factionInfo(c.faction).name}</Link>}<p className="muted">{c.follower_count.toLocaleString()} followers</p></div>
+      <div className="streamer-name"><h1><Link href={`/${c.username}`}>{c.display_name}</Link></h1><p className="handle">@{c.username}</p><p className="streamer-tags">{c.faction && <Link href={`/factions/${c.faction}`} className="badge faction-tag">{factionInfo(c.faction).name}</Link>}<span className="muted">{c.follower_count.toLocaleString()} followers</span></p></div>
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
     </section>
-    {c.plays && <PlaysControls username={c.username} />}
-    <Crowd username={c.username} />
-    {c.board && <Board username={c.username} />}
-    <section className="watch-next" aria-labelledby="up-next"><SectionHead id="up-next" title="Up next" note="Same genre first, then same faction" href="/browse" link="Browse" />{next.length ? <StreamGrid streams={next} viewerFaction={account?.faction ?? null} /> : <p className="shelf-empty frame">{suggestions.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>
+    <div className="watch-interact">
+      {c.plays && <PlaysControls username={c.username} />}
+      <Crowd username={c.username} />
+      {c.board && <Board username={c.username} />}
+    </div>
+    <section className="watch-next" aria-labelledby="up-next"><SectionHead id="up-next" title="Up next" note="Same genre first, then same faction" href="/browse" link="Browse" />{next.length ? <StreamGrid streams={next} viewerFaction={account?.faction ?? null} /> : <p className="shelf-empty panel">{suggestions.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>
     </div>
     <Chat username={c.username} account={account?.username ?? null} />
   </div>;

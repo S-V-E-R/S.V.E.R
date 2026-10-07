@@ -1,4 +1,5 @@
 "use client";
+import { HeartIcon } from "./shell/Icons";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { send } from "../lib/client-api";
@@ -78,7 +79,7 @@ export function WallPost({ post, viewer }: { post: Post; viewer: WallViewer }) {
     {hidden ? <p className="muted">{post.status === "REMOVED" ? "Removed by S.V.E.R moderators." : "This post is unavailable."}</p> : <p className="wall-body"><Linkified text={post.body ?? ""} /></p>}
     {post.status_label && <span className="badge">{post.status_label}</span>}
     <div className="meta">
-      <button type="button" className="link-button" aria-pressed={liked} disabled={!viewer.can_react || post.status !== "APPROVED"} onClick={like}>{liked ? "♥ Liked" : "♡ Like"} · {likes}</button>
+      <button type="button" className="link-button" aria-pressed={liked} disabled={!viewer.can_react || post.status !== "APPROVED"} onClick={like}><HeartIcon filled={liked} /> {liked ? "Liked" : "Like"} · {likes}</button>
       {viewer.can_post && post.status === "APPROVED" && <button type="button" className="link-button" onClick={() => setReplying(!replying)}>Reply</button>}
       {post.can_delete && <button type="button" className="link-button" onClick={remove}>Delete</button>}
       {post.can_report && <ReportButton target={{ target_type: "wall_post", target_id: post.id }} />}

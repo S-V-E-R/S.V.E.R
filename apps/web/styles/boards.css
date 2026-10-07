@@ -6,7 +6,7 @@
 .board-particles span{position:absolute;top:-10%;font-size:28px;animation:board-fall 2.6s ease-in forwards}
 .effect-fireworks .board-particles span{top:auto;bottom:-10%;animation-name:board-rise}
 .effect-shake{animation:board-shake .5s ease-in-out 2}
-.effect-spotlight .board-caption{bottom:40%;font-size:22px;border-color:var(--accent,#fff);box-shadow:0 0 40px var(--accent,#fff)}
+.effect-spotlight .board-caption{bottom:40%;font-size:22px;border:2px solid var(--accent,#fff)}
 @keyframes board-fall{to{transform:translateY(120vh) rotate(240deg);opacity:.2}}
 @keyframes board-rise{to{transform:translateY(-110vh) scale(1.6);opacity:0}}
 @keyframes board-shake{25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}

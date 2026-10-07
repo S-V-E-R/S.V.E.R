@@ -32,6 +32,7 @@ function compile(file, dependencies = {}) {
 const icons = compile("apps/web/components/shell/Icons.tsx");
 const chrome = compile("apps/web/components/shell/Chrome.tsx", { "./Icons": icons });
 const { SideNav } = compile("apps/web/components/shell/SideNav.tsx", { "./Icons": icons });
+const { PlayerMenu } = compile("apps/web/components/shell/PlayerMenu.tsx", { "./Icons": icons });
 const { default: SiteShell } = compile("apps/web/components/SiteShell.tsx", { "./shell/Chrome": chrome });
 const root = createRoot(document.getElementById("root"));
 const pages = ["/about", "/factions", "/roadmap", "/help", "/terms", "/privacy", "/guidelines", "/dmca", "/contact", "/take-it-down"];
@@ -39,8 +40,8 @@ async function render(route, signedIn = false) {
   pathname = route;
   await act(async () => root.render(React.createElement(SiteShell, {
     account: signedIn ? { username: "ExampleUser" } : null, alerts: false,
-    actions: signedIn ? React.createElement("a", { href: "/ExampleUser", className: "player-chip" }, "ExampleUser") : React.createElement("a", { href: "/login" }, "Log in"),
-    sidebar: React.createElement(SideNav, { signedIn, faction: null }),
+    actions: signedIn ? React.createElement(PlayerMenu, { username: "ExampleUser", chip: "ExampleUser" }) : React.createElement("a", { href: "/login" }, "Log in"),
+    sidebar: React.createElement(SideNav, { faction: null }),
     children: React.createElement("h1", null, "Page content")
   })));
   assert.equal(document.querySelectorAll("main#main").length, 1);
@@ -63,15 +64,17 @@ async function render(route, signedIn = false) {
       if (route === "/welcome" || route.startsWith("/choose-")) assert.equal(document.querySelector("header .topbar-note"), null);
       else assert.ok(document.querySelector(`header a[href="${route === "/login" ? "/signup" : "/login"}"]`));
     }
-    // Account tools live in the sidebar's "Your channel" group (docs/DESIGN.md "Layout"); only
-    // destinations that exist are listed, so nothing is greyed out as "coming soon".
+    // The sidebar is Home, Browse, MAGNet, War map and the faction hub; account tools are in the
+    // top-bar player menu (docs/DESIGN.md "Layout"). Only destinations that exist are listed.
     await render("/settings/profile", true);
-    assert.ok(document.querySelector('aside a[href="/settings/profile"][aria-current="page"]'));
-    const navLabels = [...document.querySelectorAll('aside .nav-item')].map(item => item.querySelector('span')?.textContent);
-    assert.deepEqual(navLabels, ['Home', 'Following', 'Factions', 'Browse', 'MAGNet', 'War map', 'Creator Studio', 'Valor', 'Settings', 'Account security']);
+    const navLabels = [...document.querySelectorAll('aside .nav-item')].map(item => item.querySelector(':scope > span:last-child')?.textContent);
+    assert.deepEqual(navLabels, ['Home', 'Browse', 'MAGNet', 'War map', 'Factions']);
     assert.equal(document.querySelectorAll('aside [aria-disabled="true"]').length, 0);
+    const menuLinks = [...document.querySelectorAll('details.player-menu nav a')].map(a => a.textContent);
+    assert.deepEqual(menuLinks, ['My channel', 'Following', 'Creator Studio', 'Valor', 'Settings', 'Account security']);
+    assert.ok(document.querySelector('details.player-menu a[href="/settings/profile"][aria-current="page"]'));
     await render('/studio/channel', true);
-    assert.ok(document.querySelector('aside a[href="/studio/channel"][aria-current="page"]'));
+    assert.ok(document.querySelector('details.player-menu a[href="/studio/channel"][aria-current="page"]'));
     assert.equal(document.querySelectorAll('aside a[href="/browse"]').length, 1, "Browse is in the sidebar");
     const toggle = () => document.querySelector("button.menu-toggle");
     await act(async () => toggle().click());

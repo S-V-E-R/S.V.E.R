@@ -19,3 +19,12 @@ export const CloseIcon = ({ size = 18 }: Props) => svg(size, <path d="m2.5 2.5 7
 
 /** The MAGNet mark: three 4×10 px bars in the three faction colors (M.A.G. = Myria, Aetheron, Glint). */
 export const MagnetMark = () => <span className="magnet-mark" aria-hidden="true"><span /><span /><span /></span>;
+export const CheckIcon = ({ size = 14 }: Props) => svg(size, <path d="m2 6.5 2.5 2.5L10 3" />);
+export const CrossIcon = ({ size = 14 }: Props) => svg(size, <path d="m3 3 6 6M9 3 3 9" />);
+export const DashIcon = ({ size = 14 }: Props) => svg(size, <path d="M3 6h6" />);
+export const CircleIcon = ({ size = 14 }: Props) => svg(size, <circle cx="6" cy="6" r="3.5" />);
+export const ExternalIcon = ({ size = 14 }: Props) => svg(size, <path d="M5 2H2v8h8V7M7 1.5h3.5V5M10.5 1.5 5.5 6.5" />);
+export const ArrowIcon = ({ size = 18, dir = "right" }: Props & { dir?: "up" | "down" | "left" | "right" }) => <span style={{ display: "inline-flex", transform: `rotate(${({ right: 0, down: 90, left: 180, up: 270 })[dir]}deg)` }}>{svg(size, <path d="M2 6h8M7 3l3 3-3 3" />)}</span>;
+export const HeartIcon = ({ size = 14, filled = false }: Props & { filled?: boolean }) => <svg width={size} height={size} viewBox="0 0 12 12" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="M6 10.2 1.8 6.1a2.3 2.3 0 0 1 3.3-3.2L6 3.8l.9-.9a2.3 2.3 0 0 1 3.3 3.2z" /></svg>;
+/** A done / not done mark for checklists, with the state in text for screen readers. */
+export const StatusMark = ({ ok, optional = false }: { ok: boolean; optional?: boolean }) => <span className={ok ? "status-mark ok" : "status-mark"}>{ok ? <CheckIcon /> : optional ? <DashIcon /> : <CrossIcon />}<span className="sr-only">{ok ? "Done: " : optional ? "Optional: " : "Not done: "}</span></span>;

@@ -1,4 +1,5 @@
 "use client";
+import { ArrowIcon, StatusMark } from "../../../components/shell/Icons";
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import type { BoardDef, Control } from "../../../components/Board";
@@ -39,8 +40,8 @@ function ControlEditor({ control, mine, onChange, onMove, onRemove, onTest, save
     {c.kind === "goal" && <label className="field narrow"><span>Goal</span><input type="number" min={1} max={1000000} value={c.target ?? 1} onChange={e => onChange({ ...c, target: num(e.target.value) })} /></label>}
     <label className="field narrow"><span>Width</span><select value={c.width} onChange={e => onChange({ ...c, width: Number(e.target.value) })}>{[1, 2, 3, 4].map(w => <option key={w} value={w}>{w} of 4</option>)}</select></label>
     <div className="row wrap">
-      <button type="button" className="small quiet" onClick={() => onMove(-1)} aria-label={`Move ${c.label} up`}>↑</button>
-      <button type="button" className="small quiet" onClick={() => onMove(1)} aria-label={`Move ${c.label} down`}>↓</button>
+      <button type="button" className="small quiet" onClick={() => onMove(-1)} aria-label={`Move ${c.label} up`}><ArrowIcon dir="up" /></button>
+      <button type="button" className="small quiet" onClick={() => onMove(1)} aria-label={`Move ${c.label} down`}><ArrowIcon dir="down" /></button>
       {c.kind !== "label" && c.kind !== "joystick" && <button type="button" className="small quiet" disabled={!saved} title={saved ? undefined : "Save the draft first"} onClick={onTest}>Test</button>}
       <button type="button" className="small quiet" onClick={onRemove}>Remove</button>
     </div>
@@ -124,14 +125,14 @@ export default function StudioBoard() {
       <div className="board-preview"><EffectStage events={shown} calm={false} /></div>
     </Section>
     <Section title="Publish" intro={mine.published_at ? `Version ${mine.version} has been live since ${new Date(mine.published_at).toLocaleString()}. Publishing starts goals over.` : "Your board isn't published yet."}>
-      <ul className="list">{mine.checklist.map(c => <li key={c.label}>{c.ok ? "✓" : c.required ? "✗" : "–"} {c.label}</li>)}</ul>
+      <ul className="list">{mine.checklist.map(c => <li key={c.label}><StatusMark ok={c.ok} optional={!c.required} />{c.label}</li>)}</ul>
       <div className="row wrap">
         <button type="button" disabled={busy || dirty || required.length > 0} title={dirty ? "Save the draft first" : undefined} onClick={() => act("POST", "/api/me/board/publish", undefined, "Published.")}>Publish</button>
         {mine.published && <button type="button" className="quiet" disabled={busy} onClick={async () => { const r = await send("PUT", `${live}/disabled`, { disabled: !mine.disabled }); if (r.ok) await load(); else setState({ error: r.error }); }}>{mine.disabled ? "Resume the board" : "Pause all effects (panic)"}</button>}
       </div>
     </Section>
     <Section title="OBS overlay" intro="Add this private URL as a browser source over your whole scene (1920×1080). While it's connected, effects appear in your video instead of over the player, so every viewer sees them in sync.">
-      <p>{mine.overlay.connected ? "✓ Connected" : mine.overlay.set ? "Not connected right now" : "No overlay URL yet"}</p>
+      <p>{mine.overlay.connected ? "Connected" : mine.overlay.set ? "Not connected right now" : "No overlay URL yet"}</p>
       {overlayUrl && <p className="form-message">Copy it now; it won&apos;t be shown again. <code>{overlayUrl}</code> <CopyButton value={overlayUrl} label="overlay URL" /></p>}
       <div className="row wrap">
         <button type="button" className="small" disabled={busy} onClick={async () => { if (mine.overlay.set && !window.confirm("Make a new URL? The old one stops working.")) return; const r = await send<{ url: string }>("POST", "/api/me/board/overlay"); if (r.ok) { setOverlayUrl(r.data.url); await load(); } else setState({ error: r.error }); }}>{mine.overlay.set ? "Make a new URL" : "Make the overlay URL"}</button>
