@@ -18,11 +18,67 @@
 .war-scoreboard li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }.war-scoreboard a { display: inline-flex; align-items: center; gap: .3rem; }.war-scoreboard strong { font-size: 1.3rem; }.war-scoreboard .muted { font-size: .85rem; }
 .season-feature { flex-basis: 100%; margin: 0; }
 .war-rules { padding: 1.25rem; }.war-rules h2 { font-size: 1.25rem; }.war-rules li { margin-bottom: .4rem; }
-.hex-map { max-width: 900px; width: 100%; margin: auto; }.hex-map.hidden { display: none; }.hex-map svg { width: 100%; display: block; }.hex { cursor: pointer; }.hex polygon { fill: var(--accent-deep); stroke: var(--accent); stroke-width: 2; }.hex.contested polygon { stroke: var(--ink); }.hex:focus-visible { outline: none; }.hex:focus-visible polygon,.hex[aria-pressed=true] polygon { stroke-width: 5; stroke: var(--ink); }.hex text { fill: var(--ink); font-size: 15px; font-family: var(--font-barlow-condensed),sans-serif; pointer-events: none; }.hex .hex-holder { fill: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }.hex .hex-detail { font-size: 11px; }
+.war-map-view.hidden { display: none; }
+.war-theater { display: grid; grid-template-columns: minmax(0,1fr) 270px; border: 1px solid var(--line); background: #08111B; user-select: none; }
+.war-stage { position: relative; overflow: hidden; min-width: 0; }
+.war-theater svg { display: block; width: 100%; height: auto; max-height: 78vh; touch-action: none; }
+.war-theater svg.zoomed { cursor: grab; }.war-theater svg.dragging { cursor: grabbing; }
+.war-camera { transform-origin: 0 0; transition: transform .7s cubic-bezier(.22,.8,.24,1); will-change: transform; }
+.war-theater svg.dragging .war-camera { transition: none; }
+.war-sea-bg { fill: #08111B; }
+.war-sea { fill: #0B1826; stroke: rgba(150,190,230,.05); stroke-width: .6; }
+.war-shallows { fill: #143049; stroke: rgba(150,190,230,.1); stroke-width: .6; }
+.territory { cursor: pointer; outline: none; }
+.territory .tone { stroke: rgba(0,0,0,.3); stroke-width: .6; transition: fill .2s; }
+.territory .tone-0, .territory-lift .tone-0 { fill: color-mix(in srgb, var(--accent) 46%, #0B0C10); }
+.territory .tone-1, .territory-lift .tone-1 { fill: color-mix(in srgb, var(--accent) 36%, #0B0C10); }
+.territory .tone-2, .territory-lift .tone-2 { fill: color-mix(in srgb, var(--accent) 56%, #0B0C10); }
+.territory[data-theme=neutral] .tone-0 { fill: #3A3E46; }.territory[data-theme=neutral] .tone-1 { fill: #33363D; }.territory[data-theme=neutral] .tone-2 { fill: #42464F; }
+.territory.selected .tone-0 { fill: color-mix(in srgb, var(--accent) 60%, #0B0C10); }.territory.selected .tone-1 { fill: color-mix(in srgb, var(--accent) 50%, #0B0C10); }.territory.selected .tone-2 { fill: color-mix(in srgb, var(--accent) 70%, #0B0C10); }
+.hatch { pointer-events: none; }.hatch-line { stroke: rgba(242,240,234,.4); stroke-width: 1.6; }
+.war-border { fill: none; stroke: rgba(8,8,10,.75); stroke-width: 1.3; stroke-linecap: round; pointer-events: none; }
+.war-frontier { fill: none; stroke: #050506; stroke-width: 3; stroke-linecap: round; pointer-events: none; }
+.war-coast { fill: none; stroke: #D9CCA4; stroke-opacity: .75; stroke-width: 1.4; stroke-linecap: round; pointer-events: none; }
+.war-outline { fill: none; stroke-linecap: round; pointer-events: none; }
+.war-outline.contested { stroke: var(--ink); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.war-outline.selected { stroke: var(--ink); stroke-width: 2.6; }
+.territory-labels, .territory-lift, .war-region { pointer-events: none; }
+.territory-label text { fill: var(--ink); font-family: var(--font-barlow-condensed),sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; paint-order: stroke; stroke: rgba(5,5,6,.85); stroke-width: 2.6px; stroke-linejoin: round; }
+.territory-label .territory-detail { font-size: 8.5px; font-weight: 600; fill: var(--ink-muted); }
+.territory.contested ~ .territory-labels .territory-detail { fill: var(--ink); }
+.war-region { font-family: var(--font-display); font-size: 15px; font-weight: 700; letter-spacing: .3em; text-transform: uppercase; fill: var(--accent-light); fill-opacity: .8; }
+.territory-lift { transform-box: fill-box; transform-origin: 50% 50%; animation: territory-lift .22s ease-out both; }
+.territory-lift .tone { stroke: rgba(0,0,0,.3); stroke-width: .6; }
+.lift-shadow { fill: rgba(0,0,0,.55); }
+.lift-edge { fill: none; stroke: var(--ink); stroke-width: 1.8; stroke-linecap: round; }
+@keyframes territory-lift { from { transform: none; } to { transform: translateY(-4px) scale(1.07); } }
+.war-compass circle { fill: none; stroke: #D9CCA4; stroke-opacity: .5; }.war-compass path { fill: #D9CCA4; fill-opacity: .55; }.war-compass text { fill: #D9CCA4; fill-opacity: .7; font-size: 9px; font-family: var(--font-display); }
+.war-controls { position: absolute; left: 12px; top: 12px; display: flex; gap: 4px; }
+.war-controls button { min-width: 34px; height: 34px; padding: 0 10px; background: rgba(10,10,12,.82); border: 1px solid var(--line); }
+.war-plate { padding: 16px; background: var(--surface); border-left: 1px solid var(--line); border-top: 3px solid var(--accent); }
+.war-plate h3 { margin: .2rem 0 .3rem; font-size: 1.15rem; }.war-plate p { margin: .3rem 0; font-size: .88rem; }.war-plate .eyebrow { margin: 0; }
+.war-plate .genre-scores div[data-theme] dt { color: var(--accent-light); }
+.war-legend { position: absolute; left: 12px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 6px 10px; list-style: none; background: rgba(10,10,12,.78); border: 1px solid var(--line); font-size: .8rem; color: var(--ink-muted); }
+.war-legend li { display: flex; align-items: center; gap: 6px; }
+.war-legend .swatch { width: 12px; height: 12px; background: color-mix(in srgb, var(--accent) 50%, #0B0C10); border: 1px solid var(--accent); clip-path: polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%); }
+.war-legend [data-theme=neutral] .swatch { background: #3A3E46; }
+.war-legend .swatch.hatched { background: repeating-linear-gradient(45deg, rgba(242,240,234,.55) 0 2px, #3A3E46 2px 5px); border-color: var(--ink); }
+.war-legend .swatch.capital-key { background: #0A0A0C; border: 2px solid var(--ink-muted); border-radius: 50%; clip-path: none; }
+@media (prefers-reduced-motion: reduce) { .war-camera { transition: none; }.territory-lift { animation: none; transform: none; } }
 .genre-board { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,250px),1fr)); gap: 1rem; }.genre-card { padding: 1rem; border: 1px solid var(--line); background: var(--surface); }.genre-card h3 { font-size: 1.1rem; margin: 0; }.genre-card p { font-size: .9rem; }.genre-scores { display: grid; gap: .25rem; font-variant-numeric: tabular-nums; }.genre-scores div { display: flex; justify-content: space-between; gap: 1rem; }.genre-scores dd { margin: 0; }.contested-tag { display: inline-block; color: var(--ink); border: 1px solid var(--ink-muted); text-transform: uppercase; font-size: .65rem; letter-spacing: .08em; padding: 2px 4px; margin-left: .5rem; }
 .hub-header { display: flex; align-items: center; gap: 2rem; padding: 2rem; }.contribution-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }.faction-leaders { padding-left: 1.5rem; }.faction-leaders li { padding: .65rem 0; }.faction-leaders strong { display: block; margin-top: .25rem; }.faction-leaders small { font-weight: 400; }.faction-private > .panel { margin-top: 1rem; }.member-directory { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,230px),1fr)); gap: .75rem; }.faction-posts { list-style: none; padding: 0; }.faction-posts li { padding: 1rem 0; border-bottom: 1px solid var(--line); }.faction-posts time { display: block; color: var(--ink-muted); font-size: .8rem; margin-top: .4rem; }.faction-posts .post-body { white-space: pre-wrap; overflow-wrap: anywhere; }.season-banner { display: flex; align-items: center; gap: 1rem; padding: 1rem; border-block: 1px solid var(--accent); background: var(--accent-deep); }.faction-name[data-faction=myria] { color: var(--myria); }.faction-name[data-faction=aetheron] { color: var(--aetheron); }.faction-name[data-faction=glint] { color: var(--glint); }
 @media (min-width:960px) { .map-board:has(.genre-card:nth-child(2)) { display: none; } }
-@media (max-width:959px) { .enlist-grid,.contribution-columns { grid-template-columns: 1fr; }.hex-map,.war-view { display: none; }.hub-header { padding: 1rem; gap: 1rem; }.hub-header > img { width: 80px; height: 80px; }.war-scoreboard { gap: .5rem; }.war-scoreboard li { font-size: .85rem; }.war-scoreboard .muted { flex-basis: 100%; }.enrollment-steps li { flex-direction: column; align-items: flex-start; }.map-board .genre-board { display: grid; } }
+@media (max-width:959px) { .enlist-grid,.contribution-columns { grid-template-columns: 1fr; }.war-map-view,.war-view { display: none; }.hub-header { padding: 1rem; gap: 1rem; }.hub-header > img { width: 80px; height: 80px; }.war-scoreboard { gap: .5rem; }.war-scoreboard li { font-size: .85rem; }.war-scoreboard .muted { flex-basis: 100%; }.enrollment-steps li { flex-direction: column; align-items: flex-start; }.map-board .genre-board { display: grid; } }
 
 .genre-scores dd { display: flex; align-items: center; gap: .5rem; } .genre-scores meter { width: 55px; height: 7px; accent-color: var(--accent); }
-@media (max-width:959px) { .selected-territory { display: none; } }
+.capital-seal { fill: #0A0A0C; stroke: var(--accent); stroke-width: 1.6; }
+.capital .crater circle { fill: none; stroke: #D9CCA4; stroke-opacity: .45; stroke-width: .8; stroke-dasharray: 3 3; }
+.territory-label .capital-name { font-family: var(--font-display); font-size: 8.5px; font-weight: 700; letter-spacing: .12em; text-transform: none; fill: var(--accent-light); }
+.pale-moon path { fill: #E4E6F0; fill-opacity: .82; }.pale-moon .moon-halo { fill: none; stroke: #E4E6F0; stroke-opacity: .18; stroke-dasharray: 2 4; }
+.pale-moon text { fill: #C9CED6; fill-opacity: .7; font-family: var(--font-display); font-size: 8px; letter-spacing: .14em; }
+.war-static { pointer-events: none; }
+.war-cartouche text { fill: #D9CCA4; font-family: var(--font-display); }.cartouche-title { font-size: 13px; font-weight: 700; letter-spacing: .24em; text-transform: uppercase; fill-opacity: .85; }.cartouche-year { font-size: 10px; letter-spacing: .14em; fill-opacity: .6; }
+.war-legend .swatch.static-key { background: radial-gradient(circle, #143049 0 35%, #030508 100%); clip-path: none; border-color: var(--line); }
+.plate-lore { margin-top: .75rem; padding-top: .6rem; border-top: 1px solid var(--line); }.plate-lore p { color: var(--ink-muted); font-size: .84rem; }.plate-lore strong { color: var(--ink); font-weight: 600; }
+.battle-cry { margin-top: .6rem; color: var(--accent-light); font-family: var(--font-display); font-size: .9rem; letter-spacing: .04em; }
+.accord-terms { margin: .4rem 0 .8rem; padding-left: 1.2rem; font-size: .88rem; }.accord-terms li { margin-bottom: .35rem; }

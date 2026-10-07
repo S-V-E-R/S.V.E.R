@@ -87,6 +87,60 @@ async fn exercise(app: App) {
     let mut db = app.db.acquire().await.unwrap();
     let week = engine::current(&mut db, now).await.unwrap().unwrap();
     drop(db);
+    // The war map: fixed spots, one capital per faction, and neighbors that touch on the map.
+    let war = call(&app, "GET", "/api/factions/war", None, Value::Null).await;
+    assert_eq!(war.0, StatusCode::OK, "{}", war.1);
+    let genre = |id: &str| {
+        war.1["genres"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(genre("art")["map"], json!({"q":1,"r":0}));
+    assert_eq!(genre("strategy_4x")["capital"], true);
+    assert_eq!(genre("art")["capital"], false);
+    assert_eq!(
+        genre("art")["neighbors"],
+        json!(["strategy_4x", "puzzle_simulation", "education_coding"])
+    );
+    assert_eq!(
+        genre("coop_party")["neighbors"],
+        json!([
+            "fps_battle_royale",
+            "fighting",
+            "rts_moba",
+            "community_events"
+        ])
+    );
+    for g in war.1["genres"].as_array().unwrap() {
+        if g["map"].is_null() {
+            continue;
+        }
+        for n in g["neighbors"].as_array().unwrap() {
+            assert!(
+                genre(n.as_str().unwrap())["neighbors"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&g["id"]),
+                "{} and {n} must border each other",
+                g["id"]
+            );
+        }
+    }
+    let capitals: Vec<_> = war.1["genres"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|g| g["capital"] == true)
+        .map(|g| g["home"].as_str().unwrap())
+        .collect();
+    assert_eq!(capitals.len(), 3);
+    for f in FACTIONS {
+        assert!(capitals.contains(&f));
+    }
     // Enrollment, original choice clock, one free change and no second free switch.
     let chosen = call(
         &app,

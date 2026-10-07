@@ -5,6 +5,7 @@ import { send } from "../lib/client-api";
 import { factionInfo } from "../lib/factions";
 import { contest, type Genre, type War, utcDate } from "../lib/war";
 import { Crest } from "./FactionIdentity";
+import { TerritoryMap } from "./TerritoryMap";
 import { WarStanding } from "./WarStanding";
 
 export function GenreBoard({ genres }: { genres: Genre[] }) {
@@ -23,13 +24,11 @@ export default function WarMap({ initial }: { initial: War }) {
     return () => { active = false; clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);
   const sorted = [...war.genres].sort((a, b) => (a.home ?? "z").localeCompare(b.home ?? "z") || a.position - b.position);
-  const selectedGenre = war.genres.find(g => g.id === selected);
   return <div className="war-page"><header><p className="eyebrow">The seasonal war</p><h1>War map</h1><p>Play, build and make. Help your faction take ground.</p></header><WarStanding war={war} />
     <div className="war-rules panel"><h2>How ground is taken</h2><ol><li>Verified members earn influence from real streams and Trusted playback. Chat counts too, within limits.</li><li>Influence is balanced by active faction size. Enemy turf and your private council’s target earn bonuses.</li><li>Ownership changes at Monday’s checkpoint, 00:00 UTC. A tie or a narrow lead keeps the holder.</li></ol><p>{war.week && !war.week.completed ? `Next checkpoint: ${utcDate(war.week.ends_at)}.` : "The season is on break."} Borders show neighboring genres; they do not restrict attacks.</p></div>
-    {error && <p role="status" className="notice">{error}</p>}<div className="row war-view"><button className="quiet" aria-pressed={view === "map"} onClick={() => setView("map")}>Hex map</button><button className="quiet" aria-pressed={view === "board"} onClick={() => setView("board")}>Genre board</button></div>
+    {error && <p role="status" className="notice">{error}</p>}<div className="row war-view"><button className="quiet" aria-pressed={view === "map"} onClick={() => setView("map")}>Map</button><button className="quiet" aria-pressed={view === "board"} onClick={() => setView("board")}>Genre board</button></div>
     {war.genres.length === 0 ? <p className="notice">Territories will appear when the first season begins.</p> : <>
-      <div className={`hex-map ${view === "board" ? "hidden" : ""}`}><svg viewBox={`0 0 820 ${Math.ceil(sorted.length / 4) * 154 + 35}`} role="group" aria-label="Genre territories. Select a hex for its scores.">{sorted.map((g, i) => { const x = 102 + (i % 4) * 202 + (Math.floor(i / 4) % 2) * 8; const y = 82 + Math.floor(i / 4) * 154; const c = contest(g); const words = g.name.split(" & "); return <g key={g.id} data-theme={g.holder ?? "neutral"} className={c.contested ? "hex contested" : "hex"} transform={`translate(${x} ${y})`} role="button" tabIndex={0} aria-label={`${g.name}, held by ${g.holder ?? "nobody"}${c.contested ? ", contested" : ""}`} aria-pressed={selected === g.id} onClick={() => setSelected(g.id)} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(g.id); } }}><polygon points="-92,-42 0,-76 92,-42 92,42 0,76 -92,42" /><text textAnchor="middle" y={-26} className="hex-holder">{g.holder ?? "Neutral"}</text><text textAnchor="middle" y={-4}>{words.map((w, n) => <tspan key={n} x="0" dy={n ? 20 : 0}>{w}</tspan>)}</text><text textAnchor="middle" y={45} className="hex-detail">{c.contested ? "CONTESTED · " : ""}{c.top?.score ? `${c.lead.toFixed(1)}% lead` : "No score yet"}</text></g>; })}</svg></div>
-      {view === "map" && selectedGenre && <div className="selected-territory"><GenreBoard genres={[selectedGenre]} /></div>}
+      <div className={`war-map-view ${view === "board" ? "hidden" : ""}`}><TerritoryMap genres={sorted} selected={selected} onSelect={setSelected} season={war.season?.number} /></div>
       <div className={view === "map" ? "map-board" : ""}><GenreBoard genres={war.genres} /></div>
     </>}
     {!!war.history.length && <details className="panel"><summary>Checkpoint history</summary>{war.history.map(h => <section key={h.ends_at}><h3>{utcDate(h.ends_at)}</h3><ul>{h.genres.map(g => <li key={g.id}>{g.name}: {g.holder ? factionInfo(g.holder).name : "Neutral"}</li>)}</ul></section>)}</details>}
