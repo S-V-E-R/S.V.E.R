@@ -321,6 +321,45 @@ pub async fn exercise(e: &Env) {
     e.sql("DELETE FROM magnet_settings WHERE user_id='mg-small'")
         .await;
 
+    // Detach on switch: the merge ends, messages from it stay in the room, new channel chat doesn't
+    // cross. The feature is restored afterwards for the Studio checks below.
+    let ended: Vec<String> = sqlx::query_scalar("UPDATE magnet_features SET ended_at=now() WHERE lane='global' AND ended_at IS NULL RETURNING id")
+        .fetch_all(&e.app.db).await.unwrap();
+    e.sql("UPDATE magnet_lanes SET current_broadcast=NULL WHERE id='global'")
+        .await;
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/channels/MgSmall/chat",
+        Some(&small),
+        json!({"id":id(),"body":"after the switch"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, room) = get(e, "/api/magnet/global/chat", None).await;
+    let bodies: Vec<&str> = room["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["body"].as_str())
+        .collect();
+    assert_eq!(room["merged_with"], Value::Null, "detached");
+    assert!(
+        bodies.contains(&"hello from MAGNet"),
+        "messages from the merge stay in the room's history"
+    );
+    assert!(
+        !bodies.contains(&"after the switch"),
+        "new channel chat stays in the channel"
+    );
+    sqlx::query("UPDATE magnet_features SET ended_at=NULL WHERE id=ANY($1)")
+        .bind(&ended)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    e.sql("UPDATE magnet_lanes SET current_broadcast='mg-b-small' WHERE id='global'")
+        .await;
+
     // Studio: featured now, history, settings and the flag cooldown.
     let (_, mine) = get(e, "/api/me/magnet", Some(&small)).await;
     assert_eq!(mine["featured_now"][0]["lane"], "global");
@@ -610,6 +649,7 @@ pub async fn exercise(e: &Env) {
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-%'").await;
 
     hardening(e, &admin).await;
+    genre_lane(e).await;
 
     for statement in [
         "DELETE FROM moderation_actions WHERE actor_id='mg-staff'",
@@ -799,4 +839,60 @@ async fn hardening(e: &Env, admin: &str) {
     sver::integrity::tick(&e.app).await.unwrap();
     assert_eq!(provisional().await, (0, 25));
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-%'").await;
+}
+
+/// A genre lane runs its own moments: a follow burst from real viewers on a small stream there
+/// starts a countdown with its reason, and a restricted channel is never a candidate.
+async fn genre_lane(e: &Env) {
+    e.sql("UPDATE magnet_features SET ended_at=now() WHERE ended_at IS NULL")
+        .await;
+    e.sql("UPDATE magnet_lanes SET current_broadcast=NULL,current_kind=NULL,current_reason=NULL,current_since=NULL,pending_broadcast=NULL,pending_kind=NULL,pending_reason=NULL,switch_at=NULL,last_kind=NULL,last_moment_at=NULL,forced_broadcast=NULL WHERE id='art'").await;
+    for (id, name) in [
+        ("mg-ga", "MgGenreA"),
+        ("mg-gb", "MgGenreB"),
+        ("mg-gr", "MgRestricted"),
+    ] {
+        person(e, id, name, true).await;
+    }
+    live(e, "mg-g-a", "mg-ga", "art", 30).await;
+    live(e, "mg-g-b", "mg-gb", "art", 20).await;
+    live(e, "mg-g-r", "mg-gr", "art", 25).await;
+    e.sql("INSERT INTO profiles(user_id,display_name,restricted_until) VALUES('mg-gr','MgRestricted',now()+interval '1 day') ON CONFLICT(user_id) DO UPDATE SET restricted_until=EXCLUDED.restricted_until").await;
+    let mut db = e.app.db.acquire().await.unwrap();
+    let candidates: Vec<String> = sver::magnet::candidates(&mut db, "art", &e.app.config.magnet)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.1.broadcast)
+        .collect();
+    drop(db);
+    assert!(candidates.contains(&"mg-g-a".to_string()));
+    assert!(
+        !candidates.contains(&"mg-g-r".to_string()),
+        "a restricted channel is never a candidate"
+    );
+    tick(e, "art").await;
+    assert_eq!(
+        current(e, "art").await.0.as_deref(),
+        Some("mg-g-a"),
+        "first a fair turn"
+    );
+    // Four verified viewers of the small stream follow it within the minute.
+    e.sql("UPDATE magnet_lanes SET current_since=now()-interval '50 seconds' WHERE id='art'")
+        .await;
+    for follower in ["mg-c1", "mg-c2", "mg-c3", "mg-c4"] {
+        watching(e, "mg-g-b", follower).await;
+        sqlx::query("INSERT INTO follows(follower_id,following_id) VALUES($1,'mg-gb') ON CONFLICT DO NOTHING")
+            .bind(follower).execute(&e.app.db).await.unwrap();
+    }
+    tick(e, "art").await;
+    assert_eq!(current(e, "art").await.2.as_deref(), Some("mg-g-b"));
+    let (_, page) = get(e, "/api/magnet/art", None).await;
+    assert_eq!(page["next"]["stream"]["username"], "MgGenreB");
+    assert_eq!(page["next"]["reason"], "New follows are pouring in");
+    e.sql("DELETE FROM follows WHERE following_id='mg-gb'")
+        .await;
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-g-%'").await;
+    e.sql("UPDATE magnet_features SET ended_at=now() WHERE ended_at IS NULL")
+        .await;
 }

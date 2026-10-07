@@ -71,31 +71,73 @@ pub fn slot(at: DateTime<Utc>) -> i64 {
     at.timestamp().div_euclid(ROTATE_SECONDS)
 }
 
-/// Fair rotation. Streams sit in a fixed cycle (by start time); each slot the cycle advances one
-/// place, so every stream reaches the first position within one cycle. Streams in the viewer's
-/// home genres take a second place in the cycle (the home-turf boost), so they come round twice
-/// as often. Nothing about size, followers or money is an input.
-pub fn rotate(mut streams: Vec<Stream>, home_genres: &[String], slot: i64) -> Vec<Stream> {
-    streams.sort_by(|a, b| (a.started_at, &a.broadcast_id).cmp(&(b.started_at, &b.broadcast_id)));
-    let mut cycle: Vec<usize> = (0..streams.len()).collect();
-    cycle.extend((0..streams.len()).filter(|&i| {
-        streams[i]
-            .genre
-            .as_ref()
-            .is_some_and(|g| home_genres.contains(g))
-    }));
-    if cycle.is_empty() {
-        return streams;
+/// A stream's place in the rotation cycle. Streams sit in start order, so a stream starting or
+/// ending never moves the others.
+pub type Place = (DateTime<Utc>, String);
+fn place(s: &Stream) -> Place {
+    (s.started_at, s.broadcast_id.clone())
+}
+
+/// The next place after `from` in the cycle, wrapping round; the first place when there is none.
+pub fn next_place(places: &[Place], from: Option<&Place>) -> Option<Place> {
+    let first = places.first()?;
+    Some(
+        from.and_then(|f| places.iter().find(|p| *p > f))
+            .unwrap_or(first)
+            .clone(),
+    )
+}
+
+/// Fair rotation. The shared pointer (`leader`, moved one place per slot by `leader`) is first, or
+/// the next stream after it if it has ended; the rest follow in cycle order. A stream starting or
+/// ending doesn't reorder the cycle, so every stream reaches the first position within one cycle.
+/// After the first position, the viewer's home-genre streams come first (the home-turf boost).
+/// Nothing about size, followers or money is an input.
+pub fn rotate(
+    mut streams: Vec<Stream>,
+    home_genres: &[String],
+    leader: Option<&Place>,
+) -> Vec<Stream> {
+    streams.sort_by_key(place);
+    let start = leader
+        .and_then(|l| streams.iter().position(|s| place(s) >= *l))
+        .unwrap_or(0);
+    streams.rotate_left(start);
+    if streams.len() > 1 {
+        let home = |s: &Stream| s.genre.as_ref().is_some_and(|g| home_genres.contains(g));
+        streams[1..].sort_by_key(|s| !home(s));
     }
-    let start = slot.rem_euclid(cycle.len() as i64) as usize;
-    let mut seen = HashSet::new();
-    let order: Vec<usize> = cycle[start..]
-        .iter()
-        .chain(&cycle[..start])
-        .copied()
-        .filter(|i| seen.insert(*i))
-        .collect();
-    order.into_iter().map(|i| streams[i].clone()).collect()
+    streams
+}
+
+/// Moves the shared rotation pointer one place for every slot that has passed (at most once round)
+/// and returns it. It covers every live stream, not one viewer's view of them.
+/// ponytail: one locked row per discovery request; cache per slot if this ever gets hot.
+async fn leader(app: &App, streams: &[Stream], slot: i64) -> Res<Option<Place>> {
+    let mut places: Vec<Place> = streams.iter().map(place).collect();
+    places.sort();
+    let mut tx = app.db.begin().await?;
+    let row: Option<(i64, Option<DateTime<Utc>>, Option<String>)> = sqlx::query_as(
+        "SELECT slot,leader_started_at,leader_id FROM discovery_rotation FOR UPDATE",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (at, mut current) = match row {
+        Some((at, Some(t), Some(id))) => (at, Some((t, id))),
+        Some((at, ..)) => (at, None),
+        None => (slot, None),
+    };
+    let steps = (slot - at).clamp(0, places.len() as i64);
+    if current.is_none() {
+        current = next_place(&places, None);
+    }
+    for _ in 0..steps {
+        current = next_place(&places, current.as_ref());
+    }
+    sqlx::query("INSERT INTO discovery_rotation(singleton,slot,leader_started_at,leader_id) VALUES(true,$1,$2,$3) ON CONFLICT(singleton) DO UPDATE SET slot=greatest(discovery_rotation.slot,EXCLUDED.slot),leader_started_at=EXCLUDED.leader_started_at,leader_id=EXCLUDED.leader_id")
+        .bind(slot.max(at)).bind(current.as_ref().map(|c| c.0)).bind(current.as_ref().map(|c| &c.1)).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(current)
 }
 
 /// The home genres of a faction (Module 4's territories at season start).
@@ -172,13 +214,14 @@ async fn rotation_for(
 ) -> Res<Vec<Stream>> {
     let mut db = app.db.acquire().await?;
     let mut streams = live_streams(&mut db).await?;
+    let lead = leader(app, &streams, slot(at)).await?;
     if let Some(viewer) = viewer {
         let hidden: Vec<String> = sqlx::query_scalar("SELECT blocked_id FROM user_blocks WHERE blocker_id=$1 UNION SELECT blocker_id FROM user_blocks WHERE blocked_id=$1")
             .bind(viewer).fetch_all(&mut *db).await?;
         streams.retain(|s| !hidden.contains(&s.owner_id));
     }
     let home = home_genres(&mut db, faction).await?;
-    Ok(rotate(streams, &home, slot(at)))
+    Ok(rotate(streams, &home, lead.as_ref()))
 }
 
 /// Channels that were live in the last 14 days (newest first), for empty states.
@@ -600,24 +643,82 @@ mod tests {
         v.iter().map(|s| s.broadcast_id.clone()).collect()
     }
 
+    /// Runs the pointer the way `leader` does, slot by slot, returning who was first each slot.
+    fn simulate(live_at: impl Fn(i64) -> Vec<Stream>, slots: i64) -> Vec<String> {
+        let mut current: Option<Place> = None;
+        (0..slots)
+            .map(|slot| {
+                let streams = live_at(slot);
+                let mut places: Vec<Place> = streams.iter().map(place).collect();
+                places.sort();
+                current = if slot == 0 || current.is_none() {
+                    next_place(&places, None)
+                } else {
+                    next_place(&places, current.as_ref())
+                };
+                rotate(streams, &[], current.as_ref())[0]
+                    .broadcast_id
+                    .clone()
+            })
+            .collect()
+    }
+
     #[test]
     fn every_stream_reaches_the_top_within_a_cycle() {
         let streams: Vec<Stream> = (0..7)
             .map(|i| s(&format!("s{i}"), 100 - i, "art", "glint"))
             .collect();
-        for (genres, cycle) in [(Vec::new(), 7), (vec!["art".to_string()], 14)] {
-            let firsts: HashSet<String> = (0..cycle)
-                .map(|slot| {
-                    rotate(streams.clone(), &genres, slot)[0]
-                        .broadcast_id
-                        .clone()
-                })
-                .collect();
-            assert_eq!(firsts.len(), 7, "every stream is first within one cycle");
-        }
-        let order = rotate(streams, &[], 3);
+        let firsts = simulate(|_| streams.clone(), 7);
+        assert_eq!(
+            firsts.into_iter().collect::<HashSet<_>>().len(),
+            7,
+            "every stream is first within one cycle"
+        );
+        let order = rotate(streams, &[], None);
         assert_eq!(order.len(), 7);
         assert_eq!(ids(&order).into_iter().collect::<HashSet<_>>().len(), 7);
+    }
+
+    #[test]
+    fn streams_starting_and_ending_never_skip_anyone() {
+        // Six streams live throughout; others start and end every slot, which used to shift the
+        // cycle's offset and skip streams.
+        let steady: Vec<Stream> = (0..6)
+            .map(|i| s(&format!("steady{i}"), 500 - i, "art", "glint"))
+            .collect();
+        let live_at = |slot: i64| {
+            let mut v = steady.clone();
+            for k in 0..(slot % 4) {
+                v.push(s(
+                    &format!("churn{slot}-{k}"),
+                    100 - slot - k,
+                    "art",
+                    "myria",
+                ));
+            }
+            v
+        };
+        // Within one cycle (all streams live at most 6 + 3 at once) each steady stream leads.
+        let firsts: HashSet<String> = simulate(live_at, 9).into_iter().collect();
+        for i in 0..6 {
+            assert!(
+                firsts.contains(&format!("steady{i}")),
+                "steady{i} reached the top"
+            );
+        }
+        // An ended leader hands over to the next stream after it, not back to the start.
+        let mut places: Vec<Place> = steady.iter().map(place).collect();
+        places.sort();
+        let gone = places[2].clone();
+        let without: Vec<Stream> = steady
+            .iter()
+            .filter(|x| place(x) != gone)
+            .cloned()
+            .collect();
+        assert_eq!(
+            rotate(without, &[], Some(&gone))[0].broadcast_id,
+            places[3].1
+        );
     }
 
     #[test]
@@ -628,13 +729,19 @@ mod tests {
             s("fps2", 30, "fps_battle_royale", "myria"),
         ];
         let home = vec!["art".to_string()];
-        let leads = (0..4)
-            .filter(|&slot| rotate(streams.clone(), &home, slot)[0].broadcast_id == "art")
-            .count();
-        assert_eq!(leads, 2, "the boosted stream leads 2 of the 4 slots");
+        // The pointer's stream stays first; after it, home-turf streams come first.
+        let mut places: Vec<Place> = streams.iter().map(place).collect();
+        places.sort();
+        let fps_first = places.iter().find(|p| p.1 != "art").cloned().unwrap();
+        assert_eq!(
+            ids(&rotate(streams.clone(), &home, Some(&fps_first)))[..2],
+            [fps_first.1.clone(), "art".to_string()],
+            "the boosted stream comes right after the leader"
+        );
         let orders = |streams: &[Stream]| -> Vec<Vec<String>> {
-            (0..4)
-                .map(|slot| ids(&rotate(streams.to_vec(), &home, slot)))
+            places
+                .iter()
+                .map(|p| ids(&rotate(streams.to_vec(), &home, Some(p))))
                 .collect()
         };
         let before = orders(&streams);

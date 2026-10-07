@@ -79,6 +79,7 @@ function playingWithin(video: HTMLVideoElement, ms: number) {
  */
 export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, muted, onUnmute, followRaids = true, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; muted?: boolean; onUnmute?: () => void; followRaids?: boolean; children?: React.ReactNode }) {
   const [live, setLive] = useState<Live | null>(null);
+  const [lastRaid, setLastRaid] = useState<Raid | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   // Which transport is playing, so board effects wait for this player's own delay.
   const [transport, setTransport] = useState<"webrtc" | "hls" | null>(null);
@@ -109,7 +110,9 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     // `?transport=hls` on the page asks for HLS (the CDN path), e.g. for latency checks.
     const hlsOnly = new URLSearchParams(window.location.search).get("transport") === "hls";
     const result = await send<Live>("GET", hlsOnly ? `${path}?transport=hls` : path);
-    if (result.ok) setLive(result.data);
+    if (!result.ok) return;
+    setLive(result.data);
+    if (result.data.live) setLastRaid(result.data.raid ?? null);
   }, [path]);
   useLoad(load);
   useEffect(() => {
@@ -134,7 +137,9 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     if (live?.live) wasLive.current = true;
     else if (live && wasLive.current && !isOwner) setEnded(true);
   }, [live, isOwner]);
-  const polled = live?.live ? live.raid ?? null : null;
+  // The last raid seen while live: a stream can end during a raid's countdown, and the raid still
+  // takes viewers along (it wins over the stream-end countdown).
+  const polled = live?.live ? live.raid ?? null : lastRaid;
   const raid = pushed === undefined ? polled : pushed;
   const counting = followRaids && raid && raid.status !== "cancelled" && raid.status !== "failed" && stayed !== raid.id ? raid : null;
   const moving = useRef("");
@@ -214,13 +219,17 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     return () => clearInterval(timer);
   }, [broadcast, isOwner, path, magnetLane]);
 
+  const raidBar = counting && <div className="raid-countdown" role="status">
+    {isOwner ? <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s <button type="button" className="small quiet" onClick={() => void send("DELETE", "/api/me/raids").then(r => { if (r.ok) setPushed(null); })}>Cancel raid</button></>
+      : <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s <button type="button" className="small quiet" onClick={() => setStayed(counting.id)}>Stay here</button></>}
+  </div>;
   if (!live?.live) {
     // An offline channel hosting a live one shows that stream; its viewers count for the target.
     if (live?.hosting && !nested) return <div className="hosting">
       <p className="hosting-bar">Hosting <Link href={`/${live.hosting.username}`}>{live.hosting.display_name}</Link></p>
       <LivePlayer username={live.hosting.username} focused={focused} signedIn={signedIn} nested>{children}</LivePlayer>
     </div>;
-    return <>{ended && !nested && <UpNext username={username} focused={focused} />}{children}</>;
+    return <>{counting ? raidBar : ended && !nested && <UpNext username={username} focused={focused} />}{children}</>;
   }
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
@@ -232,10 +241,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     {!rewind && phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} />}
-    {counting && <div className="raid-countdown" role="status">
-      {isOwner ? <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s <button type="button" className="small quiet" onClick={() => void send("DELETE", "/api/me/raids").then(r => { if (r.ok) setPushed(null); })}>Cancel raid</button></>
-        : <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s <button type="button" className="small quiet" onClick={() => setStayed(counting.id)}>Stay here</button></>}
-    </div>}
+    {raidBar}
     <p className="live-meta"><span className="live badge">Live</span> <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching</span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>} {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</p>
   </div>;
 }
