@@ -453,6 +453,28 @@ pub async fn exercise(e: &Env) {
             .len(),
         4
     );
+    // Any member's watch page finds the shared view; a channel outside it does not.
+    let found = ok(
+        e,
+        &fan,
+        "GET",
+        "/api/channels/TeamPerson2/squad",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(found["squad"]["id"], squad.as_str());
+    assert_eq!(found["squad"]["members"].as_array().unwrap().len(), 4);
+    assert!(
+        ok(
+            e,
+            &fan,
+            "GET",
+            "/api/channels/TeamPerson4/squad",
+            Value::Null
+        )
+        .await["squad"]
+            .is_null()
+    );
     let chat = format!("{path}/chat");
     e.sql("INSERT INTO magnet_lanes(id,current_broadcast,current_since) VALUES('global','team-0',now()-interval '1 hour')").await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

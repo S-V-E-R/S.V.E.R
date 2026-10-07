@@ -77,7 +77,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       <div className="side-label"><span id="following-live">Following · live</span><span className="magnet"><MagnetMark />MAGNet</span></div>
       {live.length === 0
         ? <p className="side-empty">Nobody you follow is live.</p>
-        : <ul className="side-channels">{live.map(user => <li key={user.username}><Link href={`/${user.username}`}><Crest faction={user.faction ?? null} initial={user.display_name.slice(0, 1).toUpperCase()} size={30} /><span className="side-channel-name">{user.display_name}</span><span className="live-dot" aria-hidden="true" /><span className="sr-only">, live</span></Link></li>)}</ul>}
+        : <ul className="side-channels">{live.map(user => <li key={user.username}><Link href={`/${user.username}/live`}><Crest faction={user.faction ?? null} initial={user.display_name.slice(0, 1).toUpperCase()} size={30} /><span className="side-channel-name">{user.display_name}</span><span className="live-dot" aria-hidden="true" /><span className="sr-only">, live</span></Link></li>)}</ul>}
     </section>}
   </>;
 

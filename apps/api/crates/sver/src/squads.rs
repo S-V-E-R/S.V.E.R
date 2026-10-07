@@ -382,6 +382,37 @@ async fn page(State(app): State<App>, jar: CookieJar, Path(id): Path<String>) ->
         json!({"id":id,"mode":s.mode,"ended":s.ended_at.is_some(),"members":members,"joined":joined,"host":host,"invited":invited,"pending":pending}),
     ))
 }
+/// GET /api/channels/{username}/squad: the live co-stream (two or more visible streams) this
+/// channel is in, so its watch page can offer the shared view. `{"squad":null}` otherwise.
+async fn for_channel(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(username): Path<String>,
+) -> Res<Json<Value>> {
+    let mut db = app.db.acquire().await?;
+    let Some(user) = profiles::eligible_by_name(&mut db, &username).await? else {
+        return Ok(Json(json!({"squad":null})));
+    };
+    let id: Option<String> =
+        sqlx::query_scalar("SELECT squad_id FROM squad_members WHERE user_id=$1")
+            .bind(&user.id)
+            .fetch_optional(&mut *db)
+            .await?;
+    drop(db);
+    let Some(id) = id else {
+        return Ok(Json(json!({"squad":null})));
+    };
+    let Json(squad) = page(State(app), jar, Path(id)).await?;
+    let members = squad["members"]
+        .as_array()
+        .map_or(&[][..], |m| m.as_slice());
+    let shown = squad["ended"] == false
+        && members.len() > 1
+        && members.iter().any(|m| m["username"] == user.username);
+    Ok(Json(
+        json!({"squad": if shown { squad } else { Value::Null }}),
+    ))
+}
 async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     tick(&app).await?;
@@ -626,6 +657,7 @@ pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/me/squads", get(mine).post(create))
         .route("/api/squads/{id}", get(page))
+        .route("/api/channels/{username}/squad", get(for_channel))
         .route("/api/squads/{id}/invites", post(invite))
         .route("/api/squads/{id}/invites/{username}", delete(cancel))
         .route("/api/squads/{id}/answer", post(answer))

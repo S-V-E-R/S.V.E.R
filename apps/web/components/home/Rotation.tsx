@@ -29,7 +29,7 @@ export function Rotation({ streams, viewerFaction }: { streams: LiveCard[]; view
     <div className="rotation-row">
     {n > 1 && <span className="rotation-peek" style={{ background: scene(prev.username) }} aria-hidden="true" />}
     <div className="rotation-card frame" aria-live="polite">
-      <Link href={`/${cur.username}`} className="rotation-stage" style={{ background: scene(cur.username) }} aria-label={`Watch ${cur.display_name}`}>
+      <Link href={`/${cur.username}/live`} className="rotation-stage" style={{ background: scene(cur.username) }} aria-label={`Watch ${cur.display_name}`}>
         <LiveThumbnail key={cur.broadcast_id ?? cur.username} src={cur.thumbnail} label={cur.category ?? cur.display_name} />
         <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}</span>
       </Link>
@@ -40,7 +40,7 @@ export function Rotation({ streams, viewerFaction }: { streams: LiveCard[]; view
         </div>
         <p className="rotation-title">{cur.title}</p>
         <div className="chips">{cur.category && <span className="chip">{cur.category}</span>}<span className="chip">{cur.viewers.toLocaleString()} watching</span></div>
-        <div className="rotation-actions"><Link href={`/${cur.username}`} className="button">Watch</Link></div>
+        <div className="rotation-actions"><Link href={`/${cur.username}/live`} className="button">Watch</Link></div>
         {n > 1 && <p className="rotation-next">Up next in rotation: <strong>{next.display_name}</strong>{next.category ? ` · ${next.category}` : ""}</p>}
       </div>
     </div>
