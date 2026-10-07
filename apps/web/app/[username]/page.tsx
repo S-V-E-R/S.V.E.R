@@ -12,7 +12,7 @@ import type { ActivityItem, Chip } from "../../lib/types";
 /** A square War Council tile linking to the member's channel; position 1 carries a static crown (docs/PROFILES.md, War Council). */
 function CouncilTile({ user, crown }: { user: Chip; crown: boolean }) {
   const body = <>
-    {crown && <span className="crown" title="Top spot" aria-label="Top spot">♛</span>}
+    {crown && <span className="crown" title="Top spot" role="img" aria-label="Top spot"><svg width="14" height="14" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeLinejoin="round" aria-hidden="true"><path d="M1.5 9.5h9L10 3.5 7.8 5.5 6 2 4.2 5.5 2 3.5z" /></svg></span>}
     <Avatar sizes={user.avatar} name={user.display_name} size={72} />
     {user.faction && <Crest faction={user.faction} size={18} />}<strong>{user.display_name}</strong>
     {user.username && <span className="handle">@{user.username}</span>}

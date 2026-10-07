@@ -19,6 +19,6 @@ export function StudioNav({ username }: { username: string }) {
       <span className="studio-nav-label">{label}</span>
       {links.map(([href, text]) => <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{text}</Link>)}
     </div>)}
-    <Link href={`/${username}`} className="studio-view">View channel →</Link>
+    <Link href={`/${username}`} className="studio-view">View channel</Link>
   </nav>;
 }

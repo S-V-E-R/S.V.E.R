@@ -5,7 +5,8 @@ import SiteShell from "../components/SiteShell";
 import { StaffRemovalAlerts } from "../components/StaffRemovalAlerts";
 import { BellIcon, MagnetMark } from "../components/shell/Icons";
 import { SideNav } from "../components/shell/SideNav";
-import type { PeoplePage } from "../components/People";
+import { PlayerMenu } from "../components/shell/PlayerMenu";
+import type { LiveCard } from "../components/home/types";
 import { apiGet } from "../lib/server-api";
 import { themeFor } from "../lib/theme";
 import { factionOf } from "../lib/factions";
@@ -35,15 +36,15 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-/** Channels the viewer follows that are live now, from the first page of their follows. */
-async function followingLive() {
-  const page = (await apiGet<PeoplePage>("/api/me/following?live=true")).data;
-  return (page?.items ?? []).map(item => item.user).filter(user => user.live && user.username);
+/** Sidebar live list: followed channels that are live, or MAGNet's picks for a signed-out visitor. */
+async function sidebarLive(signedIn: boolean): Promise<LiveCard[]> {
+  const home = (await apiGet<{ live: LiveCard[]; following: LiveCard[] }>("/api/discovery/home")).data;
+  return ((signedIn ? home?.following : home?.live) ?? []).slice(0, 8);
 }
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const account = await currentAccount();
-  const [alerts, live] = account ? await Promise.all([hasAlerts(), followingLive()]) : [false, []];
+  const [alerts, live] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account)]);
   const initial = account?.username.slice(0, 1).toUpperCase();
 
   const faction = factionOf(account?.faction);
@@ -52,10 +53,11 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     ? <>
       <StaffRemovalAlerts />
       <Link href="/notifications" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
-      <Link href={`/${account.username}`} className="player-chip">
+      <PlayerMenu username={account.username} chip={<>
         <Crest faction={account.faction} initial={initial ?? "?"} size={36} label={faction?.name} />
         <span className="player-chip-text"><span className="player-chip-name">{account.username}</span>{faction && <span className="player-chip-title">{faction.title}</span>}</span>
-      </Link>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" aria-hidden="true"><path d="m3 4.5 3 3 3-3" /></svg>
+      </>} />
     </>
     : <>
       <Link href="/login" className="topbar-link">Log in</Link>
@@ -70,14 +72,18 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       </Link>
       : <Link href="/welcome" className="player-card frame unchosen">
         <Crest faction={null} initial={initial ?? "?"} size={56} />
-        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side →</span></span>
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side</span></span>
       </Link>)}
-    <SideNav signedIn={!!account} faction={faction ? { name: faction.name, slug: faction.slug } : null} />
-    {account && <section className="side-section" aria-labelledby="following-live">
-      <div className="side-label"><span id="following-live">Following · live</span><span className="magnet"><MagnetMark />MAGNet</span></div>
+    <SideNav faction={faction ? { name: faction.name, slug: faction.slug } : null} />
+    {(account || live.length > 0) && <section className="side-section" aria-labelledby="side-live">
+      <div className="side-label"><span id="side-live">{account ? "Following · live" : "Picked for you"}</span><span className="magnet"><MagnetMark />MAGNet</span></div>
       {live.length === 0
         ? <p className="side-empty">Nobody you follow is live.</p>
-        : <ul className="side-channels">{live.map(user => <li key={user.username}><Link href={`/${user.username}/live`}><Crest faction={user.faction ?? null} initial={user.display_name.slice(0, 1).toUpperCase()} size={30} /><span className="side-channel-name">{user.display_name}</span><span className="live-dot" aria-hidden="true" /><span className="sr-only">, live</span></Link></li>)}</ul>}
+        : <ul className="side-channels">{live.map(s => <li key={s.username}><Link href={`/${s.username}/live`}>
+          <Crest faction={s.faction} initial={s.display_name.slice(0, 1).toUpperCase()} size={30} />
+          <span className="side-channel-text"><span className="side-channel-name">{s.display_name}</span>{s.category && <span className="side-channel-category">{s.category}</span>}</span>
+          <span className="side-channel-count"><span className="live-dot" aria-hidden="true" />{s.viewers.toLocaleString()}<span className="sr-only"> watching</span></span>
+        </Link></li>)}</ul>}
     </section>}
   </>;
 

@@ -1,7 +1,7 @@
 // Local only (node scripts/check-profile-parity.mjs [origin]): synthetic dev users in the isolated sver_rebuild DB; headless Chrome checks
 // the profile parity additions (song start/volume, War Council tiles, wall links/time, follow dates, Following unfollow, sponsor copy,
 // setup grouping, link handles/icons, phone user-card sheet) and the parity additions P1-P9 (share, mood presets, readiness,
-// setup photos, link suggestions, opt-in card, activity feed, rewards stub, header copy). Any uncaught page exception fails.
+// setup photos, link suggestions, opt-in card, activity feed, rewards page, header copy). Any uncaught page exception fails.
 // The API must run with APP_ORIGIN set to the web origin.
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -300,7 +300,7 @@ try {
   check("P1 share: native share sheet on touch devices", (await until("window.__shared && window.__shared.url")) === `${origin}/${A.username}`);
   // P8 rewards stub.
   await go(`/${A.username}/rewards`, "!!document.querySelector('.channel')");
-  check("P8 rewards: placeholder renders", await evalv("!!document.querySelector('[data-stub=rewards]') && document.body.textContent.includes('Rewards are coming')"));
+  check("P8 rewards: page points to chat rewards", await evalv("!!document.querySelector('[data-page=rewards]') && document.body.textContent.includes('Channel rewards')"));
   check("P8 rewards: no Rewards tab", await evalv("![...document.querySelectorAll('.channel-tabs a')].some(a => a.textContent === 'Rewards')"));
   check("P8 rewards: 404 for an unknown channel", (await fetch(`${origin}/no_such_user_${A.id.slice(0, 6)}/rewards`)).status === 404);
 

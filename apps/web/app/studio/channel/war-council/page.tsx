@@ -1,4 +1,5 @@
 "use client";
+import { ArrowIcon } from "../../../../components/shell/Icons";
 import { useCallback, useEffect, useState } from "react";
 import { Avatar } from "../../../../components/Avatar";
 import { Section, Status, type SaveState } from "../../../../components/Form";
@@ -32,7 +33,7 @@ export default function CouncilStudio() {
     <Section title="Your Top 8" intro="Pick up to 8 channels and put them in order. Members who become unavailable are hidden from visitors.">
       <ol className="list">{members.map((m, i) => <li key={m.user.username ?? i} className="row between">
         <span className="row"><Avatar sizes={m.user.avatar} name={m.user.display_name} size={32} /> {m.user.display_name} {m.user.username && <span className="handle">@{m.user.username}</span>}{!m.available && <span className="badge">Unavailable</span>}</span>
-        <span className="row"><button type="button" className="small quiet" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button><button type="button" className="small quiet" disabled={i === members.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button><button type="button" className="small quiet" onClick={() => setMembers(members.filter((_, j) => j !== i))}>Remove</button></span>
+        <span className="row"><button type="button" className="small quiet" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up"><ArrowIcon dir="up" /></button><button type="button" className="small quiet" disabled={i === members.length - 1} onClick={() => move(i, 1)} aria-label="Move down"><ArrowIcon dir="down" /></button><button type="button" className="small quiet" onClick={() => setMembers(members.filter((_, j) => j !== i))}>Remove</button></span>
       </li>)}</ol>
       {members.length < 8 ? <label className="field"><span>Add a channel</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by username" /></label> : <p className="muted">Your War Council is full.</p>}
       {shown.length > 0 && <ul className="list">{shown.filter(r => !members.some(m => m.user.username === r.username)).map(r => <li key={r.username}><button type="button" className="link-button" onClick={() => { setMembers([...members, { position: members.length + 1, user: r, available: true }]); setQuery(""); }}>{r.display_name} @{r.username}</button></li>)}</ul>}

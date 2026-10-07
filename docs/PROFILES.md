@@ -849,7 +849,7 @@ This import is one-time and insert-only. It applies the same guardrails as the L
 | Beacons tab | None | Module 9 |
 | Wall SUBSCRIBERS option, Subscribe and Valor tribute buttons | Hidden | Module 6 |
 | Badges, achievements, featured stats, card frames | Not rendered; the only stats are follower and following counts and the join date | Phase 3 |
-| Channel rewards (`/{username}/rewards`, decision P8) | Reserved sub-path showing "Rewards are coming"; no tab | Module 4 / Phase 2 (economy) |
+| Channel rewards (`/{username}/rewards`, decision P8) | Sub-path with no tab; since Support (Module 6) it points to the rewards in chat | Done with Module 6 |
 | Notifications (wall posts, follows, approvals) | None; Studio shows pending counts. Report outcomes and strikes use `/settings/reports`, `/settings/standing` and the generic emails defined in Safety | Notification work (unscheduled) |
 
 ## Acceptance

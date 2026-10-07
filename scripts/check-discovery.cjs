@@ -42,8 +42,9 @@ const { default: Home } = compile("apps/web/app/page.tsx", deps);
 const position = (html, id) => html.indexOf(`id="${id}"`);
 (async () => {
   let html = renderToStaticMarkup(await Home());
-  // Signed out: spotlight, rotation, live now, just went live, in that order; no personal shelves.
-  const order = ["spot-h", "rot-h", "live-h", "new-h"].map(id => position(html, id));
+  // Signed out, Main mockup order: front-line banner, MAGNet rotation (spotlights first, with their
+  // reason), live now, just went live; no personal shelves.
+  const order = ["front-line-title", "rot-h", "live-h", "new-h"].map(id => position(html, id));
   assert(order.every(p => p > 0) && order.every((p, i) => i === 0 || p > order[i - 1]), "shelf order");
   assert.equal(position(html, "fol-h"), -1);
   assert.equal(position(html, "fac-h"), -1);
@@ -51,18 +52,21 @@ const position = (html, id) => html.indexOf(`id="${id}"`);
   assert.match(html, /&lt;First&gt; playing/, "titles are text");
   assert.match(html, /New creator/);
   assert.match(html, /Community pick/);
+  assert.match(html, /First stream on S.V.E.R/, "spotlight reason in the rotation");
+  assert.match(html, /href="\/signup"[^>]*>Enlist/, "front line offers Enlist to guests");
   assert.match(html, /src="https:\/\/media.example\/thumbs\/b-second\/1.webp\?v=0"/, "live still on the card");
   assert.doesNotMatch(html, /<video/, "previews never start playback");
-  // Signed in with a faction: following and own-faction shelves.
+  // Signed in with a faction: the own-faction shelf after Live now; Following · live is in the sidebar.
   account = { username: "Viewer", faction: "glint" };
   home = { ...home, following: [second], faction: [first] };
   html = renderToStaticMarkup(await Home());
-  assert(position(html, "fol-h") > 0 && position(html, "fac-h") > position(html, "live-h"));
+  assert.equal(position(html, "fol-h"), -1);
+  assert(position(html, "fac-h") > position(html, "live-h"));
   assert.match(html, /From Glint/);
   // Nothing live: recently live channels and the war map, never an empty page.
   home = { ...home, live: [], following: [], faction: [], fresh: [], spotlights: [], recent: [{ user: { username: "Gone", display_name: "Gone", avatar: null }, ended_at: "2026-10-04T12:00:00Z" }] };
   html = renderToStaticMarkup(await Home());
-  assert.match(html, /Nobody is live right now/);
+  assert.match(html, /Nothing live right now/);
   assert.match(html, /href="\/Gone"/);
   assert.match(html, /href="\/war-map"/);
   home = null;

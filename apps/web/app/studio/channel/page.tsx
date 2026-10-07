@@ -1,4 +1,5 @@
 "use client";
+import { StatusMark } from "../../../components/shell/Icons";
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
@@ -22,7 +23,7 @@ export default function ChannelOverview() {
       <p className="readiness-count" aria-live="polite">{data.complete ? "Your page is ready." : `${data.done} of ${data.total} done`}</p>
       <progress max={data.total} value={data.done} aria-label="Page readiness" />
       <ol className="list readiness-list">{data.steps.map(s => <li key={s.key} data-step={s.key} data-done={s.done} className="row between">
-        <span><span aria-hidden="true" className="readiness-mark">{s.done ? "✓" : "○"}</span> {s.label}<span className="sr-only">{s.done ? " (done)" : " (not done)"}</span></span>
+        <span><StatusMark ok={s.done} />{s.label}</span>
         {!s.done && <Link href={s.href}>Do this</Link>}
       </li>)}</ol>
       {!data.complete && (data.dismissed ? <button type="button" className="small quiet" onClick={() => remind(false)}>Show the reminder again</button> : <button type="button" className="small quiet" onClick={() => remind(true)}>Hide the reminder</button>)}

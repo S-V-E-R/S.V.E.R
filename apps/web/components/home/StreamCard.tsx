@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Crest } from "../Crest";
 import { factionOf } from "../../lib/factions";
-import { scene, uptime, type LiveCard } from "./types";
+import { uptime, type LiveCard } from "./types";
 import { LiveThumbnail } from "../LiveThumbnail";
 
 /** A live channel card for the homepage grids (Main mockup: "Live now", "Just went live"). */
@@ -9,7 +9,7 @@ export function StreamCard({ s, viewerFaction, fresh = false }: { s: LiveCard; v
   const f = factionOf(s.faction);
   const ally = !!viewerFaction && s.faction === viewerFaction;
   return <Link href={`/${s.username}/live`} className={ally ? "stream-card ally" : "stream-card"}>
-    <span className="stream-thumb" style={{ background: scene(s.username) }}>
+    <span className="stream-thumb">
       <LiveThumbnail src={s.thumbnail} label={s.category ?? s.display_name} />
       <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}{s.label && <span className="tag-label">{s.label}</span>}</span>
       {fresh

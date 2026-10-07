@@ -1,4 +1,5 @@
 "use client";
+import { StatusMark } from "./shell/Icons";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
@@ -46,7 +47,7 @@ function Skills({ path }: { path: string }) {
     setText(""); setNote(`${skill.name} played.`);
     setData(d => d && { ...d, valor: d.valor === null ? null : d.valor - skill.valor });
   }
-  return <details className="crowd-skills frame" onToggle={e => void toggle(e.currentTarget.open)}>
+  return <details className="crowd-skills panel" onToggle={e => void toggle(e.currentTarget.open)}>
     <summary>Skills{data?.valor != null && <> · {data.valor.toLocaleString()} Valor</>}</summary>
     {!data ? <p className="loading">{note || "Loading…"}</p> : data.valor === null ? <p className="muted">Sign in to play Skills. Streamers can&apos;t play Skills on their own channel.</p> : <>
       <p className="muted small">Skills use your Purchased Valor, show on stream and in chat, and pay the streamer like a tribute. <Link href="/wallet">Get Valor</Link></p>
@@ -73,7 +74,7 @@ export function Results({ poll }: { poll: PollState }) {
   return <ul className="list crowd-results">{poll.options.map((option, i) => {
     const share = total ? Math.round((poll.counts[i] / total) * 100) : 0;
     return <li key={option}>
-      <span>{poll.winner === i && "✓ "}{option}{poll.mine?.option === i && <strong> (you)</strong>}</span>
+      <span>{poll.winner === i && <StatusMark ok />}{option}{poll.mine?.option === i && <strong> (you)</strong>}</span>
       <span className="muted">{poll.pools ? `${poll.pools[i].toLocaleString()} EV · ` : ""}{poll.counts[i]} ({share}%)</span>
       <progress max={100} value={share} aria-label={`${option}: ${share}%`} />
     </li>;
@@ -97,7 +98,7 @@ function PollCard({ poll, path, state, now, onChange }: { poll: PollState; path:
     onChange();
   }
   const status = poll.status === "resolved" ? `Result: ${poll.options[poll.winner ?? 0]}` : poll.status === "cancelled" ? "Cancelled; stakes were refunded." : poll.status === "locked" ? "Locked. Waiting for the result." : open ? `${left}s left` : "Voting has closed.";
-  return <section className="crowd-card frame" aria-label={prediction ? "Prediction" : "Poll"}>
+  return <section className="crowd-card panel" aria-label={prediction ? "Prediction" : "Poll"}>
     <span className="eyebrow">{prediction ? "Prediction · Engagement Valor" : "Poll"}</span>
     <h3>{poll.question}</h3>
     <p className="muted small" role="status">{status}{poll.mine?.payout != null && ` · You got back ${poll.mine.payout.toLocaleString()} EV`}</p>
@@ -177,7 +178,7 @@ export function Crowd({ username }: { username: string }) {
   const surgeLeft = state.surge ? Math.max(0, Math.ceil((Date.parse(state.surge.ends_at) - now) / 1000)) : 0;
   return <div className="crowd">
     {state.surge && <p className="surge-banner" role="status"><strong>Surge level {state.surge.level}</strong> · {state.surge.participants} taking part · next level at {state.surge.threshold * (state.surge.level + 1)} · {Math.floor(surgeLeft / 60)}:{String(surgeLeft % 60).padStart(2, "0")} left</p>}
-    {state.rally && <section className="crowd-card frame" aria-label="Faction rally">
+    {state.rally && <section className="crowd-card panel" aria-label="Faction rally">
       <span className="eyebrow">Faction rally</span>
       <RallyMeter rally={state.rally} />
       {state.faction && <RallyButton path={path} faction={state.faction} />}

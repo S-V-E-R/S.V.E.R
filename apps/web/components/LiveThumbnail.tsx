@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 /** A still only: visible cards refresh once a minute without creating playback sessions. */
 export function LiveThumbnail({ src, label }: { src?: string | null; label: string }) {
   const frame = useRef<HTMLSpanElement>(null);
+  const img = useRef<HTMLImageElement>(null);
   const [version, setVersion] = useState(0);
   const [failed, setFailed] = useState<string | null>(null);
   const url = src ? `${src}${src.includes("?") ? "&" : "?"}v=${version}` : null;
@@ -24,9 +25,14 @@ export function LiveThumbnail({ src, label }: { src?: string | null; label: stri
     document.addEventListener("visibilitychange", refresh);
     return () => { observer.disconnect(); clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [src]);
+  // An error before hydration never reaches onError, so check the loaded image once on mount.
+  useEffect(() => {
+    const el = img.current;
+    if (el && url && el.complete && el.naturalWidth === 0) setFailed(url);
+  }, [url]);
   return <span className="live-thumbnail" ref={frame} aria-hidden="true">
     <span className="stream-thumb-mark">{label}</span>
     {/* eslint-disable-next-line @next/next/no-img-element -- small server-generated still, never video */}
-    {url && <img src={url} alt="" loading="lazy" decoding="async" hidden={failed === url} onError={() => setFailed(url)} />}
+    {url && <img ref={img} src={url} alt="" loading="lazy" decoding="async" hidden={failed === url} onError={() => setFailed(url)} />}
   </span>;
 }
