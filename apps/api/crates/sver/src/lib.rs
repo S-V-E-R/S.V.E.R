@@ -71,6 +71,8 @@ pub struct Config {
     pub turnstile_secret: String,
     pub resend_key: String,
     pub mail_from: String,
+    /// The postal address printed at the foot of opt-in alert emails (CAN-SPAM).
+    pub mail_postal_address: String,
     pub providers: Vec<oauth::Provider>,
     pub turnstile_url: String,
     pub breach_url: String,
@@ -116,6 +118,13 @@ impl Config {
         let turnstile_site_key = env("TURNSTILE_SITE_KEY");
         let resend_key = env("RESEND_API_KEY");
         let mail_from = env("MAIL_FROM");
+        // The registered DMCA agent's address on /dmca, unless the server sets another.
+        let mail_postal_address = match env("MAIL_POSTAL_ADDRESS") {
+            address if address.is_empty() => {
+                "SVER LLC, 4030 Wake Forest Road, Suite 349, Raleigh, NC 27609".to_string()
+            }
+            address => address,
+        };
         if turnstile_secret.is_empty() || turnstile_site_key.is_empty() {
             return Err("Turnstile keys are required".into());
         }
@@ -146,6 +155,7 @@ impl Config {
             turnstile_secret,
             resend_key,
             mail_from,
+            mail_postal_address,
             providers: oauth::providers_from_env()?,
             trusted_proxy,
             media,

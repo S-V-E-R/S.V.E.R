@@ -376,16 +376,18 @@ pub async fn tick(app: &App) -> Res<()> {
         let mut tx = app.db.begin().await?;
         // A burst of arrivals not explained by the stream just starting gets a provisional window.
         // Go-live alerts go out as the stream starts, inside this grace window.
-        // Raids and committed MAGNet handoffs explain their arrival bursts.
+        // Raids and committed MAGNet handoffs explain their arrival bursts. After a handoff's first
+        // two minutes, viewers MAGNet brought still don't count toward a burst: sessions tagged with
+        // a lane that was featuring this broadcast when they started. Other arrivals still do.
         if running >= t.spike_grace_seconds as f64
             && !crate::raids::explains_burst(&mut tx, &broadcast).await?
             && !crate::magnet::explains_burst(&mut tx, &broadcast).await?
         {
-            let (arrivals, baseline): (i64, i64) = sqlx::query_as("SELECT count(*) FILTER (WHERE created_at>now()-interval '60 seconds' AND provisional_until IS NULL), count(*) FILTER (WHERE created_at<=now()-interval '60 seconds' AND created_at>now()-interval '6 minutes') FROM playback_leases WHERE broadcast_id=$1")
+            let (arrivals, baseline): (i64, i64) = sqlx::query_as("SELECT count(*) FILTER (WHERE created_at>now()-interval '60 seconds' AND provisional_until IS NULL AND NOT EXISTS(SELECT 1 FROM magnet_features f WHERE f.lane=playback_leases.magnet_lane AND f.broadcast_id=playback_leases.broadcast_id AND playback_leases.created_at>=f.started_at-interval '15 seconds' AND (f.ended_at IS NULL OR playback_leases.created_at<=f.ended_at))), count(*) FILTER (WHERE created_at<=now()-interval '60 seconds' AND created_at>now()-interval '6 minutes') FROM playback_leases WHERE broadcast_id=$1")
                 .bind(&broadcast).fetch_one(&mut *tx).await?;
             let per_minute = (baseline as f64 / 5.0).max(1.0);
             if arrivals >= t.spike_min && arrivals as f64 > t.spike_factor * per_minute {
-                sqlx::query("UPDATE playback_leases SET provisional_until=now()+make_interval(secs=>$2) WHERE broadcast_id=$1 AND created_at>now()-interval '60 seconds' AND provisional_until IS NULL")
+                sqlx::query("UPDATE playback_leases SET provisional_until=now()+make_interval(secs=>$2) WHERE broadcast_id=$1 AND created_at>now()-interval '60 seconds' AND provisional_until IS NULL AND NOT EXISTS(SELECT 1 FROM magnet_features f WHERE f.lane=playback_leases.magnet_lane AND f.broadcast_id=playback_leases.broadcast_id AND playback_leases.created_at>=f.started_at-interval '15 seconds' AND (f.ended_at IS NULL OR playback_leases.created_at<=f.ended_at))")
                     .bind(&broadcast).bind(t.provisional_seconds as f64).execute(&mut *tx).await?;
             }
         }

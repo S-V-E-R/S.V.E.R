@@ -32,6 +32,7 @@ The goal is fewer, better notifications. Each one should be something the person
   - Go-live alerts keep their existing limit: one per channel every 6 hours.
 - **Email is only for things worth an inbox:**
   - Optional emails have a one-click unsubscribe (including the header mail apps use) that turns off that type.
+  - Optional emails end with S.V.E.R's postal address, as CAN-SPAM requires of commercial email: SVER LLC's registered DMCA agent address from `/dmca`, unless the server sets `MAIL_POSTAL_ADDRESS`. Change both together if the address moves.
   - Unverified addresses never get mail.
   - Product news is a separate opt-in that is off by default, and under-18 accounts never get it.
 - **No sensitive content in push or email:** no report details, strike reasons, payment amounts beyond the person's own, or other people's private information. Those link to the page that shows them after sign-in.

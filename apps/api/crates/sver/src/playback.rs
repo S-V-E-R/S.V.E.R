@@ -245,7 +245,10 @@ pub async fn beat(
         crate::raids::arrived(&app, &input.broadcast_id, &key, raid).await?;
     }
     if let (Some(_), Some(lane)) = (&outcome, &input.magnet) {
-        sqlx::query("UPDATE playback_leases SET magnet_lane=$3 WHERE broadcast_id=$1 AND viewer_key=$2 AND magnet_lane IS NULL AND EXISTS(SELECT 1 FROM magnet_lanes WHERE id=$3)")
+        // Only a session that started while that lane features this broadcast is MAGNet's: the
+        // tag keeps it out of the stream's moment signals and explains its arrival to viewer
+        // integrity, so a client can't claim it for any other session.
+        sqlx::query("UPDATE playback_leases l SET magnet_lane=$3 WHERE l.broadcast_id=$1 AND l.viewer_key=$2 AND l.magnet_lane IS NULL AND EXISTS(SELECT 1 FROM magnet_features f WHERE f.lane=$3 AND f.broadcast_id=$1 AND f.ended_at IS NULL AND l.created_at>=f.started_at-interval '15 seconds')")
             .bind(&input.broadcast_id).bind(&key).bind(lane).execute(&app.db).await?;
     }
     Ok(Json(match outcome {

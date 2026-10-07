@@ -257,6 +257,13 @@ pub async fn exercise(e: &Env) {
     .await
     .unwrap();
     let mail: Value = serde_json::from_str(&sec::unseal(&e.app, "mail", &sealed).unwrap()).unwrap();
+    assert!(
+        mail["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("SVER LLC, 4030 Wake Forest Road, Suite 349, Raleigh, NC 27609"),
+        "optional email ends with the postal address"
+    );
     assert!(mail["text"].as_str().unwrap().contains("/AlertOwner"));
     assert_eq!(
         mail["headers"]["List-Unsubscribe-Post"],

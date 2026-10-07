@@ -228,3 +228,4 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .channel-stream:empty{display:none}
 @media(max-width:650px){.channel-banner{aspect-ratio:2/1}.banner-status{left:12px;top:10px;bottom:auto}.channel-header .identity{padding:0 14px}}
 .faction-line a{display:inline-flex;align-items:center;gap:8px}
+.subscribe-terms { flex-basis: 100%; font-size: 13px; }
