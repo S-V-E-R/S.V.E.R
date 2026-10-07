@@ -379,7 +379,9 @@ Built (`integrity.rs`, migration `0017`, `tests/streams/integrity.rs` and unit t
 
 Built since (October 4): a raid explains its burst for two minutes. Go-live alerts go out as a stream starts, so the start-of-stream grace window covers them. Spike chat protection: while a provisional window is open, the owner and moderators see a one-click prompt in chat for followers-only chat for 10 minutes (migration 0023). It always ends by itself, can be ended early and is logged in the channel moderation log. Meanwhile only followers of at least 10 minutes and the channel's roles can chat. It is never turned on automatically. Covered by `tests/streams/staff_streams.rs`.
 
-Not built yet, with hooks left for them: the IPinfo Lite network database (hosting/VPN risk; network signals are absent until it is installed, which needs an IPinfo account token), Bunny signed per-lease CDN URLs (with the CDN), SRS WebRTC connection matching, cohort detection beyond arrival rate, MAGNet handoffs explaining bursts (MAGNet module) and the Plays control gate below (with the Plays migration).
+MAGNet handoffs (October 7): a committed feature in any lane explains arrival bursts for two minutes, including every featured member of a merged co-stream. The exemption reads server-side feature history, not the viewer's lane label. A countdown alone grants nothing, and an ongoing feature does not renew the window. Only the arrival-spike hold is skipped; security checks, existing provisional holds and all other integrity scoring still apply.
+
+Not built yet, with hooks left for them: the IPinfo Lite network database (hosting/VPN risk; network signals are absent until it is installed, which needs an IPinfo account token), Bunny signed per-lease CDN URLs (with the CDN), SRS WebRTC connection matching and cohort detection beyond arrival rate. The Plays control gate is implemented below under "Dedicated SVER Plays test channel".
 
 ### S.V.E.R Plays
 
