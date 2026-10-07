@@ -179,6 +179,9 @@ pub async fn chat_vote(
 struct Beat {
     ready: bool,
     input_mode: String,
+    /// The host watchdog's current problem (frozen picture, restarted runner), if any.
+    #[serde(default)]
+    problem: Option<String>,
 }
 async fn bridge(
     State(app): State<App>,
@@ -193,6 +196,14 @@ async fn bridge(
         .ok_or_else(Fail::missing)?;
     if !["chat", "rl"].contains(&input.input_mode.as_str()) {
         return Err(Fail::bad("Invalid input mode."));
+    }
+    let problem = input
+        .problem
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty());
+    if problem.is_some_and(|p| p.chars().count() > 200 || p.chars().any(char::is_control)) {
+        return Err(Fail::bad("Invalid problem report."));
     }
     let mut tx = app.db.begin().await?;
     let r: Runtime =
@@ -222,6 +233,8 @@ async fn bridge(
     };
     sqlx::query("UPDATE plays_runtime SET heartbeat_at=$1,ready=$2,input_mode=$3,last_round=greatest(last_round,$4),last_command=coalesce($5,last_command),last_chosen_at=CASE WHEN $5::text IS NOT NULL THEN $1 ELSE last_chosen_at END WHERE singleton")
         .bind(now).bind(ready).bind(&input.input_mode).bind(round-1).bind(&command).execute(&mut *tx).await?;
+    sqlx::query("UPDATE plays_runtime SET problem=$1,problem_since=CASE WHEN $1::text IS NULL THEN NULL ELSE coalesce(problem_since,$2) END WHERE singleton")
+        .bind(problem).bind(now).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM plays_votes WHERE round<$1")
         .bind(round - 120)
         .execute(&mut *tx)
@@ -239,6 +252,50 @@ pub async fn accepts_costream(db: &mut PgConnection, channel: &str, host: &str) 
         .bind(host)
         .fetch_one(db)
         .await?)
+}
+/// Plays is the always-on monitoring stream, so its own outages email staff admins: a problem the
+/// host watchdog reported, a bridge that stopped checking in, or no live broadcast, each for more
+/// than two minutes. At most one email an hour while it stays unhealthy.
+pub async fn tick(app: &App) -> Res<()> {
+    let mut tx = app.db.begin().await?;
+    let issue: Option<String> = sqlx::query_scalar(
+        "SELECT CASE
+            WHEN r.problem IS NOT NULL AND r.problem_since<=now()-interval '2 minutes' THEN r.problem
+            WHEN r.heartbeat_at IS NULL OR r.heartbeat_at<=now()-interval '2 minutes' THEN 'The Plays bridge has stopped checking in.'
+            WHEN NOT EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=r.channel_id AND (b.state IN ('LIVE','RECONNECTING') OR b.ended_at>now()-interval '2 minutes')) THEN 'The Plays stream is offline.'
+         END
+         FROM plays_runtime r WHERE r.enabled AND (r.alerted_at IS NULL OR r.alerted_at<=now()-interval '1 hour') FOR UPDATE",
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    let Some(issue) = issue else {
+        return Ok(());
+    };
+    let admins: Vec<String> = sqlx::query_scalar("SELECT r.user_id FROM staff_roles r JOIN users u ON u.id=r.user_id AND u.deleted_at IS NULL WHERE r.role='admin'")
+        .fetch_all(&mut *tx).await?;
+    let body = format!(
+        "{issue}
+
+The host watchdog restarts the game automatically when its picture stops. Check the channel and the server logs if this repeats: {}/admin",
+        app.config.origin
+    );
+    for admin in admins {
+        crate::safety::queue_notice_id(
+            app,
+            &mut tx,
+            &admin,
+            "S.V.E.R Plays needs attention",
+            &body,
+        )
+        .await?;
+    }
+    sqlx::query("UPDATE plays_runtime SET alerted_at=now() WHERE singleton")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    eprintln!("plays_event=alert outcome=queued");
+    Ok(())
 }
 pub fn routes() -> Router<App> {
     Router::new()

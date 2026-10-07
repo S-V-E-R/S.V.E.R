@@ -11,6 +11,19 @@ import time
 import urllib.request
 
 COMMANDS = {"up", "down", "left", "right", "a", "b", "start", "select"}
+HEALTH = Path(os.environ.get("PLAYS_HEALTH_FILE", "/var/run/sver-plays/health.json"))
+
+
+def problem():
+    """The watchdog's current problem (watchdog.py); a silent watchdog is a problem too."""
+    try:
+        if time.time() - HEALTH.stat().st_mtime > 180:
+            return "The Plays watchdog has stopped reporting."
+        return json.loads(HEALTH.read_text()).get("problem")
+    except FileNotFoundError:
+        return None  # No watchdog installed on this host.
+    except (OSError, ValueError):
+        return "The Plays watchdog report can't be read."
 
 
 def deliver(bus, config, data):
@@ -46,7 +59,7 @@ def main():
             if cached in {"chat", "rl"}:
                 mode = cached
             ready = bus.pubsub_numsub(config["command_channel"])[0][1] > 0
-            request = urllib.request.Request(config["api_origin"].rstrip("/") + "/api/plays/bridge", data=json.dumps({"ready": ready, "input_mode": mode}).encode(), headers={"Authorization": "Bearer " + config["token"], "Origin": config["site_origin"], "Content-Type": "application/json"})
+            request = urllib.request.Request(config["api_origin"].rstrip("/") + "/api/plays/bridge", data=json.dumps({"ready": ready, "input_mode": mode, "problem": problem()}).encode(), headers={"Authorization": "Bearer " + config["token"], "Origin": config["site_origin"], "Content-Type": "application/json"})
             with urllib.request.urlopen(request, timeout=5) as response:
                 data = json.loads(response.read(65536))
             deliver(bus, config, data)

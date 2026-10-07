@@ -80,6 +80,8 @@ Plays is the **first CrowdSync board**. It is built in step 1 using CrowdSync's 
 
 ## Reliability fixes (step 1)
 
+Status, October 7, 2026: crash restart, Postgres vote state, the channel setting, no recording and co-streams were already in place. The stream now runs at real time: the adapter had emitted in-between frames faster than real time and the runner padded on top, so about 3 seconds of video went out per second and HLS viewers stalled. Every frame now takes one wall-clock slot, and ffmpeg stamps frames with the wall clock at a constant rate as a backstop. Alerts: `infra/plays/watchdog.py` runs every minute beside the game, restarts it after two checks without a moving picture (at most once every five minutes), and reports the problem through the bridge; Core emails staff admins when a problem, a silent bridge or an offline stream lasts more than two minutes, at most once an hour (migration `0047`). Still open: game audio. Writing audio per emulator frame is needed first, and a starved audio pipe would stall the whole stream, so it ships separately once it can't block video.
+
 - The runner's start script currently keeps reporting "running" when the emulator crashes, because it waits on the endless video loop. It must exit and restart when either process stops.
 - Vote state moves from one in-memory process to Postgres, so a restart doesn't lose votes or cooldowns.
 - Alerts for a frozen picture, a stalled game or a stopped stream (Plays is the monitoring stream, so its own health must be watched).

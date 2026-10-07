@@ -1,0 +1,16 @@
+[Unit]
+Description=SVER Plays watchdog (restarts a frozen picture, reports health)
+After=network-online.target sver-plays.service
+
+[Service]
+Type=oneshot
+# Install an ExecStart drop-in pointing at the current release's watchdog.py, and set
+# Environment=PLAYS_CHANNEL=<the Plays channel username>.
+TimeoutStartSec=150
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/run/sver-plays
+StandardOutput=journal
+StandardError=journal
