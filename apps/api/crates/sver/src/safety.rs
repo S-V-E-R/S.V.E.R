@@ -51,6 +51,7 @@ pub const FIELDS: &[&str] = &[
     "header",
 ];
 const TARGETS: &[&str] = &[
+    "beacon",
     "vod",
     "highlight",
     "clip",
@@ -200,6 +201,7 @@ async fn target(
 ) -> Res<Target> {
     let row: Option<(String, String, Value)> = match kind {
         "vod"|"highlight"|"clip"=>crate::videos::review::target(db,kind,id).await?,
+        "beacon" => crate::beacons::review::target(db, id).await?,
         "guild" | "guild_emblem" => crate::guilds::target(db,id,reporter,kind=="guild_emblem").await?,
         "faction_post" => crate::factions::target(db,id,reporter).await?,
         "emote" => crate::emotes::target(db, id).await?,
@@ -258,6 +260,10 @@ pub async fn report(
     if crate::videos::review::is_video(&input.target_type) {
         let video = crate::videos::load(&mut tx, &input.target_id).await?;
         crate::videos::accessible(&app, &video, Some(&user), true).await?;
+    }
+    if input.target_type == "beacon" {
+        let beacon = crate::beacons::load(&mut tx, &input.target_id).await?;
+        crate::beacons::accessible(&app, &beacon, Some(&user), true).await?;
     }
     let target = target(
         &mut tx,
@@ -878,6 +884,9 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
     if crate::videos::review::is_video(kind) {
         return crate::videos::review::remove(db, id, false, false).await;
     }
+    if kind == "beacon" {
+        return crate::beacons::review::remove(db, id).await;
+    }
     if matches!(kind, "guild" | "guild_emblem") {
         return crate::guilds::remove(db, id, kind == "guild_emblem").await;
     }
@@ -958,6 +967,7 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
 async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
     let owner: Option<String> = match kind {
         "vod" | "highlight" | "clip" => crate::videos::review::owner(db, id).await?,
+        "beacon" => crate::beacons::review::owner(db, id).await?,
         "guild" | "guild_emblem" => crate::guilds::owner(db, id).await?,
         "faction_post" => crate::factions::owner(db, id).await?,
         "emote" => crate::emotes::owner(db, id).await?,
@@ -1026,6 +1036,7 @@ async fn current_content(
 ) -> Res<Value> {
     Ok(match kind {
         "vod"|"highlight"|"clip"=>crate::videos::review::snapshot(db,id).await?,
+        "beacon" => crate::beacons::review::snapshot(db, id).await?,
         "guild" | "guild_emblem" => crate::guilds::snapshot(db, id).await?,
         "emote" => crate::emotes::current(db, id).await?,
         "profile" => match profile_snapshot(db, id, field).await {
@@ -1537,6 +1548,10 @@ pub async fn decide(
                 }
                 "emote" => {
                     crate::emotes::restore(&mut tx, item_id, previous).await?;
+                    continue;
+                }
+                "beacon" => {
+                    crate::beacons::review::restore(&mut tx, item_id, previous).await?;
                     continue;
                 }
                 "wall_post" => "wall_posts",

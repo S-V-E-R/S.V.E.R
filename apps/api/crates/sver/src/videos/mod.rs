@@ -1,7 +1,7 @@
 //! Module 8: private recordings, independent cuts and durable media work.
 mod config;
 pub use config::Config;
-mod delivery;
+pub(crate) mod delivery;
 mod manage;
 pub mod recording;
 mod routes;

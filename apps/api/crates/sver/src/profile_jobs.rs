@@ -18,6 +18,9 @@ pub async fn erase(db: &mut PgConnection, user_id: &str) -> Result<()> {
     crate::videos::erase(db, user_id)
         .await
         .map_err(|_| crate::Error::internal())?;
+    crate::beacons::erase(db, user_id)
+        .await
+        .map_err(|_| crate::Error::internal())?;
     crate::factions::erase(db, user_id)
         .await
         .map_err(|_| crate::Error::internal())?;

@@ -58,6 +58,7 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
       {data.signed_in && v.kind !== "CLIP" && data.clip_permission !== "OFF" && <button className="quiet" onClick={() => setCut(cut === "CLIP" ? null : "CLIP")}>Create clip</button>}
       {data.can_highlight && v.recording && v.kind === "VOD" && <button className="quiet" onClick={() => setCut(cut === "HIGHLIGHT" ? null : "HIGHLIGHT")}>Save Highlight</button>}
       <button className="quiet" onClick={async () => { try { await navigator.clipboard.writeText(window.location.href.split("?")[0]); setMessage("Link copied."); } catch { setMessage("Copy the address from your browser to share this video."); } }}>Share</button>
+      {data.is_owner && v.kind === "CLIP" && v.status === "READY" && v.approval === "APPROVED" && <Link className="button quiet" href={`/studio/beacons?clip=${id}`}>Make a Beacon</Link>}
       {data.can_download && v.kind !== "CLIP" && <button className="quiet" onClick={() => void requestDownload()}>Prepare download</button>}
       {download && <a className="button" href={download}>Download MP4</a>}
       {data.signed_in && !data.is_owner ? <ReportButton target={target} /> : <TakeDownLink target={target} />}

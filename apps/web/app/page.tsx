@@ -8,6 +8,8 @@ import { currentAccount } from "./session";
 import "../styles/home.css";
 import { VideoGrid } from "../components/VideoGrid";
 import type { VideoCard } from "../lib/videos";
+import { BeaconGrid } from "../components/BeaconGrid";
+import type { BeaconItem } from "../lib/beacons";
 import { FrontLine } from "../components/WarStanding";
 import { TerritoryGrid, type BrowseGenre } from "../components/Territories";
 import type { War } from "../lib/war";
@@ -17,18 +19,20 @@ type Home = { live: LiveCard[]; following: LiveCard[]; faction: LiveCard[] | nul
 
 /**
  * Home, in the Main mockup's order (docs/DESIGN.md "Home"): front-line banner, MAGNet rotation,
- * Live now, From your faction (docs/MAGNET.md), Just went live, Territories, Latest clips. The
- * Beacons shelf joins between Live now and Just went live with Module 9. Following · live is in
- * the sidebar. Every list is in MAGNet's fair rotation, never by viewer count.
+ * Live now, From your faction (docs/MAGNET.md), the Beacons shelf, Just went live, Territories,
+ * Latest clips. Following · live is in the sidebar. Every list is in fair rotation, never by
+ * viewer count; the Beacons shelf never by views or likes either.
  */
 export default async function Home() {
   const account = await currentAccount();
-  const [homeRes, clipsRes, warRes, browseRes] = await Promise.all([
+  const [homeRes, clipsRes, warRes, browseRes, beaconsRes] = await Promise.all([
     apiGet<Home>("/api/discovery/home"),
     apiGet<{ clips: VideoCard[] }>("/api/clips/latest"),
     apiGet<War>("/api/factions/war"),
     apiGet<{ genres: BrowseGenre[] }>("/api/discovery/browse"),
+    apiGet<{ items: BeaconItem[] }>("/api/beacons/shelf"),
   ]);
+  const beacons = (beaconsRes.data?.items ?? []).slice(0, 8);
   const home = homeRes.data;
   const clips = clipsRes.data?.clips ?? [];
   const war = warRes.data ?? null;
@@ -66,6 +70,11 @@ export default async function Home() {
     {mine && (home?.faction?.length ?? 0) > 0 && <section aria-labelledby="fac-h" className="home-section">
       <SectionHead id="fac-h" title={`From ${mine.name}`} note="Live from your side" href={`/browse?faction=${mine.slug}`} link="View all" />
       <StreamGrid streams={home!.faction!} viewerFaction={viewerFaction} />
+    </section>}
+
+    {beacons.length > 0 && <section aria-labelledby="bea-h" className="home-section frame beacon-shelf">
+      <SectionHead id="bea-h" title="Beacons" note="Short videos that lead to the stream" href="/beacons" link="Open the feed" />
+      <BeaconGrid items={beacons} />
     </section>}
 
     {(home?.fresh.length ?? 0) > 0 && <section aria-labelledby="new-h" className="home-section">

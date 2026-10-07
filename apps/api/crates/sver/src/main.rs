@@ -107,6 +107,27 @@ async fn main() -> Result<(), String> {
             }
         });
     }
+    if app.config.videos.storage.available() {
+        // Beacons share the private recording store; one worker keeps re-encodes one at a time.
+        let beacons = app.clone();
+        tokio::spawn(async move {
+            loop {
+                match sver::beacons::worker::run_one(&beacons).await {
+                    Ok(true) => {}
+                    _ => tokio::time::sleep(std::time::Duration::from_millis(500)).await,
+                }
+            }
+        });
+        let beacons = app.clone();
+        tokio::spawn(async move {
+            loop {
+                if sver::beacons::worker::maintain(&beacons).await.is_err() {
+                    eprintln!("beacon_event=maintenance outcome=retry");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            }
+        });
+    }
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

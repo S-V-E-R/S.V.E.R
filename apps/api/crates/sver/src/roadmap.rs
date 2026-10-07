@@ -99,7 +99,7 @@ mod tests {
     fn malformed_or_incomplete_progress_is_never_published() {
         for source in [
             String::new(),
-            SOURCE.replace("| Planned |", "| Almost done |"),
+            SOURCE.replacen("| Done |", "| Almost done |", 1),
             SOURCE.replace("| 9 |", "| 8 |"),
             SOURCE.replace("| 9 |", "| 10 |"),
             SOURCE.replace("| 0 | Foundation |", "| 0 | |"),

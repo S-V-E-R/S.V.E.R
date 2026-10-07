@@ -117,7 +117,7 @@ async fn thumbnail(
         .ok_or_else(Fail::missing)?;
     Ok(([(header::CONTENT_TYPE, "image/webp")], bytes).into_response())
 }
-fn range(value: Option<&str>, length: u64) -> Res<(u64, u64, bool)> {
+pub(crate) fn range(value: Option<&str>, length: u64) -> Res<(u64, u64, bool)> {
     if length == 0 {
         return Err(Fail::missing());
     }

@@ -222,6 +222,50 @@ impl S3 {
             .header("authorization", format!("AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature={signature}", self.access_key)))
     }
 }
+impl S3 {
+    /// Query-signed PUT URL (SigV4, host header only, unsigned payload) so a browser can upload
+    /// one object straight to private storage. The URL names one key and expires; nothing else
+    /// about the bucket is exposed.
+    pub fn presign_put(&self, key: &str, seconds: u32) -> Res<String> {
+        let mut url = url::Url::parse(&self.object_url(key)).map_err(|_| Fail::internal())?;
+        let host = match url.port() {
+            Some(port) => format!("{}:{port}", url.host_str().unwrap_or_default()),
+            None => url.host_str().unwrap_or_default().to_string(),
+        };
+        let now = Utc::now();
+        let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+        let date = now.format("%Y%m%d").to_string();
+        let scope = format!("{date}/{}/s3/aws4_request", self.region);
+        let mut query = [
+            ("X-Amz-Algorithm", "AWS4-HMAC-SHA256".to_string()),
+            ("X-Amz-Credential", format!("{}/{scope}", self.access_key)),
+            ("X-Amz-Date", amz_date.clone()),
+            ("X-Amz-Expires", seconds.to_string()),
+            ("X-Amz-SignedHeaders", "host".to_string()),
+        ];
+        query.sort();
+        let encoded = query
+            .iter()
+            .map(|(k, v)| format!("{}={}", aws_encode(k), aws_encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        let canonical = format!(
+            "PUT\n{}\n{encoded}\nhost:{host}\n\nhost\nUNSIGNED-PAYLOAD",
+            url.path()
+        );
+        let to_sign = format!(
+            "AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}",
+            hex(&Sha256::digest(canonical.as_bytes()))
+        );
+        let mut signing = hmac(format!("AWS4{}", self.secret_key).as_bytes(), &date);
+        for part in [self.region.as_str(), "s3", "aws4_request"] {
+            signing = hmac(&signing, part);
+        }
+        let signature = hex(&hmac(&signing, &to_sign));
+        url.set_query(Some(&format!("{encoded}&X-Amz-Signature={signature}")));
+        Ok(url.to_string())
+    }
+}
 fn aws_encode(value: &str) -> String {
     value
         .bytes()

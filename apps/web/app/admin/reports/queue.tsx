@@ -5,6 +5,7 @@ import { Section, Status, type SaveState } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 import { reasons } from "../../../lib/types";
 import { RecordingEvidence } from "../../../components/RecordedPlayer";
+import { BeaconEvidence } from "../../../components/BeaconEvidence";
 
 type Report = { id: string; reason: string; note: string; field: string | null; snapshot: { field: string | null; value: unknown }; created_at: string };
 type Group = { target_type: string; target_id: string; username: string; count: number; reasons: string[]; reports: Report[]; oldest: string; current: unknown; history: { action: string; note: string; created_at: string; actor: string | null }[] };
@@ -71,13 +72,14 @@ export default function QueuePage() {
     {queue.interim_restrictions.length > 0 && <Section title="Interim restrictions">
       <ul className="list">{queue.interim_restrictions.map(i => <li key={i.id} className="row between"><span><Link href={`/admin/users/${i.username}`}>@{i.username}</Link> until {when(i.until)} {i.overdue && <span className="badge danger-text">Overdue: record a strike or lift</span>}</span><button type="button" className="small quiet" onClick={() => lift(i.username)}>Lift</button></li>)}</ul>
     </Section>}
-    <div className="row"><select aria-label="Type" value={filter.type} onChange={e => setFilter({ ...filter, type: e.target.value })}><option value="">All types</option><option value="profile">Channels</option><option value="wall_post">Wall posts</option><option value="wall_reply">Wall replies</option><option value="fan_art">Fan art</option><option value="setup_photo">Setup photos</option><option value="chat_message">Chat messages</option><option value="live_stream">Live streams</option><option value="emote">Emotes</option><option value="faction_post">Faction posts</option><option value="guild">Guilds</option><option value="guild_emblem">Guild emblems</option></select>
+    <div className="row"><select aria-label="Type" value={filter.type} onChange={e => setFilter({ ...filter, type: e.target.value })}><option value="">All types</option><option value="profile">Channels</option><option value="wall_post">Wall posts</option><option value="wall_reply">Wall replies</option><option value="fan_art">Fan art</option><option value="setup_photo">Setup photos</option><option value="chat_message">Chat messages</option><option value="live_stream">Live streams</option><option value="emote">Emotes</option><option value="faction_post">Faction posts</option><option value="guild">Guilds</option><option value="guild_emblem">Guild emblems</option><option value="vod">Past broadcasts</option><option value="highlight">Highlights</option><option value="clip">Clips</option><option value="beacon">Beacons</option></select>
       <select aria-label="Reason" value={filter.reason} onChange={e => setFilter({ ...filter, reason: e.target.value })}>{[<option key="" value="">All reasons</option>, ...reasons.map(([v, l]) => <option key={v} value={v}>{l}</option>)]}</select></div>
     {queue.groups.length === 0 ? <p className="panel section muted">The queue is empty.</p> : queue.groups.map(g => <Section key={`${g.target_type}:${g.target_id}`} title={`${g.target_type.replace("_", " ")} · @${g.username}`}>
       <p className="muted">{g.count} report(s) since {when(g.oldest)} · {g.reasons.join(", ")} · <Link href={`/admin/users/${g.username}`}>Standing</Link></p>
       <details open><summary>Reports and snapshots</summary><ul className="list">{g.reports.map(r => <li key={r.id}><strong>{r.reason}</strong>{r.field && ` · ${r.field}`} · {when(r.created_at)}{r.note && <p>{r.note}</p>}<pre className="snapshot">{JSON.stringify(r.snapshot.value, null, 2)}</pre></li>)}</ul></details>
       <details><summary>Current content</summary><pre className="snapshot">{JSON.stringify(g.current, null, 2)}</pre></details>
       {["vod","highlight","clip"].includes(g.target_type) && <RecordingEvidence id={g.target_id} />}
+      {g.target_type === "beacon" && <BeaconEvidence id={g.target_id} />}
       {g.history.length > 0 && <details><summary>History</summary><ul className="list">{g.history.map((h, i) => <li key={i}>{h.action} · {h.actor ? `@${h.actor}` : "system"} · {when(h.created_at)}{h.note && ` — ${h.note}`}</li>)}</ul></details>}
       <Action group={g} onDone={load} />
     </Section>)}
