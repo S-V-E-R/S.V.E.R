@@ -121,6 +121,25 @@ The old codebase is frozen as a reference (tag `legacy-web-final`). It is a spec
 - Nightly backups must stay working; if you touch backup scripts, confirm they still execute.
 - Secrets live in `/etc/sver` on the server and in environment variables, never in git.
 
+## Write the least code (Ponytail)
+
+Adapted from Ponytail (github.com/dietrichgebert/ponytail, MIT). Lazy means efficient, not careless: the best code is code never written. First understand the task and trace the real flow end to end, then stop at the first rung that holds:
+
+1. Does this need to be built at all?
+2. Does it already exist in this repo? Reuse the helper or pattern that's here.
+3. Does the standard library do it?
+4. Does a native platform feature (Postgres, the browser, Next.js, Axum) cover it?
+5. Does an already-installed dependency solve it?
+6. Can it be one line?
+7. Only then: write the minimum code that works.
+
+- Bug fixes go to the root cause. Find every caller of the function you touch and fix the shared function once, not just the path the report names.
+- No abstractions, boilerplate or new dependencies nobody asked for. Deletion over addition, boring over clever, fewest files possible.
+- Shortest working diff wins, but only once you understand the problem. A small change in the wrong place is a second bug.
+- When a request looks bigger than it needs to be, ask: "Do you need X, or does Y cover it?" (this counts as your one suggested improvement).
+- Mark a deliberate shortcut with a known ceiling (global lock, O(n²) scan, naive heuristic) with a `ponytail:` comment naming the ceiling and the upgrade path.
+- Never lazy about: input validation, permissions, error handling that prevents data loss, security, accessibility, money ledgers, or anything Joe asked for explicitly. The quality bar and closure rule below still apply in full.
+
 ## Quality bar
 
 - Rust: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test` all pass.
