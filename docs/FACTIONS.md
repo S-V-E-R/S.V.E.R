@@ -13,7 +13,7 @@ Three factions fight a seasonal war over the genres people stream. Every account
 | Values | Discipline, Conviction, Endurance | Curiosity, Mastery, Discovery | Belonging, Trust, Momentum |
 | Color | `#FF9A1F` | `#A68BFF` | `#E9C35A` |
 
-Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page. Glint is community-first: its legacy "merchant empire" lore, map names ("Glint Treasury", "Glint Bazaar") and emotes ("stonks", "coin") are rewritten around hosts, gatherings and belonging; the title "The Sovereign" stays. Artists belong to Aetheron. Joe confirmed the three current crests as approved original artwork on October 4, 2026.
+Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page; the world, relics, homelands, founders and bot voices are canon in [LORE.md](LORE.md) (approved by Joe, October 6, 2026). Glint is community-first: its legacy "merchant empire" lore, map names ("Glint Treasury", "Glint Bazaar") and emotes ("stonks", "coin") are rewritten around hosts, gatherings and belonging; the title "The Sovereign" stays. Artists belong to Aetheron. Joe confirmed the three current crests as approved original artwork on October 4, 2026.
 
 ## Membership
 

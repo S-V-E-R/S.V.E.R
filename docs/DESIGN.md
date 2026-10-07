@@ -122,7 +122,7 @@ Every page uses the same shell (top bar, sidebar, main column) unless noted. Uti
 
 **Faction hub (`/factions/{faction}`).** The one place a crest is shown large (up to 160 px). Header with crest, name, epithet and creed in that faction's theme regardless of the viewer's; season standing; contribution leaderboard as player cards (rank, crest, name, influence); live streams from the faction; territories it holds.
 
-**War map.** Genres as a hex map, clustered by holding faction, each hex edged in the holder's color with the lead percentage; contested hexes get a white edge and a CONTESTED tag. Beside it: standings per faction and a short numbered list of how ground is taken.
+**War map.** Genres as a hex map, grouped under each faction's homeland name from [LORE.md](LORE.md) (the Kiln, Selenne, Aurel, then open ground), each hex edged in the holder's color with the lead percentage; contested hexes get a white edge and a CONTESTED tag. Beside it: standings per faction and a short numbered list of how ground is taken.
 
 **Beacons feed.** One 9:16 video at a time, centered on desktop and full screen on phones, with a right-side rail: creator crest and name, like, view count, and Live now when the creator is streaming. Swipe or arrow keys move between Beacons.
 
