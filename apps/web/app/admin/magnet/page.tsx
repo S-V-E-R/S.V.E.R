@@ -3,7 +3,7 @@ import { FormEvent, useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
 import { send, useLoad, type Result } from "../../../lib/client-api";
 
-type Lane = { id: string; name: string; enabled: boolean; featuring: string | null; reason: string | null; since: string | null; forced: string | null; next: string | null };
+type Lane = { id: string; name: string; enabled: boolean; featuring: string | null; reason: string | null; since: string | null; forced: string | null; next: string | null; stalled: boolean; failing_since: string | null };
 type Decision = { lane: string; at: string; kind: string; chosen: string | null; reason: string; candidates: { username: string; score: number; moment: string | null; signals: Record<string, unknown> }[] };
 type Admin = { lanes: Lane[]; decisions: Decision[] };
 
@@ -32,7 +32,7 @@ export default function AdminMagnet() {
     <Section title="Lanes" intro="Every action is audited. Forcing holds a live stream on a lane until released.">
       <button type="button" className="small danger-text" onClick={stop}>Emergency stop</button>
       <ul className="list">{data.lanes.map(l => <li key={l.id} className="panel inline-panel">
-        <p><strong>{l.name}</strong> · {l.enabled ? (l.featuring ? <>@{l.featuring} <span className="muted">· {l.reason}</span></> : <span className="muted">nothing live</span>) : <span className="muted">stopped</span>}{l.next && <span className="muted"> · next @{l.next}</span>}{l.forced && <strong> · forced @{l.forced}</strong>}</p>
+        <p><strong>{l.name}</strong> · {l.enabled ? (l.featuring ? <>@{l.featuring} <span className="muted">· {l.reason}</span></> : <span className="muted">nothing live</span>) : <span className="muted">stopped</span>}{l.next && <span className="muted"> · next @{l.next}</span>}{l.forced && <strong> · forced @{l.forced}</strong>}{l.stalled && <strong className="danger-text"> · stalled{l.failing_since && <> since {new Date(l.failing_since).toLocaleTimeString()}</>}, holding its stream</strong>}</p>
         <div className="row">
           <button type="button" className="small quiet" onClick={async () => apply(await send<Admin>("PUT", `/api/admin/magnet/${l.id}`, { enabled: !l.enabled }), l.enabled ? "Lane stopped." : "Lane enabled.")}>{l.enabled ? "Stop lane" : "Enable lane"}</button>
           <form className="row" onSubmit={e => force(e, l.id)}><label className="sr-only" htmlFor={`force-${l.id}`}>Force a channel</label><input id={`force-${l.id}`} name="username" placeholder={l.forced ? "Leave empty to release" : "username"} maxLength={26} /><button type="submit" className="small">{l.forced ? "Force / release" : "Force"}</button></form>

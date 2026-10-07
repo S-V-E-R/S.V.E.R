@@ -190,8 +190,8 @@ pub async fn fan_out(app: &App) -> Res<()> {
             let page = format!("{}/unsubscribe?token={token}", app.config.origin);
             let subject = format!("{display_name} is live on S.V.E.R");
             let text = format!(
-                "{subject}\n\nWatch: {}/{username}\n\nYou follow this channel and turned on go-live emails. Stop these emails: {page}\nYou can also change alerts in your notification settings: {}/settings/notifications",
-                app.config.origin, app.config.origin
+                "{subject}\n\nWatch: {}/{username}\n\nYou follow this channel and turned on go-live emails. Stop these emails: {page}\nYou can also change alerts in your notification settings: {}/settings/notifications\n\n{}",
+                app.config.origin, app.config.origin, app.config.mail_postal_address
             );
             let payload = json!({"to":[email],"subject":subject,"text":text,
                 "headers":{"List-Unsubscribe":format!("<{link}>"),"List-Unsubscribe-Post":"List-Unsubscribe=One-Click"}});

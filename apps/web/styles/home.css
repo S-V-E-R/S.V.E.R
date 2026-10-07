@@ -153,3 +153,9 @@
 .genre-tabs a:hover { color: var(--ink); text-decoration: none; }
 .genre-tabs a[aria-current="page"] { color: var(--accent-light); box-shadow: inset 0 -2px 0 var(--accent); }
 .browse .territory-grid { margin-bottom: 32px; }
+/* The MAGNet page stacks its column in the player area instead of auto-placing each piece in the watch grid. */
+.magnet-hype .watch-main { display: block; grid-area: player; min-width: 0; }
+.magnet-previous { display: flex; gap: 12px; align-items: flex-start; margin: 8px 0; padding: 12px; }
+.magnet-previous-list { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.magnet-previous-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.magnet-previous-row p { margin: 0; flex: 1 1 180px; }

@@ -178,13 +178,26 @@ pub async fn exercise(e: &Env) {
     assert!(
         form.contains("mode=subscription")
             && form.contains("unit_amount%5D=999")
-            && form.contains("sver_tier%5D=2"),
-        "{form}"
+            && form.contains("sver_tier%5D=2")
+            && form.contains("custom_text%5Bsubmit%5D%5Bmessage%5D=Renews"),
+        "the renewal terms sit above Checkout's pay button: {form}"
     );
+    let mails = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mail_jobs WHERE user_id='sb-gifter'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    let mails_before = mails().await;
     let before = balance(e, "usd:earnings:stream-owner").await;
     let first = invoice("in_sb_1", "sb-gifter", 2, 999, "subscription_create", 30);
     assert_eq!(event(e, first.clone()).await, StatusCode::OK);
     assert_eq!(event(e, first).await, StatusCode::OK);
+    assert_eq!(
+        mails().await - mails_before,
+        1,
+        "one acknowledgment with the renewal terms and how to cancel"
+    );
     assert_eq!(
         balance(e, "usd:earnings:stream-owner").await - before,
         share(999)
@@ -208,6 +221,11 @@ pub async fn exercise(e: &Env) {
     // Renewal adds a month; an upgrade's proration doesn't, but its share is credited.
     let renewal = invoice("in_sb_2", "sb-gifter", 2, 999, "subscription_cycle", 60);
     assert_eq!(event(e, renewal).await, StatusCode::OK);
+    assert_eq!(
+        mails().await - mails_before,
+        1,
+        "renewals aren't acknowledged again"
+    );
     assert_eq!(months(e, "sb-gifter").await, 2);
     assert_eq!(
         post(e, &gifter, "/subscription/upgrade", json!({"tier": 1}))

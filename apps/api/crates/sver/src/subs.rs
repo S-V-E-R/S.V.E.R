@@ -33,6 +33,44 @@ fn price(tier: i16) -> i64 {
     PRICES[(tier - 1) as usize]
 }
 
+/// What an auto-renewing card subscription agrees to, shown beside every place it's started.
+fn renewal_terms(cents: i64) -> String {
+    format!(
+        "Renews automatically every month at ${}.{:02} until you cancel. Cancel anytime from the channel's Subscribe panel; benefits last to the end of the paid month.",
+        cents / 100,
+        cents % 100
+    )
+}
+
+/// The acknowledgment after a new card subscription: its terms, the next charge and how to cancel.
+async fn acknowledge(
+    app: &App,
+    tx: &mut PgConnection,
+    channel: &str,
+    user: &str,
+    tier: i16,
+    paid_through: i64,
+) -> Res<()> {
+    let names: Option<(String, String)> =
+        sqlx::query_as("SELECT username,display_name FROM channel_users WHERE id=$1")
+            .bind(channel)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((username, display_name)) = names else {
+        return Ok(());
+    };
+    let next = chrono::DateTime::from_timestamp(paid_through, 0)
+        .map_or_else(String::new, |at| at.format("%B %-d, %Y").to_string());
+    let subject = format!("Your subscription to {display_name} on S.V.E.R");
+    let body = format!(
+        "You subscribed to {display_name} at Tier {tier}.\n\n{}\nYour next charge is on {next}.\n\nTo cancel, open {}/{username}, choose Subscribed, then Cancel renewal.",
+        renewal_terms(price(tier)),
+        app.config.origin
+    );
+    crate::safety::queue_notice(app, tx, user, &subject, &body).await?;
+    Ok(())
+}
+
 /// The viewer's active tier in a channel, if subscribed.
 pub async fn active_tier(app: &App, channel: &str, user: &str) -> Res<Option<i16>> {
     Ok(sqlx::query_scalar(
@@ -315,6 +353,8 @@ async fn subscribe(
                 ("subscription_data[metadata][sver_tier]", tier.to_string()),
                 ("success_url", format!("{origin}/{username}?subscribed=1")),
                 ("cancel_url", format!("{origin}/{username}")),
+                // The renewal terms sit right above Checkout's pay button.
+                ("custom_text[submit][message]", renewal_terms(cents)),
             ];
             if pool.len() > 1 {
                 form.push(("subscription_data[metadata][sver_pool]", pool.join(",")));
@@ -653,6 +693,9 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
         .bind(channel).bind(user).bind(tier).bind(end as f64).bind(month)
         .bind(details["subscription"].as_str()).bind(reason == "subscription_create")
         .execute(&mut *tx).await?;
+    if reason == "subscription_create" {
+        acknowledge(app, tx, channel, user, tier, end).await?;
+    }
     if cents > 0 {
         post_pairs(
             tx,
