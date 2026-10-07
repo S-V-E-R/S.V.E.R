@@ -809,6 +809,47 @@ async fn lane(
     let next = find(&pending).map(|s| {
         json!({"stream":discovery::card(&app, s, now),"reason":pending_reason,"switch_at":switch_at})
     });
+    // "You just watched" (docs/MAGNET.md "After a switch"): the last feature on this lane that ended
+    // in the past 10 minutes, so a viewer can follow who they saw after MAGNet moved on. A merged
+    // co-stream lists its members. The page shows it only to viewers who watched that feature.
+    let viewer_id = viewer.as_ref().map(|v| v.id.clone());
+    type PreviousRow = (
+        String,
+        DateTime<Utc>,
+        String,
+        String,
+        Option<String>,
+        bool,
+        bool,
+        bool,
+    );
+    let rows: Vec<PreviousRow> = sqlx::query_as(
+        "SELECT f.reason,f.ended_at,c.username,c.display_name,c.avatar_key,
+          EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=c.id AND b.state IN ('LIVE','RECONNECTING')),
+          EXISTS(SELECT 1 FROM follows w WHERE w.follower_id=$2 AND w.following_id=c.id),
+          coalesce(c.id=$2,false)
+         FROM magnet_features f JOIN channel_users c ON c.id=f.owner_id AND c.eligible
+         WHERE f.lane=$1 AND f.ended_at=(SELECT max(ended_at) FROM magnet_features WHERE lane=$1 AND ended_at>now()-interval '10 minutes')
+           AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=$2 AND k.blocked_id=c.id) OR (k.blocker_id=c.id AND k.blocked_id=$2))
+         ORDER BY f.started_at,f.id",
+    )
+    .bind(&lane)
+    .bind(viewer_id.as_deref())
+    .fetch_all(&mut *db)
+    .await?;
+    let previous = rows.first().map(|(reason, ended_at, ..)| {
+        let members: Vec<Value> = rows
+            .iter()
+            .map(
+                |(_, _, username, display_name, avatar, live, following, own)| {
+                    json!({"username":username,"display_name":display_name,
+                    "avatar":profiles::avatar_json(&app, avatar.as_deref()),"live":live,
+                    "following":viewer_id.as_ref().map(|_| *following),"own":own})
+                },
+            )
+            .collect();
+        json!({"reason":reason,"ended_at":ended_at,"members":members})
+    });
     // Other streams in this lane, for the holding card.
     let others: Vec<Value> = streams
         .iter()
@@ -818,7 +859,7 @@ async fn lane(
         .map(|s| discovery::card(&app, s, now))
         .collect();
     Ok(Json(
-        json!({"id":lane,"name":name,"enabled":enabled,"featured":featured,"next":next,"others":others,"as_of":now}),
+        json!({"id":lane,"name":name,"enabled":enabled,"featured":featured,"next":next,"previous":previous,"others":others,"as_of":now}),
     ))
 }
 

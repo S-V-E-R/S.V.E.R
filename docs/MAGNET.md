@@ -95,6 +95,7 @@ Later add-ons: game-API detectors and computer-vision moment detection for speci
 - Chat works as described in "MAGNet chat" below.
 - Viewers on a MAGNet channel are ordinary playback sessions on the featured broadcast, so they count for that stream like any other viewer.
 - Discovery labels where true: First feature, Returning creator, New creator.
+- **After a switch** (added October 7, 2026): a viewer who watched the previous stream gets a "You just watched" card under the player with a one-tap Follow (Log in to follow when signed out) and a link back to that stream (or its channel if it has ended). It lists every member of a merged co-stream. It stays until the next switch replaces it or the viewer dismisses it, for at most 10 minutes. It isn't shown to viewers who only saw the holding card, for their own channel's Follow, or where either side has blocked the other. Follows from it show in the streamer's feature history like any other follow from MAGNet viewers, and never count toward moments.
 
 ### MAGNet chat
 
@@ -159,6 +160,7 @@ A review against the auto-switching channel MAGNet reinvents found that its mome
 - **Countdown recovery.** If the next stream ends or becomes ineligible during the 5-second countdown, the countdown is cancelled (`cancelled` in the decision log) and the lane decides again in the same tick. If the current stream ended too, the lane falls back at once instead of showing nothing until the next tick.
 - **Ended staff picks are released** automatically (`released` in the decision log), so Admin never shows a force that can no longer take effect.
 - **Lane health.** A lane whose ticks fail keeps holding its stream, as before, and records since when (`failing_since`, `failures`). Admin → MAGNet marks a lane as stalled when its ticks are failing or it hasn't ticked for six ticks. One successful tick clears it.
+- **"You just watched"**: `GET /api/magnet/{lane}` returns `previous` (the lane's last feature that ended in the past 10 minutes: its reason and each member's name, avatar, whether they're live, whether the viewer follows them, and whether it's the viewer's own channel; channels either side blocked are left out). The page shows the card only for streams it actually played (`JustWatched`). The MAGNet page's column now stacks in the player area of the watch grid, so the card sits under the player and above chat on phones.
 - Coverage: the hardening scenario in `tests/streams/magnet.rs` (non-viewers, MAGNet's audience, copy-paste, emote-only, paid messages, follows, raids with and without arrivals and a raid traded back, countdown recovery, the stale force, stalled lanes and the spike rule).
 
 Considered and not adopted: a split-screen of several moments at once breaks the one-player rule, and computer-vision detection stays a later add-on (game state read from pixels breaks whenever a game changes its interface; game APIs come first).

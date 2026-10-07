@@ -4,19 +4,21 @@ import { useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { LivePlayer } from "./LivePlayer";
 import { HypeChat } from "./HypeChat";
+import { JustWatched, type Previous } from "./JustWatched";
 import { StreamCard } from "./home/StreamCard";
 import type { LiveCard } from "./home/types";
 import { LiveThumbnail } from "./LiveThumbnail";
 
 type Featured = { stream: LiveCard; kind: string; reason: string | null; since: string; moves_on_by: string | null; holding: boolean; squad: { mode: "MERGED" | "SEPARATE"; members: LiveCard[] } | null };
-type Lane = { id: string; name: string; enabled: boolean; featured: Featured | null; next: { stream: LiveCard; reason: string | null; switch_at: string } | null; others: LiveCard[] };
+type Lane = { id: string; name: string; enabled: boolean; featured: Featured | null; next: { stream: LiveCard; reason: string | null; switch_at: string } | null; previous: Previous | null; others: LiveCard[] };
 type LaneLink = { id: string; name: string; enabled: boolean; featuring: string | null };
 
 /**
  * A MAGNet channel (docs/MAGNET.md "What the viewer sees"): one player on the featured
  * stream with a one-line reason, a 5-second countdown with a still of the next stream and Stay,
  * and a holding card for viewers who can't watch the featured channel. A merged co-stream is
- * featured as one unit with tabs between its members (still one player).
+ * featured as one unit with tabs between its members (still one player). After a switch, viewers
+ * who watched the previous stream get a "You just watched" card to follow it.
  */
 export function MagnetHype({ lane, account, viewerFaction }: { lane: string; account: string | null; viewerFaction: string | null }) {
   const signedIn = !!account;
@@ -26,6 +28,9 @@ export function MagnetHype({ lane, account, viewerFaction }: { lane: string; acc
   const [now, setNow] = useState(() => Date.now());
   // The co-stream member tab a viewer picked, for the feature it was picked in.
   const [tab, setTab] = useState<{ of: string; username: string } | null>(null);
+  // Streams this viewer actually watched here (not a holding card), and cards they dismissed.
+  const [seen, setSeen] = useState<string[]>([]);
+  const [dismissed, setDismissed] = useState<string | null>(null);
   const load = useCallback(async () => {
     const result = await send<Lane>("GET", `/api/magnet/${encodeURIComponent(lane)}`);
     if (result.ok) { setState(result.data); setError(""); } else setError(result.error);
@@ -47,6 +52,12 @@ export function MagnetHype({ lane, account, viewerFaction }: { lane: string; acc
   const merged = featured?.squad?.mode === "MERGED" ? featured.squad.members : [];
   const shown = (tab && tab.of === featured?.since && merged.find(m => m.username === tab.username)) || featured?.stream;
   const left = counting ? Math.max(0, Math.ceil((counting - now) / 1000)) : 0;
+  const watching = featured && !featured.holding ? shown?.username : undefined;
+  if (watching && !seen.includes(watching)) setSeen([...seen, watching]);
+  const previous = state?.previous;
+  const justWatched = previous && previous.ended_at !== dismissed
+    && previous.members.some(m => seen.includes(m.username))
+    && previous.members.every(m => m.username !== shown?.username) ? previous : null;
   const minutes = featured?.moves_on_by ? Math.max(1, Math.ceil((Date.parse(featured.moves_on_by) - now) / 60000)) : null;
   return <div className="magnet-hype channel watch"><div className="watch-main">
     <nav className="browse-genres" aria-label="MAGNet lanes">{lanes.filter(l => l.enabled).map(l => <Link key={l.id} href={l.id === "global" ? "/magnet" : `/magnet/${l.id}`} aria-current={l.id === lane ? "page" : undefined} className="chip">{l.name}</Link>)}</nav>
@@ -63,6 +74,7 @@ export function MagnetHype({ lane, account, viewerFaction }: { lane: string; acc
       {merged.length > 1 && <div className="board-screens" role="tablist" aria-label="Co-stream members">{merged.map(m => <button key={m.username} type="button" role="tab" aria-selected={m.username === shown!.username} className={m.username === shown!.username ? "small" : "small quiet"} onClick={() => setTab({ of: featured.since, username: m.username })}>{m.display_name}</button>)}</div>}
       <p className="magnet-why"><span className="magnet-mark-inline" aria-hidden="true">MAGNet</span> <Link href={`/${shown!.username}/live`}><strong>{shown!.display_name}</strong></Link> · {shown!.title}{shown!.category && <span className="muted"> · {shown!.category}</span>}{shown!.label && <span className="tag-label">{shown!.label}</span>}<br /><span className="muted">{featured.reason}</span>
         {featured.squad?.mode === "SEPARATE" && featured.squad.members.length > 0 && <><br /><span className="muted">Co-streaming with {featured.squad.members.map((m, i) => <span key={m.username}>{i > 0 && ", "}<Link href={`/${m.username}/live`}>{m.display_name}</Link></span>)}</span></>}</p>
+      {justWatched && <JustWatched key={justWatched.ended_at} previous={justWatched} signedIn={signedIn} onDismiss={() => setDismissed(justWatched.ended_at)} />}
       {state!.next && <div className="magnet-countdown panel" role="status">
         <span className="magnet-next-thumbnail"><LiveThumbnail src={state!.next.stream.thumbnail} label={state!.next.stream.category ?? state!.next.stream.display_name} /></span>
         <p>Up next in <strong>{left}</strong>: <strong>{state!.next.stream.display_name}</strong> · {state!.next.reason}</p>

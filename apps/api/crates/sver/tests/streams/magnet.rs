@@ -143,6 +143,38 @@ pub async fn exercise(e: &Env) {
     let decisions: i64 = sqlx::query_scalar("SELECT count(*) FROM magnet_decisions WHERE lane='global' AND kind='moment' AND jsonb_array_length(candidates)>=2")
         .fetch_one(&e.app.db).await.unwrap();
     assert_eq!(decisions, 1);
+    // "You just watched": the stream MAGNet moved on from stays one tap away to follow.
+    let (_, page) = get(e, "/api/magnet/global", None).await;
+    assert_eq!(page["previous"]["members"][0]["username"], "MgBig");
+    assert_eq!(page["previous"]["members"][0]["following"], Value::Null);
+    assert_eq!(page["previous"]["members"][0]["live"], true);
+    assert!(
+        page["previous"]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("Fair turn")
+    );
+    let (_, page) = get(e, "/api/magnet/global", Some(&small)).await;
+    assert_eq!(
+        (
+            &page["previous"]["members"][0]["following"],
+            &page["previous"]["members"][0]["own"]
+        ),
+        (&json!(false), &json!(false))
+    );
+    let (status, _) = call(e, "PUT", "/api/follows/MgBig", Some(&small), Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, page) = get(e, "/api/magnet/global", Some(&small)).await;
+    assert_eq!(page["previous"]["members"][0]["following"], true);
+    // Blocked either way: no card.
+    e.sql("INSERT INTO user_blocks(blocker_id,blocked_id) VALUES('mg-big','mg-banned')")
+        .await;
+    let (_, page) = get(e, "/api/magnet/global", Some(&banned)).await;
+    assert_eq!(page["previous"], Value::Null);
+    e.sql("DELETE FROM user_blocks WHERE blocker_id='mg-big'")
+        .await;
+    e.sql("DELETE FROM follows WHERE follower_id='mg-small' AND following_id='mg-big'")
+        .await;
     let candidate_users: Vec<String> = sqlx::query_scalar("SELECT c->>'username' FROM magnet_decisions d, jsonb_array_elements(d.candidates) c WHERE d.lane='global' AND d.kind='moment'")
         .fetch_all(&e.app.db).await.unwrap();
     assert!(!candidate_users.contains(&"MgOptedOut".to_string()));
