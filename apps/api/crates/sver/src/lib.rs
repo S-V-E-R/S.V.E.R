@@ -14,6 +14,7 @@ pub mod activity;
 pub mod alerts;
 pub mod auth;
 pub mod bans;
+pub mod beacons;
 pub mod boards;
 pub mod chat;
 pub mod crowd;
@@ -90,6 +91,7 @@ pub struct Config {
     pub staff_push: staff_push::Config,
     pub stripe: stripe::Config,
     pub videos: videos::Config,
+    pub beacons: beacons::Config,
 }
 impl Config {
     pub fn from_env() -> std::result::Result<Self, String> {
@@ -159,6 +161,7 @@ impl Config {
             staff_push: staff_push::Config::from_env(),
             stripe: stripe::Config::from_env(production)?,
             videos: videos::Config::from_env(production)?,
+            beacons: beacons::Config::from_env(production)?,
             youtube_oembed_url: "https://www.youtube.com/oembed".into(),
             soundcloud_oembed_url: "https://soundcloud.com/oembed".into(),
             thumbnail_hosts: vec!["ytimg.com".into(), "sndcdn.com".into()],
@@ -346,6 +349,7 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
 pub fn router(app: App) -> Router {
     Router::new()
         .merge(videos::routes())
+        .merge(beacons::routes())
         .route(
             "/api/health",
             get(|| async { Json(json!({"status":"ok"})) }),

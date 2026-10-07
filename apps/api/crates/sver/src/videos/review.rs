@@ -140,9 +140,34 @@ pub async fn remove(db: &mut PgConnection, id: &str, descendants: bool, legal: b
         }
         sqlx::query("UPDATE videos SET status='DELETING',revision=revision+1 WHERE id=$1 AND status NOT IN ('DELETED','EXPIRED')").bind(&video).execute(&mut *db).await?;
         enqueue(db, &video, "DELETE", Some(&video), json!({"legal":legal})).await?;
+        crate::beacons::remove_made_from(db, std::slice::from_ref(&video), legal).await?;
     }
     Ok(json!({"type":"video","id":id,"previous":"REMOVED"}))
 }
 pub async fn removed(db: &mut PgConnection, id: &str) -> Res<bool> {
-    Ok(sqlx::query_scalar("WITH RECURSIVE family AS (SELECT id,status FROM videos WHERE id=$1 UNION ALL SELECT v.id,v.status FROM videos v JOIN family f ON v.parent_id=f.id) SELECT NOT EXISTS(SELECT 1 FROM family WHERE status NOT IN ('DELETED','EXPIRED'))").bind(id).fetch_one(db).await?)
+    let family: Vec<(String, String)> = sqlx::query_as("WITH RECURSIVE family AS (SELECT id,status FROM videos WHERE id=$1 UNION ALL SELECT v.id,v.status FROM videos v JOIN family f ON v.parent_id=f.id) SELECT id,status FROM family").bind(id).fetch_all(&mut *db).await?;
+    if family
+        .iter()
+        .any(|(_, status)| !matches!(status.as_str(), "DELETED" | "EXPIRED"))
+    {
+        return Ok(false);
+    }
+    let ids: Vec<String> = family.into_iter().map(|(id, _)| id).collect();
+    crate::beacons::review::removed(db, &ids).await
+}
+/// SQL: whether the clip whose id is the expression `clip` is held for a removal request or a
+/// copyright notice. Beacons made from it stay out of public view meanwhile (docs/BEACONS.md).
+pub fn source_held_sql(clip: &str) -> String {
+    format!(
+        "EXISTS(SELECT 1 FROM video_holds h WHERE h.video_id={clip} AND h.kind IN ('TAKE_DOWN','COPYRIGHT'))"
+    )
+}
+pub async fn source_held(db: &mut PgConnection, clip: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {}",
+        source_held_sql("$1")
+    )))
+    .bind(clip)
+    .fetch_one(db)
+    .await?)
 }

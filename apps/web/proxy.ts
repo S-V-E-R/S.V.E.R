@@ -19,7 +19,7 @@ function to(request: NextRequest, path: string, status: 302 | 308, query = reque
 
 export async function proxy(request: NextRequest) {
   const segments = request.nextUrl.pathname.split("/").filter(Boolean);
-  if (["videos", "clips", "embed"].includes(segments[0])) return NextResponse.next();
+  if (["videos", "clips", "embed", "beacons"].includes(segments[0])) return NextResponse.next();
   if (segments.length === 0 || STATIC.has(segments[0])) return NextResponse.next();
   const [first, ...rest] = segments;
   // Aliases: /s/{name}, /u/{name} and /@{name} are permanent; /watch/{name} goes to the live view.

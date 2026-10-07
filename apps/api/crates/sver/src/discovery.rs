@@ -396,8 +396,9 @@ async fn search(
         .bind(q)
         .fetch_all(&mut *db)
         .await?;
+    let beacons = crate::beacons::search(&app, &mut db, viewer.as_ref(), &pattern).await?;
     Ok(Json(
-        json!({"query":q,"channels":channels,"categories":categories}),
+        json!({"query":q,"channels":channels,"categories":categories,"beacons":beacons}),
     ))
 }
 

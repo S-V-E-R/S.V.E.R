@@ -75,6 +75,9 @@ pub async fn locate(
 }
 
 pub async fn hide(db: &mut PgConnection, target: &Located) -> Res<Value> {
+    if target.kind == "beacon" {
+        return crate::beacons::review::hide(db, &target.id).await;
+    }
     if matches!(
         target.kind.as_str(),
         "profile"
@@ -119,6 +122,7 @@ pub async fn restore(
                     .bind(id).bind(previous).execute(db).await?;
             }
         }
+        "beacon" => crate::beacons::review::unhide(db, id, previous).await?,
         "chat_message" if previous["previous"] == "VISIBLE" => {
             sqlx::query("UPDATE chat_messages SET deleted_at=NULL WHERE id=$1 AND deleted_at=$2 AND expires_at>now()")
                 .bind(id).bind(since).execute(db).await?;

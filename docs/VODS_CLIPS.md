@@ -47,7 +47,7 @@ Live streams are recorded so people can catch up. Streamers keep their best mome
 - **Clips never expire.** They're short, and they're how channels get found. The streamer can delete any clip of their channel, and the clipper can delete their own.
 - **Each clip keeps** its channel, broadcast, category, faction, clipper, and the chat messages from its time window (copied at creation, since chat bodies expire after 7 days).
 - **Sharing:** every clip has its own page, an embed player, oEmbed, and preview tags so a link posted to Discord, X or Reddit shows the video, image and title. The player shows the channel name and a link to the live channel. Clips aren't watermarked, because that would need a re-encode.
-- **Beacons:** a clip can be turned into a Beacon in Module 9, which makes the 9:16 version. Only clips the streamer approves can become Beacons.
+- **Beacons:** a clip can be turned into a Beacon in Module 9, which makes the 9:16 version. Only clips the streamer approves can become Beacons. The streamer picks the clip in Creator Studio, or with "Make a Beacon" on the clip's page. Choosing it is the approval, and it's logged. The Beacon carries the moving watermark. The clip itself stays a watermark-free transmux, and removing the clip removes its Beacons.
 
 ## Chat replay
 

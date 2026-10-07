@@ -22,6 +22,8 @@ use tower::ServiceExt;
 mod alerts;
 #[path = "streams/bans.rs"]
 mod bans;
+#[path = "streams/beacons.rs"]
+mod beacons;
 #[path = "streams/boards.rs"]
 mod boards;
 #[path = "streams/chat.rs"]

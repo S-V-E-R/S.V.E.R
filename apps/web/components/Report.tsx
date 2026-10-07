@@ -3,7 +3,7 @@ import { FormEvent, useState } from "react";
 import { send } from "../lib/client-api";
 import { reasons } from "../lib/types";
 
-export type ReportTarget = { target_type: "profile" | "wall_post" | "wall_reply" | "fan_art" | "setup_photo" | "chat_message" | "live_stream" | "emote" | "faction_post" | "guild" | "guild_emblem" | "vod" | "highlight" | "clip"; target_id: string; field?: string };
+export type ReportTarget = { target_type: "profile" | "wall_post" | "wall_reply" | "fan_art" | "setup_photo" | "chat_message" | "live_stream" | "emote" | "faction_post" | "guild" | "guild_emblem" | "vod" | "highlight" | "clip" | "beacon"; target_id: string; field?: string };
 export function TakeDownLink({ target }: { target: ReportTarget }) {
   const query = new URLSearchParams({ report: target.target_type, id: target.target_id, ...(target.field ? { field: target.field } : {}) });
   const location = `https://sver.tv/${target.target_type === "profile" ? encodeURIComponent(target.target_id) : "take-it-down"}?${query}`;

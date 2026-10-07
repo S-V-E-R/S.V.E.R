@@ -204,6 +204,10 @@ async fn locate(
         }
         return Ok((vec![], None));
     }
+    if path.len() == 2 && path[0] == "beacons" {
+        let target = safety::take_down::locate(db, "beacon", path[1], None).await?;
+        return Ok((vec![], target));
+    }
     let media_base = format!("{}/", app.config.media.public_base.trim_end_matches('/'));
     let key = location
         .strip_prefix(&media_base)
@@ -242,6 +246,7 @@ async fn locate(
         "vod",
         "highlight",
         "clip",
+        "beacon",
     ]
     .contains(&kind)
     {
@@ -566,6 +571,8 @@ async fn decide(
                 safety::take_down::remove(&mut tx, kind, target).await?;
             } else if crate::videos::review::is_video(kind) {
                 crate::videos::review::remove(&mut tx, target, true, true).await?;
+            } else if kind == "beacon" {
+                crate::beacons::review::remove_legal(&mut tx, target).await?;
             }
         }
         sqlx::query("UPDATE take_down_requests SET status='under_review' WHERE id=$1")
@@ -576,6 +583,17 @@ async fn decide(
         // The removal worker does storage work. Staff can close only after every descendant's
         // objects and cache have actually gone; a retry never reports a queued delete as done.
         for (kind, target, _) in &targets {
+            if kind == "beacon"
+                && !crate::beacons::review::removed(
+                    &mut *app.db.acquire().await?,
+                    std::slice::from_ref(target),
+                )
+                .await?
+            {
+                return Err(Fail::unavailable(
+                    "Beacon removal is processing. Keep this request open and retry shortly.",
+                ));
+            }
             if crate::videos::review::is_video(kind)
                 && !crate::videos::review::removed(&mut *app.db.acquire().await?, target).await?
             {

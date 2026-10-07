@@ -68,8 +68,8 @@ export function Chrome({ actions, sidebar, footer, children }: Props) {
       <span className="topbar-space" />
       <form className="search" role="search" action="/search">
         <SearchIcon />
-        <label htmlFor="site-search" className="sr-only">Search channels and categories</label>
-        <input id="site-search" name="q" type="search" placeholder="Search channels and categories" minLength={2} maxLength={50} autoComplete="off" />
+        <label htmlFor="site-search" className="sr-only">Search channels, categories and Beacons</label>
+        <input id="site-search" name="q" type="search" placeholder="Search channels, categories and Beacons" minLength={2} maxLength={50} autoComplete="off" />
       </form>
       <span className="topbar-space" />
       <div className="topbar-actions">{actions}</div>

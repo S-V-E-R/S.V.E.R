@@ -1,4 +1,4 @@
-# Add this override only when the private recording bucket is ready.
+# Add this override only when the private recording bucket is ready. Beacons share the bucket.
 services:
   api:
     env_file:
@@ -6,5 +6,7 @@ services:
     environment:
       VOD_STORAGE: s3
       VOD_TUNING_FILE: /run/sver/vods-tuning.json
+      BEACON_TUNING_FILE: /run/sver/beacons-tuning.json
     volumes:
       - ${SVER_VOD_TUNING_FILE:?Set the absolute external recording tuning path}:/run/sver/vods-tuning.json:ro
+      - ${SVER_BEACON_TUNING_FILE:?Set the absolute external Beacon tuning path}:/run/sver/beacons-tuning.json:ro

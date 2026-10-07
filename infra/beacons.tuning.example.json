@@ -1,0 +1,9 @@
+{
+  "watermark_min_ms": 3000,
+  "watermark_max_ms": 6000,
+  "likes_per_user_hour": 120,
+  "beats_per_viewer_minute": 60,
+  "beats_per_ip_minute": 600,
+  "taps_per_viewer_hour": 60,
+  "mutes_per_user_hour": 60
+}

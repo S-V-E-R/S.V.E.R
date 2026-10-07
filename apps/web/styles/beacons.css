@@ -1,0 +1,75 @@
+/* Beacons (docs/DESIGN.md "Beacons feed"): one 9:16 video at a time, centered on desktop and full
+   screen on phones, with a right-side rail. Square corners and code-only ornament, like the rest. */
+.beacon-feed { padding: 16px 24px 24px; display: flex; flex-direction: column; gap: 12px; }
+.beacon-live-row ul { display: flex; gap: 14px; overflow-x: auto; list-style: none; padding: 0; margin: 6px 0 0; }
+.beacon-live-row a { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 76px; font-size: 13px; text-align: center; color: var(--ink); overflow-wrap: anywhere; }
+.beacon-live-row .avatar { outline: 2px solid var(--live); outline-offset: 2px; }
+.beacon-stage { position: relative; display: flex; justify-content: center; overscroll-behavior: contain; }
+.beacon { position: relative; display: flex; align-items: flex-end; gap: 14px; }
+.beacon-video { position: relative; height: min(calc(100dvh - 220px), 860px); min-height: 420px; aspect-ratio: 9 / 16; background: #000; border: 1px solid var(--line); overflow: hidden; touch-action: pan-x; }
+.beacon-video video { display: block; width: 100%; height: 100%; object-fit: cover; cursor: pointer; }
+.beacon-caption { position: absolute; left: 0; right: 20%; bottom: 0; padding: 48px 16px 16px; background: linear-gradient(transparent, rgba(0, 0, 0, .78)); color: #fff; pointer-events: none; }
+.beacon-caption a { pointer-events: auto; color: #fff; }
+.beacon-caption h2 { margin: 0 0 4px; font: 700 18px/1.3 var(--font-body); overflow-wrap: anywhere; }
+.beacon-caption p { margin: 2px 0; font-size: 14px; }
+.beacon-caption .muted, .beacon-caption .muted a { color: rgba(255, 255, 255, .78); }
+.beacon-shine .eyebrow { color: var(--accent-light); margin-right: 4px; }
+.beacon-unmute { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.beacon-paused { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 6px 12px; background: rgba(0, 0, 0, .6); color: #fff; font: 700 13px var(--font-label); letter-spacing: .14em; text-transform: uppercase; pointer-events: none; }
+.beacon-gate { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%; padding: 24px; text-align: center; color: #fff; }
+.beacon-rail { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-bottom: 8px; }
+.beacon-creator { position: relative; display: block; }
+.beacon-creator .avatar { display: block; border: 2px solid var(--accent); }
+.beacon-crest { position: absolute; right: -8px; bottom: -8px; line-height: 0; }
+.beacon-action { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 60px; min-height: 52px; padding: 6px 4px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 600 13px var(--font-label); letter-spacing: .04em; cursor: pointer; }
+.beacon-action > span:first-child { font-size: 20px; line-height: 1; }
+.beacon-action[aria-pressed="true"] > span:first-child { color: var(--live); }
+.beacon-action:hover { background: var(--tint); }
+.beacon-stat { cursor: default; }
+.beacon-live { border-color: var(--live); }
+.beacon-live .tag-live { font-size: 11px; }
+.beacon-nav { position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 8px; }
+.beacon-nav button { min-width: 44px; min-height: 44px; font-size: 20px; }
+.beacon-panel { position: absolute; right: 0; bottom: 0; z-index: 5; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; width: min(340px, calc(100vw - 32px)); }
+.beacon-message { position: absolute; left: 12px; top: 56px; z-index: 4; margin: 0; padding: 6px 10px; background: var(--surface); border: 1px solid var(--line); max-width: 70%; }
+.beacon-empty { padding: 32px; max-width: 460px; margin: 40px auto; }
+
+/* 9:16 cards: home shelf, channel tab, search. */
+.beacon-shelf { padding: 20px; }
+.beacon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); gap: 16px; list-style: none; padding: 0; margin: 16px 0; }
+.beacon-card { min-width: 0; }
+.beacon-poster { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 9 / 16; background: var(--surface); border: 1px solid var(--line); overflow: hidden; color: var(--ink-muted); }
+.beacon-poster img { width: 100%; height: 100%; object-fit: cover; }
+.beacon-poster .tag-live { position: absolute; top: 8px; left: 8px; }
+.beacon-views { position: absolute; left: 6px; bottom: 6px; padding: 1px 6px; background: rgba(0, 0, 0, .7); color: #fff; font-size: 13px; }
+.beacon-card h3 { margin: 8px 0 2px; font: 600 16px/1.3 var(--font-body); overflow-wrap: anywhere; }
+
+/* Creator Studio: the 9:16 crop window over a clip. */
+.beacon-crop { position: relative; width: 100%; max-width: 720px; aspect-ratio: 16 / 9; background: #000; overflow: hidden; user-select: none; touch-action: none; }
+.beacon-crop video { display: block; width: 100%; height: 100%; object-fit: contain; }
+.beacon-crop-window { position: absolute; border: 2px solid var(--accent); outline: 9999px solid rgba(0, 0, 0, .55); cursor: grab; }
+.beacon-crop-window:active { cursor: grabbing; }
+.beacon-crop-window:focus-visible { border-color: var(--accent-light); }
+.beacon-studio-list { list-style: none; padding: 0; }
+.beacon-studio-list > li { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 14px; border-top: 1px solid var(--line); padding: 16px 0; }
+.beacon-studio-list .beacon-poster { width: 72px; }
+.beacon-studio-list h3 { margin: 0 0 4px; overflow-wrap: anywhere; }
+.beacon-clip-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 12px; list-style: none; padding: 0; }
+.beacon-clip-picker button { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.beacon-clip-picker img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+
+@media (max-width: 720px) {
+  .beacon-feed { padding: 0; gap: 0; }
+  .beacon-live-row { display: flex; align-items: center; gap: 12px; padding: 6px 16px; }
+  .beacon-live-row ul { margin: 0; gap: 10px; }
+  .beacon-live-row a { width: auto; }
+  .beacon-live-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .beacon-live-row .avatar { width: 32px !important; height: 32px !important; font-size: 14px; }
+  .beacon { width: 100%; }
+  .beacon-video { width: 100vw; height: calc(100dvh - 190px); min-height: 0; aspect-ratio: auto; border: 0; }
+  .beacon-rail { position: absolute; right: 8px; bottom: 120px; z-index: 2; gap: 10px; }
+  .beacon-action { min-width: 52px; background: rgba(0, 0, 0, .45); border-color: transparent; color: #fff; }
+  .beacon-nav { display: none; }
+  .beacon-studio-list > li { grid-template-columns: 56px minmax(0, 1fr); }
+  .beacon-studio-list .beacon-poster { width: 56px; }
+}
