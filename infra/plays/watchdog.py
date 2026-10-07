@@ -15,13 +15,15 @@ import time
 import urllib.request
 from pathlib import Path
 
-SITE = os.environ.get("PLAYS_SITE", "https://sver.tv")
+# Core's own listener on this host; the public site sits behind Cloudflare's bot checks.
+SITE = os.environ.get("PLAYS_SITE", "http://127.0.0.1:18080")
 CHANNEL = os.environ.get("PLAYS_CHANNEL", "")
 ORIGIN_HLS = os.environ.get("PLAYS_ORIGIN_HLS", "http://127.0.0.1:8090/rebuild")
 SERVICE = os.environ.get("PLAYS_SERVICE", "sver-plays")
 RUN_DIR = Path(os.environ.get("PLAYS_RUN_DIR", "/var/run/sver-plays"))
 RESTART_GAP = 300
 REPORT_FOR = 600
+UNKNOWN = "unknown"  # Core couldn't be asked; restarting the game wouldn't help.
 
 
 def fetch(url):
@@ -30,9 +32,12 @@ def fetch(url):
 
 
 def media_sequence():
-    """The origin playlist's media sequence, or None when the stream can't be read."""
+    """The origin playlist's media sequence; None when the stream is gone; UNKNOWN without Core."""
     try:
         live = json.loads(fetch(f"{SITE}/api/channels/{CHANNEL}/live"))
+    except (OSError, ValueError):
+        return UNKNOWN
+    try:
         found = re.search(r"/([0-9a-f]{32})\.m3u8", (live.get("playback") or {}).get("hls") or "")
         if not found:
             return None
@@ -45,6 +50,8 @@ def media_sequence():
 
 def check(state, sequence, now, restart):
     """One pass. Returns the new state; calls restart() when the picture has stopped."""
+    if sequence == UNKNOWN:
+        return state
     moving = sequence is not None and sequence != state.get("sequence")
     failures = 0 if moving else state.get("failures", 0) + 1
     problem = state.get("problem")

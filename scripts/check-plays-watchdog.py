@@ -21,4 +21,8 @@ s = watchdog.check(s, 300, 1360, restart)
 assert s["problem"], "a restart stays reported for ten minutes"
 s = watchdog.check(s, 360, 1180 + 600, restart)
 assert s["problem"] is None, "then clears once the picture moves"
+before = dict(s)
+s = watchdog.check(s, watchdog.UNKNOWN, 3000, restart)
+s = watchdog.check(s, watchdog.UNKNOWN, 3060, restart)
+assert s == before and restarts == [1], "an unreachable Core never restarts the game"
 print("plays watchdog checks passed")
