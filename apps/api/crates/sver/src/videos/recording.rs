@@ -70,6 +70,10 @@ pub async fn hook(
     )
     .await?
     .ok_or_else(|| Fail::denied("Unknown recording publisher."))?;
+    // The 24/7 Plays channel would fill storage: no recording and no clipping buffer.
+    if crate::plays::is_channel(&mut *app.db.acquire().await?, &context.owner_id).await? {
+        return Ok(Json(json!({"code":0})));
+    }
     let source = format!("{}:{}:{}", input.server_id, input.client_id, path);
     let known:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM video_segments WHERE source_identity=$1 AND video_id IN (SELECT id FROM videos WHERE broadcast_id=$2 AND kind='VOD'))").bind(&source).bind(&context.broadcast_id).fetch_one(&app.db).await?;
     if known {
