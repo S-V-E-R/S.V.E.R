@@ -19,6 +19,11 @@ async fn live(
     sqlx::query("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,alert_state) VALUES($1,$2,$1,1,'LIVE','s','v','c',now()-make_interval(mins=>$3),now(),now(),'skipped')")
         .bind(id).bind(owner).bind(minutes).execute(&e.app.db).await.unwrap();
 }
+/// A signed-in viewer whose session viewer integrity has counted.
+async fn watching(e: &Env, broadcast: &str, user: &str) {
+    sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,created_at,expires_at,level,ever_counted,signed_in,verified) VALUES($1,'u:'||$2,now()-interval '5 minutes',now()+interval '30 seconds','counted',true,true,true) ON CONFLICT DO NOTHING")
+        .bind(broadcast).bind(user).execute(&e.app.db).await.unwrap();
+}
 async fn tick(e: &Env, lane: &str) {
     sver::magnet::tick_lane(&e.app, lane).await.unwrap();
 }
@@ -93,12 +98,22 @@ pub async fn exercise(e: &Env) {
     tick(e, "fps_battle_royale").await;
     assert_eq!(current(e, "fps_battle_royale").await.0, None);
 
-    // A chat burst on the small stream: 4 verified chatters in the last minute, none before.
+    // A chat burst on the small stream: 4 verified chatters in the last minute, none before. Only
+    // people actually watching count.
     e.sql("UPDATE magnet_lanes SET current_since=now()-interval '50 seconds' WHERE id='global'")
         .await;
     for author in ["mg-c1", "mg-c2", "mg-c3", "mg-c4"] {
-        sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body) VALUES(gen_random_uuid()::text,'mg-small',$1,'what a play')")
+        sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body) VALUES(gen_random_uuid()::text,'mg-small',$1,'what a play from '||$1)")
             .bind(author).execute(&e.app.db).await.unwrap();
+    }
+    tick(e, "global").await;
+    assert_eq!(
+        current(e, "global").await.2,
+        None,
+        "chatters who aren't watching don't count"
+    );
+    for author in ["mg-c1", "mg-c2", "mg-c3", "mg-c4"] {
+        watching(e, "mg-b-small", author).await;
     }
     // Hype-side messages never count toward a burst (no feedback loop).
     for author in ["mg-c1", "mg-c2", "mg-c3", "mg-c4"] {
@@ -471,8 +486,15 @@ pub async fn exercise(e: &Env) {
         current(e, "global").await.0.as_deref(),
         Some("mg-sq-b-solo")
     );
-    for author in ["mg-c1", "mg-c2", "mg-c3", "mg-c4"] {
-        sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,squad_id) VALUES(gen_random_uuid()::text,'mg-sq-host',$1,'what a play','mg-squad')")
+    // Shared-chat viewers may watch any member.
+    for (author, watched) in [
+        ("mg-c1", "mg-sq-b-host"),
+        ("mg-c2", "mg-sq-b-guest"),
+        ("mg-c3", "mg-sq-b-host"),
+        ("mg-c4", "mg-sq-b-guest"),
+    ] {
+        watching(e, watched, author).await;
+        sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,squad_id) VALUES(gen_random_uuid()::text,'mg-sq-host',$1,'what a play by '||$1,'mg-squad')")
             .bind(author).execute(&e.app.db).await.unwrap();
     }
     // Outside the 2-minute gap after the earlier moment, so only the cooldown can hold it back.
@@ -494,6 +516,8 @@ pub async fn exercise(e: &Env) {
     e.sql("DELETE FROM squads WHERE id='mg-squad'").await;
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-%'").await;
 
+    hardening(e, &admin).await;
+
     for statement in [
         "DELETE FROM moderation_actions WHERE actor_id='mg-staff'",
         "DELETE FROM staff_roles WHERE user_id='mg-staff'",
@@ -502,4 +526,182 @@ pub async fn exercise(e: &Env) {
     ] {
         e.sql(statement).await;
     }
+}
+
+/// One stream's moment signals on the Global lane.
+async fn signals(e: &Env, broadcast: &str) -> sver::magnet::Signals {
+    let mut db = e.app.db.acquire().await.unwrap();
+    sver::magnet::candidates(&mut db, "global", &e.app.config.magnet)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.1.broadcast == broadcast)
+        .map(|c| c.2)
+        .unwrap()
+}
+async fn say_in(e: &Env, channel: &str, author: &str, body: &str, extra: &str) {
+    sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO chat_messages(id,channel_id,author_id,body{extra}) VALUES(gen_random_uuid()::text,$1,$2,$3{})", if extra.is_empty() { "" } else { ",10" })))
+        .bind(channel).bind(author).bind(body).execute(&e.app.db).await.unwrap();
+}
+
+/// Hardening (docs/MAGNET.md "Hardening"): only real viewers count, never MAGNet's own audience or
+/// paid messages; low-effort chat counts for less; a raid counts when it brought someone, once a
+/// day per pair; the lane recovers at once when the next stream leaves during a countdown; an
+/// ended staff pick is released; MAGNet's arrivals don't look like a viewbot spike.
+async fn hardening(e: &Env, admin: &str) {
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-%'").await;
+    e.sql("UPDATE magnet_features SET ended_at=now() WHERE ended_at IS NULL")
+        .await;
+    e.sql("UPDATE magnet_lanes SET current_broadcast=NULL,current_kind=NULL,current_reason=NULL,current_since=NULL,pending_broadcast=NULL,pending_kind=NULL,pending_reason=NULL,switch_at=NULL,last_kind=NULL,last_moment_at=NULL,forced_broadcast=NULL WHERE id='global'").await;
+    for (id, name) in [
+        ("mg-ha", "MgHardA"),
+        ("mg-hb", "MgHardB"),
+        ("mg-hc", "MgHardC"),
+        ("mg-hd", "MgHardD"),
+    ] {
+        person(e, id, name, true).await;
+    }
+    live(e, "mg-h-a", "mg-ha", "art", 30).await;
+    live(e, "mg-h-b", "mg-hb", "art", 20).await;
+    live(e, "mg-h-c", "mg-hc", "art", 20).await;
+    live(e, "mg-h-d", "mg-hd", "art", 20).await;
+    let chatters = ["mg-c1", "mg-c2", "mg-c3", "mg-c4"];
+
+    // People MAGNet brought never count, so a feature can't keep itself going.
+    for author in chatters {
+        watching(e, "mg-h-b", author).await;
+        say_in(e, "mg-hb", author, &format!("nice one {author}"), "").await;
+    }
+    e.sql("UPDATE playback_leases SET magnet_lane='global' WHERE broadcast_id='mg-h-b'")
+        .await;
+    assert_eq!(signals(e, "mg-h-b").await.chatters, 0.0);
+    e.sql("UPDATE playback_leases SET magnet_lane=NULL WHERE broadcast_id='mg-h-b'")
+        .await;
+    assert_eq!(signals(e, "mg-h-b").await.chatters, 4.0);
+
+    // Copy-paste and emote-only messages count half; paid messages (tributes, Skills) never count.
+    for author in chatters {
+        watching(e, "mg-h-c", author).await;
+        say_in(e, "mg-hc", author, "GG", "").await;
+    }
+    assert_eq!(signals(e, "mg-h-c").await.chatters, 2.0);
+    for author in chatters {
+        say_in(e, "mg-hc", author, &format!("paid {author}"), ",tribute").await;
+    }
+    e.sql("INSERT INTO chat_messages(id,channel_id,author_id,body,skill) VALUES(gen_random_uuid()::text,'mg-hc','mg-c1','a skill','sticker')").await;
+    assert_eq!(signals(e, "mg-h-c").await.chatters, 2.0);
+    e.sql("INSERT INTO channel_emotes(id,channel_id,code,image_key) VALUES('mg-emote','mg-ha','HypeA','x')").await;
+    for (n, author) in chatters.iter().enumerate() {
+        watching(e, "mg-h-a", author).await;
+        say_in(e, "mg-ha", author, &vec!["HypeA"; n + 1].join(" "), "").await;
+    }
+    assert_eq!(signals(e, "mg-h-a").await.chatters, 2.0);
+
+    // Follows count from real viewers only, and never from MAGNet's audience.
+    for follower in ["mg-c1", "mg-c2", "mg-c3", "mg-hc"] {
+        sqlx::query("INSERT INTO follows(follower_id,following_id) VALUES($1,'mg-hd')")
+            .bind(follower)
+            .execute(&e.app.db)
+            .await
+            .unwrap();
+    }
+    for author in ["mg-c1", "mg-c2", "mg-c3"] {
+        watching(e, "mg-h-d", author).await;
+    }
+    assert_eq!(signals(e, "mg-h-d").await.follows, 3.0);
+    e.sql("UPDATE playback_leases SET magnet_lane='global' WHERE broadcast_id='mg-h-d' AND viewer_key='u:mg-c1'").await;
+    assert_eq!(signals(e, "mg-h-d").await.follows, 2.0);
+
+    // A raid that brought nobody isn't a moment; one that did is, unless the two channels already
+    // raided each other within the day.
+    e.sql("INSERT INTO raids(id,raider_id,broadcast_id,target_id,target_broadcast_id,execute_at,status) VALUES('mg-raid','mg-hc','mg-h-c','mg-hd','mg-h-d',now()-interval '30 seconds','moved')").await;
+    assert_eq!(signals(e, "mg-h-d").await.raided_by, None);
+    e.sql("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level,raid_id) VALUES('mg-h-d','b:mg-raider',now()+interval '30 seconds','pending','mg-raid')").await;
+    assert!(signals(e, "mg-h-d").await.raided_by.is_some());
+    e.sql("INSERT INTO raids(id,raider_id,broadcast_id,target_id,target_broadcast_id,execute_at,status) VALUES('mg-raid-back','mg-hd','mg-h-d','mg-hc','mg-h-c',now()-interval '3 hours','moved')").await;
+    assert_eq!(signals(e, "mg-h-d").await.raided_by, None);
+
+    // The next stream ends during the countdown, and so does the current one: the lane falls back
+    // in the same tick instead of showing nothing until the next.
+    tick(e, "global").await;
+    assert_eq!(current(e, "global").await.0.as_deref(), Some("mg-h-a"));
+    e.sql("UPDATE magnet_lanes SET current_since=now()-interval '50 seconds' WHERE id='global'")
+        .await;
+    tick(e, "global").await;
+    assert_eq!(current(e, "global").await.2.as_deref(), Some("mg-h-b"));
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test' WHERE id IN ('mg-h-a','mg-h-b')").await;
+    e.sql("UPDATE magnet_lanes SET switch_at=now()-interval '1 second' WHERE id='global'")
+        .await;
+    tick(e, "global").await;
+    assert_eq!(
+        current(e, "global").await,
+        (Some("mg-h-c".into()), Some("fallback".into()), None)
+    );
+    let cancelled: i64 = sqlx::query_scalar("SELECT count(*) FROM magnet_decisions WHERE lane='global' AND kind='cancelled' AND chosen='mg-h-b'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(cancelled, 1);
+
+    // A staff pick whose broadcast ended is released.
+    e.sql("UPDATE magnet_lanes SET forced_broadcast='mg-h-b' WHERE id='global'")
+        .await;
+    tick(e, "global").await;
+    let forced: Option<String> =
+        sqlx::query_scalar("SELECT forced_broadcast FROM magnet_lanes WHERE id='global'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(forced, None);
+    let (_, admin_view) = get(e, "/api/admin/magnet", Some(admin)).await;
+    let global = admin_view["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == "global")
+        .unwrap()
+        .clone();
+    assert_eq!(global["stalled"], false);
+    assert!(
+        admin_view["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["kind"] == "released")
+    );
+
+    // A failing lane says so to staff, and clears once a tick succeeds.
+    e.sql("UPDATE magnet_lanes SET failing_since=now()-interval '2 minutes',failures=12 WHERE id='global'").await;
+    let (_, admin_view) = get(e, "/api/admin/magnet", Some(admin)).await;
+    assert!(
+        admin_view["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l["id"] == "global" && l["stalled"] == true)
+    );
+    tick(e, "global").await;
+    let failing: (Option<chrono::DateTime<chrono::Utc>>, i32) =
+        sqlx::query_as("SELECT failing_since,failures FROM magnet_lanes WHERE id='global'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(failing, (None, 0));
+
+    // Viewers MAGNet brought don't look like a viewbot spike; other sudden arrivals still do.
+    for n in 0..25 {
+        sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,magnet_lane) VALUES('mg-h-c',$1,now()+interval '30 seconds','global')")
+            .bind(format!("b:mg-hype-{n}")).execute(&e.app.db).await.unwrap();
+    }
+    sver::integrity::tick(&e.app).await.unwrap();
+    let provisional = || async {
+        sqlx::query_as::<_, (i64, i64)>("SELECT count(*) FILTER (WHERE magnet_lane IS NOT NULL), count(*) FILTER (WHERE magnet_lane IS NULL) FROM playback_leases WHERE broadcast_id='mg-h-c' AND provisional_until IS NOT NULL")
+            .fetch_one(&e.app.db).await.unwrap()
+    };
+    assert_eq!(provisional().await, (0, 0));
+    for n in 0..25 {
+        sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at) VALUES('mg-h-c',$1,now()+interval '30 seconds')")
+            .bind(format!("b:mg-burst-{n}")).execute(&e.app.db).await.unwrap();
+    }
+    sver::integrity::tick(&e.app).await.unwrap();
+    assert_eq!(provisional().await, (0, 25));
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-%'").await;
 }

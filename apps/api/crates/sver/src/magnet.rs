@@ -42,6 +42,12 @@ pub struct Tuning {
     pub flag_bonus: f64,
     pub flag_elevated: f64,
     pub flag_cooldown_seconds: i64,
+    /// Weight of a chatter whose account is under 7 days old.
+    pub new_account_weight: f64,
+    /// Weight of a chatter who only sent emote-only or copy-pasted messages in the minute.
+    pub low_effort_weight: f64,
+    /// A raid between two channels counts as a moment once in this many hours, either direction.
+    pub raid_repeat_hours: i64,
 }
 impl Default for Tuning {
     fn default() -> Self {
@@ -61,6 +67,9 @@ impl Default for Tuning {
             flag_bonus: 1.0,
             flag_elevated: 1.5,
             flag_cooldown_seconds: 600,
+            new_account_weight: 0.5,
+            low_effort_weight: 0.5,
+            raid_repeat_hours: 24,
         }
     }
 }
@@ -297,13 +306,16 @@ type SignalRow = (
 );
 /// Eligible streams for a lane, with their signals. Eligible: live 60+ seconds and not
 /// reconnecting, an active category (the lane's genre for genre lanes), not opted out, an eligible
-/// channel and no open integrity case.
-async fn candidates(
+/// channel and no open integrity case. Public so tests can read the signals.
+pub async fn candidates(
     db: &mut PgConnection,
     lane: &str,
     t: &Tuning,
 ) -> Res<Vec<(Stream, Candidate, Signals)>> {
     let streams = discovery::live_streams(&mut *db).await?;
+    // Chat and follows count only from real viewers of the stream (viewer integrity counted them),
+    // never from people MAGNet brought, never through paid messages; low-effort chat and new
+    // accounts count for less. A raid counts when it brought real viewers, once a day per pair.
     let rows: Vec<SignalRow> = sqlx::query_as(
         "SELECT b.id,
           b.state='LIVE' AND b.started_at<=now()-make_interval(secs=>$2)
@@ -311,13 +323,16 @@ async fn candidates(
             AND NOT EXISTS(SELECT 1 FROM integrity_cases ic WHERE ic.owner_id=b.owner_id AND ic.status='OPEN')
             AND ($1='global' OR EXISTS(SELECT 1 FROM stream_settings s JOIN stream_categories c ON c.id=s.category_id WHERE s.owner_id=b.owner_id AND c.active AND c.genre=$1))
             AND NOT EXISTS(SELECT 1 FROM stream_settings s JOIN stream_categories c ON c.id=s.category_id WHERE s.owner_id=b.owner_id AND NOT c.active),
-          (SELECT coalesce(sum(CASE WHEN u.created_at>now()-interval '7 days' THEN 0.5 ELSE 1 END),0) FROM (SELECT DISTINCT m.author_id FROM chat_messages m WHERE m.channel_id=b.owner_id AND m.author_id<>b.owner_id AND m.deleted_at IS NULL AND m.origin IS NULL AND m.squad_id IS NULL AND m.created_at>now()-interval '60 seconds') a JOIN users u ON u.id=a.author_id AND u.email_verified)::float8,
-          (SELECT count(DISTINCT (m.author_id, date_trunc('minute', m.created_at))) FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.channel_id=b.owner_id AND m.author_id<>b.owner_id AND m.origin IS NULL AND m.squad_id IS NULL AND m.created_at<=now()-interval '60 seconds' AND m.created_at>greatest(b.started_at,now()-interval '31 minutes'))::float8
+          (SELECT coalesce(sum(a.w),0) FROM (SELECT CASE WHEN u.created_at>now()-interval '7 days' THEN $4::float8 ELSE 1.0::float8 END * CASE WHEN bool_and(magnet_low_effort(m.channel_id,m.squad_id,m.author_id,m.body,m.created_at)) THEN $5::float8 ELSE 1.0::float8 END AS w FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.channel_id=b.owner_id AND m.squad_id IS NULL AND m.author_id<>b.owner_id AND m.deleted_at IS NULL AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at>now()-interval '60 seconds' AND magnet_room_viewer(ARRAY[b.id],m.author_id) GROUP BY m.author_id,u.created_at) a)::float8,
+          (SELECT count(DISTINCT (m.author_id, date_trunc('minute', m.created_at))) FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.channel_id=b.owner_id AND m.squad_id IS NULL AND m.author_id<>b.owner_id AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at<=now()-interval '60 seconds' AND m.created_at>greatest(b.started_at,now()-interval '31 minutes') AND magnet_room_viewer(ARRAY[b.id],m.author_id))::float8
             / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(b.started_at,now()-interval '31 minutes'))::float8/60.0),
-          (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=b.owner_id AND f.created_at>now()-interval '60 seconds')::float8,
-          (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=b.owner_id AND f.created_at<=now()-interval '60 seconds' AND f.created_at>greatest(b.started_at,now()-interval '31 minutes'))::float8
+          (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=b.owner_id AND f.created_at>now()-interval '60 seconds' AND magnet_room_viewer(ARRAY[b.id],f.follower_id))::float8,
+          (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=b.owner_id AND f.created_at<=now()-interval '60 seconds' AND f.created_at>greatest(b.started_at,now()-interval '31 minutes') AND magnet_room_viewer(ARRAY[b.id],f.follower_id))::float8
             / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(b.started_at,now()-interval '31 minutes'))::float8/60.0),
-          (SELECT c.display_name FROM raids r JOIN channel_users c ON c.id=r.raider_id WHERE r.target_broadcast_id=b.id AND r.status='moved' AND r.execute_at>now()-interval '2 minutes' ORDER BY r.execute_at DESC LIMIT 1),
+          (SELECT c.display_name FROM raids r JOIN channel_users c ON c.id=r.raider_id WHERE r.target_broadcast_id=b.id AND r.status='moved' AND r.execute_at>now()-interval '2 minutes'
+            AND EXISTS(SELECT 1 FROM playback_leases l WHERE l.raid_id=r.id AND l.broadcast_id=b.id AND l.level<>'excluded')
+            AND NOT EXISTS(SELECT 1 FROM raids p WHERE p.id<>r.id AND p.status='moved' AND p.execute_at<r.execute_at AND p.execute_at>r.execute_at-make_interval(hours=>$6::int) AND ((p.raider_id=r.raider_id AND p.target_id=r.target_id) OR (p.raider_id=r.target_id AND p.target_id=r.raider_id)))
+            ORDER BY r.execute_at DESC LIMIT 1),
           EXISTS(SELECT 1 FROM magnet_flags g WHERE g.broadcast_id=b.id AND g.at>now()-interval '2 minutes'),
           (SELECT max(coalesce(f.ended_at,now())) FROM magnet_features f WHERE f.lane=$1 AND f.owner_id=b.owner_id),
           EXISTS(SELECT 1 FROM plays_runtime pr WHERE pr.enabled AND pr.channel_id=b.owner_id)
@@ -326,6 +341,9 @@ async fn candidates(
     .bind(lane)
     .bind(t.min_live_seconds as f64)
     .bind(streams.iter().map(|s| s.broadcast_id.clone()).collect::<Vec<_>>())
+    .bind(t.new_account_weight)
+    .bind(t.low_effort_weight)
+    .bind(t.raid_repeat_hours)
     .fetch_all(&mut *db)
     .await?;
     // S.V.E.R Plays and other system channels are featured only when nothing else is live.
@@ -389,22 +407,30 @@ async fn candidates(
             continue;
         }
         let ids: Vec<String> = squad.members.iter().map(|m| m.0.clone()).collect();
-        let (chatters, chat_base): (f64, f64) = sqlx::query_as(
+        let watched: Vec<String> = squad.members.iter().map(|m| m.1.clone()).collect();
+        // Real viewers of any member count, under the same rules as a single stream.
+        let (chatters, chat_base, follows, follow_base): (f64, f64, f64, f64) = sqlx::query_as(
             "SELECT
-              (SELECT coalesce(sum(CASE WHEN u.created_at>now()-interval '7 days' THEN 0.5 ELSE 1 END),0) FROM (SELECT DISTINCT m.author_id FROM chat_messages m WHERE m.squad_id=s.id AND m.author_id<>ALL($2) AND m.deleted_at IS NULL AND m.origin IS NULL AND m.created_at>now()-interval '60 seconds') a JOIN users u ON u.id=a.author_id AND u.email_verified)::float8,
-              (SELECT count(DISTINCT (m.author_id, date_trunc('minute', m.created_at))) FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.squad_id=s.id AND m.author_id<>ALL($2) AND m.origin IS NULL AND m.created_at<=now()-interval '60 seconds' AND m.created_at>greatest(s.created_at,now()-interval '31 minutes'))::float8
+              (SELECT coalesce(sum(a.w),0) FROM (SELECT CASE WHEN u.created_at>now()-interval '7 days' THEN $4::float8 ELSE 1.0::float8 END * CASE WHEN bool_and(magnet_low_effort(m.channel_id,m.squad_id,m.author_id,m.body,m.created_at)) THEN $5::float8 ELSE 1.0::float8 END AS w FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.squad_id=s.id AND m.author_id<>ALL($2) AND m.deleted_at IS NULL AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at>now()-interval '60 seconds' AND magnet_room_viewer($3,m.author_id) GROUP BY m.author_id,u.created_at) a)::float8,
+              (SELECT count(DISTINCT (m.author_id, date_trunc('minute', m.created_at))) FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.squad_id=s.id AND m.author_id<>ALL($2) AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at<=now()-interval '60 seconds' AND m.created_at>greatest(s.created_at,now()-interval '31 minutes') AND magnet_room_viewer($3,m.author_id))::float8
+                / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(s.created_at,now()-interval '31 minutes'))::float8/60.0),
+              (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=ANY($2) AND f.created_at>now()-interval '60 seconds' AND magnet_room_viewer($3,f.follower_id))::float8,
+              (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=ANY($2) AND f.created_at<=now()-interval '60 seconds' AND f.created_at>greatest(s.created_at,now()-interval '31 minutes') AND magnet_room_viewer($3,f.follower_id))::float8
                 / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(s.created_at,now()-interval '31 minutes'))::float8/60.0)
              FROM squads s WHERE s.id=$1",
         )
         .bind(&squad.id)
         .bind(&ids)
+        .bind(&watched)
+        .bind(t.new_account_weight)
+        .bind(t.low_effort_weight)
         .fetch_one(&mut *db)
         .await?;
         let signals = Signals {
             chatters,
             chat_base,
-            follows: unit.iter().map(|o| o.2.follows).sum(),
-            follow_base: unit.iter().map(|o| o.2.follow_base).sum(),
+            follows,
+            follow_base,
             raided_by: unit.iter().find_map(|o| o.2.raided_by.clone()),
             flagged: unit.iter().any(|o| o.2.flagged),
         };
@@ -439,9 +465,11 @@ pub async fn tick(app: &App) -> Res<()> {
     .fetch_all(&app.db)
     .await?;
     for lane in lanes {
-        // If the engine fails, the lane holds its current stream.
+        // If the engine fails, the lane holds its current stream; staff see since when.
         if tick_lane(app, &lane).await.is_err() {
-            eprintln!("magnet_event=tick outcome=hold");
+            eprintln!("magnet_event=tick lane={lane} outcome=hold");
+            sqlx::query("UPDATE magnet_lanes SET failing_since=coalesce(failing_since,now()),failures=failures+1 WHERE id=$1")
+                .bind(&lane).execute(&app.db).await?;
         }
     }
     sqlx::query("DELETE FROM magnet_decisions WHERE at<now()-interval '7 days'")
@@ -488,10 +516,12 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
     else {
         return Ok(());
     };
-    sqlx::query("UPDATE magnet_lanes SET ticked_at=now() WHERE id=$1")
-        .bind(lane)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE magnet_lanes SET ticked_at=now(),failing_since=NULL,failures=0 WHERE id=$1",
+    )
+    .bind(lane)
+    .execute(&mut *tx)
+    .await?;
     if !enabled {
         if current.is_some() || pending.is_some() {
             end_feature(&mut tx, lane).await?;
@@ -504,32 +534,58 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
         }
         return Ok(());
     }
+    // A staff pick whose broadcast ended is released, so the lane never waits on it.
+    let mut changed = false;
+    let forced = match forced {
+        Some(id) => {
+            let ended: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM broadcasts WHERE id=$1 AND state IN ('LIVE','RECONNECTING'))")
+                .bind(&id).fetch_one(&mut *tx).await?;
+            if ended {
+                sqlx::query("UPDATE magnet_lanes SET forced_broadcast=NULL WHERE id=$1")
+                    .bind(lane)
+                    .execute(&mut *tx)
+                    .await?;
+                record(&mut tx, lane, &json!({"kind":"released","chosen":id,"reason":"The staff pick ended","candidates":[]})).await?;
+                changed = true;
+                None
+            } else {
+                Some(id)
+            }
+        }
+        None => None,
+    };
     let found = candidates(&mut tx, lane, t).await?;
     let cands: Vec<Candidate> = found.iter().map(|f| f.1.clone()).collect();
     let now = Utc::now();
     // A countdown in progress: switch when it ends, if the next stream is still eligible.
     if let (Some(next), Some(at)) = (&pending, switch_at) {
-        if at <= now {
-            if let Some(unit) = cands.iter().find(|c| c.has(next)) {
-                commit(
-                    &mut tx,
-                    lane,
-                    next,
-                    &unit.members,
-                    pending_kind.as_deref().unwrap_or("fair"),
-                    pending_reason.as_deref().unwrap_or(""),
-                )
-                .await?;
-            } else {
-                sqlx::query("UPDATE magnet_lanes SET pending_broadcast=NULL,pending_kind=NULL,pending_reason=NULL,switch_at=NULL WHERE id=$1")
-                    .bind(lane).execute(&mut *tx).await?;
+        if at > now {
+            tx.commit().await?;
+            if changed {
+                publish(app, lane);
             }
+            return Ok(());
+        }
+        if let Some(unit) = cands.iter().find(|c| c.has(next)) {
+            commit(
+                &mut tx,
+                lane,
+                next,
+                &unit.members,
+                pending_kind.as_deref().unwrap_or("fair"),
+                pending_reason.as_deref().unwrap_or(""),
+            )
+            .await?;
             tx.commit().await?;
             publish(app, lane);
-        } else {
-            tx.commit().await?;
+            return Ok(());
         }
-        return Ok(());
+        // The next stream ended or became ineligible during the countdown: decide again now
+        // rather than a tick later, so viewers aren't left on a stream that may have ended too.
+        sqlx::query("UPDATE magnet_lanes SET pending_broadcast=NULL,pending_kind=NULL,pending_reason=NULL,switch_at=NULL WHERE id=$1")
+            .bind(lane).execute(&mut *tx).await?;
+        record(&mut tx, lane, &json!({"kind":"cancelled","chosen":next,"reason":"The next stream left before the switch","candidates":[]})).await?;
+        changed = true;
     }
     let state = LaneState {
         current: current.clone(),
@@ -547,6 +603,9 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
     match &decision {
         Decision::Hold => {
             tx.commit().await?;
+            if changed {
+                publish(app, lane);
+            }
             return Ok(());
         }
         Decision::Clear => {
@@ -830,7 +889,9 @@ async fn flag(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
 /// GET /api/admin/magnet: lanes and the decision log (7 days).
 async fn admin(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     safety::staff(&app, &jar).await?;
-    let lanes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'name',CASE WHEN l.id='global' THEN 'Global' ELSE g.name END,'enabled',l.enabled,'featuring',c.username,'reason',l.current_reason,'since',l.current_since,'forced',fc.username,'next',pc.username,'switch_at',l.switch_at) FROM magnet_lanes l LEFT JOIN faction_genres g ON g.id=l.id LEFT JOIN broadcasts b ON b.id=l.current_broadcast LEFT JOIN channel_users c ON c.id=b.owner_id LEFT JOIN broadcasts fb ON fb.id=l.forced_broadcast LEFT JOIN channel_users fc ON fc.id=fb.owner_id LEFT JOIN broadcasts pb ON pb.id=l.pending_broadcast LEFT JOIN channel_users pc ON pc.id=pb.owner_id ORDER BY l.id<>'global', g.position NULLS FIRST, l.id")
+    let lanes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'name',CASE WHEN l.id='global' THEN 'Global' ELSE g.name END,'enabled',l.enabled,'featuring',c.username,'reason',l.current_reason,'since',l.current_since,'forced',fc.username,'next',pc.username,'switch_at',l.switch_at,'failing_since',l.failing_since,'stalled',l.enabled AND (l.failing_since IS NOT NULL OR l.ticked_at<now()-make_interval(secs=>$1))) FROM magnet_lanes l LEFT JOIN faction_genres g ON g.id=l.id LEFT JOIN broadcasts b ON b.id=l.current_broadcast LEFT JOIN channel_users c ON c.id=b.owner_id LEFT JOIN broadcasts fb ON fb.id=l.forced_broadcast LEFT JOIN channel_users fc ON fc.id=fb.owner_id LEFT JOIN broadcasts pb ON pb.id=l.pending_broadcast LEFT JOIN channel_users pc ON pc.id=pb.owner_id ORDER BY l.id<>'global', g.position NULLS FIRST, l.id")
+        // A lane that hasn't ticked for six ticks, or whose ticks keep failing, is stalled.
+        .bind((app.config.magnet.tick_seconds * 6) as f64)
         .fetch_all(&app.db).await?;
     let decisions: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('lane',d.lane,'at',d.at,'kind',d.kind,'chosen',c.username,'reason',d.reason,'candidates',d.candidates) FROM magnet_decisions d LEFT JOIN broadcasts b ON b.id=d.chosen LEFT JOIN channel_users c ON c.id=b.owner_id ORDER BY d.at DESC LIMIT 100")
         .fetch_all(&app.db).await?;
