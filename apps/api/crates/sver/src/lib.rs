@@ -71,6 +71,8 @@ pub struct Config {
     pub turnstile_secret: String,
     pub resend_key: String,
     pub mail_from: String,
+    /// The postal address printed at the foot of opt-in alert emails (CAN-SPAM). Empty leaves it out.
+    pub mail_postal_address: String,
     pub providers: Vec<oauth::Provider>,
     pub turnstile_url: String,
     pub breach_url: String,
@@ -116,6 +118,7 @@ impl Config {
         let turnstile_site_key = env("TURNSTILE_SITE_KEY");
         let resend_key = env("RESEND_API_KEY");
         let mail_from = env("MAIL_FROM");
+        let mail_postal_address = env("MAIL_POSTAL_ADDRESS");
         if turnstile_secret.is_empty() || turnstile_site_key.is_empty() {
             return Err("Turnstile keys are required".into());
         }
@@ -146,6 +149,7 @@ impl Config {
             turnstile_secret,
             resend_key,
             mail_from,
+            mail_postal_address,
             providers: oauth::providers_from_env()?,
             trusted_proxy,
             media,
