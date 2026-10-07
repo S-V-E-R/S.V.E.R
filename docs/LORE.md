@@ -140,7 +140,11 @@ Sample lines in the Battle personality:
   - The "The Ashfall" section has the world paragraph and the Accord.
 - **Welcome ceremony and the signup "Your side" step:** the faction paragraph.
 - **Faction hubs:** "The story of …" has the line, the paragraph, the faction's own telling, the relic and its price, the homeland, the shadow, the battle cry and the founders.
-- **War map:** hexes are grouped under the Kiln, Selenne and Aurel, with genres that have no home faction under "Open ground".
+- **War map:**
+  - The RISK-style continent (`TerritoryMap`, PR #72) names each homeland in the sea beside it and marks each faction's capital.
+  - Its side panel shows the Accord, the selected territory's founder and the battle cry.
+  - Genre cards say which homeland a genre lies in.
+  - `lib/lore.ts` maps genres to founders; everything else comes from `lib/factions.ts`.
 
 ## Legacy material
 

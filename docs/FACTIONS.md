@@ -34,7 +34,7 @@ Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page; the
   - Any other genre starts **neutral**.
 - **The war map** is a RISK-style map: each genre is a territory, grouped into each faction's home region, colored by its current holder, with this week's standings when you hover or tap it. Drawn as a light inline SVG (no large images).
 - On phones, and for anyone who prefers it, the same data shows as a **genre board**: one tile per genre with the holder's crest and live standing bars.
-- Territories have neighbors on the map for flavor; at launch, adjacency has no rules attached. RISK-style rules (for example, only attacking neighboring territories) can be added later without changing the data.
+- Each genre has a fixed spot on the map (migration `0043_war_map.sql`) and each faction one capital among its home genres; neighbors are the territories that touch on the map. Genres added later appear in the free spot nearest the middle of the map until a migration gives them a permanent one. At launch, adjacency and capitals have no rules attached. RISK-style rules (for example, only attacking neighboring territories) can be added later without changing the data.
 
 ## Influence
 

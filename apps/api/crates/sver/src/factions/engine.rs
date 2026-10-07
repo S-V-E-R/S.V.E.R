@@ -133,17 +133,20 @@ pub(super) async fn standings(
         Option<String>,
         i32,
         Vec<String>,
+        Option<i32>,
+        Option<i32>,
+        bool,
     );
-    let genres: Vec<GenreRow> = sqlx::query_as("SELECT g.id,g.name,g.home,t.holder,g.position,g.neighbors FROM faction_genres g JOIN faction_territories t ON t.genre=g.id AND t.season_id=$1 ORDER BY g.position,g.id")
+    let genres: Vec<GenreRow> = sqlx::query_as("SELECT g.id,g.name,g.home,t.holder,g.position,g.neighbors,g.map_q,g.map_r,g.capital FROM faction_genres g JOIN faction_territories t ON t.genre=g.id AND t.season_id=$1 ORDER BY g.position,g.id")
         .bind(week.season_id).fetch_all(&mut *db).await?;
     let members: Vec<Value> = FACTIONS.iter().map(|f| json!({"faction":f,"active_members":active.iter().find(|(a,_)| a==f).map_or(0,|(_,n)|*n)})).collect();
-    let rows: Vec<Value> = genres.into_iter().map(|(id,name,home,holder,position,neighbors)| {
+    let rows: Vec<Value> = genres.into_iter().map(|(id,name,home,holder,position,neighbors,map_q,map_r,capital)| {
         let scores: Vec<Value> = FACTIONS.iter().map(|f| {
             let raw=totals.iter().find(|(g,a,_)| g==&id && a==f).map_or(0,|(_,_,n)| *n);
             let divisor=active.iter().find(|(a,_)| a==f).map_or(0,|(_,n)|*n).max(tuning.minimum_divisor);
             json!({"faction":f,"influence":raw,"score":raw as f64/divisor as f64})
         }).collect();
-        json!({"id":id,"name":name,"home":home,"holder":holder,"position":position,"neighbors":neighbors,"scores":scores})
+        json!({"id":id,"name":name,"home":home,"holder":holder,"position":position,"neighbors":neighbors,"map":map_q.zip(map_r).map(|(q,r)| json!({"q":q,"r":r})),"capital":capital,"scores":scores})
     }).collect();
     Ok(json!({"genres":rows,"factions":members}))
 }
