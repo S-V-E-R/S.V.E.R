@@ -1,6 +1,7 @@
 "use client";
 import { useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { factionInfo } from "../lib/factions";
+import { accord, founders, homelands, yearAF } from "../lib/lore";
 import { contest, type Genre } from "../lib/war";
 import { warGeometry, type Territory } from "../lib/warmap";
 
@@ -10,7 +11,7 @@ const nameLines = (name: string) => name.includes(" & ") ? name.split(" & ") : n
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 /** The RISK-style war map: hex-tiled territories, hover to lift and read standings, select to zoom in. */
-export function TerritoryMap({ genres, selected, onSelect }: { genres: Genre[]; selected: string | null; onSelect: (id: string | null) => void }) {
+export function TerritoryMap({ genres, selected, onSelect, season }: { genres: Genre[]; selected: string | null; onSelect: (id: string | null) => void; season?: number | null }) {
   const layoutKey = genres.map(g => `${g.id}:${g.home}:${g.map?.q},${g.map?.r}`).join("|");
   // Geometry depends only on the layout, not on live scores, so the 30-second refresh never redraws tiles.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -46,9 +47,13 @@ export function TerritoryMap({ genres, selected, onSelect }: { genres: Genre[]; 
   const lifted = dragging ? undefined : geo.territories.find(t => t.genre.id === hover);
   const shown = byId.get(hover ?? selected ?? "");
   const label = (t: Territory) => {
-    const g = byId.get(t.genre.id) ?? t.genre, c = contest(g), words = nameLines(g.name), top = g.capital ? 9 : -((words.length - 1) * 11) / 2 - 2;
+    const g = byId.get(t.genre.id) ?? t.genre, c = contest(g), words = nameLines(g.name), capital = g.capital && g.home ? g.home : null, top = capital ? 16 : -((words.length - 1) * 11) / 2 - 2;
     return <g className="territory-label" transform={`translate(${t.x.toFixed(1)} ${t.y.toFixed(1)})`}>
-      {g.capital && g.home && <g className="capital" data-theme={g.home}><circle cy={-14} r={12} /><image href={`/factions/${g.home}.webp`} x={-10} y={-24} width={20} height={20} /></g>}
+      {capital && <g className="capital" data-theme={capital}>
+        {capital === "myria" && <g className="crater"><circle cy={-22} r={19} /><circle cy={-22} r={25} /></g>}
+        <circle cy={-22} r={12} className="capital-seal" /><image href={`/factions/${capital}.webp`} x={-10} y={-32} width={20} height={20} />
+        <text textAnchor="middle" y={2} className="capital-name">{homelands[capital].city}</text>
+      </g>}
       <text textAnchor="middle" y={top}>{words.map((w, n) => <tspan key={n} x="0" dy={n ? 11 : 0}>{w}</tspan>)}</text>
       <text textAnchor="middle" y={top + words.length * 11 + 1} className="territory-detail">{c.contested ? "Contested" : c.top?.score ? `${c.lead.toFixed(0)}% lead` : ""}</text>
     </g>;
@@ -57,11 +62,13 @@ export function TerritoryMap({ genres, selected, onSelect }: { genres: Genre[]; 
     <svg ref={svg} viewBox={`0 0 ${geo.width} ${geo.height}`} className={dragging ? "dragging" : camera.s > 1 ? "zoomed" : undefined} role="group" aria-label="War map. Each territory is a genre, colored by the faction holding it. Select one to zoom in and see its scores."
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onPointerLeave={() => setHover(null)}>
       <defs>
+        <radialGradient id={`${id}-static`} cx="50%" cy="50%" r="72%"><stop offset="55%" stopColor="#030508" stopOpacity="0" /><stop offset="100%" stopColor="#030508" stopOpacity=".7" /></radialGradient>
         <pattern id={`${id}-hatch`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" className="hatch-line" /></pattern>
       </defs>
       <rect width={geo.width} height={geo.height} className="war-sea-bg" />
       <g className="war-camera" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.s})` }}>
         <path d={geo.sea} className="war-sea" /><path d={geo.shallows} className="war-shallows" />
+        {geo.moon && <g className="pale-moon" transform={`translate(${geo.moon.x.toFixed(1)} ${geo.moon.y.toFixed(1)})`} aria-hidden="true"><circle r="19" className="moon-halo" /><path d="M0 -15A15 15 0 1 0 0 15A11 15 0 1 1 0 -15Z" /><text y="30" textAnchor="middle">The Pale Moon</text></g>}
         {geo.territories.map(t => {
           const g = byId.get(t.genre.id) ?? t.genre, c = contest(g);
           return <g key={g.id} data-theme={g.holder ?? "neutral"} className={`territory${c.contested ? " contested" : ""}${selected === g.id ? " selected" : ""}`} role="button" tabIndex={0}
@@ -82,21 +89,38 @@ export function TerritoryMap({ genres, selected, onSelect }: { genres: Genre[]; 
           <path d={lifted.outline} className="lift-edge" />{label(lifted)}
         </g>}
       </g>
+      <rect width={geo.width} height={geo.height} fill={`url(#${id}-static)`} className="war-static" />
+      <g className="war-cartouche" transform={`translate(${geo.width - 16} 26)`} aria-hidden="true"><text textAnchor="end" className="cartouche-title">The Known World</text><text textAnchor="end" y="15" className="cartouche-year">{season ? `Season ${season} · ` : ""}{yearAF(season)} AF</text></g>
       <g className="war-compass" transform={`translate(${geo.width - 34} ${geo.height - 36})`} aria-hidden="true"><circle r="20" /><path d="M0 -17L4 0L0 17L-4 0Z M-17 0L0 -3L17 0L0 3Z" /><text y="-23" textAnchor="middle">N</text></g>
     </svg>
     <div className="war-controls"><button type="button" className="quiet" onClick={() => zoom(1.4)} aria-label="Zoom in">+</button><button type="button" className="quiet" onClick={() => zoom(1 / 1.4)} aria-label="Zoom out" disabled={camera.s <= 1}>−</button><button type="button" className="quiet" onClick={() => { onSelect(null); setCamera(FULL); }} disabled={camera.s <= 1 && !selected}>Full map</button></div>
-    <ul className="war-legend" aria-label="Map key">{(["myria", "aetheron", "glint"] as const).map(f => <li key={f} data-theme={f}><span className="swatch" />{factionInfo(f).name}</li>)}<li data-theme="neutral"><span className="swatch" />Neutral</li><li><span className="swatch hatched" />Contested</li><li><span className="swatch capital-key" />Capital</li></ul></div>
-    <aside className="war-plate" data-theme={shown?.holder ?? "neutral"}>{shown ? <TerritoryPlate genre={shown} /> : <p className="muted">Hover a territory for this week’s standings. Select one to zoom in.</p>}</aside>
+    <ul className="war-legend" aria-label="Map key">{(["myria", "aetheron", "glint"] as const).map(f => <li key={f} data-theme={f}><span className="swatch" />{factionInfo(f).name}</li>)}<li data-theme="neutral"><span className="swatch" />Unclaimed</li><li><span className="swatch hatched" />Contested</li><li><span className="swatch capital-key" />Capital</li><li><span className="swatch static-key" />The Static</li></ul></div>
+    <aside className="war-plate" data-theme={shown?.holder ?? "neutral"}>{shown ? <TerritoryPlate genre={shown} /> : <AccordPlate />}</aside>
   </div>;
 }
 
 function TerritoryPlate({ genre: g }: { genre: Genre }) {
-  const c = contest(g), max = Math.max(1, ...g.scores.map(s => s.score));
+  const c = contest(g), max = Math.max(1, ...g.scores.map(s => s.score)), founder = founders[g.id];
   return <>
-    <p className="eyebrow">{g.home ? `${factionInfo(g.home).name} home${g.capital ? " · capital" : ""}` : "Open ground"}</p>
+    <p className="eyebrow">{g.capital && g.home ? `${homelands[g.home].city} · capital of ${factionInfo(g.home).name}` : g.home ? `${factionInfo(g.home).name} home turf` : "Open ground"}</p>
     <h3>{g.name}</h3>
-    <p>Held by {g.holder ? factionInfo(g.holder).name : "nobody"}{c.contested && <strong className="contested-tag">Contested</strong>}</p>
+    <p>Held by {g.holder ? factionInfo(g.holder).name : "nobody, under the Accord"}{c.contested && <strong className="contested-tag">Contested</strong>}</p>
     <dl className="genre-scores">{[...g.scores].sort((a, b) => b.score - a.score).map(s => <div key={s.faction} data-theme={s.faction}><dt>{factionInfo(s.faction).name}</dt><dd><meter min={0} max={max} value={s.score} aria-label={`${factionInfo(s.faction).name} balanced score`} />{s.score.toLocaleString("en-US", { maximumFractionDigits: 1 })}</dd></div>)}</dl>
     <p className="muted">{c.top?.score ? `${factionInfo(c.top.faction).name} leads by ${c.lead.toFixed(1)}%.` : "No influence this week."}</p>
+    {(g.capital && g.home || founder) && <div className="plate-lore">
+      {g.capital && g.home && <p>{homelands[g.home].about} Home of {homelands[g.home].relic}.</p>}
+      {founder && <p><strong>{founder.name}.</strong> {founder.deed}</p>}
+    </div>}
+    {g.holder && <p className="battle-cry">“{homelands[g.holder].cry}”</p>}
+  </>;
+}
+
+/** Shown before anything is hovered: the terms the war is fought under. */
+function AccordPlate() {
+  return <>
+    <p className="eyebrow">Sworn in 41 AF</p>
+    <h3>The Accord</h3>
+    <ol className="accord-terms">{accord.map(term => <li key={term}>{term}</li>)}</ol>
+    <p className="muted">Hover a territory for this week’s standings. Select one to zoom in.</p>
   </>;
 }

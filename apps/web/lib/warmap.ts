@@ -20,6 +20,8 @@ export type Territory = {
 export type WarGeometry = {
   width: number; height: number; territories: Territory[]; sea: string; shallows: string;
   coast: string; borders: string; frontiers: string; regions: { home: Faction; x: number; y: number }[];
+  /** Open sky beside Aetheron's region name, where the Pale Moon hangs. */
+  moon: { x: number; y: number } | null;
 };
 
 function hash(x: number, y: number, seed: number) {
@@ -61,7 +63,7 @@ function place(genres: Genre[]) {
 }
 
 export function warGeometry(genres: Genre[]): WarGeometry {
-  if (!genres.length) return { width: 0, height: 0, territories: [], sea: "", shallows: "", coast: "", borders: "", frontiers: "", regions: [] };
+  if (!genres.length) return { width: 0, height: 0, territories: [], sea: "", shallows: "", coast: "", borders: "", frontiers: "", regions: [], moon: null };
   const spots = place(genres);
   const qs = [...spots.values()];
   const minQ = Math.min(...qs.map(s => s.q)) - 3, maxQ = Math.max(...qs.map(s => s.q)) + 3, minR = Math.min(...qs.map(s => s.r)) - 2, maxR = Math.max(...qs.map(s => s.r)) + 2;
@@ -137,5 +139,12 @@ export function warGeometry(genres: Genre[]): WarGeometry {
     const spot = spots.find(open);
     return spot ? [{ home, x: spot[0], y: spot[1] }] : [];
   });
-  return { width: n1(right - left), height: n1(bottom - top), territories, sea: seaPath, shallows, coast, borders, frontiers, regions };
+  // The page overlays controls (top left), the title (top right), the key (bottom left) and the compass (bottom right).
+  const W = right - left, H = bottom - top, overlaid = (mx: number, my: number) => (my < 70 && (mx < 170 || mx > W - 250)) || (my > H - 70 && (mx < 400 || mx > W - 90));
+  const clear = ([mx, my]: number[]) => mx > 30 && my > 30 && mx < W - 30 && my < H - 30 && !overlaid(mx, my) && [0, 1, 2, 3, 4, 5, 6, 7].every(k => isSea(mx + 30 * Math.cos(k * Math.PI / 4), my + 30 * Math.sin(k * Math.PI / 4))) && [-45, -22, 0, 22, 45].every(dx => isSea(mx + dx, my + 30)) && regions.every(r => Math.abs(r.x - mx) > 110 || Math.abs(r.y - my) > 36);
+  const home = territories.filter(t => t.genre.home === "aetheron");
+  const hx = home.reduce((n, t) => n + t.x, 0) / (home.length || 1), hy = home.reduce((n, t) => n + t.y, 0) / (home.length || 1);
+  const rings = [140, 180, 220, 260].flatMap(rad => [200, 230, 250, 270, 290, 320, 170, 140].map(deg => [hx + rad * Math.cos(deg * Math.PI / 180), hy + rad * Math.sin(deg * Math.PI / 180)]));
+  const moon = home.length ? rings.find(clear) : undefined;
+  return { width: n1(right - left), height: n1(bottom - top), territories, sea: seaPath, shallows, coast, borders, frontiers, regions, moon: moon ? { x: moon[0], y: moon[1] } : null };
 }
