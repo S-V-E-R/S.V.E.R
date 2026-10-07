@@ -130,16 +130,17 @@ fn frame(path: &std::path::Path, at: f64) -> Vec<u8> {
     assert_eq!(out.stdout.len(), 216 * 384);
     out.stdout
 }
-/// Mean difference inside one corner's band: left/right half, top or bottom watermark band.
+/// Mean difference where one corner's mark sits on a 216x384 frame. The left mark spans about
+/// 6-43% of the width and the right one 43-80%, so only each mark's outer part is compared.
 fn corner_difference(a: &[u8], b: &[u8], corner: sver::beacons::watermark::Corner) -> f64 {
     use sver::beacons::watermark::Corner::*;
     let (x0, x1) = match corner {
-        TopLeft | BottomLeft => (0, 108),
-        TopRight | BottomRight => (108, 216),
+        TopLeft | BottomLeft => (13, 70),
+        TopRight | BottomRight => (112, 172),
     };
     let (y0, y1) = match corner {
-        TopLeft | TopRight => (20, 60),
-        BottomLeft | BottomRight => (255, 300),
+        TopLeft | TopRight => (22, 46),
+        BottomLeft | BottomRight => (272, 296),
     };
     let mut total = 0.0;
     for y in y0..y1 {
@@ -454,9 +455,11 @@ async fn beacons_publish_watermark_count_and_remove() {
         "the upload is removed once processed"
     );
     assert!(!private.join(format!("beacons/{good_id}/upload")).exists());
-    // Uploads are padded, not stretched: the 4:3 picture keeps black bars above and below.
+    // Uploads are padded, not stretched: the 4:3 picture keeps black bars above and below
+    // (rows 0-110 of 384). Rows 24-46 are skipped, where a top-corner watermark may sit.
     let padded = frame(&private.join(good_row["mp4_key"].as_str().unwrap()), 1.0);
-    assert!(padded[..216 * 40].iter().all(|p| *p < 24));
+    assert!(padded[..216 * 20].iter().all(|p| *p < 24));
+    assert!(padded[216 * 50..216 * 100].iter().all(|p| *p < 24));
 
     // A Take It Down blocklist match never publishes, including a retry of the same file.
     let blocked = e
