@@ -11,6 +11,9 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 async fn bridge(e: &Env, key: &str, ready: bool) -> (StatusCode, Value) {
+    beat(e, key, json!({"ready":ready,"input_mode":"chat"})).await
+}
+async fn beat(e: &Env, key: &str, body: Value) -> (StatusCode, Value) {
     let response = sver::router(e.app.clone())
         .oneshot(
             Request::builder()
@@ -19,9 +22,7 @@ async fn bridge(e: &Env, key: &str, ready: bool) -> (StatusCode, Value) {
                 .header("origin", &e.app.config.origin)
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {key}"))
-                .body(Body::from(
-                    json!({"ready":ready,"input_mode":"chat"}).to_string(),
-                ))
+                .body(Body::from(body.to_string()))
                 .unwrap(),
         )
         .await
@@ -195,6 +196,51 @@ pub async fn exercise(e: &Env) {
         e.sql("DELETE FROM channel_restrictions WHERE channel_id='plays-host'")
             .await;
     }
+    // Health: the host watchdog's problem reaches staff admins once, after two minutes.
+    e.sql("INSERT INTO staff_roles(user_id,role) VALUES('plays-viewer','admin')")
+        .await;
+    let mails = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mail_jobs WHERE user_id='plays-viewer'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    let before = mails().await;
+    let sick = json!({"ready":true,"input_mode":"chat","problem":"The Plays picture stopped advancing; the game was restarted."});
+    assert_eq!(beat(e, &key, sick.clone()).await.0, StatusCode::OK);
+    sver::plays::tick(&e.app).await.unwrap();
+    assert_eq!(mails().await, before, "not before two minutes");
+    e.sql("UPDATE plays_runtime SET problem_since=now()-interval '3 minutes'")
+        .await;
+    assert_eq!(
+        beat(e, &key, sick).await.0,
+        StatusCode::OK,
+        "a repeat keeps the start time"
+    );
+    sver::plays::tick(&e.app).await.unwrap();
+    assert_eq!(mails().await, before + 1, "admins are emailed");
+    sver::plays::tick(&e.app).await.unwrap();
+    assert_eq!(mails().await, before + 1, "at most once an hour");
+    assert_eq!(
+        beat(
+            e,
+            &key,
+            json!({"ready":true,"input_mode":"chat","problem":"x".repeat(201)})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(bridge(e, &key, true).await.0, StatusCode::OK);
+    let cleared: Option<String> = sqlx::query_scalar("SELECT problem FROM plays_runtime")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(cleared, None, "a healthy beat clears the problem");
+    e.sql("DELETE FROM staff_roles WHERE user_id='plays-viewer'")
+        .await;
+    e.sql("DELETE FROM mail_jobs WHERE user_id='plays-viewer'")
+        .await;
     e.sql("UPDATE plays_runtime SET heartbeat_at=now()-interval '1 minute'")
         .await;
     assert_eq!(
