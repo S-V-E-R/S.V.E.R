@@ -115,6 +115,16 @@ pub async fn exercise(e: &Env) {
         hls_only["playback"]["preferred"], "hls",
         "a viewer may ask for HLS"
     );
+    // Over the WebRTC limit the broadcast is on the CDN: no WHEP URL is offered.
+    e.sql("UPDATE broadcasts SET delivery='cdn' WHERE public_id='pub-play'")
+        .await;
+    let (_, scaled) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
+    assert_eq!(
+        scaled["playback"],
+        json!({"webrtc":null,"hls":"https://media.example/rebuild/pub-play.m3u8","preferred":"hls"})
+    );
+    e.sql("UPDATE broadcasts SET delivery='webrtc' WHERE public_id='pub-play'")
+        .await;
     let (_, channel) = guest(e, "GET", "/api/channels/streamer", Value::Null).await;
     assert_eq!(channel["channel"]["live"], true, "channel page shows live");
     let (_, card) = guest(e, "GET", "/api/users/streamer/card", Value::Null).await;
