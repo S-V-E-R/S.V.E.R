@@ -117,6 +117,8 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .chat-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
 .chat-form textarea{resize:vertical;min-width:0;width:100%}
 .chat-form .error{grid-column:1/-1;margin:0}
+/* Notes above the box (highlight on) take the full row, so the box and Send keep their columns. */
+.chat-form .chat-draft-note{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;font-size:13px}
 .chat-actions{display:inline-flex;flex-wrap:wrap;gap:4px}
 .chat-message-actions{font-size:.85em}
 .chat-message-actions summary{cursor:pointer;color:var(--ink-muted);width:fit-content;padding:4px 0}
