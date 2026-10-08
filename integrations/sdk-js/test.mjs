@@ -13,6 +13,7 @@ const gateway = await serve((socket, request) => {
   socket.on("message", text => {
     const message = JSON.parse(text);
     seen.push(message);
+    if (message.type === "ready" || message.type === "cap") socket.send(JSON.stringify({ type: "ack", id: message.id }));
     if (message.type === "state") {
       if (message.controls.jump?.label === "") socket.send(JSON.stringify({ type: "error", id: message.id, message: "Labels are 1–40 characters." }));
       else {
@@ -50,7 +51,12 @@ const sent = seen.filter(m => m.type === "state");
 assert.equal(sent.length, 2);
 assert.notEqual(sent[0].id, sent[1].id, "each request has its own id");
 
+// Ready and the input cap.
+await sdk.ready();
+await sdk.setInputCap(20);
+assert.deepEqual(seen.filter(m => m.type === "ready" || m.type === "cap").map(m => m.per_second ?? m.type), ["ready", 20]);
+
 sdk.close();
 gateway.close();
-console.log("SDK checks passed: connect, event routing, state acks and errors.");
+console.log("SDK checks passed: connect, event routing, state acks and errors, ready and cap.");
 process.exit(0);

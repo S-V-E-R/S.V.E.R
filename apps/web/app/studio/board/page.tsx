@@ -11,6 +11,7 @@ import { send, useLoad } from "../../../lib/client-api";
 type Mine = {
   username: string; draft: BoardDef; published: BoardDef | null; version: number; published_at: string | null;
   disabled: boolean; moderators_run: boolean; overlay: { set: boolean; connected: boolean }; webhook_url: string | null;
+  input_cap: number | null; typical_balance: number | null;
   checklist: { label: string; ok: boolean; required: boolean }[]; templates: { name: string; board: BoardDef }[];
   effects: string[]; kinds: Control["kind"][]; audiences: Control["audience"][]; webhook_secret?: string | null;
 };
@@ -31,7 +32,8 @@ function ControlEditor({ control, mine, onChange, onMove, onRemove, onTest, save
     <legend>{KIND_NAMES[c.kind]} · <code>{c.id}</code></legend>
     <label className="field"><span>Label</span><input value={c.label} maxLength={40} required onChange={e => onChange({ ...c, label: e.target.value })} /></label>
     {!simple && <>
-      <label className="field narrow"><span>Cost (Engagement Valor, 0 is free)</span><input type="number" min={0} max={100000} value={c.cost} onChange={e => onChange({ ...c, cost: num(e.target.value) })} /></label>
+      <label className="field narrow"><span>Cost (Engagement Valor, 0 is free)</span><input type="number" min={0} max={100000} value={c.cost} onChange={e => onChange({ ...c, cost: num(e.target.value) })} />
+        {mine.typical_balance !== null && <small className={c.cost > mine.typical_balance ? "form-message" : "muted"}>{c.cost > mine.typical_balance ? "Above" : "Within"} the typical viewer balance here ({mine.typical_balance.toLocaleString()}).</small>}</label>
       <label className="field narrow"><span>Cooldown per viewer (seconds)</span><input type="number" min={0} max={3600} value={c.cooldown_seconds} onChange={e => onChange({ ...c, cooldown_seconds: num(e.target.value) })} /></label>
       <label className="field narrow"><span>Limit per stream</span><input type="number" min={1} max={1000} placeholder="No limit" value={c.per_stream_limit ?? ""} onChange={e => onChange({ ...c, per_stream_limit: e.target.value ? Number(e.target.value) : null })} /></label>
       <label className="field narrow"><span>Effect</span><select value={c.effect} onChange={e => onChange({ ...c, effect: e.target.value })}>{mine.effects.map(fx => <option key={fx} value={fx}>{fx === "none" ? "None" : fx[0].toUpperCase() + fx.slice(1)}</option>)}</select></label>
@@ -57,6 +59,7 @@ export default function StudioBoard() {
   const [busy, setBusy] = useState(false);
   const [state, setState] = useState<SaveState>({});
   const [webhook, setWebhook] = useState("");
+  const [cap, setCap] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const [overlayUrl, setOverlayUrl] = useState<string | null>(null);
   const [shown, add] = useShown();
@@ -64,6 +67,7 @@ export default function StudioBoard() {
     setMine(data);
     if (!keepDraft) { setBoard(data.draft); setDirty(false); }
     setWebhook(data.webhook_url ?? "");
+    setCap(data.input_cap?.toString() ?? "");
   }, []);
   const load = useCallback(async () => {
     const r = await send<Mine>("GET", "/api/me/board");
@@ -139,15 +143,16 @@ export default function StudioBoard() {
         {mine.overlay.set && <button type="button" className="small quiet" disabled={busy} onClick={() => { setOverlayUrl(null); void act("DELETE", "/api/me/board/overlay", undefined, "Overlay URL turned off.", dirty); }}>Turn off</button>}
       </div>
     </Section>
-    <Section title="Moderators and webhook" intro="A webhook sends each press to your own HTTPS endpoint, signed with a secret (header SVER-Signature: t=timestamp,v1=HMAC-SHA256 of “timestamp.body”). Private network addresses are refused.">
+    <Section title="Moderators, webhook and input cap" intro="Over the input cap, viewers see “Busy, try again”; a connected game can set it too. A webhook sends each press to your own HTTPS endpoint, signed with a secret (header SVER-Signature: t=timestamp,v1=HMAC-SHA256 of “timestamp.body”). Private network addresses are refused.">
       <form onSubmit={async e => {
         e.preventDefault();
-        const data = await act("PUT", "/api/me/board/settings", { moderators_run: mine.moderators_run, webhook_url: webhook || null }, "Saved.", dirty);
+        const data = await act("PUT", "/api/me/board/settings", { moderators_run: mine.moderators_run, webhook_url: webhook || null, input_cap: cap ? Number(cap) : null }, "Saved.", dirty);
         if (data?.webhook_secret) setSecret(data.webhook_secret);
       }}>
-        <label className="checkbox"><input type="checkbox" checked={mine.moderators_run} onChange={e => void act("PUT", "/api/me/board/settings", { moderators_run: e.target.checked, webhook_url: mine.webhook_url }, "Saved.", dirty)} /> Let my channel moderators pause the board and block viewers from it</label>
+        <label className="checkbox"><input type="checkbox" checked={mine.moderators_run} onChange={e => void act("PUT", "/api/me/board/settings", { moderators_run: e.target.checked, webhook_url: mine.webhook_url, input_cap: mine.input_cap }, "Saved.", dirty)} /> Let my channel moderators pause the board and block viewers from it</label>
         <label className="field"><span>Webhook URL (optional)</span><input type="url" value={webhook} maxLength={500} placeholder="https://example.com/sver" onChange={e => setWebhook(e.target.value)} /></label>
-        <button className="small" disabled={busy}>Save webhook</button>
+        <label className="field narrow"><span>Input cap (presses and joystick moves a second sent to your game)</span><input type="number" min={1} max={100} placeholder="No cap" value={cap} onChange={e => setCap(e.target.value)} /></label>
+        <button className="small" disabled={busy}>Save</button>
       </form>
       {secret && <p className="form-message">Signing secret, shown once: <code>{secret}</code> <CopyButton value={secret} label="signing secret" /></p>}
     </Section>

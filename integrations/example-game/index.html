@@ -55,7 +55,10 @@ if (params.get("token")) {
   });
   board.on("input", move => { if (move.control === "move") runner.speed = Math.max(2, Math.min(9, runner.speed + move.x)); });
   board.on("close", () => { status.textContent = "Disconnected from S.V.E.R; reconnecting…"; });
-  board.on("hello", hello => { status.textContent = `Connected to ${hello.channel}'s board. Viewers are in control.`; });
+  board.on("hello", hello => {
+    status.textContent = `Connected to ${hello.channel}'s board. Viewers are in control.`;
+    board.ready().catch(() => {});
+  });
   board.connect().catch(error => { status.textContent = error.message; });
 }
 addEventListener("keydown", e => {

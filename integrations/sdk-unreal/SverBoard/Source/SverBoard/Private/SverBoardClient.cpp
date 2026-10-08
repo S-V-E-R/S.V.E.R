@@ -191,6 +191,30 @@ void USverBoardClient::SendControl(const FString& Control, const TSharedRef<FJso
 	Send(Message);
 }
 
+void USverBoardClient::Ready()
+{
+	const TSharedRef<FJsonObject> Message = MakeShared<FJsonObject>();
+	Message->SetStringField(TEXT("type"), TEXT("ready"));
+	Message->SetNumberField(TEXT("id"), NextId++);
+	Send(Message);
+}
+
+void USverBoardClient::SetInputCap(int32 PerSecond)
+{
+	const TSharedRef<FJsonObject> Message = MakeShared<FJsonObject>();
+	Message->SetStringField(TEXT("type"), TEXT("cap"));
+	Message->SetNumberField(TEXT("id"), NextId++);
+	if (PerSecond > 0)
+	{
+		Message->SetNumberField(TEXT("per_second"), PerSecond);
+	}
+	else
+	{
+		Message->SetField(TEXT("per_second"), MakeShared<FJsonValueNull>());
+	}
+	Send(Message);
+}
+
 void USverBoardClient::SetDisabled(const FString& Control, bool bDisabled)
 {
 	const TSharedRef<FJsonObject> Change = MakeShared<FJsonObject>();

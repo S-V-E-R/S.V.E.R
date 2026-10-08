@@ -148,6 +148,18 @@ pub async fn exercise(e: &Env) {
     let (mut bridge, _) = connect(None, Some(bridge_token.clone())).await.unwrap();
     assert_eq!(next(&mut bridge, "hello").await["kind"], "bridge");
 
+    // ---- A connected game holds the board at "Starting…" until it says ready ----
+    assert_eq!(hello["starting"], true);
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert_eq!(viewing["starting"], true);
+    assert_eq!(press(e, &viewer, "jump", 1).await, StatusCode::CONFLICT);
+    let reply = say(&mut bridge, json!({"type": "ready"})).await;
+    assert_eq!(reply["type"], "error", "only the game says ready");
+    assert_eq!(
+        say(&mut game, json!({"type": "ready", "id": "r"})).await,
+        json!({"type": "ack", "id": "r"})
+    );
+
     // ---- Presses reach both ----
     assert_eq!(press(e, &viewer, "jump", 1).await, StatusCode::OK);
     for ws in [&mut game, &mut bridge] {
@@ -236,6 +248,54 @@ pub async fn exercise(e: &Env) {
         (&republished["version"], &republished["state"]),
         (&json!(2), &json!({}))
     );
+
+    // ---- Input cap: set by the game (or the streamer); over it, "Busy, try again" ----
+    // A fresh second of the 10-messages limit.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    for bad in [json!(0), json!(101), json!("5")] {
+        let reply = say(&mut game, json!({"type": "cap", "per_second": bad})).await;
+        assert_eq!(reply["type"], "error", "cap {bad}");
+    }
+    assert_eq!(
+        say(&mut game, json!({"type": "cap", "per_second": 1})).await["type"],
+        "ack"
+    );
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    let version = viewing["version"].as_i64().unwrap();
+    assert_eq!(press(e, &viewer, "jump", version).await, StatusCode::OK);
+    let (status, busy) = call(
+        e,
+        "POST",
+        &format!("{CHANNEL}/press"),
+        Some(&viewer),
+        json!({"id": id(), "version": version, "control": "jump"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{busy}");
+    assert!(busy.to_string().contains("Busy, try again."), "{busy}");
+    let (status, _) = call(
+        e,
+        "PUT",
+        "/api/me/board/settings",
+        Some(&owner),
+        json!({"moderators_run": false, "input_cap": 0}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, studio) = call(
+        e,
+        "PUT",
+        "/api/me/board/settings",
+        Some(&owner),
+        json!({"moderators_run": false}),
+    )
+    .await;
+    assert_eq!(
+        (status, &studio["input_cap"]),
+        (StatusCode::OK, &Value::Null),
+        "the streamer clears it"
+    );
+    assert!(studio.get("typical_balance").is_some());
 
     // ---- At most 10 messages a second ----
     for _ in 0..12 {

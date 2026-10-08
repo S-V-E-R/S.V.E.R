@@ -5,6 +5,7 @@
 //   const board = new SverBoard({ token: "sver_g_..." });
 //   board.on("press", p => { if (p.control === "jump") player.jump(); });
 //   board.on("input", m => player.steer(m.x, m.y));            // joystick moves
+//   board.on("hello", () => board.ready());                     // after every (re)connect
 //   await board.connect();
 //   await board.setState({ jump: { disabled: true, label: "Jump (cooling)" }, coins: { progress: 3 } });
 //
@@ -126,6 +127,13 @@ export class SverBoard {
   label(control, label) { return this.setState({ [control]: { label } }); }
   progress(control, progress) { return this.setState({ [control]: { progress } }); }
   ping() { return this.request({ type: "ping" }); }
+  /**
+   * The game is listening (game connections only). Viewers see "Starting…" and can't press from
+   * each connect until this, so call it on every "hello", once the game can take input.
+   */
+  ready() { return this.request({ type: "ready" }); }
+  /** The most presses and joystick moves a second sent to the game (1–100, or null for none). */
+  setInputCap(perSecond) { return this.request({ type: "cap", per_second: perSecond }); }
 
   close() {
     this.stopped = true;
@@ -133,6 +141,6 @@ export class SverBoard {
   }
 }
 
-function snapshot({ board, version, disabled, state, goals }) {
-  return { board, version, disabled, state, goals };
+function snapshot({ board, version, disabled, state, goals, starting, input_cap }) {
+  return { board, version, disabled, state, goals, starting, input_cap };
 }

@@ -8,7 +8,7 @@ export type Control = {
 };
 export type Board = { screens: { name: string; controls: Control[] }[] };
 export type ControlState = { label?: string; disabled?: boolean };
-export type Snapshot = { board: Board | null; version: number; disabled: boolean; state: Record<string, ControlState>; goals: Record<string, number> };
+export type Snapshot = { board: Board | null; version: number; disabled: boolean; state: Record<string, ControlState>; goals: Record<string, number>; starting: boolean; input_cap: number | null };
 export type Hello = Snapshot & { type: "hello"; kind: "bridge" | "game"; channel: string; protocol: number };
 export type Press = {
   type: "board_effect"; control: string; label: string; effect: string; user: { username: string };
@@ -36,5 +36,7 @@ export class SverBoard {
   label(control: string, label: string | null): Promise<void>;
   progress(control: string, progress: number): Promise<void>;
   ping(): Promise<void>;
+  ready(): Promise<void>;
+  setInputCap(perSecond: number | null): Promise<void>;
   close(): void;
 }

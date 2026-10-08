@@ -16,7 +16,7 @@ use axum::{
         ConnectInfo, DefaultBodyLimit, Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     response::Response,
     routing::{get, post, put},
 };
@@ -304,17 +304,28 @@ struct Row {
     webhook_url: Option<String>,
     /// What a connected game set: per-control label overrides and availability.
     live_state: Value,
+    /// A game is connected but hasn't said "ready" yet.
+    starting: bool,
+    /// Most presses and joystick moves per second forwarded to the game.
+    input_cap: Option<i16>,
 }
-const ROW: &str = "SELECT draft,published,version,published_at,disabled,moderators_run,
-    coalesce(overlay_seen_at>now()-interval '30 seconds',false) AS overlay, overlay_token_hash IS NOT NULL AS overlay_set, webhook_url, live_state FROM boards";
+fn row_sql() -> String {
+    format!("SELECT draft,published,version,published_at,disabled,moderators_run,
+    coalesce(overlay_seen_at>now()-interval '30 seconds',false) AS overlay, overlay_token_hash IS NOT NULL AS overlay_set, webhook_url, live_state,
+    {STARTING} AS starting, input_cap FROM boards")
+}
+/// A game session checked in within the last minute and hasn't said "ready".
+const STARTING: &str =
+    "coalesce(game_seen_at>now()-interval '60 seconds' AND NOT game_ready,false)";
 async fn row(app: &App, channel: &str) -> Res<Option<Row>> {
-    // ROW is fixed SQL; the channel is bound.
-    Ok(
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{ROW} WHERE channel_id=$1")))
-            .bind(channel)
-            .fetch_optional(&app.db)
-            .await?,
-    )
+    // row_sql() is fixed SQL; the channel is bound.
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{} WHERE channel_id=$1",
+        row_sql()
+    )))
+    .bind(channel)
+    .fetch_optional(&app.db)
+    .await?)
 }
 async fn channel(app: &App, name: &str) -> Res<String> {
     let mut conn = app.db.acquire().await?;
@@ -362,6 +373,8 @@ async fn studio(app: &App, user: &auth::User) -> Res<Value> {
             overlay_set: false,
             webhook_url: None,
             live_state: json!({}),
+            starting: false,
+            input_cap: None,
         },
     };
     let templates: Vec<Value> = templates()
@@ -374,7 +387,8 @@ async fn studio(app: &App, user: &auth::User) -> Res<Value> {
         "version": row.version, "published_at": row.published_at,
         "disabled": row.disabled, "moderators_run": row.moderators_run,
         "overlay": {"set": row.overlay_set, "connected": row.overlay},
-        "webhook_url": row.webhook_url,
+        "webhook_url": row.webhook_url, "input_cap": row.input_cap,
+        "typical_balance": typical_balance(app, &user.id).await?,
         "checklist": checklist(&row),
         "templates": templates, "effects": EFFECTS, "kinds": KINDS, "audiences": AUDIENCES,
     }))
@@ -432,7 +446,7 @@ async fn publish(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     studio(&app, &user).await.map(Json)
 }
 /// Open boards and overlays reload.
-fn changed(app: &App, channel: &str) {
+pub(crate) fn changed(app: &App, channel: &str) {
     app.chat.publish(channel, None, 0, json!({"type": "board"}));
 }
 
@@ -463,6 +477,8 @@ async fn test(State(app): State<App>, jar: CookieJar, Json(input): Json<Test>) -
 pub struct Settings {
     moderators_run: bool,
     webhook_url: Option<String>,
+    #[serde(default)]
+    input_cap: Option<i16>,
 }
 /// PUT /api/me/board/settings: a new or changed webhook gets a new signing secret, shown once.
 async fn settings(
@@ -480,6 +496,7 @@ async fn settings(
     if let Some(url) = url {
         webhook_target(&app, url).map_err(|m| Fail::field("webhook_url", m))?;
     }
+    check_cap(input.input_cap).map_err(|m| Fail::field("input_cap", m))?;
     let current: Option<Option<String>> =
         sqlx::query_scalar("SELECT webhook_url FROM boards WHERE channel_id=$1")
             .bind(&user.id)
@@ -491,19 +508,47 @@ async fn settings(
         .as_deref()
         .map(|s| sec::seal(&app, "board-webhook", s))
         .transpose()?;
-    sqlx::query("INSERT INTO boards(channel_id,draft,moderators_run,webhook_url,webhook_secret) VALUES($1,$2,$3,$4,$5)
-        ON CONFLICT(channel_id) DO UPDATE SET moderators_run=EXCLUDED.moderators_run, webhook_url=EXCLUDED.webhook_url,
+    sqlx::query("INSERT INTO boards(channel_id,draft,moderators_run,webhook_url,webhook_secret,input_cap) VALUES($1,$2,$3,$4,$5,$6)
+        ON CONFLICT(channel_id) DO UPDATE SET moderators_run=EXCLUDED.moderators_run, webhook_url=EXCLUDED.webhook_url, input_cap=EXCLUDED.input_cap,
             webhook_secret=CASE WHEN EXCLUDED.webhook_url IS NULL THEN NULL ELSE coalesce(EXCLUDED.webhook_secret,boards.webhook_secret) END, updated_at=now()")
         .bind(&user.id)
         .bind(sqlx::types::Json(Board::empty()))
         .bind(input.moderators_run)
         .bind(url)
         .bind(sealed)
+        .bind(input.input_cap)
         .execute(&app.db)
         .await?;
     let mut body = studio(&app, &user).await?;
     body["webhook_secret"] = json!(secret);
     Ok(Json(body))
+}
+
+pub(crate) fn check_cap(cap: Option<i16>) -> Result<(), &'static str> {
+    match cap {
+        Some(n) if !(1..=100).contains(&n) => Err("The input cap is 1–100 a second."),
+        _ => Ok(()),
+    }
+}
+/// Pricing guidance: the median Engagement Valor of viewers who watched or chatted here in the
+/// last 30 days. None under 5 of them, so it never describes one person.
+async fn typical_balance(app: &App, channel: &str) -> Res<Option<i64>> {
+    Ok(sqlx::query_scalar("SELECT CASE WHEN count(*)>=5 THEN (percentile_disc(0.5) WITHIN GROUP (ORDER BY balance))::bigint END FROM engagement
+        WHERE channel_id=$1 AND greatest(last_watch_at,last_chat_at)>now()-interval '30 days'")
+        .bind(channel)
+        .fetch_one(&app.db)
+        .await?)
+}
+/// The input cap: one more input to the game this second, or "Busy, try again".
+async fn within_cap(app: &App, channel: &str, cap: Option<i16>) -> Res<()> {
+    let Some(cap) = cap else { return Ok(()) };
+    match sec::reserve(app, vec![format!("board-cap:{channel}")], cap.into(), 1).await {
+        Err(crate::Error(StatusCode::TOO_MANY_REQUESTS, ..)) => Err(Fail {
+            retry: Some(1),
+            ..Fail::new(StatusCode::TOO_MANY_REQUESTS, "Busy, try again.")
+        }),
+        other => other.map(drop).map_err(Fail::from),
+    }
 }
 
 /// POST /api/me/board/overlay: a new private overlay URL (the old one stops working).
@@ -715,7 +760,7 @@ async fn view(
     }
     Ok(Json(json!({
         "board": board.0, "version": row.version, "disabled": row.disabled, "live": live.is_some(), "state": row.live_state,
-        "overlay": row.overlay, "goals": goals, "used": used, "last_press": last,
+        "overlay": row.overlay, "starting": row.starting, "goals": goals, "used": used, "last_press": last,
         "balance": balance, "signed_in": viewer.is_some(), "can_run": can_run, "blocks": blocks,
     })))
 }
@@ -752,6 +797,11 @@ async fn press(
     let board = row.published.ok_or_else(Fail::missing)?.0;
     if row.disabled {
         return Err(Fail::conflict("The board is paused right now."));
+    }
+    if row.starting {
+        return Err(Fail::conflict(
+            "The game is starting. Try again in a moment.",
+        ));
     }
     if input.version != row.version {
         return Err(Fail::stale());
@@ -798,6 +848,7 @@ async fn press(
         if !(-1.0..=1.0).contains(&x) || !(-1.0..=1.0).contains(&y) {
             return Err(Fail::bad("Joystick input is -1 to 1."));
         }
+        within_cap(&app, &channel, row.input_cap).await?;
         app.chat.publish(&channel, Some(&user.id), 0, json!({"type": "board_input", "control": control.id,
             "x": x, "y": y, "user": author, "stream_ms": stream_ms, "at": at, "overlay": row.overlay}));
         return Ok(Json(json!({})));
@@ -883,6 +934,8 @@ async fn press(
                 "stream_ms": stream_ms, "created_at": Utc::now()}))
             .execute(&mut *tx).await?;
     }
+    // Last, so a press refused for cooldown or balance doesn't use a slot (the tx rolls back on Busy).
+    within_cap(&app, &channel, row.input_cap).await?;
     tx.commit().await?;
     crate::surge::participated(&mut *app.db.acquire().await?, &channel, &user.id).await?;
     // The effect plays once: in the video when the overlay is connected, otherwise over the player.
@@ -901,9 +954,11 @@ async fn press(
 /// The published board as integrations see it: definition, version, pause, game-set state and
 /// goal progress (null board when nothing is published).
 pub(crate) async fn snapshot(db: &mut sqlx::PgConnection, channel: &str) -> Res<Value> {
-    let row: Option<(Option<sqlx::types::Json<Board>>, i32, bool, Value)> = sqlx::query_as(
-        "SELECT published, version, disabled, live_state FROM boards WHERE channel_id=$1",
-    )
+    // row_sql() is fixed SQL; the channel is bound.
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{} WHERE channel_id=$1",
+        row_sql()
+    )))
     .bind(channel)
     .fetch_optional(&mut *db)
     .await?;
@@ -914,10 +969,21 @@ pub(crate) async fn snapshot(db: &mut sqlx::PgConnection, channel: &str) -> Res<
     .fetch_one(&mut *db)
     .await?;
     Ok(match row {
-        Some((Some(board), version, disabled, state)) => {
-            json!({"board": board.0, "version": version, "disabled": disabled, "state": state, "goals": goals})
+        Some(Row {
+            published: Some(board),
+            version,
+            disabled,
+            live_state,
+            starting,
+            input_cap,
+            ..
+        }) => {
+            json!({"board": board.0, "version": version, "disabled": disabled, "state": live_state, "goals": goals,
+                "starting": starting, "input_cap": input_cap})
         }
-        _ => json!({"board": null, "version": 0, "disabled": false, "state": {}, "goals": {}}),
+        _ => {
+            json!({"board": null, "version": 0, "disabled": false, "state": {}, "goals": {}, "starting": false, "input_cap": null})
+        }
     })
 }
 /// A game's update to the published board (docs/CROWDSYNC.md "Game SDK"): per control, a label

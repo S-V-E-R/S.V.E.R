@@ -22,7 +22,7 @@ From S.V.E.R:
 
 | `type` | When | Fields |
 |---|---|---|
-| `hello` | On connect | `kind` (`bridge`/`game`), `channel`, `protocol` (1), `board` (the published board, or null), `version`, `disabled` (paused), `state`, `goals` |
+| `hello` | On connect | `kind` (`bridge`/`game`), `channel`, `protocol` (1), `board` (the published board, or null), `version`, `disabled` (paused), `state`, `goals`, `starting` (a game is connected but hasn't said `ready`), `input_cap` |
 | `board_effect` | A viewer pressed a control | `control`, `label`, `effect`, `user.username`, `text` (text inputs), `goal` (`progress`, `target`, `reached`), `stream_ms`, `at` |
 | `board_effect` without `control` | A Skill, emote combo or Surge level played | `skill` or `surge`, `effect`, `caption` |
 | `board_input` | A viewer moved a joystick | `control`, `x`, `y` (−1 to 1), `user.username` |
@@ -34,6 +34,8 @@ To S.V.E.R (at most 10 messages a second):
 
 - `{"type": "ping", "id": 1}`
 - `{"type": "state", "id": 2, "controls": {"jump": {"disabled": true, "label": "Jump (cooling)"}, "coins": {"progress": 12}}}`. Game tokens only. Per control: `label` (1–40 characters, or `null` to restore the builder's label), `disabled` (viewers can't press it) and, for goals, `progress` (0 to the target). A message is applied in full or not at all. Publishing a new board version clears these.
+- `{"type": "ready", "id": 3}`. Game tokens only. From each game connect, the board shows "Starting…" and refuses presses until the game says it is listening; send this after every `hello`. A game that disconnects (or misses two 30-second checks) stops holding the board.
+- `{"type": "cap", "id": 4, "per_second": 20}`. Game tokens only. The most presses and joystick moves a second sent to the game (1–100, or `null` for none); the streamer can also set it in Creator Studio. Over the cap, the newest input is refused and the viewer sees "Busy, try again".
 
 Close code `4001` means the token was revoked; don't reconnect. `4000` means the connection fell behind; reconnect.
 

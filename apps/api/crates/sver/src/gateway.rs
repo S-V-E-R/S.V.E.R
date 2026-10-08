@@ -132,6 +132,8 @@ pub struct TokenQuery {
 }
 struct Connection {
     id: String,
+    /// This socket, so a game's reconnect isn't undone by the old socket closing.
+    session: String,
     channel: String,
     username: String,
     kind: String,
@@ -171,6 +173,7 @@ async fn socket(
     };
     let connection = Connection {
         id,
+        session: profiles::new_id(),
         channel,
         username,
         kind,
@@ -188,9 +191,46 @@ async fn send(ws: &mut WebSocket, value: Value) -> bool {
 async fn board(app: &App, channel: &str) -> Res<Value> {
     boards::snapshot(&mut *app.db.acquire().await?, channel).await
 }
-async fn session(app: App, c: Connection, mut ws: WebSocket) {
+async fn session(app: App, c: Connection, ws: WebSocket) {
+    if c.kind == "game" {
+        // The board shows "Starting…" until this game says ready.
+        game(
+            &app,
+            &c,
+            "game_session=$2, game_seen_at=now(), game_ready=false",
+        )
+        .await;
+    }
+    run(&app, &c, ws).await;
+    if c.kind == "game" {
+        game(
+            &app,
+            &c,
+            "game_session=NULL, game_seen_at=NULL, game_ready=false",
+        )
+        .await;
+    }
+}
+/// Updates this game session's board fields and reloads open boards.
+async fn game(app: &App, c: &Connection, set: &str) {
+    let sql = format!(
+        "UPDATE boards SET {set} WHERE channel_id=$1 AND (game_session IS NULL OR game_session=$2 OR $3)"
+    );
+    // A new session takes over; the others only touch their own.
+    let takeover = set.starts_with("game_session=$2");
+    let done = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(&c.channel)
+        .bind(&c.session)
+        .bind(takeover)
+        .execute(&app.db)
+        .await;
+    if matches!(done, Ok(r) if r.rows_affected() > 0) {
+        boards::changed(app, &c.channel);
+    }
+}
+async fn run(app: &App, c: &Connection, mut ws: WebSocket) {
     let mut events = app.chat.subscribe();
-    let Ok(snapshot) = board(&app, &c.channel).await else {
+    let Ok(snapshot) = board(app, &c.channel).await else {
         return;
     };
     let mut hello = json!({"type": "hello", "kind": c.kind, "channel": c.username, "protocol": 1});
@@ -212,13 +252,17 @@ async fn session(app: App, c: Connection, mut ws: WebSocket) {
                     let _ = ws.send(Message::Close(Some(CloseFrame { code: 4001, reason: "revoked".into() }))).await;
                     return;
                 }
+                if c.kind == "game" {
+                    let _ = sqlx::query("UPDATE boards SET game_seen_at=now() WHERE channel_id=$1 AND game_session=$2")
+                        .bind(&c.channel).bind(&c.session).execute(&app.db).await;
+                }
             }
             event = events.recv() => match event {
                 Ok(e) if forward(&e, &c.channel) => {
                     let mut out = e.payload.clone();
                     if out["type"] == "board" {
                         // Published or paused: send the whole board again.
-                        let Ok(snapshot) = board(&app, &c.channel).await else { return; };
+                        let Ok(snapshot) = board(app, &c.channel).await else { return; };
                         merge(&mut out, snapshot);
                     }
                     if !send(&mut ws, out).await { return; }
@@ -239,7 +283,7 @@ async fn session(app: App, c: Connection, mut ws: WebSocket) {
                     let reply = if sent > MESSAGES_PER_SECOND {
                         json!({"type": "error", "message": "Too many messages. At most 10 a second."})
                     } else {
-                        handle(&app, &c, &text).await
+                        handle(app, c, &text).await
                     };
                     if !send(&mut ws, reply).await { return; }
                 }
@@ -262,7 +306,8 @@ fn forward(e: &Arc<Event>, channel: &str) -> bool {
             Some("board_effect" | "board_input" | "board" | "board_state")
         )
 }
-/// One message from a client: "ping", or (games only) "state" with control changes.
+/// One message from a client: "ping", or (games only) "state" with control changes, "ready" when
+/// the game is listening, and "cap" with the most inputs per second it wants (`per_second`).
 async fn handle(app: &App, c: &Connection, text: &str) -> Value {
     let Ok(message) = serde_json::from_str::<Value>(text) else {
         return json!({"type": "error", "message": "Send JSON."});
@@ -295,7 +340,34 @@ async fn handle(app: &App, c: &Connection, text: &str) -> Value {
                 Err(fail) => json!({"type": "error", "id": id, "message": fail.message}),
             }
         }
-        Some("state") => {
+        Some("ready") if c.kind == "game" => {
+            game(app, c, "game_ready=true, game_seen_at=now()").await;
+            json!({"type": "ack", "id": id})
+        }
+        Some("cap") if c.kind == "game" => {
+            let cap = match &message["per_second"] {
+                Value::Null => None,
+                n => match n.as_i64().and_then(|n| i16::try_from(n).ok()) {
+                    Some(n) => Some(n),
+                    None => {
+                        return json!({"type": "error", "id": id, "message": "\"per_second\" is 1–100, or null for no cap."});
+                    }
+                },
+            };
+            if let Err(message) = boards::check_cap(cap) {
+                return json!({"type": "error", "id": id, "message": message});
+            }
+            match sqlx::query("UPDATE boards SET input_cap=$2 WHERE channel_id=$1")
+                .bind(&c.channel)
+                .bind(cap)
+                .execute(&app.db)
+                .await
+            {
+                Ok(_) => json!({"type": "ack", "id": id}),
+                Err(_) => json!({"type": "error", "id": id, "message": "Try again."}),
+            }
+        }
+        Some("state" | "ready" | "cap") => {
             json!({"type": "error", "id": id, "message": "Only game connections can change the board."})
         }
         _ => json!({"type": "error", "id": id, "message": "Unknown message type."}),
