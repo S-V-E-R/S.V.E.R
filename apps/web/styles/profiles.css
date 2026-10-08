@@ -117,6 +117,18 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .chat-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
 .chat-form textarea{resize:vertical;min-width:0;width:100%}
 .chat-form .error{grid-column:1/-1;margin:0}
+/* Chat dock (ChatDock): Emotes, Rewards and Skills under the box; each opens a panel over the
+   bottom of the chat with tiles, so the chat column stays messages plus the box. */
+.chat-dock{position:relative;margin-top:8px}
+.chat-dock-bar{display:flex;flex-wrap:wrap;gap:6px}
+.chat-dock-panel{position:absolute;left:0;right:0;bottom:calc(100% + 6px);z-index:20;max-height:min(420px,60vh);overflow:auto;padding:10px;background:var(--surface);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.chat-dock-tabs{display:flex;align-items:center;gap:6px;margin-bottom:8px}.chat-dock-tabs [aria-selected="true"]{border-color:var(--accent);color:var(--ink)}.chat-dock-close{margin-left:auto}
+.dock-tiles{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px}
+.dock-tiles li{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dock-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;min-height:96px;padding:8px 6px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:6px;color:var(--ink);font:inherit;font-size:12px;letter-spacing:0;text-transform:none;box-shadow:none;text-align:center;overflow-wrap:anywhere}
+button.dock-tile:not(:disabled):hover,button.dock-tile:focus-visible{border-color:var(--accent)}
+.dock-tile:disabled{opacity:.45;cursor:not-allowed}
+.dock-tile-name{font-weight:600}.dock-cost{color:var(--accent);font-weight:600}
 /* Notes above the box (highlight on) take the full row, so the box and Send keep their columns. */
 .chat-form .chat-draft-note{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;font-size:13px}
 .chat-actions{display:inline-flex;flex-wrap:wrap;gap:4px}
@@ -175,8 +187,6 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .step-up .panel{width:min(440px,100%)}
 
 .chat-emote { display: inline-block; width: 28px; height: 28px; vertical-align: middle; object-fit: contain; }
-.chat-emotes { border-top: 1px solid var(--line); padding: .5rem 0; }
-.chat-emotes li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 
 /* Notifications list (go-live alerts). */
 .notifications li { gap: 12px; align-items: center; justify-content: flex-start; }
@@ -208,8 +218,6 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .subscribe-tiers { list-style: none; padding: 0; display: grid; gap: 0.5rem; }
 .subscribe-tiers li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .chat-highlight { background: color-mix(in srgb, var(--accent-light) 16%, transparent); padding: 0.15rem 0.4rem; }
-.chat-rewards summary { cursor: pointer; }
-.chat-rewards li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.4rem; }
 .reward-form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.6rem; }
 .tier-badge { border-color: var(--accent); color: var(--accent); margin: 0 0.3rem; }
 .shine-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.5rem 0.75rem; border: 1px solid var(--accent); background: var(--tint); }

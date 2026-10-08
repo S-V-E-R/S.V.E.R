@@ -7,7 +7,7 @@ import { Crest } from "./FactionIdentity";
 import { GuildChatBadge } from "./Guilds";
 import { CREATOR_TIERS, type Chip } from "../lib/types";
 import { EmoteImage, type ChannelEmote } from "./Emote";
-import { Rewards } from "./Rewards";
+import { ChatDock } from "./ChatDock";
 import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
@@ -267,13 +267,6 @@ export function Chat({ username, account, squad }: { username: string; account: 
       </li>)}
     </ol>
     {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt("Reason for lifting this restriction")?.trim(); if (!reason || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, { reason }); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
-    <details className="chat-emotes"><summary>Channel emotes ({emotes.length})</summary>
-      {emotes.length === 0 ? <p className="muted">No channel emotes yet.</p> : <ul className="list">{emotes.map(emote => <li key={emote.id}>
-        {account ? <button type="button" className="quiet small" disabled={busy} onClick={() => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${emote.code} `.slice(0, 500)); input.current?.focus(); }} aria-label={`Insert ${emote.code}`}><EmoteImage emote={emote} /> {emote.code}</button> : <span className="row"><EmoteImage emote={emote} /> {emote.code}</span>}
-        {account && account.toLowerCase() !== username.toLowerCase() ? <ReportButton label={`Report ${emote.code}`} target={{ target_type: "emote", target_id: emote.id }} /> : <TakeDownLink target={{ target_type: "emote", target_id: emote.id }} />}
-      </li>)}</ul>}
-    </details>
-    {!squad && <Rewards username={username} account={account} version={rewardsVersion} onHighlight={setHighlight} />}
     {account ? <form onSubmit={submit} className="chat-form">
       {reply && <div className="chat-reply-draft"><span>Replying to @{reply.username}: {reply.body}</span><button type="button" className="small quiet" onClick={() => setReply(null)}>Cancel reply</button></div>}
       {highlight !== null && <div className="chat-draft-note"><span>Your next message is highlighted · {highlight.toLocaleString()} Engagement Valor</span><button type="button" className="small quiet" onClick={() => setHighlight(null)}>Not highlighted</button></div>}
@@ -285,5 +278,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
       {canPin && <button type="button" className="quiet small" disabled={busy || !draft.trim()} onClick={event => submit(event, true)}>Send and pin</button>}
       {error && <p role="alert" className="error">{error}</p>}
     </form> : <p className="muted"><Link href="/login">Sign in</Link> to chat.</p>}
+    <ChatDock username={username} account={account} emotes={emotes} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
+      onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 500)); input.current?.focus(); }} />
   </section>;
 }

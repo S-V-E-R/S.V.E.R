@@ -1,6 +1,5 @@
 "use client";
 import { StatusMark } from "./shell/Icons";
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { playerDelay } from "./BoardEffects";
@@ -14,7 +13,6 @@ export type PollState = {
 export type Counter = { id: string; kind: "shiny" | "deaths" | "tally" | "custom"; label: string; value: number; extra: number; odds: number | null };
 export type Rally = { myria: number; aetheron: number; glint: number };
 export type Surge = { id: string; level: number; threshold: number; started_at: string; ends_at: string; ended_at: string | null; participants: number; awarded: number };
-type Skill = { id: string; name: string; category: string; valor: number; effect: string; enabled: boolean };
 type State = { poll: PollState | null; prediction: PollState | null; counters: Counter[]; balance: number | null; can_run: boolean; can_resolve: boolean; max_stake: number; rally: Rally | null; surge: Surge | null; faction: keyof Rally | null };
 const FACTIONS: [keyof Rally, string][] = [["myria", "Myria"], ["aetheron", "Aetheron"], ["glint", "Glint"]];
 
@@ -28,37 +26,6 @@ export function RallyMeter({ rally }: { rally: Rally }) {
 }
 
 /** Skills: premium effects paid in Purchased Valor, sent as a chat message like a tribute. Loads when opened. */
-function Skills({ path }: { path: string }) {
-  const [data, setData] = useState<{ skills: Skill[]; valor: number | null; paused: boolean } | null>(null);
-  const [text, setText] = useState("");
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function toggle(opened: boolean) {
-    if (!opened || data) return;
-    const r = await send<{ skills: Skill[]; valor: number | null; paused: boolean }>("GET", `${path}/skills`);
-    if (r.ok) setData(r.data); else setNote(r.error);
-  }
-  async function play(skill: Skill) {
-    if (!window.confirm(`Play ${skill.name} for ${skill.valor.toLocaleString()} Valor?`)) return;
-    setBusy(true); setNote("");
-    const r = await send("POST", `${path}/chat`, { id: crypto.randomUUID(), body: text.trim() || skill.name, skill: skill.id });
-    setBusy(false);
-    if (!r.ok) { setNote(r.error); return; }
-    setText(""); setNote(`${skill.name} played.`);
-    setData(d => d && { ...d, valor: d.valor === null ? null : d.valor - skill.valor });
-  }
-  return <details className="crowd-skills panel" onToggle={e => void toggle(e.currentTarget.open)}>
-    <summary>Skills{data?.valor != null && <> · {data.valor.toLocaleString()} Valor</>}</summary>
-    {!data ? <p className="loading">{note || "Loading…"}</p> : data.valor === null ? <p className="muted">Sign in to play Skills. Streamers can&apos;t play Skills on their own channel.</p> : <>
-      <p className="muted small">Skills use your Purchased Valor, show on stream and in chat, and pay the streamer like a tribute. <Link href="/wallet">Get Valor</Link></p>
-      {data.paused && <p className="form-message">Effects are paused on this channel right now.</p>}
-      <label className="field"><span>Message (optional)</span><input value={text} maxLength={200} onChange={e => setText(e.target.value)} /></label>
-      <div className="crowd-options">{data.skills.filter(s => s.enabled).map(s => <button key={s.id} type="button" className="small" disabled={busy || data.paused || (data.valor ?? 0) < s.valor} onClick={() => play(s)}>{s.name} <small>{s.valor.toLocaleString()} Valor</small></button>)}</div>
-    </>}
-    {data && note && <p role="status" className="form-message">{note}</p>}
-  </details>;
-}
-
 /** How a counter reads: "12", "4–2", or a shiny hunt's encounters, phase and chance so far. */
 export function counterText(c: Counter) {
   if (c.kind === "tally") return `${c.value}–${c.extra}`;
@@ -193,7 +160,6 @@ export function Crowd({ username }: { username: string }) {
     {state.poll && <PollCard poll={state.poll} path={path} state={state} now={now} onChange={load} />}
     {state.prediction && <PollCard poll={state.prediction} path={path} state={state} now={now} onChange={load} />}
     {state.can_run && <StartForm path={path} onChange={load} />}
-    <Skills path={path} />
   </div>;
 }
 
