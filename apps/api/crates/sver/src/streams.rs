@@ -355,6 +355,25 @@ pub async fn mature_blocked(
     .await?;
     Ok(labeled && viewer != channel && !auth::is_adult(db, viewer).await?)
 }
+/// Live channels labeled mature, when `viewer` is a signed-in under-18 account (otherwise none).
+/// Lists drop them after their own ordering, so fair rotation is unchanged.
+pub async fn mature_hidden(
+    db: &mut PgConnection,
+    viewer: Option<&str>,
+) -> profiles::Res<std::collections::HashSet<String>> {
+    let Some(viewer) = viewer else {
+        return Ok(Default::default());
+    };
+    if auth::is_adult(&mut *db, viewer).await? {
+        return Ok(Default::default());
+    }
+    Ok(sqlx::query_scalar("SELECT s.owner_id FROM stream_settings s WHERE s.mature AND s.owner_id<>$1 AND EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=s.owner_id AND b.state IN ('LIVE','RECONNECTING'))")
+        .bind(viewer)
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .collect())
+}
 /// SRS media callbacks can resolve only an accepted publisher, including its final segments.
 pub async fn recording_context(
     db: &mut PgConnection,

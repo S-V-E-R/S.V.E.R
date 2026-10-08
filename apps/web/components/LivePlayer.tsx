@@ -10,7 +10,7 @@ import { RecordedPlayer } from "./RecordedPlayer";
 import { LiveVideoTools } from "./LiveVideoTools";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
-type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string } };
+type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string; mature?: boolean } };
 type Live =
   | { live: false; hosting?: { username: string; display_name: string } }
   | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null };
@@ -254,7 +254,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   }, [broadcast, isOwner, path, magnetLane]);
 
   const raidBar = counting && <div className="raid-countdown" role="status">
-    {isOwner ? <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s <button type="button" className="small quiet" onClick={() => void send("DELETE", "/api/me/raids").then(r => { if (r.ok) setPushed(null); })}>Cancel raid</button></>
+    {isOwner ? <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s{counting.target.mature && <> (labeled mature: viewers under 18 stay behind)</>} <button type="button" className="small quiet" onClick={() => void send("DELETE", "/api/me/raids").then(r => { if (r.ok) setPushed(null); })}>Cancel raid</button></>
       : <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s <button type="button" className="small quiet" onClick={() => setStayed(counting.id)}>Stay here</button></>}
   </div>;
   if (!live?.live) {

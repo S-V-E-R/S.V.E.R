@@ -243,8 +243,10 @@ pub async fn my_following(
     .await?;
     let more = rows.len() as i64 > PAGE;
     let rows = &rows[..rows.len().min(PAGE as usize)];
+    let mature = crate::streams::mature_hidden(&mut db, Some(&user.id)).await?;
     let mut items: Vec<Value> = rows
         .iter()
+        .filter(|(_, _, id)| !mature.contains(id))
         .map(|(chip, at, id)| json!({"user": chip, "followed_at": at,"guilds":guilds.iter().find(|g|g.0==*id).map(|g|&g.2)}))
         .collect();
     items.iter_mut().for_each(|v| hydrate(&app, v));

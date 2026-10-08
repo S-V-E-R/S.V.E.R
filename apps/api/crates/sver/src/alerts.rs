@@ -165,7 +165,7 @@ pub async fn fan_out(app: &App) -> Res<()> {
         };
         // Followers with alerts on for this channel; never the owner, people the owner blocked or
         // banned from the channel, unverified, restricted or deleted accounts.
-        let recipients: Vec<(String, bool, bool, bool, String)> = sqlx::query_as("SELECT c.id,coalesce(s.site,true),coalesce(s.push,true),coalesce(s.email,false),u.email FROM follows f JOIN channel_users c ON c.id=f.follower_id JOIN users u ON u.id=f.follower_id LEFT JOIN notification_settings s ON s.user_id=f.follower_id WHERE f.following_id=$1 AND f.alerts AND c.eligible AND c.email_verified AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE k.blocker_id=$1 AND k.blocked_id=f.follower_id) AND NOT EXISTS(SELECT 1 FROM channel_restrictions r WHERE r.channel_id=$1 AND r.user_id=f.follower_id AND r.kind='ban')")
+        let recipients: Vec<(String, bool, bool, bool, String)> = sqlx::query_as("SELECT c.id,coalesce(s.site,true),coalesce(s.push,true),coalesce(s.email,false),u.email FROM follows f JOIN channel_users c ON c.id=f.follower_id JOIN users u ON u.id=f.follower_id LEFT JOIN notification_settings s ON s.user_id=f.follower_id WHERE f.following_id=$1 AND f.alerts AND c.eligible AND c.email_verified AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE k.blocker_id=$1 AND k.blocked_id=f.follower_id) AND NOT EXISTS(SELECT 1 FROM channel_restrictions r WHERE r.channel_id=$1 AND r.user_id=f.follower_id AND r.kind='ban') AND NOT (coalesce((SELECT mature FROM stream_settings WHERE owner_id=$1),false) AND coalesce(u.date_of_birth>current_date-interval '18 years',true))")
             .bind(&owner)
             .fetch_all(&mut *tx)
             .await?;

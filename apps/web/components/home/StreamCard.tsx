@@ -11,7 +11,7 @@ export function StreamCard({ s, viewerFaction, fresh = false }: { s: LiveCard; v
   return <Link href={`/${s.username}/live`} className={ally ? "stream-card ally" : "stream-card"}>
     <span className="stream-thumb">
       <LiveThumbnail src={s.thumbnail} label={s.category ?? s.display_name} />
-      <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}{s.label && <span className="tag-label">{s.label}</span>}</span>
+      <span className="stream-tags"><span className="tag-live">Live</span>{s.mature && <span className="tag-label mature-tag">Mature</span>}{ally && <span className="tag-ally">Ally</span>}{s.label && <span className="tag-label">{s.label}</span>}</span>
       {fresh
         ? <span className="stream-started">Started {uptime(s.started_at)} ago</span>
         : <><span className="stream-viewers">{s.viewers.toLocaleString()} watching</span><span className="stream-uptime">{uptime(s.started_at)}</span></>}
