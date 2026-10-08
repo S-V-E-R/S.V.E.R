@@ -141,6 +141,8 @@ async fn state(
         role = moderation::role_of(&app, &channel, v).await?;
     }
     out["balance"] = json!(balance);
+    // The streamer's own viewers rally; the streamer gets an explanation instead of the button.
+    out["own"] = json!(viewer.as_ref().is_some_and(|v| v.id == channel));
     out["can_run"] = json!(role.is_some());
     out["can_resolve"] = json!(matches!(role, Some(Role::Owner | Role::Staff)));
     // Phase 3: the rally meter, the running Surge and the viewer's faction (for the rally button).
