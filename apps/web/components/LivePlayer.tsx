@@ -86,6 +86,8 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const [live, setLive] = useState<Live | null>(null);
   const [lastRaid, setLastRaid] = useState<Raid | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
+  // Autoplay with sound was refused, so the stream started muted; the Unmute button turns it on.
+  const [autoMuted, setAutoMuted] = useState(false);
   // Which transport is playing, so board effects wait for this player's own delay.
   const [transport, setTransport] = useState<"webrtc" | "hls" | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -184,7 +186,15 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
           stop = url === webrtc ? await startWebRtc(element, url, fail) : await startHls(element, url, fail);
           if (cancelled) break;
           const started = playingWithin(element, 8000);
-          await element.play().catch(() => { if (!cancelled) setPhase("blocked"); });
+          // Browsers may refuse autoplay with sound: start muted with an Unmute button instead. If
+          // even muted autoplay is refused, keep the stream loaded behind a Play button (no
+          // startup timeout tears it down while the viewer decides).
+          const allowed = await element.play().then(() => true, async () => {
+            if (element.muted) return false;
+            element.muted = true;
+            return element.play().then(() => { if (!cancelled) setAutoMuted(true); return true; }, () => false);
+          });
+          if (!allowed) { started.catch(() => {}); if (!cancelled) { setPhase("blocked"); setTransport(url === webrtc ? "webrtc" : "hls"); } return; }
           await started;
           if (!cancelled) { setPhase("playing"); setTransport(url === webrtc ? "webrtc" : "hls"); }
           return;
@@ -239,10 +249,11 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
   return <div className={focused ? "live-player focused" : "live-player"}>
-    {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={onUnmute ? event => { if (!event.currentTarget.muted) onUnmute(); } : undefined} aria-label={`${live.title}, live`} />}
+    {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} aria-label={`${live.title}, live`} />}
     {!rewind && <PlayerEffects username={username} video={video} transport={transport} />}
     {!rewind && status && <p className="player-status" role="status">{status}</p>}
     {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
+    {!rewind && autoMuted && phase === "playing" && <button type="button" className="player-action" onClick={() => { if (video.current) video.current.muted = false; }}>Unmute</button>}
     {!rewind && phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} size={nested ? "compact" : "normal"} />}
