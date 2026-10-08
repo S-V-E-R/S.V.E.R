@@ -276,9 +276,9 @@ export function Chat({ username, account, squad }: { username: string; account: 
     {!squad && <Rewards username={username} account={account} version={rewardsVersion} onHighlight={setHighlight} />}
     {account ? <form onSubmit={submit} className="chat-form">
       {reply && <div className="chat-reply-draft"><span>Replying to @{reply.username}: {reply.body}</span><button type="button" className="small quiet" onClick={() => setReply(null)}>Cancel reply</button></div>}
+      {highlight !== null && <div className="chat-draft-note"><span>Your next message is highlighted · {highlight.toLocaleString()} Engagement Valor</span><button type="button" className="small quiet" onClick={() => setHighlight(null)}>Not highlighted</button></div>}
       <label htmlFor="chat-input" className="sr-only">Message</label>
       <textarea ref={input} id="chat-input" value={draft} disabled={busy} maxLength={500} rows={2} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
-      {highlight !== null && <span className="tribute-draft">Highlighted · {highlight.toLocaleString()} Engagement Valor <button type="button" className="small quiet" onClick={() => setHighlight(null)}>Not highlighted</button></span>}
       <button type="submit" disabled={busy}>{tribute ? "Pay tribute" : "Send"}</button>
       {tribute === null ? <button type="button" className="quiet small" disabled={busy} onClick={() => setTribute(10)}>Tribute</button>
         : <span className="tribute-draft"><label htmlFor="tribute-amount">Valor</label> <input id="tribute-amount" type="number" min={10} step={1} value={tribute} onChange={e => setTribute(Math.max(0, Math.floor(Number(e.target.value) || 0)))} /> <button type="button" className="quiet small" onClick={() => setTribute(null)}>No tribute</button> <Link href="/wallet" className="small">Get Valor</Link></span>}
