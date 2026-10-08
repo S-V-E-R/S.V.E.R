@@ -171,9 +171,27 @@ async fn beacons_publish_watermark_count_and_remove() {
     config.resend_key.clear();
     config.videos.storage = sver::media::Storage::Filesystem(root.join("private"));
     config.media.storage = sver::media::Storage::Filesystem(root.join("public"));
-    config.take_down.purge_url.clear();
+    // A fake CDN that records what it was asked to purge.
+    let purge = axum::Router::new().route(
+        "/purge",
+        axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+            let files = body["files"].as_array().cloned().unwrap_or_default();
+            PURGED.lock().unwrap().extend(
+                files
+                    .into_iter()
+                    .filter_map(|f| f.as_str().map(str::to_owned)),
+            );
+            axum::Json(json!({"success": true}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    config.take_down.purge_url = format!("http://{}/purge", listener.local_addr().unwrap());
+    config.take_down.purge_token = "synthetic-purge".into();
+    tokio::spawn(async move { axum::serve(listener, purge).await.unwrap() });
     config.beacons.uploads = true;
     config.beacons.tuning.likes_per_user_hour = 4;
+    config.beacons.tuning.taps_per_ip_hour = 2;
+    config.beacons.tuning.guest_sessions_per_network_hour = 2;
     let app = App::new(db.clone(), config).await.unwrap();
     let e = synthetic_owner(app, fake).await;
     let viewer = person(&e, "bc-viewer", "BeaconViewer", true).await;
@@ -683,6 +701,22 @@ async fn beacons_publish_watermark_count_and_remove() {
         )
         .await;
     assert_eq!(own["recorded"], false);
+    // Guests can mint browser IDs, so new guest sessions are capped per network.
+    let guest = |b: &str| json!({"browser_id": b, "media_time": 0.0, "visible": true});
+    let (first, second) = (id_like(), id_like());
+    for b in [&first, &second, &first] {
+        assert_eq!(
+            call(&e, "POST", &beat_path, None, guest(b)).await.0,
+            StatusCode::OK
+        );
+    }
+    assert_eq!(
+        call(&e, "POST", &beat_path, None, guest(&id_like()))
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS,
+        "a third new guest session from one network"
+    );
 
     // Likes: signed in only, one per account, can be taken back, rate-limited.
     let like = format!("/api/beacons/{id}/like");
@@ -751,6 +785,16 @@ async fn beacons_publish_watermark_count_and_remove() {
     .await
     .1;
     assert_eq!(jumped["url"], "/Streamer/live");
+    // Taps are limited per network too, since guests can mint browser IDs.
+    let tapped = |b: String| json!({"browser_id": b});
+    assert_eq!(
+        call(&e, "POST", &tap, None, tapped(id_like())).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&e, "POST", &tap, None, tapped(id_like())).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
     e.sql("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level) VALUES('bc-live','u:bc-viewer',now()+interval '1 minute','counted')").await;
     sver::beacons::worker::maintain(&e.app).await.unwrap();
     assert_eq!(
@@ -841,6 +885,22 @@ async fn beacons_publish_watermark_count_and_remove() {
             .unwrap()
             .contains("/thumbnail?ticket=")
     );
+    // Link previews are cached by the sites that show them, so their ticket lasts days.
+    let raw = share["mp4"]
+        .as_str()
+        .unwrap()
+        .split("ticket=")
+        .nth(1)
+        .unwrap();
+    let sealed: String = url::form_urlencoded::parse(format!("t={raw}").as_bytes())
+        .next()
+        .unwrap()
+        .1
+        .into_owned();
+    let ticket: Value =
+        serde_json::from_str(&sver::security::unseal(&e.app, "beacon-ticket", &sealed).unwrap())
+            .unwrap();
+    assert!(ticket["until"].as_i64().unwrap() > chrono::Utc::now().timestamp() + 6 * 24 * 3600);
 
     // Reports reach the admin queue; the Beacon keeps playing until staff act.
     let (status, _) = call(
@@ -914,6 +974,11 @@ async fn beacons_publish_watermark_count_and_remove() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(beacon(&e, &id).await["status"], "REMOVED");
+    let page = format!("{}/beacons/{id}", e.app.config.origin);
+    assert!(
+        PURGED.lock().unwrap().contains(&page),
+        "staff removal purges the page"
+    );
     assert_eq!(
         call(&e, "GET", &format!("/api/beacons/{id}"), None, Value::Null)
             .await
@@ -994,4 +1059,11 @@ async fn beacons_publish_watermark_count_and_remove() {
         .execute(&admin)
         .await
         .unwrap();
+}
+
+/// URLs the fake CDN was asked to purge.
+static PURGED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// A fresh guest browser ID.
+fn id_like() -> String {
+    uuid::Uuid::new_v4().to_string()
 }

@@ -11,6 +11,9 @@ pub struct Tuning {
     pub beats_per_viewer_minute: i32,
     pub beats_per_ip_minute: i32,
     pub taps_per_viewer_hour: i32,
+    pub taps_per_ip_hour: i32,
+    /// New guest playback sessions per network (guests can mint browser IDs).
+    pub guest_sessions_per_network_hour: i32,
     pub mutes_per_user_hour: i32,
 }
 impl Default for Tuning {
@@ -22,6 +25,8 @@ impl Default for Tuning {
             beats_per_viewer_minute: 60,
             beats_per_ip_minute: 600,
             taps_per_viewer_hour: 60,
+            taps_per_ip_hour: 600,
+            guest_sessions_per_network_hour: 60,
             mutes_per_user_hour: 60,
         }
     }

@@ -230,12 +230,27 @@ pub fn ticket(
     scope: &str,
     age_ack: bool,
 ) -> Res<String> {
+    ticket_for(app, video, user, scope, age_ack, 300)
+}
+/// Link previews: Discord, X and Reddit cache the video URL, so it lasts 7 days. It still stops
+/// at once when the video is hidden, removed or changed (the revision and access are rechecked).
+pub fn share_ticket(app: &App, video: &Video) -> Res<String> {
+    ticket_for(app, video, None, "play", false, 7 * 24 * 3600)
+}
+fn ticket_for(
+    app: &App,
+    video: &Video,
+    user: Option<&auth::User>,
+    scope: &str,
+    age_ack: bool,
+    seconds: i64,
+) -> Res<String> {
     let value = Ticket {
         video: video.id.clone(),
         revision: video.revision,
         subject: user.map(|u| u.id.clone()),
         scope: scope.into(),
-        until: Utc::now().timestamp() + 300,
+        until: Utc::now().timestamp() + seconds,
         age_ack,
     };
     Ok(url::form_urlencoded::byte_serialize(
