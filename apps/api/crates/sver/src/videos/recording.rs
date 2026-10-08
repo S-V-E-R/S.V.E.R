@@ -130,7 +130,7 @@ pub async fn hook(
     let faction = crate::factions::membership(&mut tx, &context.owner_id).await?;
     let id = profiles::new_id();
     sqlx::query("INSERT INTO videos(id,owner_id,broadcast_id,kind,status,visibility,recording,mature,title,category_id,category,genre,faction,started_at,ended_at,expires_at,retention_hours) VALUES($1,$2,$3,'VOD','RECORDING',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13+make_interval(hours=>$14),$14) ON CONFLICT(broadcast_id) WHERE kind='VOD' DO NOTHING")
-        .bind(&id).bind(&context.owner_id).bind(&context.broadcast_id).bind(&settings.visibility).bind(settings.recording).bind(settings.mature).bind(&context.title).bind(&context.category_id).bind(&context.category).bind(&context.genre).bind(faction).bind(wall_start.max(context.started_at)).bind(context.ended_at).bind(tiers::VOD_HOURS[tier as usize] as i32).execute(&mut *tx).await?;
+        .bind(&id).bind(&context.owner_id).bind(&context.broadcast_id).bind(&settings.visibility).bind(settings.recording).bind(settings.mature || context.mature).bind(&context.title).bind(&context.category_id).bind(&context.category).bind(&context.genre).bind(faction).bind(wall_start.max(context.started_at)).bind(context.ended_at).bind(tiers::VOD_HOURS[tier as usize] as i32).execute(&mut *tx).await?;
     let video: Video =
         sqlx::query_as("SELECT * FROM videos WHERE broadcast_id=$1 AND kind='VOD' FOR UPDATE")
             .bind(&context.broadcast_id)

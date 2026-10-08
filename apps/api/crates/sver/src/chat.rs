@@ -610,6 +610,7 @@ pub async fn read(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     let viewer = profiles::viewer(&app, &jar).await?;
+    mature_gate(&app, &channel, viewer.as_ref().map(|v| v.id.as_str())).await?;
     let hidden = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await?;
     Ok(Json(
         json!({"messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?, "subs_only":crate::moderation::subs_only(&app, &channel).await?}),
@@ -622,9 +623,20 @@ pub async fn post(
     Json(input): Json<Send>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
+    let viewer = profiles::viewer(&app, &jar).await?;
+    mature_gate(&app, &channel, viewer.as_ref().map(|v| v.id.as_str())).await?;
     Ok(Json(
         json!({"message": send(&app, &jar, &channel, input, None).await?}),
     ))
+}
+/// Chat is closed to under-18 accounts in a channel labeled mature.
+async fn mature_gate(app: &App, channel: &str, viewer: Option<&str>) -> Res<()> {
+    if crate::streams::mature_blocked(&mut *app.db.acquire().await?, channel, viewer).await? {
+        return Err(Fail::denied(
+            "This channel is labeled mature, so its chat isn't available on your account.",
+        ));
+    }
+    Ok(())
 }
 
 pub async fn squad_read(
@@ -790,7 +802,10 @@ pub async fn socket(
             .next()
             .ok_or_else(Fail::missing)?
     } else {
-        channel(&app, &join.channel).await?
+        let channel = channel(&app, &join.channel).await?;
+        let viewer = profiles::viewer(&app, &jar).await?;
+        mature_gate(&app, &channel, viewer.as_ref().map(|v| v.id.as_str())).await?;
+        channel
     };
     if app.chat.sockets.load(Ordering::Relaxed) >= MAX_SOCKETS {
         return Err(Fail::unavailable("Chat is busy. Please try again shortly."));

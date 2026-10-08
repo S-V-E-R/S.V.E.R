@@ -247,6 +247,26 @@ pub async fn live(
         }));
     };
     let viewer = profiles::viewer(&app, &jar).await?;
+    let mature: bool = sqlx::query_scalar(
+        "SELECT coalesce((SELECT mature FROM stream_settings WHERE owner_id=$1),false)",
+    )
+    .bind(&owner)
+    .fetch_one(&app.db)
+    .await?;
+    // Mature label: an under-18 account gets no playback (adults and guests see a warning first).
+    if crate::streams::mature_blocked(
+        &mut *app.db.acquire().await?,
+        &owner,
+        viewer.as_ref().map(|v| v.id.as_str()),
+    )
+    .await?
+    {
+        return Ok(Json(json!({
+            "live": true, "broadcast_id": b.id, "state": b.state, "title": b.title,
+            "category": b.category, "started_at": b.started_at, "viewers": b.viewers,
+            "is_owner": false, "mature": true, "mature_blocked": true, "playback": null,
+        })));
+    }
     // A channel ban refuses signed-in playback (logged-out viewing cannot be prevented).
     if let Some(v) = &viewer
         && crate::moderation::banned(&app, &owner, &v.id).await?
@@ -294,7 +314,7 @@ pub async fn live(
     Ok(Json(json!({
         "live": true, "broadcast_id": b.id, "state": b.state, "title": b.title,
         "category": b.category, "started_at": b.started_at, "viewers": b.viewers,
-        "is_owner": viewer.as_ref().is_some_and(|v| v.id == owner),
+        "is_owner": viewer.as_ref().is_some_and(|v| v.id == owner), "mature": mature,
         "playback": {"webrtc": webrtc, "hls": hls, "preferred": preferred},
         "raid": crate::raids::for_viewers(&app, &b.id, viewer.as_ref().map(|v| v.id.as_str())).await?,
     })))

@@ -44,6 +44,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 - Staff can switch the label on for a broadcast and lock it until that broadcast ends (Admin → Live streams; audited).
 - Repeatedly leaving the label off after staff lock it follows the existing strike rules. Content the guidelines ban is still removed whether or not it's labeled.
 
+**Built so far (October 8, 2026, migration 0054):** the Studio switch (saved on the channel; a broadcast labeled at any point stays labeled, and its VOD and clips inherit it), `/live` refusing playback to signed-in under-18 accounts (with Up next), chat history, socket and posting closed to them, the warning screen before anything plays for adults (30 days per channel) and signed-out visitors (the session), and the Mature tag in the player. Next: lists, raids, hosts and alerts; then the catalog rating, report reason and staff lock.
+
 **Done when**
 1. An under-18 account can't play, find or chat in a labeled stream, VOD or clip, through any list, link, embed, raid or host.
 2. Adults and signed-out visitors see the warning once per channel (30 days, or the session for guests), and the preference turns it off.

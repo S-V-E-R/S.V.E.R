@@ -125,6 +125,62 @@ pub async fn exercise(e: &Env) {
     );
     e.sql("UPDATE broadcasts SET delivery='webrtc' WHERE public_id='pub-play'")
         .await;
+    // Mature label: guests and adults get playback behind a warning; an under-18 account gets
+    // neither playback nor chat.
+    e.sql("INSERT INTO stream_settings(owner_id,title,mature) VALUES('stream-owner','Streamer''s stream',true) ON CONFLICT(owner_id) DO UPDATE SET mature=true")
+        .await;
+    let minor = super::chat::person(e, "minor-viewer", "MinorViewer", true).await;
+    e.sql(
+        "UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='minor-viewer'",
+    )
+    .await;
+    let adult = super::chat::person(e, "adult-viewer", "AdultViewer", true).await;
+    let (_, labeled) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
+    assert_eq!(
+        (&labeled["mature"], labeled["playback"].is_object()),
+        (&json!(true), true)
+    );
+    let call = |token| {
+        super::chat::call(
+            e,
+            "GET",
+            "/api/channels/streamer/live",
+            Some(token),
+            Value::Null,
+        )
+    };
+    let (_, young) = call(&minor).await;
+    assert_eq!(
+        (&young["mature_blocked"], &young["playback"]),
+        (&json!(true), &Value::Null)
+    );
+    assert!(call(&adult).await.1["playback"].is_object());
+    let chat = |token| {
+        super::chat::call(
+            e,
+            "GET",
+            "/api/channels/streamer/chat",
+            Some(token),
+            Value::Null,
+        )
+    };
+    assert_eq!(
+        chat(&minor).await.0,
+        StatusCode::FORBIDDEN,
+        "chat is closed to under-18"
+    );
+    assert_eq!(chat(&adult).await.0, StatusCode::OK);
+    let post = super::chat::call(
+        e,
+        "POST",
+        "/api/channels/streamer/chat",
+        Some(&minor),
+        json!({"id": super::chat::id(), "body": "hi"}),
+    )
+    .await;
+    assert_eq!(post.0, StatusCode::FORBIDDEN);
+    e.sql("UPDATE stream_settings SET mature=false WHERE owner_id='stream-owner'")
+        .await;
     let (_, channel) = guest(e, "GET", "/api/channels/streamer", Value::Null).await;
     assert_eq!(channel["channel"]["live"], true, "channel page shows live");
     let (_, card) = guest(e, "GET", "/api/users/streamer/card", Value::Null).await;
