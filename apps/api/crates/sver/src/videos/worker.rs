@@ -409,6 +409,7 @@ async fn remove(app: &App, job: &Job) -> Res<bool> {
         &[
             format!("{}/videos/{}", app.config.origin, job.video_id),
             format!("{}/clips/{}", app.config.origin, job.video_id),
+            format!("{}/embed/{}", app.config.origin, job.video_id),
         ],
     )
     .await?;
