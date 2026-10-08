@@ -149,7 +149,7 @@ export function Crowd({ username }: { username: string }) {
       <span className="eyebrow">Faction rally</span>
       <RallyMeter rally={state.rally} />
       {state.own ? <p className="muted small">Your viewers rally for their factions here; their rallies fill this meter.</p>
-        : state.faction && <RallyButton path={path} faction={state.faction} />}
+        : state.faction && <RallyButton path={path} faction={state.faction} onRallied={load} />}
     </section>}
     {state.counters.length > 0 && <ul className="crowd-counters" aria-label="Counters">{state.counters.map(c => <li key={c.id}>
       <span>{c.label}: <strong>{counterText(c)}</strong></span>
@@ -164,13 +164,16 @@ export function Crowd({ username }: { username: string }) {
   </div>;
 }
 
-function RallyButton({ path, faction }: { path: string; faction: keyof Rally }) {
+// The meter also moves on the live "rally" event; reloading after your own rally shows it at once
+// even when that event doesn't reach this page.
+function RallyButton({ path, faction, onRallied }: { path: string; faction: keyof Rally; onRallied: () => void }) {
   const [note, setNote] = useState("");
   const [failed, setFailed] = useState(false);
   async function rally() {
     const r = await send("POST", `${path}/rally`);
     setFailed(!r.ok);
     setNote(r.ok ? "Rallied! You can rally again in a minute." : r.error);
+    if (r.ok) onRallied();
   }
   const name = FACTIONS.find(f => f[0] === faction)?.[1];
   return <p className="row wrap"><button type="button" className="small" onClick={rally}>Rally for {name}</button>{note && (failed ? <span role="alert" className="form-message">{note}</span> : <span role="status" className="muted small">{note}</span>)}</p>;
