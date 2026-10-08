@@ -13,7 +13,7 @@ type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc"
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string; mature?: boolean } };
 type Live =
   | { live: false; hosting?: { username: string; display_name: string } }
-  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null };
+  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null };
 type Phase = "loading" | "playing" | "reconnecting" | "blocked" | "failed";
 
 let cachedBrowserId = "";
@@ -155,7 +155,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const isOwner = live?.live ? live.is_owner : false;
   const accepted = useSyncExternalStore(onMature, () => matureAccepted(username, !!signedIn), () => false);
   // A labeled stream waits behind the warning: nothing plays until the viewer chooses Watch.
-  const warning = !!(live?.live && live.mature && !live.is_owner && !accepted);
+  const warning = !!(live?.live && live.mature && live.mature_warn !== false && !live.is_owner && !accepted);
   // Remember that this page saw the stream live, so its end can offer the next stream.
   const [ended, setEnded] = useState(false);
   const wasLive = useRef(false);
