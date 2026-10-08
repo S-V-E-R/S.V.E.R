@@ -1227,6 +1227,16 @@ pub async fn admin_action(
         .await?;
     audit(&mut tx, Some(&actor.id), &input.action, &kind, &id, &report_ids, &note, json!({"field": input.field, "item_id": input.item_id, "strike_id": strike_id, "removed": removed}), false).await?;
     tx.commit().await?;
+    // Kept privately for an overturn, but its page leaves the CDN now.
+    if kind == "beacon" && input.action == "remove_content" {
+        let page = format!("{}/beacons/{id}", app.config.origin);
+        if crate::media::removal::purge_urls(&app, &[page])
+            .await
+            .is_err()
+        {
+            eprintln!("beacon_event=staff_removal_purge outcome=failed");
+        }
+    }
     // Open chats drop a message staff removed, as they do for a channel moderator's delete.
     if kind == "emote" {
         app.chat.publish(&owner, None, 0, json!({"type":"emotes"}));

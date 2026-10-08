@@ -22,7 +22,7 @@ async fn shared(app: &App, id: &str) -> Res<(Video, Value)> {
     )
     .await?
     .ok_or_else(Fail::missing)?;
-    let token = ticket(app, &video, None, "play", false)?;
+    let token = super::share_ticket(app, &video)?;
     let origin = &app.config.origin;
     let data = json!({"id":id,"title":video.title,"author_name":owner.display_name,"author_url":format!("{origin}/{}",owner.username),"url":format!("{origin}/clips/{id}"),"embed":format!("{origin}/embed/{id}"),"mp4":format!("{origin}/api/videos/{id}/file?ticket={token}"),"thumbnail":video.thumbnail_key.as_ref().map(|_|format!("{origin}/api/videos/{id}/thumbnail?ticket={token}"))});
     Ok((video, data))

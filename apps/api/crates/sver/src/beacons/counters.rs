@@ -112,6 +112,19 @@ async fn beat(
         _ => false,
     };
     let network = integrity::keyed(&app, "beacon-net", &integrity::network(ip));
+    if user.is_none() {
+        let fresh: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM beacon_playback WHERE beacon_id=$1 AND viewer_key=$2 AND day=current_date)")
+            .bind(&id).bind(&key).fetch_one(&app.db).await?;
+        if fresh {
+            security::reserve(
+                &app,
+                vec![format!("beacon-guest:{network}")],
+                tuning.guest_sessions_per_network_hour,
+                3600,
+            )
+            .await?;
+        }
+    }
     let mut tx = app.db.begin().await?;
     sqlx::query("INSERT INTO beacon_playback(beacon_id,viewer_key,day,network,media_time) VALUES($1,$2,current_date,$3,$4) ON CONFLICT DO NOTHING")
         .bind(&id).bind(&key).bind(&network).bind(input.media_time).execute(&mut *tx).await?;
@@ -237,6 +250,8 @@ struct Session {
 /// is counted on the creator's stream (worker::maintain).
 async fn live(
     State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     jar: CookieJar,
     Path(id): Path<String>,
     Json(input): Json<Session>,
@@ -255,10 +270,19 @@ async fn live(
     }
     let key = viewer_key(user.as_ref(), &input.browser_id);
     if beacon.status == "PUBLISHED" && user.as_ref().is_none_or(|u| u.id != owner) {
+        let tuning = &app.config.beacons.tuning;
         security::reserve(
             &app,
             vec![format!("beacon-tap:{key}")],
-            app.config.beacons.tuning.taps_per_viewer_hour,
+            tuning.taps_per_viewer_hour,
+            3600,
+        )
+        .await?;
+        let ip = security::client_ip(&app, peer, &headers);
+        security::reserve(
+            &app,
+            vec![format!("beacon-tap-ip:{ip}")],
+            tuning.taps_per_ip_hour,
             3600,
         )
         .await?;

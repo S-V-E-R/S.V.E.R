@@ -257,7 +257,7 @@ async fn share(State(app): State<App>, Path(id): Path<String>) -> Res<Json<Value
     )
     .await?
     .ok_or_else(Fail::missing)?;
-    let token = ticket(&app, &beacon, None, "play", false)?;
+    let token = super::share_ticket(&app, &beacon)?;
     let origin = &app.config.origin;
     Ok(Json(json!({
         "id": id,
