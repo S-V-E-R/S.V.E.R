@@ -364,6 +364,8 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
     config.streaming = Some(streams::Config {
         api_url: api.clone(),
         ingest_url: ingest.clone(),
+        whip_url: None,
+        srt_url: None,
         hook_secret: secret,
         hook_ip: "127.0.0.1".parse().unwrap(),
         vhost: "__defaultVhost__".into(),

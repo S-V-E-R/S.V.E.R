@@ -142,6 +142,8 @@ async fn recordings_retry_privacy_cuts_and_retention() {
     config.streaming = Some(streams::Config {
         api_url: format!("http://{address}"),
         ingest_url: "rtmp://127.0.0.1:1935/rebuild".into(),
+        whip_url: None,
+        srt_url: None,
         hook_secret: "synthetic-hook-secret-only-for-this-test".into(),
         hook_ip: "127.0.0.1".parse().unwrap(),
         vhost: "__defaultVhost__".into(),

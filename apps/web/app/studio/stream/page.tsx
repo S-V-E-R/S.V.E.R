@@ -14,7 +14,7 @@ type Stream = {
   broadcast: { state: string; started_at: string; reconnect_deadline: string | null; observed_at: string | null; end_reason?: string | null; health: Health } | null;
 };
 type Account = { has_password: boolean; reauthenticated: boolean };
-type Key = { server: string; key: string; disconnect_pending: boolean };
+type Key = { server: string; key: string; whip?: { url: string; token: string } | null; srt?: string | null; disconnect_pending: boolean };
 
 export default function StreamStudio() {
   const [data, setData] = useState<Stream | null>(null);
@@ -29,6 +29,7 @@ export default function StreamStudio() {
   const [code, setCode] = useState("");
   const [secret, setSecret] = useState<Key | null>(null);
   const [rotate, setRotate] = useState(false);
+  const [ingest, setIngest] = useState<"rtmp" | "whip" | "srt">("rtmp");
   const active = useRef(true);
   const secretEpoch = useRef(0);
   const load = useCallback(async () => {
@@ -150,9 +151,24 @@ export default function StreamStudio() {
       </div>
       {rotate && <div className="notice"><p>Replacing this key disconnects the current publisher. Update OBS with the new key before reconnecting.</p><button className="quiet danger-text" disabled={busy || !usable || !code} onClick={() => keyAction("rotate")}>Replace key and disconnect OBS</button></div>}
       {secret && <div>
-        <label className="field"><span>Server</span><input readOnly value={secret.server} /></label><button className="quiet small" onClick={() => copy(secret.server)}>Copy server</button>
-        <label className="field"><span>Stream key</span><input readOnly autoComplete="off" spellCheck={false} value={secret.key} onFocus={event => event.target.select()} /></label>
-        <div className="row"><button className="quiet small" onClick={() => copy(secret.key)}>Copy key</button><button className="quiet small" onClick={() => setSecret(null)}>Hide key</button></div>
+        {(secret.whip || secret.srt) && <div className="row" role="tablist" aria-label="Connection type">
+          {([["rtmp", "RTMP (recommended)"], ["whip", "WHIP (lowest delay)"], ["srt", "SRT (unstable connections)"]] as const).filter(([id]) => id === "rtmp" || (id === "whip" ? secret.whip : secret.srt)).map(([id, label]) =>
+            <button key={id} type="button" role="tab" aria-selected={ingest === id} className={ingest === id ? "small" : "small quiet"} onClick={() => setIngest(id)}>{label}</button>)}
+        </div>}
+        {ingest === "whip" && secret.whip ? <>
+          <p>OBS 30 or later: in Stream settings choose Service <strong>WHIP</strong>. WHIP sends Opus audio and has fewer encoder options, so RTMP stays the default.</p>
+          <label className="field"><span>Server</span><input readOnly value={secret.whip.url} /></label><button className="quiet small" onClick={() => copy(secret.whip!.url)}>Copy server</button>
+          <label className="field"><span>Bearer token</span><input readOnly autoComplete="off" spellCheck={false} value={secret.whip.token} onFocus={event => event.target.select()} /></label>
+          <div className="row"><button className="quiet small" onClick={() => copy(secret.whip!.token)}>Copy token</button><button className="quiet small" onClick={() => setSecret(null)}>Hide key</button></div>
+        </> : ingest === "srt" && secret.srt ? <>
+          <p>For mobile or travel connections that drop packets: in Stream settings choose Custom, paste this as the Server and leave Stream Key empty. It contains your key.</p>
+          <label className="field"><span>Server</span><input readOnly autoComplete="off" spellCheck={false} value={secret.srt} onFocus={event => event.target.select()} /></label>
+          <div className="row"><button className="quiet small" onClick={() => copy(secret.srt!)}>Copy server</button><button className="quiet small" onClick={() => setSecret(null)}>Hide key</button></div>
+        </> : <>
+          <label className="field"><span>Server</span><input readOnly value={secret.server} /></label><button className="quiet small" onClick={() => copy(secret.server)}>Copy server</button>
+          <label className="field"><span>Stream key</span><input readOnly autoComplete="off" spellCheck={false} value={secret.key} onFocus={event => event.target.select()} /></label>
+          <div className="row"><button className="quiet small" onClick={() => copy(secret.key)}>Copy key</button><button className="quiet small" onClick={() => setSecret(null)}>Hide key</button></div>
+        </>}
       </div>}
     </Section>
     <Section title="OBS setup and input health" intro="Use H.264 video and AAC audio, turn B-frames off, and set a one-second keyframe interval.">
