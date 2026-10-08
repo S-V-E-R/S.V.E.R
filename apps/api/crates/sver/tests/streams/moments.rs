@@ -243,9 +243,19 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert_eq!(
-        (&crowd["faction"], &crowd["rally"]["myria"]),
-        (&json!("myria"), &json!(1))
+        (&crowd["faction"], &crowd["rally"]["myria"], &crowd["own"]),
+        (&json!("myria"), &json!(1), &json!(false))
     );
+    // The streamer sees an explanation instead of a rally button.
+    let (_, mine) = call(
+        e,
+        "GET",
+        &format!("{CHANNEL}/crowd"),
+        Some(&owner),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(mine["own"], true);
 
     // ---- Emote combos: 5 distinct accounts within 5 seconds ----
     e.sql("INSERT INTO channel_emotes(id,channel_id,code,image_key) VALUES('mo-emote','mo-owner','MoHype','emotes/mo-hype')").await;
