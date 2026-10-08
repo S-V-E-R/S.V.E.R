@@ -29,6 +29,10 @@ pub struct Config {
     pub cdn_url: Option<String>,
     /// Bunny token authentication key; CDN URLs are signed for one stream's files.
     pub cdn_key: String,
+    /// Measured direct-WebRTC limits (viewers per broadcast, and across all broadcasts). Unset
+    /// means no automatic switching; set privately from the load test (docs/LOAD_TEST.md).
+    pub webrtc_per_broadcast: Option<i64>,
+    pub webrtc_global: Option<i64>,
 }
 impl Config {
     pub fn from_env(production: bool) -> std::result::Result<Self, String> {
@@ -56,11 +60,24 @@ impl Config {
         if cdn_url.is_some() && cdn_key.is_empty() {
             return Err("STREAM_CDN_URL needs STREAM_CDN_TOKEN_KEY".into());
         }
+        let limit = |name: &str| -> std::result::Result<Option<i64>, String> {
+            match std::env::var(name).unwrap_or_default().as_str() {
+                "" => Ok(None),
+                v => v
+                    .parse()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .map(Some)
+                    .ok_or_else(|| format!("{name} must be a positive number")),
+            }
+        };
         Ok(Self {
             hls_url: read("STREAM_HLS_URL")?,
             whep_url: read("STREAM_WHEP_URL")?,
             cdn_url,
             cdn_key,
+            webrtc_per_broadcast: limit("STREAM_WEBRTC_PER_BROADCAST")?,
+            webrtc_global: limit("STREAM_WEBRTC_GLOBAL")?,
         })
     }
 }
@@ -99,10 +116,91 @@ struct Live {
     id: String,
     public_id: String,
     state: String,
+    delivery: String,
     started_at: DateTime<Utc>,
     title: String,
     category: Option<String>,
     viewers: i64,
+}
+
+/// One broadcast's delivery state for the switch.
+#[derive(sqlx::FromRow, Clone, Debug, PartialEq)]
+pub struct Delivery {
+    pub id: String,
+    pub cdn: bool,
+    /// Unexpired playback leases at any level: excluded viewers still use bandwidth.
+    pub audience: i64,
+    pub over_since: Option<DateTime<Utc>>,
+    pub under_since: Option<DateTime<Utc>>,
+}
+/// The transport policy (docs/LIVE_STREAMS.md "Playback and capacity"). Smallest audiences take the
+/// global WebRTC budget first, so it moves the biggest streams (the most capacity per switch):
+/// over the limit for 30 seconds moves a broadcast to
+/// the CDN; at or under 70% of it for 120 seconds brings it back. Returns the changed rows.
+pub fn decide(
+    mut all: Vec<Delivery>,
+    per_broadcast: i64,
+    global: Option<i64>,
+    now: DateTime<Utc>,
+) -> Vec<Delivery> {
+    all.sort_by(|a, b| a.audience.cmp(&b.audience).then(a.id.cmp(&b.id)));
+    let (mut direct, mut changed) = (0, Vec::new());
+    for row in all {
+        let mut next = row.clone();
+        let total = direct + row.audience;
+        if row.cdn {
+            let under = row.audience * 10 <= per_broadcast * 7
+                && global.is_none_or(|g| total * 10 <= g * 7);
+            next.under_since = under.then(|| row.under_since.unwrap_or(now));
+            next.over_since = None;
+            if next
+                .under_since
+                .is_some_and(|t| now - t >= chrono::Duration::seconds(120))
+            {
+                (next.cdn, next.under_since) = (false, None);
+            }
+        } else {
+            let over = row.audience > per_broadcast || global.is_some_and(|g| total > g);
+            next.over_since = over.then(|| row.over_since.unwrap_or(now));
+            next.under_since = None;
+            if next
+                .over_since
+                .is_some_and(|t| now - t >= chrono::Duration::seconds(30))
+            {
+                (next.cdn, next.over_since) = (true, None);
+            }
+        }
+        if !next.cdn {
+            direct += row.audience;
+        }
+        if next != row {
+            changed.push(next);
+        }
+    }
+    changed
+}
+/// Every 5 seconds: applies `decide` to live broadcasts when a WebRTC limit and the CDN are set.
+pub async fn tick(app: &App) -> Res<()> {
+    let p = &app.config.playback;
+    let (Some(limit), true) = (
+        p.webrtc_per_broadcast,
+        p.cdn_url.is_some() || p.hls_url.is_some(),
+    ) else {
+        return Ok(());
+    };
+    let rows: Vec<Delivery> = sqlx::query_as("SELECT b.id, b.delivery='cdn' AS cdn, (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now()) AS audience, b.delivery_over_since AS over_since, b.delivery_under_since AS under_since FROM broadcasts b WHERE b.state IN ('LIVE','RECONNECTING')")
+        .fetch_all(&app.db)
+        .await?;
+    for row in decide(rows, limit, p.webrtc_global, Utc::now()) {
+        sqlx::query("UPDATE broadcasts SET delivery=$2, delivery_over_since=$3, delivery_under_since=$4 WHERE id=$1")
+            .bind(&row.id)
+            .bind(if row.cdn { "cdn" } else { "webrtc" })
+            .bind(row.over_since)
+            .bind(row.under_since)
+            .execute(&app.db)
+            .await?;
+    }
+    Ok(())
 }
 
 /// SQL expression: whether the user whose id is the SQL expression `id` has a public broadcast.
@@ -139,7 +237,7 @@ pub async fn live(
     axum::extract::Query(query): axum::extract::Query<LiveQuery>,
 ) -> Res<Json<Value>> {
     let owner = owner_id(&app, &name).await?;
-    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,b.state,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
+    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,b.state,b.delivery,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
         .bind(&owner).fetch_optional(&app.db).await?;
     let Some(b) = current else {
         // An offline channel may host a live one; its page shows that stream.
@@ -181,9 +279,13 @@ pub async fn live(
             .as_ref()
             .map(|u| format!("{u}/{}.m3u8", b.public_id)),
     };
-    // No automatic scale switching until the load test measures the WebRTC limit: WebRTC first
-    // when offered, the player falls back to HLS on failure, and `?transport=hls` (latency tests,
-    // or a viewer who prefers it) asks for HLS. Asking for HLS is always allowed.
+    // Over the measured WebRTC limit the broadcast is on the CDN (`tick`): no WHEP URL is offered,
+    // and open players move within one 15-second poll. Otherwise WebRTC first; the player falls
+    // back to HLS on failure, and `?transport=hls` (latency tests, or a viewer who prefers it)
+    // asks for HLS. Asking for HLS is always allowed.
+    // ponytail: SRS WHEP stays reachable to a client that keeps an old URL; gate it in nginx
+    // (auth_request) if anyone bypasses the switch.
+    let webrtc = webrtc.filter(|_| b.delivery == "webrtc" || hls.is_none());
     let preferred = if webrtc.is_some() && query.transport.as_deref() != Some("hls") {
         "webrtc"
     } else {
@@ -381,5 +483,74 @@ mod cdn_tests {
             .parse()
             .unwrap();
         assert!(expires - 1_000_000_000 >= 6 * 3600);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn row(id: &str, cdn: bool, audience: i64) -> Delivery {
+        Delivery {
+            id: id.into(),
+            cdn,
+            audience,
+            over_since: None,
+            under_since: None,
+        }
+    }
+    #[test]
+    fn switches_with_hysteresis_and_the_global_budget() {
+        let t0 = Utc::now();
+        let secs = |s| t0 + chrono::Duration::seconds(s);
+        // Over the limit: noted, then moved after 30 seconds.
+        let noted = decide(vec![row("a", false, 71)], 70, None, t0);
+        assert_eq!(noted[0].over_since, Some(t0));
+        assert!(!noted[0].cdn);
+        assert!(
+            decide(noted.clone(), 70, None, secs(29)).is_empty(),
+            "still waiting"
+        );
+        let moved = decide(noted, 70, None, secs(30));
+        assert!(moved[0].cdn);
+        // A dip below the limit resets the clock.
+        let dip = decide(
+            vec![Delivery {
+                over_since: Some(t0),
+                ..row("a", false, 70)
+            }],
+            70,
+            None,
+            secs(40),
+        );
+        assert_eq!(dip[0].over_since, None);
+        // Back only at or under 70% (49 of 70) for 120 seconds.
+        assert!(decide(vec![row("a", true, 50)], 70, None, t0).is_empty());
+        let under = decide(vec![row("a", true, 49)], 70, None, t0);
+        assert!(decide(under.clone(), 70, None, secs(119)).is_empty());
+        assert!(!decide(under, 70, None, secs(120))[0].cdn);
+        // The global budget moves the biggest stream first.
+        let global = decide(
+            vec![row("small", false, 30), row("big", false, 60)],
+            70,
+            Some(80),
+            t0,
+        );
+        assert_eq!(
+            global.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["big"]
+        );
+        let after = decide(
+            vec![
+                row("small", false, 30),
+                Delivery {
+                    over_since: Some(t0),
+                    ..row("big", false, 60)
+                },
+            ],
+            70,
+            Some(80),
+            secs(30),
+        );
+        assert!(after[0].cdn && after[0].id == "big");
     }
 }
