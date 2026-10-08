@@ -108,7 +108,7 @@ function SkillsTab({ username, account }: { username: string; account: string | 
     {canPlay && <label className="field"><span>Message (optional)</span><input value={text} maxLength={200} onChange={e => setText(e.target.value)} /></label>}
     <ul className="dock-tiles">{data.skills.filter(s => s.enabled).map(s => <li key={s.id}>
       <button type="button" className="dock-tile" disabled={!canPlay || busy || data.paused || (data.valor ?? 0) < s.valor} onClick={() => play(s)}>
-        <SkillArt id={s.id} /><span className="dock-tile-name">{s.name}</span><span className="dock-cost">{s.valor.toLocaleString()}</span></button></li>)}</ul>
+        <SkillArt id={s.id} size={40} /><span className="dock-tile-name">{s.name}</span><span className="dock-cost">{s.valor.toLocaleString()}</span></button></li>)}</ul>
     {note && <p role="status" className="form-message">{note}</p>}
   </>;
 }
