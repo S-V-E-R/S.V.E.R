@@ -41,7 +41,7 @@ The S.V.E.R Plays controller is the first CrowdSync board. It is built when Play
   - Webhook to the streamer's own HTTPS endpoint, signed, with private-network addresses blocked.
 - **Board moderators:** the streamer can let channel moderators run the board, block a viewer from the board, and panic-disable all sounds and effects with one click.
 - **Rate limits:** per account and per network across all controls, including joystick input (**Proposed:** at most 10 joystick updates per second per viewer).
-- **Reliability:** the Engagement Valor charge and the press are recorded in one database transaction, and delivery to outputs goes through a Postgres-backed outbox, so a crash can never charge without a press or lose a press. No Redis.
+- **Reliability:** the Engagement Valor charge and the press are recorded in one database transaction, so a crash can never charge without a press. Webhook delivery goes through a Postgres-backed outbox with retries. Live effects (overlay, page, gateway) are published in-process right after the commit: a crash in that instant can lose one animation, never the press record, and "Game confirms" presses that never reach the game are refunded after 60 seconds. No Redis.
 
 ## Skills
 

@@ -1,5 +1,7 @@
 use super::*;
 
+/// URLs the fake CDN was asked to purge.
+static PURGED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 async fn bytes(app: &App, path: &str, cookie: Option<&str>) -> (StatusCode, Vec<u8>) {
     let mut request = Request::builder()
         .uri(path)
@@ -115,6 +117,18 @@ async fn recordings_retry_privacy_cuts_and_retention() {
             "/storage/{*key}",
             axum::routing::any(|| async { StatusCode::SERVICE_UNAVAILABLE }),
         )
+        .route(
+            "/purge",
+            post(|Json(body): Json<Value>| async move {
+                let files = body["files"].as_array().cloned().unwrap_or_default();
+                PURGED.lock().unwrap().extend(
+                    files
+                        .into_iter()
+                        .filter_map(|f| f.as_str().map(str::to_owned)),
+                );
+                Json(json!({"success": true}))
+            }),
+        )
         .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -136,7 +150,8 @@ async fn recordings_retry_privacy_cuts_and_retention() {
     config.videos.storage = sver::media::Storage::Filesystem(root.join("private"));
     config.videos.segment_base = format!("http://{address}");
     config.media.storage = sver::media::Storage::Filesystem(root.join("public"));
-    config.take_down.purge_url.clear();
+    config.take_down.purge_url = format!("http://{address}/purge");
+    config.take_down.purge_token = "synthetic-purge".into();
     let app = App::new(db.clone(), config).await.unwrap();
     let e = synthetic_owner(app, fake).await;
     let mut outage = e.app.clone();
@@ -489,6 +504,11 @@ async fn recordings_retry_privacy_cuts_and_retention() {
             .unwrap(),
         "EXPIRED"
     );
+    let purged = PURGED.lock().unwrap().clone();
+    for page in ["videos", "clips", "embed"] {
+        let url = format!("{}/{page}/{video}", e.app.config.origin);
+        assert!(purged.contains(&url), "{url} purged from the CDN");
+    }
     let remaining: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM video_objects WHERE video_id=$1 AND deleted_at IS NULL",
     )
