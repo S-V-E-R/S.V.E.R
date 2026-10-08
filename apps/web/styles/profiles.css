@@ -121,8 +121,8 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
    bottom of the chat with tiles, so the chat column stays messages plus the box. */
 .chat-dock{position:relative;margin-top:8px}
 .chat-dock-bar{display:flex;flex-wrap:wrap;gap:6px}
-.chat-dock-panel{position:absolute;left:0;right:0;bottom:calc(100% + 6px);z-index:20;max-height:min(420px,60vh);overflow:auto;padding:10px;background:var(--surface);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.5)}
-.chat-dock-tabs{display:flex;align-items:center;gap:6px;margin-bottom:8px}.chat-dock-tabs [aria-selected="true"]{border-color:var(--accent);color:var(--ink)}.chat-dock-close{margin-left:auto}
+.chat-dock-panel{position:absolute;left:0;right:0;bottom:calc(100% + 6px);z-index:20;max-height:min(420px,60vh);overflow:auto;padding:10px;background:linear-gradient(var(--surface),var(--surface)),var(--bg);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.chat-dock-tabs{display:flex;align-items:center;gap:6px;margin-bottom:8px}.chat-dock-tabs [aria-selected="true"],.chat-dock-bar [aria-expanded="true"]{border-color:var(--accent);color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}.chat-dock-close{margin-left:auto}
 .dock-tiles{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px}
 .dock-tiles li{display:flex;flex-direction:column;gap:2px;min-width:0}
 .dock-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;min-height:96px;padding:8px 6px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:6px;color:var(--ink);font:inherit;font-size:12px;letter-spacing:0;text-transform:none;box-shadow:none;text-align:center;overflow-wrap:anywhere}
