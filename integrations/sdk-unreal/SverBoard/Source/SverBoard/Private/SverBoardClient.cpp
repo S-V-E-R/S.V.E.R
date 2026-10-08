@@ -199,6 +199,25 @@ void USverBoardClient::Ready()
 	Send(Message);
 }
 
+static TSharedRef<FJsonObject> Settle(const TCHAR* Type, const FString& Press, int32 Id)
+{
+	const TSharedRef<FJsonObject> Message = MakeShared<FJsonObject>();
+	Message->SetStringField(TEXT("type"), Type);
+	Message->SetNumberField(TEXT("id"), Id);
+	Message->SetStringField(TEXT("press"), Press);
+	return Message;
+}
+
+void USverBoardClient::Capture(const FString& Press)
+{
+	Send(Settle(TEXT("capture"), Press, NextId++));
+}
+
+void USverBoardClient::Release(const FString& Press)
+{
+	Send(Settle(TEXT("release"), Press, NextId++));
+}
+
 void USverBoardClient::SetInputCap(int32 PerSecond)
 {
 	const TSharedRef<FJsonObject> Message = MakeShared<FJsonObject>();

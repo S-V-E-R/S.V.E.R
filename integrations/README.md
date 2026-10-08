@@ -23,11 +23,12 @@ From S.V.E.R:
 | `type` | When | Fields |
 |---|---|---|
 | `hello` | On connect | `kind` (`bridge`/`game`), `channel`, `protocol` (1), `board` (the published board, or null), `version`, `disabled` (paused), `state`, `goals`, `starting` (a game is connected but hasn't said `ready`), `input_cap` |
-| `board_effect` | A viewer pressed a control | `control`, `label`, `effect`, `user.username`, `text` (text inputs), `goal` (`progress`, `target`, `reached`), `stream_ms`, `at` |
+| `board_effect` | A viewer pressed a control | `id` (the press), `confirm` (true when it waits for your `capture`/`release`), `control`, `label`, `effect`, `user.username`, `text` (text inputs), `goal` (`progress`, `target`, `reached`), `stream_ms`, `at` |
 | `board_effect` without `control` | A Skill, emote combo or Surge level played | `skill` or `surge`, `effect`, `caption` |
 | `board_input` | A viewer moved a joystick | `control`, `x`, `y` (−1 to 1), `user.username` |
 | `board` | A new version was published, or the board was paused or resumed | The same snapshot fields as `hello` |
 | `board_state` | A game changed labels, availability or goal progress | `state`, `goals` |
+| `board_result` | A "Game confirms" press was captured or released (including the automatic release after 60 seconds) | `id` (the press), `control`, `outcome` (`captured`/`released`) |
 | `ack` / `error` / `pong` | Replies to your messages | `id` (yours), `message` (errors) |
 
 To S.V.E.R (at most 10 messages a second):
@@ -35,18 +36,19 @@ To S.V.E.R (at most 10 messages a second):
 - `{"type": "ping", "id": 1}`
 - `{"type": "state", "id": 2, "controls": {"jump": {"disabled": true, "label": "Jump (cooling)"}, "coins": {"progress": 12}}}`. Game tokens only. Per control: `label` (1–40 characters, or `null` to restore the builder's label), `disabled` (viewers can't press it) and, for goals, `progress` (0 to the target). A message is applied in full or not at all. Publishing a new board version clears these.
 - `{"type": "ready", "id": 3}`. Game tokens only. From each game connect, the board shows "Starting…" and refuses presses until the game says it is listening; send this after every `hello`. A game that disconnects (or misses two 30-second checks) stops holding the board.
+- `{"type": "capture", "id": 5, "press": "…"}` / `{"type": "release", "id": 6, "press": "…"}`. Games and bridges. For a press with `confirm: true` (a "Game confirms" control), the viewer's Engagement Valor is only held: `capture` charges it once the effect happened, `release` refunds it. Unanswered presses are released after 60 seconds. Repeating the same answer is harmless; the opposite answer is refused.
 - `{"type": "cap", "id": 4, "per_second": 20}`. Game tokens only. The most presses and joystick moves a second sent to the game (1–100, or `null` for none); the streamer can also set it in Creator Studio. Over the cap, the newest input is refused and the viewer sees "Busy, try again".
 
 Close code `4001` means the token was revoked; don't reconnect. `4000` means the connection fell behind; reconnect.
 
-Presses are already paid for and checked (real viewers only, cooldowns, limits, bans) before they reach you. Joystick moves are free and rate-limited to 10 a second per viewer.
+Presses are already paid for (or, with `confirm: true`, held) and checked (real viewers only, cooldowns, limits, bans) before they reach you. Joystick moves are free and rate-limited to 10 a second per viewer.
 
 ## The OBS bridge
 
 Requires Node 22 or newer and OBS 28 or newer (Tools → WebSocket Server Settings: enable it and set a password).
 
 1. Copy `bridge/bridge.example.json` to `bridge/bridge.json` (ignored by git) and fill in the bridge token and OBS password.
-2. Under `actions`, map each board control id (or `skill:<id>`, or `surge`) to steps: `{"scene": "..."}`, `{"source": "...", "scene": "...", "visible": true | false | "toggle"}`, `{"filter": "...", "source": "...", "enabled": true | false}`, `{"wait": ms}`. Add `"cooldown": ms` to limit how often a control can fire.
+2. Under `actions`, map each board control id (or `skill:<id>`, or `surge`) to steps: `{"scene": "..."}`, `{"source": "...", "scene": "...", "visible": true | false | "toggle"}`, `{"filter": "...", "source": "...", "enabled": true | false}`, `{"wait": ms}`. Add `"cooldown": ms` to limit how often a control can fire. For a "Game confirms" control the bridge captures the press when its steps ran and releases it (refunding the viewer) when they failed or the control was cooling down; controls it has no steps for are left to your game.
 3. Run `node bridge/sver-bridge.mjs bridge/bridge.json`. It reconnects to S.V.E.R on its own.
 
 ## JavaScript and TypeScript

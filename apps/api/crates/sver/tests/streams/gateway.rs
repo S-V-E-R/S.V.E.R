@@ -46,13 +46,40 @@ async fn press(e: &Env, token: &str, control: &str, version: i64) -> StatusCode 
     .0
 }
 
+/// A press that returns the body (for balances and held presses).
+async fn e_press(e: &Env, token: &str, control: &str) -> (StatusCode, Value, String) {
+    e.sql("DELETE FROM rate_limits WHERE key LIKE 'board%'")
+        .await;
+    let (_, view) = call(e, "GET", CHANNEL, Some(token), Value::Null).await;
+    let press = id();
+    let (status, body) = call(
+        e,
+        "POST",
+        &format!("{CHANNEL}/press"),
+        Some(token),
+        json!({"id": press, "version": view["version"], "control": control}),
+    )
+    .await;
+    (status, body, press)
+}
+/// The next `kind` message about one press.
+async fn about(ws: &mut Socket, kind: &str, press: &str) -> Value {
+    loop {
+        let message = next(ws, kind).await;
+        if message["id"] == press {
+            return message;
+        }
+    }
+}
+
 pub async fn exercise(e: &Env) {
     let owner = person(e, "gw-owner", "GwOwner", true).await;
     let viewer = person(e, "gw-viewer", "GwViewer", true).await;
     let board = json!({"screens": [{"name": "Game", "controls": [
         {"id": "jump", "kind": "button", "label": "Jump"},
         {"id": "g", "kind": "goal", "label": "Coins", "target": 10, "cost": 0},
-        {"id": "info", "kind": "label", "label": "Help the runner"}
+        {"id": "info", "kind": "label", "label": "Help the runner"},
+        {"id": "boost", "kind": "button", "label": "Boost", "cost": 5, "confirm": true}
     ]}]});
     assert_eq!(
         call(
@@ -249,9 +276,66 @@ pub async fn exercise(e: &Env) {
         (&json!(2), &json!({}))
     );
 
-    // ---- Input cap: set by the game (or the streamer); over it, "Busy, try again" ----
+    // ---- Game confirms: a press holds Valor until captured, released or 60 seconds pass ----
     // A fresh second of the 10-messages limit.
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    e.sql("INSERT INTO engagement(channel_id,user_id,balance) VALUES('gw-owner','gw-viewer',100) ON CONFLICT(channel_id,user_id) DO UPDATE SET balance=100").await;
+    let (status, held, first) = e_press(e, &viewer, "boost").await;
+    assert_eq!(
+        (status, &held["held"], &held["balance"]),
+        (StatusCode::OK, &json!(true), &json!(95)),
+        "{held}"
+    );
+    assert_eq!(
+        about(&mut game, "board_effect", &first).await["confirm"],
+        true
+    );
+    let capture = json!({"type": "capture", "press": first});
+    let reply = say(&mut game, capture.clone()).await;
+    assert_eq!(reply["type"], "ack", "{reply}");
+    assert_eq!(
+        say(&mut game, capture).await["type"],
+        "ack",
+        "repeating is harmless"
+    );
+    let reply = say(&mut game, json!({"type": "release", "press": first})).await;
+    assert_eq!(reply["type"], "error", "already captured");
+    let (_, held, second) = e_press(e, &viewer, "boost").await;
+    assert_eq!(held["balance"], 90);
+    assert_eq!(
+        say(&mut bridge, json!({"type": "release", "press": second})).await["type"],
+        "ack",
+        "bridges confirm too"
+    );
+    assert_eq!(
+        about(&mut game, "board_result", &second).await["outcome"],
+        "released"
+    );
+    let (_, held, third) = e_press(e, &viewer, "boost").await;
+    assert_eq!(held["balance"], 90);
+    e.sql("UPDATE board_presses SET held_until=now()-interval '1 second' WHERE control_id='boost' AND outcome IS NULL").await;
+    sver::boards::tick(&e.app).await.unwrap();
+    assert_eq!(
+        about(&mut game, "board_result", &third).await["outcome"],
+        "released",
+        "auto-released"
+    );
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert_eq!(viewing["balance"], 95, "refunds return the Valor");
+    let mut bad = next_board.clone();
+    bad["screens"][0]["controls"][0]["confirm"] = json!(true);
+    bad["screens"][0]["controls"][0]["effect"] = json!("confetti");
+    let (status, _) = call(
+        e,
+        "PUT",
+        "/api/me/board/draft",
+        Some(&owner),
+        json!({"board": bad}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the game plays the effect");
+
+    // ---- Input cap: set by the game (or the streamer); over it, "Busy, try again" ----
     for bad in [json!(0), json!(101), json!("5")] {
         let reply = say(&mut game, json!({"type": "cap", "per_second": bad})).await;
         assert_eq!(reply["type"], "error", "cap {bad}");

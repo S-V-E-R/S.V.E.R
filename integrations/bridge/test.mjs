@@ -22,8 +22,10 @@ const obsServer = await serve(socket => {
   });
 });
 let gatewaySocket;
+const settled = [];
 const gateway = await serve((socket, request) => {
   gatewaySocket = socket;
+  socket.on("message", text => settled.push(JSON.parse(text)));
   assert.equal(new URL(request.url, "http://x").searchParams.get("token"), "sver_b_test");
   socket.send(JSON.stringify({ type: "hello", kind: "bridge", channel: "Tester", protocol: 1, board: null }));
 });
@@ -53,6 +55,8 @@ press({ control: "unmapped" });
 press({ control: "broken" }); // OBS error: logged, the queue keeps going
 press({ control: "shake" });
 press({ skill: "crown" });
+press({ control: "shake", confirm: true, id: "p-ok" });
+press({ control: "broken", confirm: true, id: "p-bad" });
 await new Promise(resolve => setTimeout(resolve, 300));
 await bridge.idle();
 
@@ -62,7 +66,9 @@ assert.deepEqual(requests.map(r => r[0]), [
   "SetCurrentProgramScene",
   "SetSourceFilterEnabled",
   "GetSceneItemId", "SetSceneItemEnabled",
+  "SetSourceFilterEnabled", "SetCurrentProgramScene",
 ]);
+assert.deepEqual(settled, [{ type: "capture", press: "p-ok" }, { type: "release", press: "p-bad" }], "confirm presses are settled");
 assert.deepEqual(requests[0][1], { sceneName: "BRB" });
 assert.deepEqual(requests[4][1], { sceneName: "Main", sceneItemId: 7, sceneItemEnabled: true }, "toggled on");
 assert.deepEqual(requests[6][1], { sourceName: "Camera", filterName: "Shake", filterEnabled: true });

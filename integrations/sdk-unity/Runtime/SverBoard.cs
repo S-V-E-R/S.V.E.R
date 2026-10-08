@@ -204,6 +204,12 @@ namespace Sver.Board
         /// <summary>The game is listening. Viewers see "Starting…" from each connect until this; call it on every Hello.</summary>
         public Task Ready() => Send(new JObject { ["type"] = "ready", ["id"] = nextId++ });
 
+        /// <summary>A "Game confirms" press happened: the viewer is charged.</summary>
+        public Task Capture(string press) => Send(new JObject { ["type"] = "capture", ["id"] = nextId++, ["press"] = press });
+
+        /// <summary>It didn't happen: the viewer is refunded (automatic after 60 seconds).</summary>
+        public Task Release(string press) => Send(new JObject { ["type"] = "release", ["id"] = nextId++, ["press"] = press });
+
         /// <summary>The most presses and joystick moves a second sent to the game (1–100, or null for none).</summary>
         public Task SetInputCap(int? perSecond) =>
             Send(new JObject { ["type"] = "cap", ["id"] = nextId++, ["per_second"] = perSecond.HasValue ? new JValue(perSecond.Value) : JValue.CreateNull() });

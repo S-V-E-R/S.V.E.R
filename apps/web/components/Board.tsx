@@ -6,7 +6,7 @@ import { send } from "../lib/client-api";
 import { REDUCE_KEY, type BoardEvent } from "./BoardEffects";
 import "../styles/boards.css";
 
-export type Control = { id: string; kind: "button" | "label" | "text" | "goal" | "joystick" | "rally"; label: string; cost: number; cooldown_seconds: number; per_stream_limit: number | null; audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number };
+export type Control = { id: string; kind: "button" | "label" | "text" | "goal" | "joystick" | "rally"; label: string; cost: number; cooldown_seconds: number; per_stream_limit: number | null; audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number; confirm?: boolean };
 export type BoardDef = { screens: { name: string; controls: Control[] }[] };
 type View = { board: BoardDef | null; version: number; disabled: boolean; starting?: boolean; live: boolean; overlay: boolean; goals: Record<string, number>; used: Record<string, number>; last_press: Record<string, string>; balance: number | null; signed_in: boolean; can_run: boolean; blocks: string[] | null; state?: Record<string, { label?: string; disabled?: boolean }> };
 const AUDIENCE = { everyone: "", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
@@ -28,6 +28,8 @@ export function Board({ username }: { username: string }) {
   const [calm, setCalm] = useState(false);
   const [blockName, setBlockName] = useState("");
   const lastMove = useRef(0);
+  // "Game confirms" presses waiting on the game: press ID → control label.
+  const held = useRef(new Map<string, string>());
   const load = useCallback(async () => {
     const r = await send<View>("GET", path);
     if (r.ok) setView(r.data); else setNote(r.error);
@@ -51,6 +53,14 @@ export function Board({ username }: { username: string }) {
         const update = e as unknown as { state: View["state"]; goals: Record<string, number> };
         setView(v => v && { ...v, state: update.state, goals: update.goals });
       }
+      else if ((e as { type: string }).type === "board_result") {
+        const result = e as unknown as { id: string; outcome: "captured" | "released" };
+        const label = held.current.get(result.id);
+        if (label === undefined) return;
+        held.current.delete(result.id);
+        setNote(result.outcome === "captured" ? `${label}: the game took it.` : `${label}: the game didn't take it, so your Engagement Valor was refunded.`);
+        if (result.outcome === "released") void load();
+      }
       else if (e.type === "board_effect" && e.goal && e.control) {
         const id = e.control, progress = e.goal.progress;
         setView(v => v && { ...v, goals: { ...v.goals, [id]: progress } });
@@ -63,14 +73,18 @@ export function Board({ username }: { username: string }) {
   async function press(control: Control, extra: Record<string, unknown> = {}) {
     if (!view) return;
     setBusy(control.kind !== "joystick"); setNote("");
-    const r = await send<{ balance?: number }>("POST", `${path}/press`, { id: crypto.randomUUID(), version: view.version, control: control.id, ...extra });
+    const id = crypto.randomUUID();
+    if (control.confirm) held.current.set(id, control.label);
+    const r = await send<{ balance?: number; held?: boolean }>("POST", `${path}/press`, { id, version: view.version, control: control.id, ...extra });
     setBusy(false);
     if (!r.ok) {
+      held.current.delete(id);
       setNote(r.error);
       if (r.status === 409) void load();
       return;
     }
     if (control.kind === "joystick") return;
+    if (r.data.held) setNote(`${control.label}: waiting for the game…`);
     setView(v => v && { ...v, balance: r.data.balance ?? v.balance, last_press: { ...v.last_press, [control.id]: new Date().toISOString() }, used: { ...v.used, [control.id]: (v.used[control.id] ?? 0) + 1 } });
     if (control.kind === "text") setTexts(t => ({ ...t, [control.id]: "" }));
   }

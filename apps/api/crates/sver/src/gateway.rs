@@ -303,11 +303,12 @@ fn forward(e: &Arc<Event>, channel: &str) -> bool {
     e.channel == channel
         && matches!(
             e.payload["type"].as_str(),
-            Some("board_effect" | "board_input" | "board" | "board_state")
+            Some("board_effect" | "board_input" | "board" | "board_state" | "board_result")
         )
 }
 /// One message from a client: "ping", or (games only) "state" with control changes, "ready" when
-/// the game is listening, and "cap" with the most inputs per second it wants (`per_second`).
+/// the game is listening, and "cap" with the most inputs per second it wants (`per_second`); games
+/// and bridges both send "capture" or "release" for a held press (`press`).
 async fn handle(app: &App, c: &Connection, text: &str) -> Value {
     let Ok(message) = serde_json::from_str::<Value>(text) else {
         return json!({"type": "error", "message": "Send JSON."});
@@ -365,6 +366,15 @@ async fn handle(app: &App, c: &Connection, text: &str) -> Value {
             {
                 Ok(_) => json!({"type": "ack", "id": id}),
                 Err(_) => json!({"type": "error", "id": id, "message": "Try again."}),
+            }
+        }
+        Some(kind @ ("capture" | "release")) => {
+            let Some(press) = message["press"].as_str() else {
+                return json!({"type": "error", "id": id, "message": "\"press\" is the press ID."});
+            };
+            match boards::settle(app, &c.channel, press, kind == "capture").await {
+                Ok(()) => json!({"type": "ack", "id": id}),
+                Err(fail) => json!({"type": "error", "id": id, "message": fail.message}),
             }
         }
         Some("state" | "ready" | "cap") => {
