@@ -13,7 +13,7 @@ export default async function Rewards({ params }: { params: ChannelParams }) {
   return <ChannelFrame data={data} path={`/${name}/rewards`}>
     <section className="panel section" data-page="rewards">
       <h2>Channel rewards</h2>
-      <p className="muted">Spend the Valor you earn watching on this channel&apos;s rewards. They&apos;re in chat, under Channel rewards.</p>
+      <p className="muted">Spend the Valor you earn watching on this channel&apos;s rewards. They&apos;re in chat: open Rewards under the message box.</p>
       <p><Link className="button quiet" href={`/${name}/live`}>Open chat</Link></p>
     </section>
   </ChannelFrame>;
