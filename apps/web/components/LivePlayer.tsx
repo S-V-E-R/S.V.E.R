@@ -49,7 +49,7 @@ async function startWebRtc(video: HTMLVideoElement, url: string, onFatal: () => 
   return () => { pc.close(); video.srcObject = null; };
 }
 
-async function startHls(video: HTMLVideoElement, url: string, onFatal: () => void): Promise<() => void> {
+export async function startHls(video: HTMLVideoElement, url: string, onFatal: () => void): Promise<() => void> {
   if (video.canPlayType("application/vnd.apple.mpegurl")) {
     video.src = url;
     return () => { video.removeAttribute("src"); video.load(); };
