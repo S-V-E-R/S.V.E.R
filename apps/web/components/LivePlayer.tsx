@@ -240,7 +240,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {!rewind && phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
-    {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} />}
+    {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} size={nested ? "compact" : "normal"} />}
     {raidBar}
     <p className="live-meta"><span className="live badge">Live</span> <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching</span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>} {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</p>
   </div>;
