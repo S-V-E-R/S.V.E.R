@@ -140,6 +140,12 @@ export class SverBoard {
   capture(press) { return this.request({ type: "capture", press }); }
   /** It didn't happen: the viewer is refunded. Unconfirmed presses are released after 60 seconds. */
   release(press) { return this.request({ type: "release", press }); }
+  /**
+   * Shows each group of viewers one screen (game connections only): by "faction" with
+   * {myria|aetheron|glint: screen name}, "random" with [2–4 screen names], or "users" with
+   * {username: screen name} (up to 500). setGroups(null) shows everyone every screen again.
+   */
+  setGroups(by, screens) { return this.request({ type: "groups", by, screens }); }
   /** The most presses and joystick moves a second sent to the game (1–100, or null for none). */
   setInputCap(perSecond) { return this.request({ type: "cap", per_second: perSecond }); }
 

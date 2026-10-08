@@ -308,7 +308,8 @@ fn forward(e: &Arc<Event>, channel: &str) -> bool {
 }
 /// One message from a client: "ping", or (games only) "state" with control changes, "ready" when
 /// the game is listening, and "cap" with the most inputs per second it wants (`per_second`); games
-/// and bridges both send "capture" or "release" for a held press (`press`).
+/// and bridges both send "capture" or "release" for a held press (`press`); games set viewer
+/// "groups" (`by`, `screens`).
 async fn handle(app: &App, c: &Connection, text: &str) -> Value {
     let Ok(message) = serde_json::from_str::<Value>(text) else {
         return json!({"type": "error", "message": "Send JSON."});
@@ -377,7 +378,15 @@ async fn handle(app: &App, c: &Connection, text: &str) -> Value {
                 Err(fail) => json!({"type": "error", "id": id, "message": fail.message}),
             }
         }
-        Some("state" | "ready" | "cap") => {
+        Some("groups") if c.kind == "game" => {
+            match boards::set_groups(app, &c.channel, message["by"].as_str(), &message["screens"])
+                .await
+            {
+                Ok(()) => json!({"type": "ack", "id": id}),
+                Err(fail) => json!({"type": "error", "id": id, "message": fail.message}),
+            }
+        }
+        Some("state" | "ready" | "cap" | "groups") => {
             json!({"type": "error", "id": id, "message": "Only game connections can change the board."})
         }
         _ => json!({"type": "error", "id": id, "message": "Unknown message type."}),

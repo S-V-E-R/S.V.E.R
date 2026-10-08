@@ -121,7 +121,7 @@ Part 2, the integration gateway, OBS bridge and Game SDKs (October 6, 2026; migr
 
 ## Additions from the Mixer review (October 6, 2026)
 
-Hold-then-capture charging for controls a game or the bridge must confirm, viewer groups, an input cap and a game ready state are specified in [DEVELOPER_PLATFORM.md](DEVELOPER_PLATFORM.md), Section 3. The input cap, ready state and pricing guidance (migration 0050) and hold-then-capture (migration 0051) were built October 8, 2026 (`tests/streams/gateway.rs`); groups ship with this module's remaining work.
+Hold-then-capture charging for controls a game or the bridge must confirm, viewer groups, an input cap and a game ready state are specified in [DEVELOPER_PLATFORM.md](DEVELOPER_PLATFORM.md), Section 3. The input cap, ready state and pricing guidance (migration 0050) hold-then-capture (migration 0051) and groups (migration 0052) were built October 8, 2026 (`tests/streams/gateway.rs`).
 
 ## Not in this module
 

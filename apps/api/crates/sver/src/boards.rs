@@ -108,6 +108,11 @@ impl Board {
     fn control(&self, id: &str) -> Option<&Control> {
         self.controls().find(|c| c.id == id)
     }
+    fn screen_of(&self, id: &str) -> Option<usize> {
+        self.screens
+            .iter()
+            .position(|s| s.controls.iter().any(|c| c.id == id))
+    }
     fn empty() -> Self {
         Board {
             screens: vec![Screen {
@@ -319,11 +324,13 @@ struct Row {
     starting: bool,
     /// Most presses and joystick moves per second forwarded to the game.
     input_cap: Option<i16>,
+    /// Viewer groups a game set (see `group_screen`).
+    groups: Value,
 }
 fn row_sql() -> String {
     format!("SELECT draft,published,version,published_at,disabled,moderators_run,
     coalesce(overlay_seen_at>now()-interval '30 seconds',false) AS overlay, overlay_token_hash IS NOT NULL AS overlay_set, webhook_url, live_state,
-    {STARTING} AS starting, input_cap FROM boards")
+    {STARTING} AS starting, input_cap, groups FROM boards")
 }
 /// A game session checked in within the last minute and hasn't said "ready".
 const STARTING: &str =
@@ -386,6 +393,7 @@ async fn studio(app: &App, user: &auth::User) -> Res<Value> {
             live_state: json!({}),
             starting: false,
             input_cap: None,
+            groups: json!({}),
         },
     };
     let templates: Vec<Value> = templates()
@@ -444,7 +452,7 @@ async fn publish(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         )));
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("UPDATE boards SET published=draft, version=version+1, published_at=now(), live_state='{}' WHERE channel_id=$1")
+    sqlx::query("UPDATE boards SET published=draft, version=version+1, published_at=now(), live_state='{}', groups='{}' WHERE channel_id=$1")
         .bind(&user.id)
         .execute(&mut *tx)
         .await?;
@@ -754,6 +762,7 @@ async fn view(
         .fetch_one(&app.db)
         .await?;
     let (mut balance, mut last, mut can_run, mut blocks) = (None, json!({}), false, Value::Null);
+    let mut screen = None;
     if let Some(v) = &viewer {
         if v.id != channel {
             balance = Some(sqlx::query_scalar::<_, i64>("SELECT coalesce((SELECT balance FROM engagement WHERE channel_id=$1 AND user_id=$2),0)")
@@ -761,6 +770,7 @@ async fn view(
             last = sqlx::query_scalar("SELECT coalesce(jsonb_object_agg(control_id,at),'{}') FROM (SELECT control_id,max(created_at) AS at FROM board_presses WHERE channel_id=$1 AND user_id=$2 GROUP BY 1) p")
                 .bind(&channel).bind(&v.id).fetch_one(&app.db).await?;
         }
+        screen = group_screen(&app, &row.groups, &v.id).await?;
         if let Some(role) = moderation::role_of(&app, &channel, v).await? {
             can_run = role != Role::Moderator || row.moderators_run;
         }
@@ -771,7 +781,7 @@ async fn view(
     }
     Ok(Json(json!({
         "board": board.0, "version": row.version, "disabled": row.disabled, "live": live.is_some(), "state": row.live_state,
-        "overlay": row.overlay, "starting": row.starting, "goals": goals, "used": used, "last_press": last,
+        "overlay": row.overlay, "starting": row.starting, "screen": screen, "goals": goals, "used": used, "last_press": last,
         "balance": balance, "signed_in": viewer.is_some(), "can_run": can_run, "blocks": blocks,
     })))
 }
@@ -821,6 +831,12 @@ async fn press(
         .control(&input.control)
         .filter(|c| pressable(c))
         .ok_or_else(Fail::missing)?;
+    if group_screen(&app, &row.groups, &user.id)
+        .await?
+        .is_some_and(|s| board.screen_of(&control.id) != Some(s))
+    {
+        return Err(Fail::denied("That control is for another group."));
+    }
     if row.live_state[&control.id]["disabled"] == true {
         return Err(Fail::conflict("That control is unavailable right now."));
     }
@@ -1001,6 +1017,96 @@ pub(crate) async fn settle(app: &App, channel: &str, press: &str, capture: bool)
         0,
         json!({"type": "board_result", "id": press, "control": control, "outcome": outcome}),
     );
+    Ok(())
+}
+/// The screen a viewer's group sees, if a game grouped them.
+async fn group_screen(app: &App, groups: &Value, user: &str) -> Res<Option<usize>> {
+    let map = &groups["map"];
+    let index = match groups["by"].as_str() {
+        Some("users") => &map[user],
+        Some("random") => {
+            // Stable for the viewer: the first 4 bytes of a digest of their ID.
+            let n = map.as_array().map_or(0, Vec::len).max(1);
+            let hash = u32::from_str_radix(&sec::digest(user)[..8], 16).unwrap_or(0);
+            &map[hash as usize % n]
+        }
+        Some("faction") => {
+            let faction: Option<String> =
+                sqlx::query_scalar("SELECT faction FROM faction_members WHERE user_id=$1")
+                    .bind(user)
+                    .fetch_optional(&app.db)
+                    .await?;
+            match faction {
+                Some(f) => &map[f.as_str()],
+                None => return Ok(None),
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(index.as_u64().map(|i| i as usize))
+}
+/// A game's grouping (docs/DEVELOPER_PLATFORM.md §3 "Groups"): `by` "faction" with
+/// {faction: screen name}, "random" with [screen names], "users" with {username: screen name}
+/// (up to 500), or null to clear. Screens are named as on the published board.
+pub(crate) async fn set_groups(
+    app: &App,
+    channel: &str,
+    by: Option<&str>,
+    screens: &Value,
+) -> Res<()> {
+    let published: Option<sqlx::types::Json<Board>> =
+        sqlx::query_scalar("SELECT published FROM boards WHERE channel_id=$1")
+            .bind(channel)
+            .fetch_optional(&app.db)
+            .await?
+            .flatten();
+    let board = published
+        .ok_or_else(|| Fail::conflict("Publish a board first."))?
+        .0;
+    let index = |name: &Value| {
+        name.as_str()
+            .and_then(|n| board.screens.iter().position(|s| s.name == n))
+            .map(|i| json!(i))
+            .ok_or_else(|| Fail::bad(format!("No screen named {name} on the published board.")))
+    };
+    let groups = match (by, screens) {
+        (None, _) => json!({}),
+        (Some("random"), Value::Array(names)) if (2..=MAX_SCREENS).contains(&names.len()) => {
+            json!({"by": "random", "map": names.iter().map(index).collect::<Res<Vec<_>>>()?})
+        }
+        (Some("faction"), Value::Object(names)) => {
+            let mut map = serde_json::Map::new();
+            for (faction, name) in names {
+                if !["myria", "aetheron", "glint"].contains(&faction.as_str()) {
+                    return Err(Fail::bad("Factions are myria, aetheron and glint."));
+                }
+                map.insert(faction.clone(), index(name)?);
+            }
+            json!({"by": "faction", "map": map})
+        }
+        (Some("users"), Value::Object(names)) if names.len() <= 500 => {
+            let mut map = serde_json::Map::new();
+            for (username, name) in names {
+                let mut conn = app.db.acquire().await?;
+                let user = profiles::eligible_by_name(&mut conn, username)
+                    .await?
+                    .ok_or_else(|| Fail::bad(format!("No viewer named {username}.")))?;
+                map.insert(user.id, index(name)?);
+            }
+            json!({"by": "users", "map": map})
+        }
+        _ => {
+            return Err(Fail::bad(
+                "Group by \"faction\" (an object), \"random\" (2–4 screen names) or \"users\" (up to 500), or null.",
+            ));
+        }
+    };
+    sqlx::query("UPDATE boards SET groups=$2 WHERE channel_id=$1")
+        .bind(channel)
+        .bind(groups)
+        .execute(&app.db)
+        .await?;
+    changed(app, channel);
     Ok(())
 }
 /// Releases presses no game confirmed within 60 seconds.

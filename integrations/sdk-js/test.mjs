@@ -13,7 +13,7 @@ const gateway = await serve((socket, request) => {
   socket.on("message", text => {
     const message = JSON.parse(text);
     seen.push(message);
-    if (["ready", "cap", "capture", "release"].includes(message.type)) socket.send(JSON.stringify({ type: "ack", id: message.id }));
+    if (["ready", "cap", "capture", "release", "groups"].includes(message.type)) socket.send(JSON.stringify({ type: "ack", id: message.id }));
     if (message.type === "state") {
       if (message.controls.jump?.label === "") socket.send(JSON.stringify({ type: "error", id: message.id, message: "Labels are 1–40 characters." }));
       else {
@@ -55,6 +55,10 @@ assert.notEqual(sent[0].id, sent[1].id, "each request has its own id");
 await sdk.ready();
 await sdk.setInputCap(20);
 assert.deepEqual(seen.filter(m => m.type === "ready" || m.type === "cap").map(m => m.per_second ?? m.type), ["ready", 20]);
+
+// Groups.
+await sdk.setGroups("random", ["Red", "Blue"]);
+assert.deepEqual(seen.at(-1).screens, ["Red", "Blue"]);
 
 // Confirming a held press, and its result event.
 await sdk.capture("p1");
