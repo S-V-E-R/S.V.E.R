@@ -5,6 +5,7 @@ import { Crest } from "../Crest";
 import { factionOf } from "../../lib/factions";
 import type { LiveCard } from "./types";
 import { LiveThumbnail } from "../LiveThumbnail";
+import { LivePreview } from "./LivePreview";
 
 /**
  * The rotation carousel (Main mockup). Every live stream gets a turn; it never orders by viewer
@@ -30,7 +31,7 @@ export function Rotation({ streams, viewerFaction, reasons = {} }: { streams: Li
     {n > 1 && <span className="rotation-peek" aria-hidden="true"><LiveThumbnail src={prev.thumbnail} label={prev.category ?? prev.display_name} /></span>}
     <div className="rotation-card frame" role="group" aria-roledescription="slide" aria-label={`${index % n + 1} of ${n}: ${cur.display_name}`}>
       <Link href={`/${cur.username}/live`} className="rotation-stage" aria-label={`Watch ${cur.display_name}`}>
-        <LiveThumbnail key={cur.broadcast_id ?? cur.username} src={cur.thumbnail} label={cur.category ?? cur.display_name} />
+        <LivePreview key={cur.broadcast_id ?? cur.username} username={cur.username} thumbnail={cur.thumbnail} label={cur.category ?? cur.display_name} />
         <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}</span>
       </Link>
       <div className="rotation-info">

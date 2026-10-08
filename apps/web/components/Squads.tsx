@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { send } from "../lib/client-api";
 import type { Chip } from "../lib/types";
@@ -75,26 +75,52 @@ export function SquadView({ initial, account }: { initial: Squad; account: strin
   </div>;
 }
 /** Watch-page view of a co-stream: every stream at once or just one, audio from one stream at a time. */
+const LAYOUT_KEY = "sver:costream-layout";
+// The choice for this page load, so the toggle works even where storage is blocked.
+let chosen: "side" | "pip" | null = null;
+function readLayout(): "side" | "pip" {
+  if (chosen) return chosen;
+  try { return localStorage.getItem(LAYOUT_KEY) === "pip" ? "pip" : "side"; } catch { return "side"; }
+}
+function onLayout(change: () => void) {
+  window.addEventListener("sver:costream-layout", change);
+  return () => window.removeEventListener("sver:costream-layout", change);
+}
+function choose(next: "side" | "pip") {
+  chosen = next;
+  try { localStorage.setItem(LAYOUT_KEY, next); } catch { /* storage unavailable: this page only */ }
+  window.dispatchEvent(new Event("sver:costream-layout"));
+}
 export function CoStreamPlayers({ initial, focus, account }: { initial: Squad; focus: string; account: string | null }) {
   const [squad, setSquad] = useState(initial);
   const [solo, setSolo] = useState<string | null>(null);
   const [audio, setAudio] = useState<string | null>(focus);
+  // Which stream is large in picture-in-picture; the page's own streamer to start with.
+  const [main, setMain] = useState(focus);
+  // Side by side or picture in picture, remembered per viewer (a convenience; storage may be off).
+  const layout = useSyncExternalStore(onLayout, readLayout, () => "side" as const);
   useEffect(() => {
     const timer = setInterval(() => { if (!document.hidden) void send<Squad>("GET", `/api/squads/${squad.id}`).then(r => { if (r.ok) setSquad(r.data); }); }, 10000);
     return () => clearInterval(timer);
   }, [squad.id]);
   const members = squad.ended ? [] : squad.members.filter(m => m.username);
-  const shown = solo && members.some(m => m.username === solo) ? members.filter(m => m.username === solo) : members.length > 1 ? [...members].sort((a, b) => Number(b.username === focus) - Number(a.username === focus)) : [];
+  const shown = solo && members.some(m => m.username === solo) ? members.filter(m => m.username === solo) : members.length > 1 ? [...members].sort((a, b) => Number(b.username === main) - Number(a.username === main)) : [];
+  const pip = layout === "pip" && shown.length > 1;
   if (!shown.length) return <div className="watch-player"><LivePlayer username={focus} focused signedIn={!!account} /></div>;
   return <div className="watch-player costream">
     <div className="costream-bar row"><span className="eyebrow">Co-stream · {members.length} streams</span>
       <button type="button" className="small quiet" aria-pressed={!solo} onClick={() => setSolo(null)}>All streams</button>
       {members.map(m => <button key={m.username} type="button" className="small quiet" aria-pressed={solo === m.username} onClick={() => { setSolo(m.username); setAudio(m.username); }}>Only {m.display_name}</button>)}
+      {shown.length > 1 && <span className="costream-layout" role="group" aria-label="Layout">
+        <button type="button" className="small quiet" aria-pressed={layout === "side"} onClick={() => choose("side")}>Side by side</button>
+        <button type="button" className="small quiet" aria-pressed={layout === "pip"} onClick={() => choose("pip")}>Picture in picture</button>
+      </span>}
     </div>
-    <div className={shown.length > 1 ? "costream-grid" : undefined}>{shown.map(m => m.username && <section key={m.username} className="squad-stream" aria-label={m.display_name}>
+    <div className={shown.length > 1 ? (pip ? "costream-pip" : "costream-grid") : undefined}>{shown.map((m, i) => m.username && <section key={m.username} className={pip && i > 0 ? "squad-stream pip-tile" : "squad-stream"} aria-label={m.display_name}>
       <LivePlayer username={m.username} signedIn={!!account} nested focused followRaids={false} muted={audio !== m.username} onUnmute={() => setAudio(m.username)} />
       <div className="row">{m.faction && <Crest faction={m.faction} size={20} />}<Link href={`/${m.username}`}><strong>{m.display_name}</strong></Link>
-        <button type="button" className="small quiet" aria-pressed={audio === m.username} onClick={() => setAudio(audio === m.username ? null : m.username)}>{audio === m.username ? "Mute" : "Listen"}</button></div>
+        <button type="button" className="small quiet" aria-pressed={audio === m.username} onClick={() => setAudio(audio === m.username ? null : m.username)}>{audio === m.username ? "Mute" : "Listen"}</button>
+        {pip && i > 0 && <button type="button" className="small quiet" onClick={() => setMain(m.username!)}>Make main</button>}</div>
     </section>)}</div>
   </div>;
 }
