@@ -80,7 +80,7 @@ Load fonts with `next/font/google` so they're self-hosted and subset. No `@impor
 
 **Progress bar.** Dark track, fill `linear-gradient(90deg, var(--accent-dark), var(--accent))`, no glow.
 
-**Motion.** CSS transitions everywhere, honoring reduced motion. Two signature moments, the welcome ceremony and the season reveal, use GSAP loaded only on those screens ([MOTION.md](MOTION.md)). No Three.js or canvas effects: the video player owns the GPU.
+**Motion.** CSS transitions everywhere, honoring reduced motion. Two signature moments, the welcome ceremony and the season reveal, use Motion (MIT) loaded only on those screens ([MOTION.md](MOTION.md)). No Three.js or canvas effects: the video player owns the GPU.
 
 **Icons.** Inline SVG strokes (`currentColor`), about 18 px. No emoji and no Unicode symbol glyphs (◈ ✦ ⌁) as icons.
 

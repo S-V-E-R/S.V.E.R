@@ -1,25 +1,27 @@
 # Motion: the welcome ceremony and the season reveal
 
-Approved by Joe on October 8, 2026. Two signature moments get choreographed animation with GSAP. Everything else stays CSS, per [DESIGN.md](DESIGN.md): pages stay light, decoration is CSS and inline SVG, and there are no glows. Three.js isn't used. A 3D canvas would compete with the video player for the GPU, and it would need a separate accessible version of anything it draws.
+Approved by Joe on October 8, 2026. Two signature moments get choreographed animation with **Motion** (motion.dev, MIT-licensed, the successor to Framer Motion). Everything else stays CSS, per [DESIGN.md](DESIGN.md): pages stay light, decoration is CSS and inline SVG, and there are no glows. Three.js isn't used. A 3D canvas would compete with the video player for the GPU, and it would need a separate accessible version of anything it draws.
 
-**When:** with the channel and transparency additions ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)), after VODs and clips (Module 8) closes. The license step below comes first.
+**When:** with the channel and transparency additions ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)), after VODs and clips (Module 8) closes.
 
-## Why GSAP, and only here
+## Why Motion, and only here
 
-- Both moments are timed sequences: several elements, in order, with overlaps. That's where CSS keyframes get brittle and GSAP's timelines stay readable.
-- GSAP is loaded with `import("gsap")` inside these two components only. Its few kilobytes don't enter the shared bundle, and no other page downloads it.
-- Later candidates, each needing its own approval: a raid arriving and CrowdSync board effects. Until then they stay CSS.
+- **Why a library at all.** Both moments are timed sequences: several elements, in order, with overlaps. That's where CSS keyframes get brittle.
+- **Why Motion over GSAP** (decided October 8):
+  - Motion's sequences cover a 2.5-second choreography comfortably.
+  - It's built for React, and it has a ready-made reduced-motion check (`useReducedMotion`).
+  - Its MIT license sits cleanly with our AGPL-3.0 repo. GSAP's no-charge license isn't open source and would have needed an extra license paragraph.
+- **What to use:**
+  - The core package (`motion`) only. Not the paid Motion+ extras.
+  - Line drawing uses SVG `pathLength`.
+  - The welcome title's line-by-line rise uses a few lines of our own code, splitting on the line breaks we render.
+- **Loading:** inside these two components only, so it never enters the shared bundle and no other page downloads it.
+- **Later candidates,** each needing its own approval: a raid arriving and CrowdSync board effects. GSAP could be reconsidered for long cinematic or scroll-driven sequences, with the license paragraph that would need.
 
-## License step (before installing)
+## Dependency
 
-- **GSAP's terms:** GSAP has been free for all uses, including commercial, since April 30, 2025, under Webflow's "Standard 'No Charge' GSAP License".
-- **The conflict:** that license is not an open-source license. It forbids using GSAP in visual animation builders that compete with Webflow. S.V.E.R is AGPL-3.0, so shipping GSAP inside our front-end bundle needs an **additional permission under AGPL section 7**. It lets S.V.E.R and its forks combine the code with GSAP under GSAP's own terms.
-- **Before installing:**
-  1. SVER LLC, as the copyright holder, adds that permission to `LICENSE` and `README.md`.
-  2. A lawyer should glance at the wording. (Claude isn't one.)
-  3. GSAP is added as an npm dependency, never copied into the repo.
-  4. It's listed on the credits page with its license.
-- **Fallback:** if Joe would rather not add an exception, use **Motion** (motion.dev, MIT-licensed) instead. It has sequences and springs and needs no license change. The rest of this spec applies to either library.
+- Added as an npm dependency in `apps/web`, never copied into the repo.
+- Listed on the credits page with its MIT license.
 
 ## Rules for both moments
 
@@ -37,7 +39,7 @@ Approved by Joe on October 8, 2026. Two signature moments get choreographed anim
   - No glows, light bloom or gradient washes.
   - Square corners.
   - Theme tokens for every colour. A faction's colours are used only when it's that faction's moment.
-- **Screen readers:** a reader hears the final text once, never letters or lines as they arrive. Split text stays in one accessible label.
+- **Screen readers:** a reader hears the final text once, never letters or lines as they arrive. A title split into lines stays in one accessible label.
 - **Sound:** none. Streaming audio is often playing in another tab.
 
 ## 1. The welcome ceremony (`/welcome`, the "Welcome to {faction}" step)
@@ -55,7 +57,7 @@ The moment someone enlists. It runs in the faction's theme. The sequence is abou
 | 2.1 s | The four "what changes now" tiles step in, 80 ms apart. |
 | 2.4 s | Continue and the battle cry appear. |
 
-The relic mark is drawn with `stroke-dashoffset` and fades to 20% opacity:
+The relic mark is drawn by animating its SVG path length and fades to 20% opacity:
 - **Myria:** a rising flame.
 - **Aetheron:** a crescent with three stars.
 - **Glint:** a crown's outline.
@@ -86,10 +88,10 @@ The first time someone opens the home page after a season ends, the front-line b
 
 ## Done when
 
-1. GSAP (or Motion) is loaded only on `/welcome` and on home during a reveal. Every other route's JavaScript is unchanged in the build output.
+1. Motion is loaded only on `/welcome` and on home during a reveal. Every other route's JavaScript is unchanged in the build output.
 2. Both sequences match the timings above (±100 ms), run within 3 seconds, and Skip and Escape jump to the end.
 3. With reduced motion, or with JavaScript off, the final state shows at once and the page is fully usable.
 4. Screen readers hear each line once. Focus starts on the heading, and buttons work during the animation.
 5. Both hold 60 fps on a 4× CPU-throttled profile, using only transform and opacity (plus dash offsets on small SVGs).
 6. The reveal uses real season results, handles joint winners, and plays once per season per browser.
-7. The license step is done before the dependency lands, and the credits page lists the library.
+7. The credits page lists Motion and its license.
