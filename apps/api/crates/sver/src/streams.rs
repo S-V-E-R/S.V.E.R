@@ -787,8 +787,51 @@ pub async fn hook(
     tx.commit().await?;
     Ok(Json(json!({"code":0})))
 }
+#[derive(Deserialize)]
+pub struct Preferences {
+    skip_mature_warning: bool,
+}
+/// GET and PUT /api/me/preferences: "Don't warn me about mature streams" (only adults can use it).
+async fn preferences(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>> {
+    let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
+    let adult = auth::is_adult(&mut tx, &user.id).await?;
+    let skip: bool = sqlx::query_scalar("SELECT skip_mature_warning FROM users WHERE id=$1")
+        .bind(&user.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(
+        json!({"skip_mature_warning": skip && adult, "adult": adult}),
+    ))
+}
+async fn save_preferences(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<Preferences>,
+) -> Result<Json<Value>> {
+    let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
+    let adult = auth::is_adult(&mut tx, &user.id).await?;
+    if input.skip_mature_warning && !adult {
+        return Err(Error::bad(
+            "Only viewers aged 18 and over can turn off the mature warning.",
+        ));
+    }
+    sqlx::query("UPDATE users SET skip_mature_warning=$2 WHERE id=$1")
+        .bind(&user.id)
+        .bind(input.skip_mature_warning)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(
+        json!({"skip_mature_warning": input.skip_mature_warning, "adult": adult}),
+    ))
+}
 pub fn routes() -> Router<App> {
     Router::new()
+        .route(
+            "/api/me/preferences",
+            get(preferences).put(save_preferences),
+        )
         .route("/api/internal/streams/playback", get(authorize_playback))
         .route("/api/categories", get(categories))
         .route("/api/me/stream", get(mine).patch(save))

@@ -155,6 +155,23 @@ pub async fn exercise(e: &Env) {
         (&json!(true), &Value::Null)
     );
     assert!(call(&adult).await.1["playback"].is_object());
+    assert_eq!(call(&adult).await.1["mature_warn"], true);
+    let prefer = |token, skip| {
+        super::chat::call(
+            e,
+            "PUT",
+            "/api/me/preferences",
+            Some(token),
+            json!({"skip_mature_warning": skip}),
+        )
+    };
+    assert_eq!(
+        prefer(&minor, true).await.0,
+        StatusCode::BAD_REQUEST,
+        "adults only"
+    );
+    assert_eq!(prefer(&adult, true).await.0, StatusCode::OK);
+    assert_eq!(call(&adult).await.1["mature_warn"], false, "Don't warn me");
     let chat = |token| {
         super::chat::call(
             e,

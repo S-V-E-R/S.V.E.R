@@ -253,6 +253,14 @@ pub async fn live(
     .bind(&owner)
     .fetch_one(&app.db)
     .await?;
+    // Adults who chose "Don't warn me about mature streams" skip the warning screen.
+    let skip_warning: bool = match &viewer {
+        Some(v) => sqlx::query_scalar("SELECT skip_mature_warning AND coalesce(date_of_birth<=current_date-interval '18 years',false) FROM users WHERE id=$1")
+            .bind(&v.id)
+            .fetch_one(&app.db)
+            .await?,
+        None => false,
+    };
     // Mature label: an under-18 account gets no playback (adults and guests see a warning first).
     if crate::streams::mature_blocked(
         &mut *app.db.acquire().await?,
@@ -315,6 +323,7 @@ pub async fn live(
         "live": true, "broadcast_id": b.id, "state": b.state, "title": b.title,
         "category": b.category, "started_at": b.started_at, "viewers": b.viewers,
         "is_owner": viewer.as_ref().is_some_and(|v| v.id == owner), "mature": mature,
+        "mature_warn": mature && !skip_warning,
         "playback": {"webrtc": webrtc, "hls": hls, "preferred": preferred},
         "raid": crate::raids::for_viewers(&app, &b.id, viewer.as_ref().map(|v| v.id.as_str())).await?,
     })))
