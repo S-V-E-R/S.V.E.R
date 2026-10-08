@@ -29,6 +29,7 @@ export default function StreamStudio() {
   const [code, setCode] = useState("");
   const [secret, setSecret] = useState<Key | null>(null);
   const [rotate, setRotate] = useState(false);
+  const [ratedMature, setRatedMature] = useState(false);
   const [ingest, setIngest] = useState<"rtmp" | "whip" | "srt">("rtmp");
   const active = useRef(true);
   const secretEpoch = useRef(0);
@@ -137,8 +138,9 @@ export default function StreamStudio() {
     <Section title="Stream details" intro="Choose a title and category before connecting OBS. You can change them while live.">
       <form onSubmit={save}>
         <label className="field"><span>Title</span><input required maxLength={280} value={form.title} disabled={busy || !data.eligible} aria-describedby="stream-title-count" onChange={event => setForm({ ...form, title: event.target.value })} /><small id="stream-title-count">{count}/140 characters</small></label>
-        <GamePicker value={form.category_id ?? ""} disabled={busy || !data.eligible} onChange={category_id => setForm({ ...form, category_id })} />
+        <GamePicker value={form.category_id ?? ""} disabled={busy || !data.eligible} onChange={(category_id, mature) => { setForm({ ...form, category_id, mature: mature || form.mature }); setRatedMature(mature); }} />
         <label className="checkbox"><input type="checkbox" checked={!!form.mature} disabled={busy || !data.eligible || (form.mature_locked && form.mature)} onChange={event => setForm({ ...form, mature: event.target.checked })} /> <strong>Mature</strong>: violent or horror games, strong language or mature themes. Viewers under 18 can&apos;t watch, and others see a warning first. It doesn&apos;t permit anything the <Link href="/guidelines">Community Guidelines</Link> ban. It stays on for your next streams until you turn it off.</label>
+        {ratedMature && form.mature && <p role="status">This game has a mature age rating (ESRB M or AO, or PEGI 18), so Mature is switched on. You can turn it off.</p>}
         {form.mature_locked && <p role="status">Staff labeled this broadcast mature, so the label stays on until it ends.</p>}
         <div className="row"><button disabled={busy || !data.eligible || count < 1 || count > 140}>Save details</button><button type="button" className="quiet" disabled={busy} onClick={reloadDetails}>Reload saved details</button></div>
       </form>

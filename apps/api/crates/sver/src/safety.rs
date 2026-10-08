@@ -32,6 +32,7 @@ pub const REASONS: &[&str] = &[
     "impersonation",
     "private_information",
     "copyright",
+    "mature_label",
     "other",
 ];
 pub const FIELDS: &[&str] = &[

@@ -321,13 +321,15 @@ pub async fn exercise(e: &Env) {
     assert_eq!(until(&mut chat, "board_input").await["x"], 0.5);
     e.sql("DELETE FROM rate_limits WHERE key LIKE 'board%'")
         .await;
-    let mut limited = 0;
-    for _ in 0..12 {
-        if raw_press(e, &viewer, stick(0.1)).await.0 == StatusCode::TOO_MANY_REQUESTS {
-            limited += 1;
-        }
-    }
-    assert!(limited >= 1, "joystick rate limit");
+    // A viewer already at 10 moves this second is refused (set directly, so a slow test machine
+    // can't spread the moves past the one-second window).
+    e.sql("INSERT INTO rate_limits(key,count,expires_at) VALUES('board-joy:bd-viewer',10,now()+interval '1 minute')")
+        .await;
+    assert_eq!(
+        raw_press(e, &viewer, stick(0.1)).await.0,
+        StatusCode::TOO_MANY_REQUESTS,
+        "joystick rate limit"
+    );
     // The press rate limit across all controls.
     e.sql("DELETE FROM rate_limits WHERE key LIKE 'board%'")
         .await;

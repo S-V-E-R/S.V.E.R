@@ -114,6 +114,64 @@ pub async fn exercise(e: &Env) {
         .unwrap();
     assert_eq!(logged, 2);
 
+    // Mature label: a report reason, a catalog rating that Studio uses, and the audited staff lock.
+    let (status, report) = call(
+        e,
+        "POST",
+        "/api/reports",
+        Some(&regular),
+        json!({"target_type":"live_stream","target_id":"so-b","reason":"mature_label"}),
+    )
+    .await;
+    assert!(status.is_success(), "{report}");
+    e.sql("INSERT INTO game_catalog(source_id,category_id,name,mature) VALUES('Q990001','fortnite','Fortnite',true)").await;
+    let (_, choices) = call(e, "GET", "/api/categories?q=fortnite", None, Value::Null).await;
+    assert_eq!(choices["categories"][0]["mature"], true, "{choices}");
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/admin/streams/so-b/mature",
+            Some(&owner),
+            json!({"reason":"no"})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/admin/streams/so-b/mature",
+        Some(&admin),
+        json!({"reason":"Horror game, unlabeled"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = call(e, "GET", "/api/admin/streams", Some(&admin), Value::Null).await;
+    assert_eq!(
+        (
+            &list["items"][0]["mature"],
+            &list["items"][0]["mature_locked"]
+        ),
+        (&json!(true), &json!(true))
+    );
+    let (_, mine) = call(e, "GET", "/api/me/stream", Some(&owner), Value::Null).await;
+    assert_eq!(
+        (
+            &mine["settings"]["mature"],
+            &mine["settings"]["mature_locked"]
+        ),
+        (&json!(true), &json!(true))
+    );
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM moderation_actions WHERE action='lock_mature' AND target_id='so-b'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+
     // Stop: a reason is required; the broadcast ends as revoked and the action is audited.
     assert_eq!(
         call(

@@ -5,7 +5,7 @@ import { Section } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 import { GameCatalogReview } from "../../../components/GameCatalogReview";
 
-type Stream = { id: string; state: string; started_at: string; title: string; category: string | null; open_reports: number; followers_only_until: string | null;
+type Stream = { id: string; state: string; started_at: string; title: string; category: string | null; open_reports: number; followers_only_until: string | null; mature?: boolean; mature_locked?: boolean;
   channel: { username: string; display_name: string };
   health: { video_codec?: string | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean; keyframe_warning?: boolean; keyframe_seconds?: number | null; b_frames?: boolean | null };
   counts: { sessions: number; public: number; trusted: number; excluded: number; pending: number } };
@@ -31,6 +31,13 @@ export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boo
     if (!reason) return;
     const result = await send("POST", `/api/admin/streams/${stream.id}/stop`, { reason });
     setMessage(result.ok ? `Stopped @${stream.channel.username}'s stream.` : result.error);
+    await load();
+  }
+  async function lockMature(stream: Stream) {
+    const reason = window.prompt(`Label @${stream.channel.username}'s stream mature and lock it until this broadcast ends? Reason (required):`)?.trim();
+    if (!reason) return;
+    const result = await send("POST", `/api/admin/streams/${stream.id}/mature`, { reason });
+    setMessage(result.ok ? `Labeled @${stream.channel.username}'s stream mature.` : result.error);
     await load();
   }
   async function add(event: FormEvent<HTMLFormElement>) {
@@ -62,7 +69,8 @@ export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boo
           <p className="muted">{s.health.video_codec ?? "codec not measured"}{s.health.input_kbps != null && ` · ${Math.round(s.health.input_kbps)} Kbps`}{s.health.keyframe_seconds != null && ` · keyframes ${s.health.keyframe_seconds} s`}{s.health.b_frames != null && ` · B-frames ${s.health.b_frames ? "on" : "off"}`}
             {(s.health.codec_warning || s.health.bitrate_warning || s.health.keyframe_warning || s.health.b_frames) && <strong> · OBS warning</strong>}</p>
           {(s.open_reports > 0 || s.followers_only_until) && <p>{s.open_reports > 0 && <Link href="/admin/reports">{s.open_reports} open report{s.open_reports === 1 ? "" : "s"}</Link>}{s.followers_only_until && <span className="muted"> Followers-only chat on</span>}</p>}
-          <button type="button" className="small quiet danger-text" onClick={() => stop(s)}>Stop stream</button>
+          <div className="row">{s.mature_locked ? <span className="muted">Labeled mature by staff (locked until this broadcast ends)</span> : <button type="button" className="small quiet" onClick={() => lockMature(s)}>{s.mature ? "Lock the Mature label" : "Label mature and lock"}</button>}
+          <button type="button" className="small quiet danger-text" onClick={() => stop(s)}>Stop stream</button></div>
         </li>)}</ul>}
     </Section>}
     {!catalogOnly && <Spotlights />}
