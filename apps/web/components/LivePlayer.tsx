@@ -50,13 +50,18 @@ async function startWebRtc(video: HTMLVideoElement, url: string, onFatal: () => 
 }
 
 export async function startHls(video: HTMLVideoElement, url: string, onFatal: () => void): Promise<() => void> {
-  if (video.canPlayType("application/vnd.apple.mpegurl")) {
+  // hls.js wherever Media Source works, so the live-edge settings below apply in every browser
+  // (some now play HLS natively, with their own, deeper buffering); native HLS only without it.
+  const { default: Hls } = await import("hls.js");
+  if (!Hls.isSupported()) {
+    if (!video.canPlayType("application/vnd.apple.mpegurl")) throw new Error("This browser can't play the stream.");
     video.src = url;
     return () => { video.removeAttribute("src"); video.load(); };
   }
-  const { default: Hls } = await import("hls.js");
-  if (!Hls.isSupported()) throw new Error("This browser can't play the stream.");
-  const hls = new Hls({ lowLatencyMode: true });
+  // Measured October 7, 2026: with the defaults the CDN path ran 3.5 s behind direct WebRTC
+  // (about 5 s end to end, the limit). Hold about 2 s behind the live edge (1-second segments),
+  // jump back past 6 s, and after a stall catch up by playing up to 10% faster.
+  const hls = new Hls({ lowLatencyMode: true, liveSyncDuration: 2, liveMaxLatencyDuration: 6, maxLiveSyncPlaybackRate: 1.1 });
   hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal) onFatal(); });
   hls.loadSource(url);
   hls.attachMedia(video);

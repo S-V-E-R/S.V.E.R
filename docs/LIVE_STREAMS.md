@@ -195,6 +195,8 @@ The five-second worker confirms H.264/AAC and increasing input bytes before mark
 
 ## Playback and capacity
 
+**Real-OBS measurement (October 7, 2026).** Joe streamed a stopwatch from OBS. Direct WebRTC read about 1.5 s behind the stopwatch on Joe's own screen (one reading; the absolute figure still needs a side-by-side screenshot per path). The CDN path (HLS through cdn.sver.tv) ran 3.41 s behind WebRTC in one session (three samples within 20 ms) and about 3.5 s in a second (frame-timed WebRTC ticks against bracketed CDN ticks), so about 5 s end to end, at the limit. The player then moved to hls.js in every browser that supports Media Source and holds about 2 s behind the live edge (`liveSyncDuration` 2, catch-up up to 1.1× speed, jump back past 6 s); re-measure after it.
+
 Use native `RTCPeerConnection` for SRS WHEP, native HLS where supported, and an established HLS browser library where Media Source playback needs one. Reuse the legacy transport fallback behavior, not its multi-provider orchestration layers. Version/pinning decisions follow the media test.
 
 The player has explicit loading, playing, reconnecting, offline and failed states. Preserve mute/volume across a transport switch, stop the retired transport, and show an actionable retry on total failure. Handle autoplay rejection with a play/unmute control. Keyboard operation, captions-track support when tracks exist, fullscreen, mobile layout and reduced motion are acceptance items; no fabricated caption feed is supplied.
