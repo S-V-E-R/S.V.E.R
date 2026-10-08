@@ -59,6 +59,7 @@ export default function AboutPage() {
         <a href="https://github.com/S-V-E-R/S.V.E.R" className="button quiet">Read the code on GitHub</a>
         <Link href="/roadmap" className="button quiet">See the roadmap</Link>
         <Link href="/contact" className="button quiet">Get in touch</Link>
+        <Link href="/credits" className="button quiet">Open-source credits</Link>
       </div>
     </section>
 

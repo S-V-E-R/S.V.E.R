@@ -140,6 +140,8 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 
 **Done when:** every shipped dependency appears with its license text, and CI catches a stale list.
 
+**Built October 8, 2026.** 371 shipped packages (Rust crates reachable from the API on Linux through normal dependencies, and the website's production npm packages; per-platform native build tools are left out so the list is the same on every machine) plus SRS, PostgreSQL, Cinzel and Barlow. Where a crate offers a choice that includes MIT, S.V.E.R uses MIT and keeps only that notice; identical texts are stored once. The vendored SRS, PostgreSQL and font license texts are in `scripts/credits/`. CI runs `node scripts/credits.mjs --check` in the Web job.
+
 ## Considered and not taken
 
 - **Pronouns** on profiles (Joe, October 6).
