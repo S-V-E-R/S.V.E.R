@@ -11,12 +11,13 @@ export type ControlState = { label?: string; disabled?: boolean };
 export type Snapshot = { board: Board | null; version: number; disabled: boolean; state: Record<string, ControlState>; goals: Record<string, number>; starting: boolean; input_cap: number | null };
 export type Hello = Snapshot & { type: "hello"; kind: "bridge" | "game"; channel: string; protocol: number };
 export type Press = {
-  type: "board_effect"; control: string; label: string; effect: string; user: { username: string };
+  type: "board_effect"; id: string; confirm: boolean; control: string; label: string; effect: string; user: { username: string };
   text?: string | null; goal?: { progress: number; target: number; reached: boolean } | null; stream_ms: number | null; at: number;
 };
 export type Input = { type: "board_input"; control: string; x: number; y: number; user: { username: string }; stream_ms: number | null; at: number };
 export type Effect = { type: "board_effect"; effect: string; label?: string; caption?: string; skill?: string; surge?: number; user?: { username: string } };
 export type StateChange = { type: "board_state"; state: Record<string, ControlState>; goals: Record<string, number> };
+export type Result = { type: "board_result"; id: string; control: string; outcome: "captured" | "released" };
 export type Change = { label?: string | null; disabled?: boolean; progress?: number };
 
 export class SverBoard {
@@ -28,6 +29,7 @@ export class SverBoard {
   on(type: "effect", fn: (effect: Effect) => void): () => void;
   on(type: "board", fn: (board: Snapshot) => void): () => void;
   on(type: "state", fn: (change: StateChange) => void): () => void;
+  on(type: "result", fn: (result: Result) => void): () => void;
   on(type: "error", fn: (error: Error) => void): () => void;
   on(type: "close", fn: (close: { code: number; reason: string }) => void): () => void;
   connect(): Promise<Hello>;
@@ -37,6 +39,8 @@ export class SverBoard {
   progress(control: string, progress: number): Promise<void>;
   ping(): Promise<void>;
   ready(): Promise<void>;
+  capture(press: string): Promise<void>;
+  release(press: string): Promise<void>;
   setInputCap(perSecond: number | null): Promise<void>;
   close(): void;
 }

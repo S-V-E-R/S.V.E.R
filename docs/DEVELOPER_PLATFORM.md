@@ -71,7 +71,7 @@ One WebSocket, `wss://sver.tv/api/events`, where apps subscribe to topics instea
 
 From Mixer's MixPlay protocol (`developer-docs` → Interactive protocol), for controls whose effect happens in a game or through the OBS bridge rather than on S.V.E.R's own overlay.
 
-- **Hold, then capture.** For a control marked "Game confirms", a press only *reserves* the viewer's Engagement Valor. The game or bridge sends `capture` (charged) or `release` (refunded) with the press ID. Anything not captured within 60 seconds is released automatically. Viewers are never charged for an effect that didn't happen. S.V.E.R's own effects keep charging at once, because S.V.E.R itself guarantees delivery.
+- **Hold, then capture.** *(Built October 8, 2026; migration 0051. The S.V.E.R effect is the game's own, so these controls have no library effect.)* For a control marked "Game confirms", a press only *reserves* the viewer's Engagement Valor. The game or bridge sends `capture` (charged) or `release` (refunded) with the press ID. Anything not captured within 60 seconds is released automatically. Viewers are never charged for an effect that didn't happen. S.V.E.R's own effects keep charging at once, because S.V.E.R itself guarantees delivery.
   - Reserve, capture and release are ledger entries in one transaction with the press, and are idempotent.
   - The viewer sees "Waiting for the game…" and then the result.
   - Skills paid in Purchased Valor stay S.V.E.R-delivered only; they're never left for a game to confirm.

@@ -66,6 +66,11 @@ public:
 	/** The game is listening. Viewers see "Starting…" from each connect until this; call it on every OnHello. */
 	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
 	void Ready();
+	/** A "Game confirms" press happened: the viewer is charged. Release refunds it (automatic after 60 seconds). */
+	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
+	void Capture(const FString& Press);
+	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
+	void Release(const FString& Press);
 	/** The most presses and joystick moves a second sent to the game (1–100, or 0 for no cap). */
 	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
 	void SetInputCap(int32 PerSecond);

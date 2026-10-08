@@ -88,6 +88,9 @@ pub struct Control {
     /// Grid columns (of 4).
     #[serde(default = "one")]
     pub width: u8,
+    /// "Game confirms": a press holds the viewer's Valor until the game captures or releases it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirm: bool,
 }
 fn everyone() -> String {
     "everyone".into()
@@ -169,6 +172,9 @@ pub fn validate(board: &Board) -> Res<()> {
             if !(1..=4).contains(&c.width) {
                 return Err(bad(c, "width is 1 to 4 columns."));
             }
+            if c.confirm && c.effect != "none" {
+                return Err(bad(c, "the game plays the effect, so choose no effect."));
+            }
             let simple = c.cost == 0
                 && c.cooldown_seconds == 0
                 && c.per_stream_limit.is_none()
@@ -186,6 +192,10 @@ pub fn validate(board: &Board) -> Res<()> {
                 }
                 kind if kind != "goal" && c.target.is_some() => {
                     return Err(bad(c, "only goals have a target."));
+                }
+                "button" | "text" => {}
+                _ if c.confirm => {
+                    return Err(bad(c, "only buttons and text inputs wait for a game."));
                 }
                 _ => {}
             }
@@ -214,6 +224,7 @@ pub fn templates() -> Vec<(&'static str, Board)> {
         effect: effect.into(),
         target: None,
         width: if kind == "label" { 4 } else { 1 },
+        confirm: false,
     };
     let screen = |name: &str, controls: Vec<Control>| Board {
         screens: vec![Screen {
@@ -892,7 +903,7 @@ async fn press(
         }
     }
     if let Some(limit) = control.per_stream_limit {
-        let used: i64 = sqlx::query_scalar("SELECT count(*) FROM board_presses WHERE channel_id=$1 AND control_id=$2 AND broadcast_id=$3")
+        let used: i64 = sqlx::query_scalar("SELECT count(*) FROM board_presses WHERE channel_id=$1 AND control_id=$2 AND broadcast_id=$3 AND outcome IS DISTINCT FROM 'released'")
             .bind(&channel).bind(&control.id).bind(&broadcast)
             .fetch_one(&mut *tx).await?;
         if used >= i64::from(limit) {
@@ -922,9 +933,9 @@ async fn press(
             return Err(Fail::conflict("You don't have enough Engagement Valor."));
         }
     }
-    sqlx::query("INSERT INTO board_presses(id,channel_id,user_id,broadcast_id,version,control_id,cost,input) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+    sqlx::query("INSERT INTO board_presses(id,channel_id,user_id,broadcast_id,version,control_id,cost,input,held_until) VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $9 THEN now()+interval '60 seconds' END)")
         .bind(&input.id).bind(&channel).bind(&user.id).bind(&broadcast).bind(row.version)
-        .bind(&control.id).bind(control.cost).bind(text.as_ref().map(|t| json!({"text": t})))
+        .bind(&control.id).bind(control.cost).bind(text.as_ref().map(|t| json!({"text": t}))).bind(control.confirm)
         .execute(&mut *tx).await?;
     if row.webhook_url.is_some() {
         sqlx::query("INSERT INTO outbox(channel_id,kind,payload) VALUES($1,'webhook',$2)")
@@ -939,7 +950,7 @@ async fn press(
     tx.commit().await?;
     crate::surge::participated(&mut *app.db.acquire().await?, &channel, &user.id).await?;
     // The effect plays once: in the video when the overlay is connected, otherwise over the player.
-    app.chat.publish(&channel, Some(&user.id), 0, json!({"type": "board_effect", "control": control.id,
+    app.chat.publish(&channel, Some(&user.id), 0, json!({"type": "board_effect", "id": input.id, "confirm": control.confirm, "control": control.id,
         "label": control.label, "effect": control.effect, "user": author, "text": text, "goal": goal,
         "stream_ms": stream_ms, "at": at, "overlay": row.overlay}));
     let balance: i64 = sqlx::query_scalar(
@@ -949,7 +960,57 @@ async fn press(
     .bind(&user.id)
     .fetch_one(&app.db)
     .await?;
-    Ok(Json(json!({"balance": balance, "goal": goal})))
+    Ok(Json(
+        json!({"balance": balance, "goal": goal, "held": control.confirm}),
+    ))
+}
+
+/// The game or bridge confirms a held press: captured (charged) or released (refunded). Repeating
+/// the same answer is harmless; the opposite answer after the first is refused.
+pub(crate) async fn settle(app: &App, channel: &str, press: &str, capture: bool) -> Res<()> {
+    let outcome = if capture { "captured" } else { "released" };
+    let mut tx = app.db.begin().await?;
+    let settled: Option<(String, String, i32)> = sqlx::query_as("UPDATE board_presses SET outcome=$3 WHERE id=$1 AND channel_id=$2 AND held_until IS NOT NULL AND outcome IS NULL RETURNING user_id, control_id, cost")
+        .bind(press).bind(channel).bind(outcome)
+        .fetch_optional(&mut *tx).await?;
+    let Some((user, control, cost)) = settled else {
+        let before: Option<Option<String>> = sqlx::query_scalar("SELECT outcome FROM board_presses WHERE id=$1 AND channel_id=$2 AND held_until IS NOT NULL")
+            .bind(press).bind(channel).fetch_optional(&mut *tx).await?;
+        return match before {
+            Some(Some(o)) if o == outcome => Ok(()),
+            Some(_) => Err(Fail::conflict(format!(
+                "That press was already {}.",
+                if capture { "released" } else { "captured" }
+            ))),
+            None => Err(Fail::missing()),
+        };
+    };
+    if !capture && cost > 0 {
+        sqlx::query("UPDATE engagement SET balance=balance+$3 WHERE channel_id=$1 AND user_id=$2")
+            .bind(channel)
+            .bind(&user)
+            .bind(i64::from(cost))
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    // The viewer's panel shows the result; games and bridges see auto-releases too.
+    app.chat.publish(
+        channel,
+        Some(&user),
+        0,
+        json!({"type": "board_result", "id": press, "control": control, "outcome": outcome}),
+    );
+    Ok(())
+}
+/// Releases presses no game confirmed within 60 seconds.
+pub async fn tick(app: &App) -> Res<()> {
+    let expired: Vec<(String, String)> = sqlx::query_as("SELECT id, channel_id FROM board_presses WHERE held_until<now() AND outcome IS NULL LIMIT 200")
+        .fetch_all(&app.db).await?;
+    for (id, channel) in expired {
+        settle(app, &channel, &id, false).await?;
+    }
+    Ok(())
 }
 /// The published board as integrations see it: definition, version, pause, game-set state and
 /// goal progress (null board when nothing is published).

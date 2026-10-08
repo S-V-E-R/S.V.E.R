@@ -13,7 +13,7 @@ const gateway = await serve((socket, request) => {
   socket.on("message", text => {
     const message = JSON.parse(text);
     seen.push(message);
-    if (message.type === "ready" || message.type === "cap") socket.send(JSON.stringify({ type: "ack", id: message.id }));
+    if (["ready", "cap", "capture", "release"].includes(message.type)) socket.send(JSON.stringify({ type: "ack", id: message.id }));
     if (message.type === "state") {
       if (message.controls.jump?.label === "") socket.send(JSON.stringify({ type: "error", id: message.id, message: "Labels are 1–40 characters." }));
       else {
@@ -27,7 +27,7 @@ const gateway = await serve((socket, request) => {
 
 const sdk = new SverBoard({ token: "sver_g_test", url: `ws://127.0.0.1:${gateway.port}/api/integrations/ws`, reconnect: false });
 const events = [];
-for (const type of ["press", "input", "effect", "board", "state"]) sdk.on(type, value => events.push([type, value]));
+for (const type of ["press", "input", "effect", "board", "state", "result"]) sdk.on(type, value => events.push([type, value]));
 
 const hello = await sdk.connect();
 assert.equal(hello.channel, "Tester");
@@ -55,6 +55,14 @@ assert.notEqual(sent[0].id, sent[1].id, "each request has its own id");
 await sdk.ready();
 await sdk.setInputCap(20);
 assert.deepEqual(seen.filter(m => m.type === "ready" || m.type === "cap").map(m => m.per_second ?? m.type), ["ready", 20]);
+
+// Confirming a held press, and its result event.
+await sdk.capture("p1");
+await sdk.release("p2");
+assert.deepEqual(seen.filter(m => m.type === "capture" || m.type === "release").map(m => [m.type, m.press]), [["capture", "p1"], ["release", "p2"]]);
+client.send(JSON.stringify({ type: "board_result", id: "p2", control: "boost", outcome: "released" }));
+await new Promise(resolve => setTimeout(resolve, 100));
+assert.equal(events.at(-1)[0], "result");
 
 sdk.close();
 gateway.close();

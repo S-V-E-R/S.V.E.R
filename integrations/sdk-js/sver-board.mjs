@@ -12,7 +12,8 @@
 // Events: "hello" (connected; the published board), "press" (a viewer pressed a control),
 // "input" (joystick move), "effect" (a Skill, emote combo or Surge celebration), "board" (a new
 // version was published or the board was paused), "state" (labels, availability or goal progress
-// changed), "error", "close". It reconnects on its own unless the token was revoked.
+// changed), "result" (a "Game confirms" press was captured or released), "error", "close". For a
+// press with `confirm: true`, call capture(press.id) once the effect happened, or release(press.id). It reconnects on its own unless the token was revoked.
 
 export const DEFAULT_GATEWAY = "wss://sver.tv/api/integrations/ws";
 
@@ -91,6 +92,9 @@ export class SverBoard {
         this.current = snapshot(message);
         this.emit("board", this.current);
         break;
+      case "board_result":
+        this.emit("result", message);
+        break;
       case "board_state":
         if (this.current) Object.assign(this.current, { state: message.state, goals: message.goals });
         this.emit("state", message);
@@ -132,6 +136,10 @@ export class SverBoard {
    * each connect until this, so call it on every "hello", once the game can take input.
    */
   ready() { return this.request({ type: "ready" }); }
+  /** A "Game confirms" press happened: the viewer is charged. Games and bridges both may confirm. */
+  capture(press) { return this.request({ type: "capture", press }); }
+  /** It didn't happen: the viewer is refunded. Unconfirmed presses are released after 60 seconds. */
+  release(press) { return this.request({ type: "release", press }); }
   /** The most presses and joystick moves a second sent to the game (1–100, or null for none). */
   setInputCap(perSecond) { return this.request({ type: "cap", per_second: perSecond }); }
 

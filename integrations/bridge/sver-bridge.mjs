@@ -109,12 +109,14 @@ export async function startBridge(config, { obs: givenObs } = {}) {
     if (!action) return;
     const steps = Array.isArray(action) ? action : action.steps ?? [];
     const cooldown = Array.isArray(action) ? 0 : action.cooldown ?? 0;
+    // "Game confirms" presses: charged only when the steps ran, refunded otherwise.
+    const settle = type => { if (event.confirm && event.id) socket?.send(JSON.stringify({ type, press: event.id })); };
     const now = Date.now();
-    if ((cooldowns.get(key) ?? 0) > now) return;
+    if ((cooldowns.get(key) ?? 0) > now) return settle("release");
     cooldowns.set(key, now + cooldown);
     queue = queue.then(() => runSteps(obs, steps))
-      .then(() => log(`Ran "${key}" for ${event.user?.username ?? "the crowd"}.`))
-      .catch(error => log(`"${key}" failed: ${error.message}`));
+      .then(() => { settle("capture"); log(`Ran "${key}" for ${event.user?.username ?? "the crowd"}.`); })
+      .catch(error => { settle("release"); log(`"${key}" failed: ${error.message}`); });
   };
   const connect = () => new Promise(resolve => {
     socket = new WebSocket(`${config.gateway ?? DEFAULT_GATEWAY}?token=${encodeURIComponent(config.token)}`);
