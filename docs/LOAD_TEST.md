@@ -70,6 +70,7 @@ The repo is public, so this doc describes the method only. Measured numbers, ser
    The site stays up, chat delivers within its target, and the viewer-integrity provisional window behaves.
 6. **Restreaming.** Push to a local stand-in for each platform on a generator machine, never to a real platform at volume. Measure outgoing bandwidth and CPU per restream, then run one real end-to-end test per platform (YouTube, Twitch, Kick) with a test channel.
 7. **Chat.** One channel with thousands of connected chatters at a busy message rate, plus many quieter channels at once. This sets the chat fan-out limits and confirms the rate limits hold.
+8. **WHIP and SRT ingest** (October 8, 2026, before they were offered). On an isolated SRS (same image as production, its own ports, never the live media server), 20 WHIP publishers (H.264 + Opus, pion) and 20 SRT publishers (MPEG-TS from FFmpeg), each 720p30 at about 6.5 Mbps, ran together: all 40 connected, every one reported H.264/AAC (SRS turns WHIP's Opus into AAC) and wrote HLS, and SRS used about 55% of one core (about 1.4% per publisher, linear from 20 to 40). Budget with 30% headroom: 28 simultaneous WHIP/SRT publishers on one SRS process, far above current use. FFmpeg 8's own WHIP muxer fails SRS's DTLS handshake; OBS uses a different WebRTC stack that SRS supports.
 
 ## Turning results into budgets
 

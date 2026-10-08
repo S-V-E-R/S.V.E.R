@@ -91,6 +91,9 @@ Mixer's `cdk` let developers ship their own HTML controls. The S.V.E.R version:
 
 ## 5. Ingest options
 
+*Built October 8, 2026.* SRS bridges WHIP (`rtc_to_rtmp`, Opus to AAC) and SRT (`srt_to_rtmp`, port 10081) into the same RTMP pipeline, so HLS, CDN, WebRTC playback, recording and the publish hook are unchanged. nginx's `/rebuild/whip/` moves the bearer token into SRS's `key` parameter (infra/media/nginx-stream-playback.conf); the API's publish hook applies the RTMP rules (key, eligibility, one publisher, lifecycle). Studio's OBS connection has RTMP, WHIP and SRT tabs. Load test: LOAD_TEST.md scenario 8.
+
+
 - **WHIP (WebRTC) ingest** alongside RTMP, for sub-second glass-to-glass. OBS 30 and later have it built in, SRS supports it, and OBS 31 removed FTL, Mixer's old low-latency ingest. So WHIP is the modern replacement and FTL is not built.
   - **Authentication:** the stream key goes in the WHIP bearer token, never in the URL.
   - **Same rules as RTMP:** verification and 2FA eligibility, one publisher, and callbacks to the same broadcast lifecycle.

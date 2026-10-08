@@ -394,6 +394,8 @@ async fn streaming_lifecycle_and_security() {
     config.streaming = Some(streams::Config {
         api_url: format!("http://{address}"),
         ingest_url: "rtmp://127.0.0.1:1935/rebuild".into(),
+        whip_url: Some("https://media.example/rebuild/whip/".into()),
+        srt_url: Some("srt://media.example:10081".into()),
         hook_secret: "synthetic-hook-secret-only-for-this-test".into(),
         hook_ip: "127.0.0.1".parse().unwrap(),
         vhost: "__defaultVhost__".into(),
@@ -551,12 +553,22 @@ async fn exercise(e: &Env) {
         StatusCode::FORBIDDEN
     );
     e.sql("UPDATE sessions SET authenticated_at=now()").await;
-    let key = e
+    let created = e
         .call("POST", "/api/me/stream/key", json!({"code":code}))
-        .await["key"]
-        .as_str()
-        .unwrap()
-        .to_string();
+        .await;
+    let key = created["key"].as_str().unwrap().to_string();
+    // WHIP keeps the key out of the URL (bearer token); SRT carries it in the stream ID.
+    let (public_id, secret) = key.split_once("?key=").unwrap();
+    assert_eq!(
+        created["whip"],
+        json!({"url": format!("https://media.example/rebuild/whip/?app=rebuild&stream={public_id}"), "token": secret})
+    );
+    assert_eq!(
+        created["srt"],
+        format!(
+            "srt://media.example:10081?streamid=#!::r=rebuild/{public_id}?key={secret},m=publish"
+        )
+    );
     assert_eq!(
         e.request(
             "POST",
@@ -698,6 +710,18 @@ async fn exercise(e: &Env) {
         e.hook(&key, client, "publish").await,
         StatusCode::OK,
         "duplicate publish"
+    );
+    // WHIP reaches the hook as `app=..&stream=..&key=..` (nginx moves the bearer token there): the
+    // same credential, so a second publisher is refused for the one-publisher rule, not the key.
+    let (public_id, secret) = key.split_once("?key=").unwrap();
+    assert_eq!(
+        e.hook(
+            &format!("{public_id}?app=rebuild&stream={public_id}&key={secret}"),
+            "whip-second",
+            "publish"
+        )
+        .await,
+        StatusCode::CONFLICT
     );
     let first = e.mine().await["broadcast"].clone();
     assert_eq!(first["state"], "STARTING");

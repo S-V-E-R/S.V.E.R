@@ -20,6 +20,10 @@ use std::{
 #[derive(Clone)]
 pub struct Config {
     pub ingest_url: String,
+    /// Optional WHIP and SRT ingest (docs/DEVELOPER_PLATFORM.md §5): the public WHIP endpoint
+    /// (`https://stream.example/rebuild/whip/`) and SRT address (`srt://stream.example:10081`).
+    pub whip_url: Option<String>,
+    pub srt_url: Option<String>,
     pub api_url: String,
     pub hook_secret: String,
     pub hook_ip: IpAddr,
@@ -41,6 +45,12 @@ impl Config {
         }
         let config = Self {
             ingest_url: values[0].trim_end_matches('/').into(),
+            whip_url: std::env::var("STREAM_WHIP_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            srt_url: std::env::var("STREAM_SRT_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
             api_url: values[1].trim_end_matches('/').into(),
             hook_secret: values[2].clone(),
             hook_ip: values[3]
@@ -492,6 +502,9 @@ async fn key_action(app: &App, jar: &CookieJar, code: &str, action: &str) -> Res
     // Never log these values, even on an SRS error.
     Ok(
         json!({"server":config.ingest_url,"key":format!("{public_id}?key={secret}"),
+        // WHIP: the key is the bearer token, never in the URL. SRT: it rides in the stream ID.
+        "whip":config.whip_url.as_ref().map(|u| json!({"url":format!("{u}?app={}&stream={public_id}",config.app),"token":secret})),
+        "srt":config.srt_url.as_ref().map(|u| format!("{u}?streamid=#!::r={}/{public_id}?key={secret},m=publish",config.app)),
         "disconnect_pending":pending,"message":"Keep this key private. Rotation or Stop revokes the previous key."}),
     )
 }

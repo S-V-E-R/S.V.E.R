@@ -20,7 +20,7 @@ Added October 3, 2026 by Joe: chat mentions, replies, a pinned message, badges a
 
 Viewbot detection was moved into this module by Joe on October 3, 2026 ("Viewer integrity" below).
 
-Deferred by the platform plan: SRT and WHIP ingest (now specified in [DEVELOPER_PLATFORM.md](DEVELOPER_PLATFORM.md), Section 5, after the load test), animated emotes, alerts/overlays and chat replay. External-platform chat is Linked chat ([LINKED_CHAT.md](LINKED_CHAT.md)), built right after this module closes. VODs/clips are Module 8. CrowdSync is Module 7 ([CROWDSYNC.md](CROWDSYNC.md)). Faction influence belongs to Module 4. Subscriptions, Valor (Purchased and Engagement), co-streams and payouts are Module 6, Support ([SUPPORT.md](SUPPORT.md)). Discovery rotation and MAGNet belong to their own modules; this module supplies live state and categories without adding ranking rules.
+WHIP and SRT ingest are built (October 8, 2026; [DEVELOPER_PLATFORM.md](DEVELOPER_PLATFORM.md), Section 5): Studio offers them beside RTMP, which stays the default. Deferred by the platform plan: animated emotes, alerts/overlays and chat replay. External-platform chat is Linked chat ([LINKED_CHAT.md](LINKED_CHAT.md)), built right after this module closes. VODs/clips are Module 8. CrowdSync is Module 7 ([CROWDSYNC.md](CROWDSYNC.md)). Faction influence belongs to Module 4. Subscriptions, Valor (Purchased and Engagement), co-streams and payouts are Module 6, Support ([SUPPORT.md](SUPPORT.md)). Discovery rotation and MAGNet belong to their own modules; this module supplies live state and categories without adding ranking rules.
 
 ## Investigation evidence
 
