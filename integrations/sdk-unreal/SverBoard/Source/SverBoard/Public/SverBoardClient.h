@@ -63,6 +63,12 @@ public:
 	void SetLabel(const FString& Control, const FString& Label);
 	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
 	void SetProgress(const FString& Control, int32 Progress);
+	/** The game is listening. Viewers see "Starting…" from each connect until this; call it on every OnHello. */
+	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
+	void Ready();
+	/** The most presses and joystick moves a second sent to the game (1–100, or 0 for no cap). */
+	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
+	void SetInputCap(int32 PerSecond);
 
 	virtual void BeginDestroy() override;
 

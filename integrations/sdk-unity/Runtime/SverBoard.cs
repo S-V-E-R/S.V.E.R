@@ -201,6 +201,13 @@ namespace Sver.Board
         public Task SetProgress(string control, int progress) =>
             SetState(new JObject { [control] = new JObject { ["progress"] = progress } });
 
+        /// <summary>The game is listening. Viewers see "Starting…" from each connect until this; call it on every Hello.</summary>
+        public Task Ready() => Send(new JObject { ["type"] = "ready", ["id"] = nextId++ });
+
+        /// <summary>The most presses and joystick moves a second sent to the game (1–100, or null for none).</summary>
+        public Task SetInputCap(int? perSecond) =>
+            Send(new JObject { ["type"] = "cap", ["id"] = nextId++, ["per_second"] = perSecond.HasValue ? new JValue(perSecond.Value) : JValue.CreateNull() });
+
         async Task Send(JObject message)
         {
             if (!Connected) throw new InvalidOperationException("Not connected to S.V.E.R.");
