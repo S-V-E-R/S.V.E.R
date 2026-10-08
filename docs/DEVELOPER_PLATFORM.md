@@ -75,7 +75,7 @@ From Mixer's MixPlay protocol (`developer-docs` → Interactive protocol), for c
   - Reserve, capture and release are ledger entries in one transaction with the press, and are idempotent.
   - The viewer sees "Waiting for the game…" and then the result.
   - Skills paid in Purchased Valor stay S.V.E.R-delivered only; they're never left for a game to confirm.
-- **Groups.** A game can put viewers into groups (for example by faction, team or a random half) and show each group a different screen of the board. Groups are set over the gateway; viewers who aren't in one see the default screen.
+- **Groups.** *(Built October 8, 2026; migration 0052.)* A game can put viewers into groups (for example by faction, team or a random half) and show each group a different screen of the board. Groups are set over the gateway; viewers who aren't in one see the default screen.
 - **Input cap.** *(Built October 8, 2026; migration 0050.)* The streamer, or the game, sets the most presses and joystick moves per second forwarded to the game (Mixer's bandwidth throttle). Over the cap, the newest input is dropped and viewers see "Busy, try again".
 - **Ready state.** *(Built October 8, 2026.)* A board connected to a game stays "Starting…" until the game says `ready`, so viewers can't press into a game that isn't listening.
 - **Pricing guidance.** *(Built October 8, 2026; shown when at least 5 viewers watched or chatted in the last 30 days.)* Mixer found most viewers held only 500–1,000 of its points. The board builder shows the channel's typical viewer balance (the median Engagement Valor of recent participants, never per person) next to each cost, and warns when a cost is above it.

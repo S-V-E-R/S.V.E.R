@@ -8,7 +8,7 @@ import "../styles/boards.css";
 
 export type Control = { id: string; kind: "button" | "label" | "text" | "goal" | "joystick" | "rally"; label: string; cost: number; cooldown_seconds: number; per_stream_limit: number | null; audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number; confirm?: boolean };
 export type BoardDef = { screens: { name: string; controls: Control[] }[] };
-type View = { board: BoardDef | null; version: number; disabled: boolean; starting?: boolean; live: boolean; overlay: boolean; goals: Record<string, number>; used: Record<string, number>; last_press: Record<string, string>; balance: number | null; signed_in: boolean; can_run: boolean; blocks: string[] | null; state?: Record<string, { label?: string; disabled?: boolean }> };
+type View = { board: BoardDef | null; version: number; disabled: boolean; starting?: boolean; screen?: number | null; live: boolean; overlay: boolean; goals: Record<string, number>; used: Record<string, number>; last_press: Record<string, string>; balance: number | null; signed_in: boolean; can_run: boolean; blocks: string[] | null; state?: Record<string, { label?: string; disabled?: boolean }> };
 const AUDIENCE = { everyone: "", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
 const STICK: ["up" | "left" | "right" | "down", number, number][] = [["up", 0, -1], ["left", -1, 0], ["right", 1, 0], ["down", 0, 1]];
 
@@ -105,7 +105,9 @@ export function Board({ username }: { username: string }) {
   }
 
   const board = view?.board;
-  const current = board?.screens[Math.min(screen, board.screens.length - 1)];
+  // A game may put the viewer in a group that sees one screen.
+  const grouped = view?.screen ?? null;
+  const current = board?.screens[Math.min(grouped ?? screen, board.screens.length - 1)];
   const canPress = !!view && view.signed_in && view.live && !view.disabled && !view.starting && view.balance !== null;
   function blocker(c: Control): string | null {
     if (!view) return "";
@@ -124,7 +126,8 @@ export function Board({ username }: { username: string }) {
     <summary>Board{view?.balance != null && <> · <strong>{view.balance.toLocaleString()}</strong> Engagement Valor</>}</summary>
     {!view ? <p className="loading">{note || "Loading…"}</p> : !board ? <p className="muted">This channel has no board right now.</p> : <>
       <p className="muted small">{view.disabled ? "The board is paused." : view.starting ? "Starting… the game isn't listening yet." : !view.live ? "The board works while the stream is live." : !view.signed_in ? <><Link href="/login">Sign in</Link> and watch to use the board.</> : view.balance === null ? "This is your board. Try it in Creator Studio's test mode." : "Presses spend this channel's Engagement Valor, earned by watching and chatting."}</p>
-      {board.screens.length > 1 && <div className="board-screens" role="tablist">{board.screens.map((s, i) => <button key={s.name + i} type="button" role="tab" aria-selected={i === screen} className={i === screen ? "small" : "small quiet"} onClick={() => setScreen(i)}>{s.name}</button>)}</div>}
+      {grouped !== null && current && <p className="muted small">Your group: <strong>{current.name}</strong></p>}
+      {grouped === null && board.screens.length > 1 && <div className="board-screens" role="tablist">{board.screens.map((s, i) => <button key={s.name + i} type="button" role="tab" aria-selected={i === screen} className={i === screen ? "small" : "small quiet"} onClick={() => setScreen(i)}>{s.name}</button>)}</div>}
       {current && <div className="board-grid">{current.controls.map(base => ({ ...base, label: view.state?.[base.id]?.label ?? base.label })).map(c => {
         const span = { gridColumn: `span ${c.width}` };
         const why = blocker(c);

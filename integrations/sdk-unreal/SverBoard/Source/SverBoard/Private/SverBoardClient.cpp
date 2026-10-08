@@ -208,6 +208,29 @@ static TSharedRef<FJsonObject> Settle(const TCHAR* Type, const FString& Press, i
 	return Message;
 }
 
+void USverBoardClient::SetGroupsJson(const FString& By, const FString& ScreensJson)
+{
+	const TSharedRef<FJsonObject> Message = MakeShared<FJsonObject>();
+	Message->SetStringField(TEXT("type"), TEXT("groups"));
+	Message->SetNumberField(TEXT("id"), NextId++);
+	if (By.IsEmpty())
+	{
+		Message->SetField(TEXT("by"), MakeShared<FJsonValueNull>());
+	}
+	else
+	{
+		TSharedPtr<FJsonValue> Screens;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(ScreensJson), Screens) || !Screens.IsValid())
+		{
+			OnError.Broadcast(TEXT("SetGroupsJson needs a JSON object or array of screens."));
+			return;
+		}
+		Message->SetStringField(TEXT("by"), By);
+		Message->SetField(TEXT("screens"), Screens);
+	}
+	Send(Message);
+}
+
 void USverBoardClient::Capture(const FString& Press)
 {
 	Send(Settle(TEXT("capture"), Press, NextId++));

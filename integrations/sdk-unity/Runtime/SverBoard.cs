@@ -204,6 +204,10 @@ namespace Sver.Board
         /// <summary>The game is listening. Viewers see "Starting…" from each connect until this; call it on every Hello.</summary>
         public Task Ready() => Send(new JObject { ["type"] = "ready", ["id"] = nextId++ });
 
+        /// <summary>Shows each group one screen: by "faction" ({faction: screen}), "random" ([screens]) or "users" ({username: screen}); by null clears.</summary>
+        public Task SetGroups(string by, JToken screens) =>
+            Send(new JObject { ["type"] = "groups", ["id"] = nextId++, ["by"] = by, ["screens"] = screens });
+
         /// <summary>A "Game confirms" press happened: the viewer is charged.</summary>
         public Task Capture(string press) => Send(new JObject { ["type"] = "capture", ["id"] = nextId++, ["press"] = press });
 

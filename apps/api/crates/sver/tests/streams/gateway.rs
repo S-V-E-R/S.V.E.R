@@ -381,17 +381,103 @@ pub async fn exercise(e: &Env) {
     );
     assert!(studio.get("typical_balance").is_some());
 
+    // ---- Groups: a game shows each group one screen; others are refused ----
+    let teams = json!({"screens": [
+        {"name": "Red", "controls": [{"id": "jump", "kind": "button", "label": "Jump"}]},
+        {"name": "Blue", "controls": [{"id": "dash", "kind": "button", "label": "Dash"}]}
+    ]});
+    call(
+        e,
+        "PUT",
+        "/api/me/board/draft",
+        Some(&owner),
+        json!({"board": teams}),
+    )
+    .await;
+    call(
+        e,
+        "POST",
+        "/api/me/board/publish",
+        Some(&owner),
+        Value::Null,
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let groups =
+        |by: Value, screens: Value| json!({"type": "groups", "by": by, "screens": screens});
+    for (bad, why) in [
+        (
+            groups(json!("random"), json!(["Red"])),
+            "a random split needs 2 screens",
+        ),
+        (
+            groups(json!("users"), json!({"GwViewer": "Green"})),
+            "unknown screen",
+        ),
+        (
+            groups(json!("users"), json!({"nobody-here": "Red"})),
+            "unknown viewer",
+        ),
+        (
+            groups(json!("faction"), json!({"pirates": "Red"})),
+            "unknown faction",
+        ),
+    ] {
+        assert_eq!(say(&mut game, bad).await["type"], "error", "{why}");
+    }
+    assert_eq!(
+        say(
+            &mut game,
+            groups(json!("users"), json!({"GwViewer": "Blue"}))
+        )
+        .await["type"],
+        "ack"
+    );
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert_eq!(viewing["screen"], 1);
+    assert_eq!(
+        e_press(e, &viewer, "jump").await.0,
+        StatusCode::FORBIDDEN,
+        "another group's control"
+    );
+    assert_eq!(e_press(e, &viewer, "dash").await.0, StatusCode::OK);
+    e.sql("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES('gw-viewer','glint',now(),now()) ON CONFLICT(user_id) DO UPDATE SET faction='glint'").await;
+    assert_eq!(
+        say(
+            &mut game,
+            groups(json!("faction"), json!({"glint": "Red", "myria": "Blue"}))
+        )
+        .await["type"],
+        "ack"
+    );
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert_eq!(viewing["screen"], 0, "by faction");
+    assert_eq!(
+        say(&mut game, groups(json!("random"), json!(["Red", "Blue"]))).await["type"],
+        "ack"
+    );
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert!(viewing["screen"].is_u64(), "a random half");
+    assert_eq!(
+        say(&mut game, groups(Value::Null, Value::Null)).await["type"],
+        "ack"
+    );
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert_eq!(viewing["screen"], Value::Null, "cleared");
+    assert_eq!(e_press(e, &viewer, "jump").await.0, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
     // ---- At most 10 messages a second ----
     for _ in 0..12 {
         game.send(Message::Text(json!({"type": "ping"}).to_string().into()))
             .await
             .unwrap();
     }
-    let mut limited = false;
-    for _ in 0..12 {
-        if next_json(&mut game).await["type"] == "error" {
-            limited = true;
-        }
+    let (mut limited, mut replies) = (false, 0);
+    while replies < 12 {
+        let reply = next_json(&mut game).await;
+        replies += usize::from(matches!(reply["type"].as_str(), Some("pong" | "error")));
+        limited |= reply["type"] == "error";
     }
     assert!(limited, "message rate limit");
 

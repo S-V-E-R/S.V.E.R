@@ -39,6 +39,10 @@ export class SverBoard {
   progress(control: string, progress: number): Promise<void>;
   ping(): Promise<void>;
   ready(): Promise<void>;
+  setGroups(by: "faction", screens: Partial<Record<"myria" | "aetheron" | "glint", string>>): Promise<void>;
+  setGroups(by: "random", screens: string[]): Promise<void>;
+  setGroups(by: "users", screens: Record<string, string>): Promise<void>;
+  setGroups(by: null): Promise<void>;
   capture(press: string): Promise<void>;
   release(press: string): Promise<void>;
   setInputCap(perSecond: number | null): Promise<void>;
