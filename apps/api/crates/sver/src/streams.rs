@@ -334,6 +334,26 @@ pub struct RecordingContext {
     pub genre: Option<String>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
+    /// Labeled mature at any point; its VOD and clips inherit it.
+    pub mature: bool,
+}
+/// Mature label (docs/CHANNEL_ADDITIONS.md): a signed-in viewer under 18 can't watch or chat in a
+/// channel labeled mature. Adults and signed-out visitors get a warning screen in the player.
+pub async fn mature_blocked(
+    db: &mut PgConnection,
+    channel: &str,
+    viewer: Option<&str>,
+) -> profiles::Res<bool> {
+    let Some(viewer) = viewer else {
+        return Ok(false);
+    };
+    let labeled: bool = sqlx::query_scalar(
+        "SELECT coalesce((SELECT mature FROM stream_settings WHERE owner_id=$1),false)",
+    )
+    .bind(channel)
+    .fetch_one(&mut *db)
+    .await?;
+    Ok(labeled && viewer != channel && !auth::is_adult(db, viewer).await?)
 }
 /// SRS media callbacks can resolve only an accepted publisher, including its final segments.
 pub async fn recording_context(
@@ -342,7 +362,7 @@ pub async fn recording_context(
     client: &str,
     stream: &str,
 ) -> profiles::Res<Option<RecordingContext>> {
-    Ok(sqlx::query_as("SELECT b.id AS broadcast_id,b.owner_id,s.title,s.category_id,c.name AS category,c.genre,b.started_at,b.ended_at FROM stream_publishers p JOIN broadcasts b ON b.id=p.broadcast_id JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE p.server_id=$1 AND p.client_id=$2 AND p.public_id=$3 AND (p.retired_at IS NULL OR p.retired_at>now()-interval '30 seconds') AND (b.ended_at IS NULL OR b.ended_at>now()-interval '30 seconds') ORDER BY p.retired_at NULLS FIRST LIMIT 1")
+    Ok(sqlx::query_as("SELECT b.id AS broadcast_id,b.owner_id,s.title,s.category_id,c.name AS category,c.genre,b.started_at,b.ended_at,b.mature FROM stream_publishers p JOIN broadcasts b ON b.id=p.broadcast_id JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE p.server_id=$1 AND p.client_id=$2 AND p.public_id=$3 AND (p.retired_at IS NULL OR p.retired_at>now()-interval '30 seconds') AND (b.ended_at IS NULL OR b.ended_at>now()-interval '30 seconds') ORDER BY p.retired_at NULLS FIRST LIMIT 1")
         .bind(server).bind(client).bind(stream).fetch_optional(db).await?)
 }
 pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>> {
@@ -350,7 +370,7 @@ pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>>
     settings(&mut tx, &user).await?;
     expire(&mut tx, &user.id).await?;
     let allowed = eligible(&mut tx, &user).await?;
-    let metadata: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',title,'category_id',category_id,'revision',revision) FROM stream_settings WHERE owner_id=$1")
+    let metadata: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',title,'category_id',category_id,'revision',revision,'mature',mature,'mature_locked',EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND mature_locked AND state<>'ENDED')) FROM stream_settings WHERE owner_id=$1")
         .bind(&user.id).fetch_one(&mut *tx).await?;
     let credential: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('created_at',created_at,'revoked',revoked_at IS NOT NULL) FROM stream_credentials WHERE owner_id=$1")
         .bind(&user.id).fetch_optional(&mut *tx).await?;
@@ -375,6 +395,8 @@ pub struct Metadata {
     title: String,
     category_id: String,
     revision: i64,
+    #[serde(default)]
+    mature: Option<bool>,
 }
 pub async fn save(
     State(app): State<App>,
@@ -407,10 +429,20 @@ pub async fn save(
             .bind(&user.id)
             .fetch_one(&mut *tx)
             .await?;
-    let revision: Option<i64> = sqlx::query_scalar("UPDATE stream_settings SET title=$2,category_id=$3,revision=revision+1,updated_at=clock_timestamp() WHERE owner_id=$1 AND revision=$4 RETURNING revision")
-        .bind(&user.id).bind(title).bind(&category_id).bind(input.revision).fetch_optional(&mut *tx).await?;
+    let locked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND mature_locked AND state<>'ENDED')")
+        .bind(&user.id).fetch_one(&mut *tx).await?;
+    if locked && input.mature == Some(false) {
+        return Err(Error::bad(
+            "Staff labeled this broadcast mature; the label stays on until it ends.",
+        ));
+    }
+    let revision: Option<i64> = sqlx::query_scalar("UPDATE stream_settings SET title=$2,category_id=$3,mature=coalesce($5,mature),revision=revision+1,updated_at=clock_timestamp() WHERE owner_id=$1 AND revision=$4 RETURNING revision")
+        .bind(&user.id).bind(title).bind(&category_id).bind(input.revision).bind(input.mature).fetch_optional(&mut *tx).await?;
     let revision = revision
         .ok_or_else(|| conflict("This changed in another tab. Reload to see the latest."))?;
+    // A broadcast labeled at any point stays labeled (its VOD and clips inherit it).
+    sqlx::query("UPDATE broadcasts b SET mature=true FROM stream_settings s WHERE b.owner_id=$1 AND s.owner_id=$1 AND s.mature AND b.state<>'ENDED'")
+        .bind(&user.id).execute(&mut *tx).await?;
     if previous.as_deref() != Some(category_id.as_str()) {
         let label: String = sqlx::query_scalar("SELECT name FROM stream_categories WHERE id=$1")
             .bind(&category_id)
@@ -714,7 +746,7 @@ pub async fn hook(
             b.id
         } else {
             let bid = id();
-            sqlx::query("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES($1,$2,$3,$4,'STARTING',$5,$6,$7,$8,$8,$9)")
+            sqlx::query("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,mature) VALUES($1,$2,$3,$4,'STARTING',$5,$6,$7,$8,$8,$9,coalesce((SELECT mature FROM stream_settings WHERE owner_id=$2),false))")
                 .bind(&bid).bind(&owner).bind(&input.stream).bind(generation).bind(&input.server_id).bind(&input.service_id).bind(&input.client_id).bind(now).bind(now+Duration::seconds(15)).execute(&mut *tx).await?;
             bid
         };

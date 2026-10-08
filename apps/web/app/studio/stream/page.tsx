@@ -5,7 +5,7 @@ import { Section, Status, type SaveState } from "../../../components/Form";
 import { send } from "../../../lib/client-api";
 import { GamePicker } from "../../../components/GamePicker";
 
-type Settings = { title: string; category_id: string | null; revision: number };
+type Settings = { title: string; category_id: string | null; revision: number; mature?: boolean; mature_locked?: boolean };
 type Health = { video_codec?: string | null; audio_codec?: string | null; width?: number | null; height?: number | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean; keyframe_seconds?: number | null; keyframe_warning?: boolean; b_frames?: boolean | null };
 type Stream = {
   configured: boolean; eligible: boolean; settings: Settings; disconnect_pending: boolean;
@@ -138,6 +138,8 @@ export default function StreamStudio() {
       <form onSubmit={save}>
         <label className="field"><span>Title</span><input required maxLength={280} value={form.title} disabled={busy || !data.eligible} aria-describedby="stream-title-count" onChange={event => setForm({ ...form, title: event.target.value })} /><small id="stream-title-count">{count}/140 characters</small></label>
         <GamePicker value={form.category_id ?? ""} disabled={busy || !data.eligible} onChange={category_id => setForm({ ...form, category_id })} />
+        <label className="checkbox"><input type="checkbox" checked={!!form.mature} disabled={busy || !data.eligible || (form.mature_locked && form.mature)} onChange={event => setForm({ ...form, mature: event.target.checked })} /> <strong>Mature</strong>: violent or horror games, strong language or mature themes. Viewers under 18 can&apos;t watch, and others see a warning first. It doesn&apos;t permit anything the <Link href="/guidelines">Community Guidelines</Link> ban. It stays on for your next streams until you turn it off.</label>
+        {form.mature_locked && <p role="status">Staff labeled this broadcast mature, so the label stays on until it ends.</p>}
         <div className="row"><button disabled={busy || !data.eligible || count < 1 || count > 140}>Save details</button><button type="button" className="quiet" disabled={busy} onClick={reloadDetails}>Reload saved details</button></div>
       </form>
     </Section>

@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { PlayerEffects } from "./BoardEffects";
 import { ReportButton, TakeDownLink } from "./Report";
@@ -13,7 +13,7 @@ type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc"
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string } };
 type Live =
   | { live: false; hosting?: { username: string; display_name: string } }
-  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; banned?: boolean; playback: Playback | null; raid?: Raid | null };
+  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null };
 type Phase = "loading" | "playing" | "reconnecting" | "blocked" | "failed";
 
 let cachedBrowserId = "";
@@ -30,6 +30,22 @@ function browserId() {
 }
 
 /** SRS WHEP: one recvonly offer, the answer comes back in the response body. */
+// Mature label (docs/CHANNEL_ADDITIONS.md): an adult's or guest's "Watch" lasts 30 days per channel
+// when signed in, and for the browser session when signed out.
+const MATURE_KEY = "sver:mature-ok:";
+const matureListeners = new Set<() => void>();
+function matureStore(signedIn: boolean): Storage | null {
+  try { return signedIn ? localStorage : sessionStorage; } catch { return null; }
+}
+function matureAccepted(username: string, signedIn: boolean): boolean {
+  try { return Number(matureStore(signedIn)?.getItem(MATURE_KEY + username.toLowerCase()) ?? 0) > Date.now(); } catch { return false; }
+}
+function acceptMature(username: string, signedIn: boolean) {
+  try { matureStore(signedIn)?.setItem(MATURE_KEY + username.toLowerCase(), String(Date.now() + 30 * 86_400_000)); } catch { /* storage unavailable: ask again next time */ }
+  matureListeners.forEach(listener => listener());
+}
+function onMature(listener: () => void) { matureListeners.add(listener); return () => { matureListeners.delete(listener); }; }
+
 async function startWebRtc(video: HTMLVideoElement, url: string, onFatal: () => void): Promise<() => void> {
   const pc = new RTCPeerConnection();
   pc.addTransceiver("video", { direction: "recvonly" });
@@ -137,6 +153,9 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   useEffect(() => { hlsUrl.current = hls; }, [hls]);
   const preferred = live?.live ? live.playback?.preferred ?? null : null;
   const isOwner = live?.live ? live.is_owner : false;
+  const accepted = useSyncExternalStore(onMature, () => matureAccepted(username, !!signedIn), () => false);
+  // A labeled stream waits behind the warning: nothing plays until the viewer chooses Watch.
+  const warning = !!(live?.live && live.mature && !live.is_owner && !accepted);
   // Remember that this page saw the stream live, so its end can offer the next stream.
   const [ended, setEnded] = useState(false);
   const wasLive = useRef(false);
@@ -172,7 +191,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   // Start (or restart, on `attempt`) playback for the current broadcast; the cleanup stops the retired transport.
   useEffect(() => {
     const element = video.current;
-    if (rewind || !broadcast || !element || (!webrtc && !hlsKey)) return;
+    if (rewind || warning || !broadcast || !element || (!webrtc && !hlsKey)) return;
     let stop: (() => void) | null = null;
     let cancelled = false;
     const fail = () => { if (!cancelled) setPhase("reconnecting"); };
@@ -206,7 +225,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       if (!cancelled) setPhase("failed");
     })();
     return () => { cancelled = true; stop?.(); };
-  }, [broadcast, webrtc, hlsKey, preferred, attempt, rewind]);
+  }, [broadcast, webrtc, hlsKey, preferred, attempt, rewind, warning]);
 
   // Retry a dropped transport a few seconds later; the broadcast's 60-second reconnect grace keeps it live meanwhile.
   useEffect(() => {
@@ -246,6 +265,11 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     </div>;
     return <>{counting ? raidBar : ended && !nested && <UpNext username={username} focused={focused} />}{children}</>;
   }
+  if (live.mature_blocked) return <div className="live-player"><p className="panel" role="status">This stream is labeled mature, so it isn&apos;t available on your account.</p>{!nested && <UpNext username={username} focused={focused} />}</div>;
+  if (warning) return <div className="live-player"><div className="panel mature-warning" role="dialog" aria-label="Mature stream">
+    <p><span className="chip mature-tag">Mature</span> <strong>{live.title}</strong> is labeled mature: it may include violent or horror games, strong language or mature themes.</p>
+    <div className="row"><button type="button" onClick={() => acceptMature(username, !!signedIn)}>Watch</button><button type="button" className="quiet" onClick={() => history.back()}>Go back</button></div>
+  </div></div>;
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
   return <div className={focused ? "live-player focused" : "live-player"}>
@@ -258,6 +282,6 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} size={nested ? "compact" : "normal"} />}
     {raidBar}
-    <p className="live-meta"><span className="live badge">Live</span> <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching</span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>} {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</p>
+    <p className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching</span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>} {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</p>
   </div>;
 }
