@@ -180,6 +180,8 @@ a.logo:hover { color: var(--accent-light); text-decoration: none; }
 .nav-magnet { width: 18px; display: inline-flex; justify-content: center; }
 .player-menu-links a { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 12px; color: var(--ink); }
 .player-menu-links a:hover, .player-menu-links a[aria-current="page"] { background: var(--tint); text-decoration: none; }
+.player-menu-links .player-menu-signout { justify-content: flex-start; margin-top: 4px; padding: 8px 12px; border: 0; border-top: 1px solid var(--line); background: none; box-shadow: none; color: var(--ink); font-family: inherit; font-weight: inherit; font-size: inherit; letter-spacing: normal; }
+.player-menu-links .player-menu-signout:hover:not(:disabled) { background: var(--tint); color: var(--ink); filter: none; }
 /* Crest slot: a square placeholder holding the initial until Module 4 supplies faction crests. */
 .crest-slot {
   width: 36px; height: 36px; flex: none; display: inline-flex; align-items: center; justify-content: center;

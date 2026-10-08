@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { send } from "../../lib/client-api";
 import { FollowingIcon, SettingsIcon, ShieldIcon, StudioIcon, WalletIcon, HomeIcon } from "./Icons";
 
 /**
@@ -35,6 +36,7 @@ export function PlayerMenu({ username, chip }: { username: string; chip: React.R
     <summary className="player-chip" aria-label={`Account menu for ${username}`}>{chip}</summary>
     <nav className="player-menu-links panel" aria-label="Account">
       {items.map(([href, label, icon]) => <Link key={href} href={href} aria-current={pathname === href || (href !== `/${username}` && pathname?.startsWith(href + "/")) ? "page" : undefined}>{icon}{label}</Link>)}
+      <button type="button" className="player-menu-signout" onClick={async () => { await send("POST", "/api/auth/logout", {}); window.location.assign("/login"); }}>Sign out</button>
     </nav>
   </details>;
 }
