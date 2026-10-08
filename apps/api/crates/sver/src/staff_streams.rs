@@ -50,7 +50,10 @@ async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     {
         let (raw, counted, trusted, excluded, pending) =
             crate::integrity::counts(&mut db, &id).await?;
+        let mature: (bool, bool) = sqlx::query_as("SELECT coalesce((SELECT mature FROM stream_settings WHERE owner_id=b.owner_id),false),b.mature_locked FROM broadcasts b WHERE b.id=$1")
+            .bind(&id).fetch_one(&mut *db).await?;
         items.push(json!({"id":id,"state":state,"started_at":started_at,"health":health,
+            "mature":mature.0,"mature_locked":mature.1,
             "channel":{"username":username,"display_name":display_name},"title":title,"category":category,
             "open_reports":reports,"followers_only_until":followers_only,
             "counts":{"sessions":raw,"public":counted,"trusted":trusted,"excluded":excluded,"pending":pending}}));
@@ -61,6 +64,44 @@ async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
 #[derive(Deserialize)]
 struct Stop {
     reason: String,
+}
+/// POST /api/admin/streams/{id}/mature: labels the channel mature and locks it on until this
+/// broadcast ends (docs/CHANNEL_ADDITIONS.md "Enforcement"). Audited.
+async fn lock_mature(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Json(input): Json<Stop>,
+) -> Res<Json<Value>> {
+    let staff = safety::staff_write(&app, &jar).await?;
+    let reason = input.reason.trim();
+    if reason.is_empty() || reason.chars().count() > 500 {
+        return Err(Fail::field("reason", "Give a reason of 1–500 characters."));
+    }
+    let mut tx = app.db.begin().await?;
+    let owner: Option<String> = sqlx::query_scalar("UPDATE broadcasts SET mature=true,mature_locked=true WHERE id=$1 AND state<>'ENDED' RETURNING owner_id")
+        .bind(&id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let owner = owner.ok_or_else(|| Fail::conflict("That stream has already ended."))?;
+    sqlx::query("INSERT INTO stream_settings(owner_id,title,mature) SELECT id,username||'''s stream',true FROM users WHERE id=$1 ON CONFLICT(owner_id) DO UPDATE SET mature=true,revision=stream_settings.revision+1,updated_at=clock_timestamp()")
+        .bind(&owner)
+        .execute(&mut *tx)
+        .await?;
+    safety::audit(
+        &mut tx,
+        Some(&staff.id),
+        "lock_mature",
+        "live_stream",
+        &id,
+        &[],
+        reason,
+        json!({"owner": owner}),
+        false,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"locked":true})))
 }
 /// POST /api/admin/streams/{id}/stop: ends the broadcast and revokes the key (the owner makes a
 /// new one), exactly like a report's remove-content action. Audited; never undone.
@@ -313,6 +354,7 @@ pub fn routes() -> Router<App> {
         )
         .route("/api/admin/streams", get(list))
         .route("/api/admin/streams/{id}/stop", post(stop))
+        .route("/api/admin/streams/{id}/mature", post(lock_mature))
         .route("/api/admin/categories", get(categories).post(create))
         .route("/api/admin/categories/{id}", patch(edit))
         .route("/api/admin/categories/{id}/merge", post(merge_category))

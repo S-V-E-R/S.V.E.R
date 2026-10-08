@@ -118,6 +118,8 @@ fn valid_id(id: &str) -> bool {
         && id[1..].bytes().all(|c| c.is_ascii_digit())
 }
 
+/// Age ratings that switch the Mature label on: ESRB Mature 17+ and Adults Only 18+, PEGI 18.
+const MATURE_RATINGS: &str = "wd:Q14864331 wd:Q14864332 wd:Q14915517";
 fn query(cursor: &str, recent: bool) -> Res<String> {
     if !cursor.is_empty() && !valid_id(cursor) {
         return Err(Fail::internal());
@@ -133,7 +135,7 @@ fn query(cursor: &str, recent: bool) -> Res<String> {
         String::new()
     };
     Ok(format!(
-        r#"SELECT ?game ?name ?description
+        r#"SELECT ?game ?name ?description (SAMPLE(?rated) AS ?mature)
         (GROUP_CONCAT(DISTINCT ?genreName;separator="|") AS ?genres)
         (GROUP_CONCAT(DISTINCT ?alias;separator="|") AS ?aliases) WHERE {{
         {{ SELECT DISTINCT ?game WHERE {{ ?game wdt:P31 wd:Q7889.
@@ -146,6 +148,7 @@ fn query(cursor: &str, recent: bool) -> Res<String> {
         OPTIONAL {{ ?game schema:description ?description FILTER(LANG(?description)="en") }}
         OPTIONAL {{ ?game wdt:P136 ?genre. ?genre rdfs:label ?genreName FILTER(LANG(?genreName)="en") }}
         OPTIONAL {{ ?game skos:altLabel ?alias FILTER(LANG(?alias) IN ("en","mul")) }}
+        BIND(EXISTS {{ ?game wdt:P852|wdt:P908 ?rating. VALUES ?rating {{ {MATURE_RATINGS} }} }} AS ?rated)
     }} GROUP BY ?game ?name ?description ORDER BY ?game"#
     ))
 }
@@ -162,6 +165,8 @@ struct Game {
     description: Binding,
     genres: Binding,
     aliases: Binding,
+    #[serde(default)]
+    mature: Binding,
 }
 #[derive(Deserialize)]
 struct Results {
@@ -193,8 +198,8 @@ async fn import(db: &mut PgConnection, game: &Game) -> Res<()> {
     let genres = terms(&game.genres.value);
     let description: String = game.description.value.chars().take(1000).collect();
     let genre = classify(&genres, &description);
-    sqlx::query("INSERT INTO game_catalog(source_id,name,aliases,genres,description,suggested_genre) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(source_id) DO UPDATE SET name=$2,aliases=$3,genres=$4,description=$5,suggested_genre=$6,refreshed_at=now()")
-        .bind(id).bind(&name).bind(&aliases).bind(&genres).bind(description).bind(genre).execute(&mut *db).await?;
+    sqlx::query("INSERT INTO game_catalog(source_id,name,aliases,genres,description,suggested_genre,mature) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(source_id) DO UPDATE SET name=$2,aliases=$3,genres=$4,description=$5,suggested_genre=$6,mature=$7,refreshed_at=now()")
+        .bind(id).bind(&name).bind(&aliases).bind(&genres).bind(description).bind(genre).bind(game.mature.value == "true").execute(&mut *db).await?;
     let (category, reviewed): (Option<String>, bool) = sqlx::query_as(
         "SELECT category_id,reviewed FROM game_catalog WHERE source_id=$1 FOR UPDATE",
     )

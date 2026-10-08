@@ -42,7 +42,7 @@ export function linkUrl(platform: string, value: string) {
 /** Host shown next to a social link, without "www.". */
 export const linkHost = (url: string) => { try { return new URL(url).host.replace(/^www\./, ""); } catch { return ""; } };
 export const followedOn = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-export const reasons: [string, string][] = [["spam", "Spam"], ["harassment", "Harassment or bullying"], ["hate", "Hate speech"], ["sexual", "Sexual content"], ["violence", "Violence or threats"], ["impersonation", "Impersonation"], ["private_information", "Private information"], ["copyright", "Copyright"], ["other", "Something else"]];
+export const reasons: [string, string][] = [["spam", "Spam"], ["harassment", "Harassment or bullying"], ["hate", "Hate speech"], ["sexual", "Sexual content"], ["violence", "Violence or threats"], ["impersonation", "Impersonation"], ["private_information", "Private information"], ["copyright", "Copyright"], ["mature_label", "Should be labeled mature"], ["other", "Something else"]];
 export const joined = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 /** One channel activity event (docs/PROFILES.md, P7). Kinds unknown to this build are not rendered. */
 export type ActivityItem = { id: string; kind: string; created_at: string; subject: Chip | null; data: Record<string, unknown> };
