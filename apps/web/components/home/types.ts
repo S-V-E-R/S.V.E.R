@@ -6,7 +6,9 @@ export type LiveCard = {
   broadcast_id?: string; category_id?: string | null; thumbnail?: string | null;
   /** Discovery label: "New creator" or "Returning creator". */
   label?: string | null; fresh?: boolean;
- mature?: boolean; };
+  /** Labeled mature (docs/CHANNEL_ADDITIONS.md). */
+  mature?: boolean;
+};
 export type Recent = { user: { username: string | null; display_name: string; avatar: Sizes }; ended_at: string };
 
 /** Uptime like "1h 05m", or "12 min" under an hour. */
