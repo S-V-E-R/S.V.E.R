@@ -759,8 +759,11 @@ async fn lane(
             .and_then(|id| streams.iter().find(|s| &s.broadcast_id == id))
     };
     let viewer = profiles::viewer(&app, &jar).await?;
+    // Rotation is unchanged; an under-18 viewer just isn't shown a labeled stream.
+    let mature =
+        crate::streams::mature_hidden(&mut db, viewer.as_ref().map(|v| v.id.as_str())).await?;
     let mut featured = Value::Null;
-    if let Some(s) = find(&current) {
+    if let Some(s) = find(&current).filter(|s| !mature.contains(&s.owner_id)) {
         let mut card = discovery::card(&app, s, now);
         let features: i64 =
             sqlx::query_scalar("SELECT count(*) FROM magnet_features WHERE owner_id=$1")

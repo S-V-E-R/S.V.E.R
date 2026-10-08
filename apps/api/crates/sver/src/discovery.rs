@@ -46,6 +46,8 @@ pub struct Stream {
     pub returning: bool,
     /// A charity stream's charity (Shine).
     pub charity: Option<String>,
+    /// Labeled mature (docs/CHANNEL_ADDITIONS.md): a tag on the card.
+    pub mature: bool,
 }
 
 /// Every public live stream: LIVE, or RECONNECTING inside its grace window, on an eligible channel.
@@ -57,7 +59,8 @@ pub async fn live_streams(db: &mut PgConnection) -> Res<Vec<Stream>> {
           (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers,
           NOT EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at) AS first_stream,
           coalesce((SELECT max(p.ended_at) FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at)<b.started_at-interval '30 days',false) AS returning,
-          (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id) AS charity
+          (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id) AS charity,
+          coalesce(s.mature,false) AS mature
          FROM broadcasts b JOIN channel_users cu ON cu.id=b.owner_id AND cu.eligible
          LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id
          WHERE b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>now())",
@@ -168,7 +171,7 @@ pub fn card(app: &App, s: &Stream, now: DateTime<Utc>) -> Value {
         "avatar":profiles::avatar_json(app,s.avatar_key.as_deref()),"faction":s.faction,"title":s.title,
         "category":s.category,"category_id":s.category_id,"genre":s.genre,"started_at":s.started_at,"viewers":s.viewers,
         "thumbnail":format!("/api/discovery/thumbnails/{}",s.broadcast_id),"label":label,"charity":s.charity,
-        "fresh":now-s.started_at<Duration::minutes(FRESH_MINUTES)})
+        "fresh":now-s.started_at<Duration::minutes(FRESH_MINUTES),"mature":s.mature})
 }
 
 /// Resolve at image-load time: a lazy card must not point at a still already replaced by capture.
@@ -221,7 +224,11 @@ async fn rotation_for(
         streams.retain(|s| !hidden.contains(&s.owner_id));
     }
     let home = home_genres(&mut db, faction).await?;
-    Ok(rotate(streams, &home, lead.as_ref()))
+    let mut ordered = rotate(streams, &home, lead.as_ref());
+    // Under-18 viewers: labeled streams leave the list after ordering, like blocks.
+    let mature = crate::streams::mature_hidden(&mut db, viewer).await?;
+    ordered.retain(|s| !mature.contains(&s.owner_id));
+    Ok(ordered)
 }
 
 /// Channels that were live in the last 14 days (newest first), for empty states.
@@ -426,8 +433,10 @@ async fn search(
     .fetch_all(&mut *db)
     .await?;
     let users = profiles::public_channels(&mut db, &ids).await?;
+    let mature =
+        crate::streams::mature_hidden(&mut db, viewer.as_ref().map(|v| v.id.as_str())).await?;
     let mut channels = Vec::new();
-    for id in &ids {
+    for id in ids.iter().filter(|id| !mature.contains(*id)) {
         if let Some(u) = users.iter().find(|u| &u.id == id) {
             let mut chip = profiles::chip(&app, u);
             chip["faction"] = json!(u.faction);
@@ -499,6 +508,7 @@ async fn suggestions(
         first_stream: false,
         returning: false,
         charity: None,
+        mature: false,
     };
     let items: Vec<Value> = suggest(&rotation, &current, 8)
         .iter()
@@ -637,6 +647,7 @@ mod tests {
             first_stream: false,
             returning: false,
             charity: None,
+            mature: false,
         }
     }
     fn ids(v: &[Stream]) -> Vec<String> {

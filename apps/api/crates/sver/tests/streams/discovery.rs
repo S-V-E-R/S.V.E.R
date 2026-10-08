@@ -148,6 +148,28 @@ pub async fn exercise(e: &Env) {
     let mut art_names = names(&list["items"]);
     art_names.sort();
     assert_eq!(art_names, ["DvArtist", "DvNewcomer"]);
+    // Mature label: under-18 viewers lose labeled streams (after ordering) from lists and search;
+    // everyone else sees them tagged.
+    e.sql("INSERT INTO stream_settings(owner_id,title,mature) VALUES('dv-art','DvArtist''s stream',true) ON CONFLICT(owner_id) DO UPDATE SET mature=true")
+        .await;
+    let minor = person(e, "dv-minor", "DvMinor", true).await;
+    e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='dv-minor'")
+        .await;
+    let (_, young) = get(e, "/api/discovery/live?genre=art", Some(&minor)).await;
+    assert_eq!(names(&young["items"]), ["DvNewcomer"]);
+    let (_, found) = get(e, "/api/search?q=DvArt", Some(&minor)).await;
+    assert_eq!(found["channels"], json!([]));
+    let (_, adult) = get(e, "/api/discovery/live?genre=art", Some(&viewer)).await;
+    let tagged = adult["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["display_name"] == "DvArtist")
+        .cloned()
+        .unwrap();
+    assert_eq!(tagged["mature"], true);
+    e.sql("UPDATE stream_settings SET mature=false WHERE owner_id='dv-art'")
+        .await;
     let (_, list) = get(e, "/api/discovery/live?faction=myria", None).await;
     assert_eq!(names(&list["items"]), ["DvShooter"]);
     let (_, list) = get(e, "/api/discovery/live?category=chess", None).await;

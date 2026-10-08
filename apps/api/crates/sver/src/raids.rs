@@ -102,12 +102,13 @@ async fn start(
 
 /// The raid as viewers see it: id, status, target and when the move happens.
 async fn raid_json(app: &App, id: &str) -> Res<Value> {
-    let (status, execute_at, username, display_name): (String, DateTime<Utc>, String, String) = sqlx::query_as("SELECT r.status,r.execute_at,c.username,c.display_name FROM raids r JOIN channel_users c ON c.id=r.target_id WHERE r.id=$1")
+    let (status, execute_at, username, display_name, mature): (String, DateTime<Utc>, String, String, bool) = sqlx::query_as("SELECT r.status,r.execute_at,c.username,c.display_name,coalesce((SELECT mature FROM stream_settings WHERE owner_id=r.target_id),false) FROM raids r JOIN channel_users c ON c.id=r.target_id WHERE r.id=$1")
         .bind(id)
         .fetch_one(&app.db)
         .await?;
+    // `mature` tells the raider the target is labeled (under-18 viewers won't follow).
     Ok(
-        json!({"id":id,"status":status,"execute_at":execute_at,"target":{"username":username,"display_name":display_name}}),
+        json!({"id":id,"status":status,"execute_at":execute_at,"target":{"username":username,"display_name":display_name,"mature":mature}}),
     )
 }
 
@@ -171,9 +172,12 @@ pub async fn for_viewers(app: &App, broadcast: &str, viewer: Option<&str>) -> Re
     let Some((id, target)) = raid else {
         return Ok(None);
     };
-    // Signed-in viewers banned from the target stay put.
+    // Signed-in viewers banned from the target stay put, and so do under-18 viewers when the target
+    // is labeled mature (they get Up next when the stream ends).
     if let Some(viewer) = viewer
-        && crate::moderation::banned(app, &target, viewer).await?
+        && (crate::moderation::banned(app, &target, viewer).await?
+            || crate::streams::mature_blocked(&mut *app.db.acquire().await?, &target, Some(viewer))
+                .await?)
     {
         return Ok(None);
     }
