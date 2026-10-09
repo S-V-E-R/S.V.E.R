@@ -36,6 +36,8 @@ mod commands;
 mod crowd;
 #[path = "streams/discovery.rs"]
 mod discovery;
+#[path = "streams/dms.rs"]
+mod dms;
 #[path = "streams/engagement.rs"]
 mod engagement;
 #[path = "streams/gateway.rs"]
@@ -467,6 +469,7 @@ async fn exercise(e: &Env) {
     restream::exercise(e).await;
     linked_chat::exercise(e).await;
     commands::exercise(e).await;
+    dms::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;
     reports::exercise(e).await;

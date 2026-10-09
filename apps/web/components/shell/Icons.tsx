@@ -14,6 +14,7 @@ export const WarMapIcon = ({ size = 18 }: Props) => svg(size, <path d="M6 1 10.3
 export const FactionIcon = ({ size = 18 }: Props) => svg(size, <path d="M2.5 11V1.5h7L8 3.75 9.5 6h-7" />);
 export const SearchIcon = ({ size = 18 }: Props) => svg(size, <><circle cx="5" cy="5" r="3.5" /><path d="M7.6 7.6 11 11" /></>);
 export const BellIcon = ({ size = 18 }: Props) => svg(size, <path d="M3 8.5V5.5a3 3 0 0 1 6 0v3l1 1H2zM5 10.5h2" />);
+export const MessageIcon = ({ size = 18 }: Props) => svg(size, <path d="M1.5 2.5h9v6h-5l-2.5 2v-2h-1.5z" />);
 export const MenuIcon = ({ size = 18 }: Props) => svg(size, <path d="M1.5 3h9M1.5 6h9M1.5 9h9" />);
 export const CloseIcon = ({ size = 18 }: Props) => svg(size, <path d="m2.5 2.5 7 7M9.5 2.5l-7 7" />);
 
