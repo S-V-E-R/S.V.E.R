@@ -156,6 +156,20 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert_eq!(say(e, &outsider, "Open again").await.0, StatusCode::OK);
+    // The chat rank gate (docs/PROGRESSION.md section 5): Regular needs 200 earned here.
+    let rules = |rank: i16| json!({"slow_mode_seconds":0,"block_links":false,"banned_words":[],"reason":"x","min_loyalty":rank});
+    e.call("PUT", &format!("{CHANNEL}/chat/settings"), rules(1))
+        .await;
+    let (status, refused) = say(e, &outsider, "Rank?").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(refused["error"].as_str().unwrap().contains("Regular"));
+    e.sql("INSERT INTO engagement(channel_id,user_id,earned) VALUES('stream-owner','sb-out',200) ON CONFLICT(channel_id,user_id) DO UPDATE SET earned=200")
+        .await;
+    let (status, sent) = say(e, &outsider, "Regular now").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(sent["message"]["loyalty"], 1);
+    e.call("PUT", &format!("{CHANNEL}/chat/settings"), rules(0))
+        .await;
     // A Tier 2 emote needs Tier 2.
     e.sql("INSERT INTO channel_emotes(id,channel_id,code,image_key,tier) VALUES('sb-emote','stream-owner','SbHype','emotes/sb-hype',2)").await;
     let (status, refused) = say(e, &fan, "SbHype").await;

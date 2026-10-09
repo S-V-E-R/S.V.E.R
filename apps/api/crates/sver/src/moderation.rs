@@ -306,6 +306,15 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
             ));
         }
     }
+    // The chat rank gate (docs/PROGRESSION.md section 5); channel roles are exempt.
+    let (min, earned): (i16, i64) = sqlx::query_as("SELECT coalesce((SELECT min_loyalty FROM chat_settings WHERE channel_id=$1),0::smallint),coalesce((SELECT earned FROM engagement WHERE channel_id=$1 AND user_id=$2),0)")
+        .bind(channel).bind(&user.id).fetch_one(&app.db).await?;
+    if crate::progression::loyalty(earned) < min && role_of(app, channel, user).await?.is_none() {
+        return Err(Fail::denied(format!(
+            "Chat here needs the {} loyalty rank. Watch and chat on this channel to earn it.",
+            crate::progression::LOYALTY[min as usize].0
+        )));
+    }
     // Subscriber-only chat and subscriber emotes; channel roles are exempt.
     let tier = crate::subs::active_tier(app, channel, &user.id).await?;
     let tokens: Vec<&str> = body.split_whitespace().collect();
@@ -382,13 +391,14 @@ pub async fn view(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     let (_, role) = actor(&app, &jar, &channel).await?;
-    let settings: Option<(i32, bool, Vec<String>, i16, bool)> = sqlx::query_as(
-        "SELECT slow_mode_seconds, block_links, banned_words, overlay_fade_seconds, allow_signatures FROM chat_settings WHERE channel_id=$1",
+    let settings: Option<(i32, bool, Vec<String>, i16, bool, i16)> = sqlx::query_as(
+        "SELECT slow_mode_seconds, block_links, banned_words, overlay_fade_seconds, allow_signatures, min_loyalty FROM chat_settings WHERE channel_id=$1",
     )
     .bind(&channel)
     .fetch_optional(&app.db)
     .await?;
-    let (slow, links, words, fade, signatures) = settings.unwrap_or((0, false, vec![], 30, true));
+    let (slow, links, words, fade, signatures, min_loyalty) =
+        settings.unwrap_or((0, false, vec![], 30, true, 0));
     // Only chip_sql with a literal alias is interpolated; channel values are bound.
     let mut moderators: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {} FROM channel_moderators m JOIN channel_users c ON c.id=m.user_id WHERE m.channel_id=$1 ORDER BY m.appointed_at", profiles::chip_sql("c"))))
         .bind(&channel).fetch_all(&app.db).await?;
@@ -410,7 +420,7 @@ pub async fn view(
         "role": role.name(),
         "spike": spike,
         "followers_only_until": followers_only(&app, &channel).await?,
-        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade, "allow_signatures": signatures},
+        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade, "allow_signatures": signatures, "min_loyalty": min_loyalty},
         "moderators": moderators, "restrictions": restrictions, "log": log,
     })))
 }
@@ -575,6 +585,9 @@ pub struct Settings {
     /// Other channels' signature emotes render in this chat (default on).
     #[serde(default)]
     allow_signatures: Option<bool>,
+    /// The chat rank gate: the loyalty rank (0 off, 1-4) needed to chat.
+    #[serde(default)]
+    min_loyalty: Option<i16>,
 }
 pub async fn save_settings(
     State(app): State<App>,
@@ -600,6 +613,9 @@ pub async fn save_settings(
             "Overlay messages last 10–120 seconds.",
         ));
     }
+    if input.min_loyalty.is_some_and(|r| !(0..=4).contains(&r)) {
+        return Err(Fail::field("min_loyalty", "Choose a loyalty rank."));
+    }
     let mut words: Vec<String> = input
         .banned_words
         .iter()
@@ -615,9 +631,9 @@ pub async fn save_settings(
         ));
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("INSERT INTO chat_settings(channel_id,slow_mode_seconds,block_links,banned_words,overlay_fade_seconds) VALUES($1,$2,$3,$4,coalesce($5,30)) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=$2,block_links=$3,banned_words=$4,overlay_fade_seconds=coalesce($5,chat_settings.overlay_fade_seconds),allow_signatures=coalesce($6,chat_settings.allow_signatures)")
-        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).bind(input.allow_signatures).execute(&mut *tx).await?;
-    log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len()}), &reason).await?;
+    sqlx::query("INSERT INTO chat_settings(channel_id,slow_mode_seconds,block_links,banned_words,overlay_fade_seconds) VALUES($1,$2,$3,$4,coalesce($5,30)) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=$2,block_links=$3,banned_words=$4,overlay_fade_seconds=coalesce($5,chat_settings.overlay_fade_seconds),allow_signatures=coalesce($6,chat_settings.allow_signatures),min_loyalty=coalesce($7,chat_settings.min_loyalty)")
+        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).bind(input.allow_signatures).bind(input.min_loyalty).execute(&mut *tx).await?;
+    log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len(), "min_loyalty": input.min_loyalty}), &reason).await?;
     tx.commit().await?;
     Ok(Json(
         json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words}),
