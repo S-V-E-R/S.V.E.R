@@ -247,8 +247,11 @@ async fn end(db: &mut PgConnection, owner: &str, reason: &str) -> Result<()> {
         .bind(owner).execute(&mut *db).await?;
     sqlx::query("UPDATE stream_publishers SET retired_at=coalesce(retired_at,clock_timestamp()) WHERE broadcast_id IN (SELECT id FROM broadcasts WHERE owner_id=$1 AND state<>'ENDED')")
         .bind(owner).execute(&mut *db).await?;
-    sqlx::query("UPDATE broadcasts SET state='ENDED',ended_at=clock_timestamp(),end_reason=$2,reconnect_deadline=NULL WHERE owner_id=$1 AND state<>'ENDED'")
+    let ended = sqlx::query("UPDATE broadcasts SET state='ENDED',ended_at=clock_timestamp(),end_reason=$2,reconnect_deadline=NULL WHERE owner_id=$1 AND state<>'ENDED'")
         .bind(owner).bind(reason).execute(&mut *db).await?;
+    if ended.rows_affected() > 0 {
+        crate::events::emit(db, owner, "live", serde_json::json!({"live": false})).await?;
+    }
     crate::videos::ended(db, owner)
         .await
         .map_err(|_| Error::internal())?;

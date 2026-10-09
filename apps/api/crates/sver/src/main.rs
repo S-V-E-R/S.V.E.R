@@ -86,6 +86,16 @@ async fn main() -> Result<(), String> {
             }
         });
     }
+    // Live events (docs/DEVELOPER_PLATFORM.md §2): the outbox goes out every second.
+    let events = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::events::drain(&events).await.is_err() {
+                eprintln!("events_event=drain outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    });
     let jobs = app.clone();
     tokio::spawn(async move {
         loop {

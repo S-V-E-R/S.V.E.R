@@ -213,6 +213,13 @@ pub async fn tick(app: &App) -> Res<()> {
     for (target, arrivals, raider) in counted {
         // The channel bot greets the raid in its personality (docs/COMMUNITY.md).
         crate::bot::record_raid(app, &target, &raider, arrivals).await?;
+        crate::events::emit(
+            &mut *app.db.acquire().await?,
+            &target,
+            "raids",
+            json!({"from": raider, "viewers": arrivals}),
+        )
+        .await?;
     }
     let mut tx = app.db.begin().await?;
     // Hosting stops when the host goes live, the target goes offline or the rules no longer allow it.
