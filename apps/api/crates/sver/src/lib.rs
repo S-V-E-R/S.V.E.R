@@ -17,6 +17,7 @@ pub mod auth;
 pub mod bans;
 pub mod beacons;
 pub mod boards;
+pub mod bot;
 pub mod chat;
 pub mod commands;
 pub mod crowd;
@@ -446,6 +447,7 @@ pub fn router(app: App) -> Router {
         .merge(restream::routes())
         .merge(linked_chat::routes())
         .merge(commands::routes())
+        .merge(bot::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())
         .merge(payouts::routes())

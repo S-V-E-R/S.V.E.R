@@ -95,6 +95,9 @@ pub async fn respond(app: &App, channel: &str, user: &auth::User, body: &str) {
     }
 }
 async fn try_respond(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<()> {
+    if crate::bot::giveaway(app, channel, user, body).await? {
+        return Ok(());
+    }
     let Some(name) = body
         .trim()
         .strip_prefix('!')
@@ -211,7 +214,7 @@ async fn view(app: &App, owner: &str) -> Res<Json<Value>> {
     let (chosen, personality) = chosen.unwrap_or((None, "chill".into()));
     let (key, name) = bot(app, owner).await?;
     Ok(Json(
-        json!({"commands": commands, "timers": timers, "bot": {"key": key, "name": name, "chosen": chosen, "personality": personality}, "max_timers": MAX_TIMERS}),
+        json!({"commands": commands, "timers": timers, "bot": {"key": key, "name": name, "chosen": chosen, "personality": personality}, "max_timers": MAX_TIMERS, "automod": crate::bot::settings(app, owner).await?}),
     ))
 }
 /// GET /api/me/commands
@@ -258,6 +261,26 @@ async fn save(
     Json(input): Json<Command>,
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
+    store(
+        &app,
+        &user.id,
+        &name,
+        &input.reply,
+        &input.access,
+        input.cooldown_seconds,
+    )
+    .await?;
+    view(&app, &user.id).await
+}
+/// Creates or changes a channel's `!name` (also used by the command import).
+pub async fn store(
+    app: &App,
+    owner: &str,
+    name: &str,
+    reply: &str,
+    access: &str,
+    cooldown: i32,
+) -> Res<()> {
     let name = name.trim().trim_start_matches('!').to_ascii_lowercase();
     if !(1..=25).contains(&name.len())
         || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -269,7 +292,7 @@ async fn save(
     }
     let counter: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM counters WHERE channel_id=$1 AND id=$2)")
-            .bind(&user.id)
+            .bind(owner)
             .bind(&name)
             .fetch_one(&app.db)
             .await?;
@@ -279,18 +302,18 @@ async fn save(
             "That name is already a built-in command or one of your counters.",
         ));
     }
-    let reply = input.reply.trim();
+    let reply = reply.trim();
     if !(1..=300).contains(&reply.chars().count()) {
         return Err(Fail::field("reply", "Write a reply of 1–300 characters."));
     }
-    if !ACCESS.contains(&input.access.as_str()) || !(0..=3600).contains(&input.cooldown_seconds) {
+    if !ACCESS.contains(&access) || !(0..=3600).contains(&cooldown) {
         return Err(Fail::bad(
             "Choose who can use it and a cooldown of 0–3600 seconds.",
         ));
     }
     let count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM chat_commands WHERE channel_id=$1 AND name<>$2")
-            .bind(&user.id)
+            .bind(owner)
             .bind(&name)
             .fetch_one(&app.db)
             .await?;
@@ -298,8 +321,8 @@ async fn save(
         return Err(Fail::bad("A channel can have up to 100 commands."));
     }
     sqlx::query("INSERT INTO chat_commands(channel_id,name,reply,access,cooldown_seconds) VALUES($1,$2,$3,$4,$5) ON CONFLICT(channel_id,name) DO UPDATE SET reply=EXCLUDED.reply,access=EXCLUDED.access,cooldown_seconds=EXCLUDED.cooldown_seconds")
-        .bind(&user.id).bind(&name).bind(reply).bind(&input.access).bind(input.cooldown_seconds).execute(&app.db).await?;
-    view(&app, &user.id).await
+        .bind(owner).bind(&name).bind(reply).bind(access).bind(cooldown).execute(&app.db).await?;
+    Ok(())
 }
 /// DELETE /api/me/commands/{name}
 async fn remove(
