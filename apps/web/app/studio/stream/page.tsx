@@ -3,12 +3,12 @@ import Link from "next/link";
 import { LANGUAGES, fromBrowser } from "../../../lib/languages";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
-import { send } from "../../../lib/client-api";
+import { send, useLoad } from "../../../lib/client-api";
 import { GamePicker } from "../../../components/GamePicker";
 
 /** A new channel's language defaults to the browser's (then "other"). */
 const defaultLanguage = () => fromBrowser(typeof navigator === "undefined" ? [] : navigator.languages)[0] ?? "other";
-type Settings = { title: string; category_id: string | null; revision: number; mature?: boolean; mature_locked?: boolean; language?: string | null };
+type Settings = { title: string; category_id: string | null; revision: number; mature?: boolean; mature_locked?: boolean; language?: string | null; edited_by?: string | null };
 type Health = { video_codec?: string | null; audio_codec?: string | null; width?: number | null; height?: number | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean; keyframe_seconds?: number | null; keyframe_warning?: boolean; b_frames?: boolean | null };
 type Stream = {
   configured: boolean; eligible: boolean; settings: Settings; disconnect_pending: boolean;
@@ -147,10 +147,12 @@ export default function StreamStudio() {
         </select></label>
         <label className="checkbox"><input type="checkbox" checked={!!form.mature} disabled={busy || !data.eligible || (form.mature_locked && form.mature)} onChange={event => setForm({ ...form, mature: event.target.checked })} /> <strong>Mature</strong>: violent or horror games, strong language or mature themes. Viewers under 18 can&apos;t watch, and others see a warning first. It doesn&apos;t permit anything the <Link href="/guidelines">Community Guidelines</Link> ban. It stays on for your next streams until you turn it off.</label>
         {ratedMature && form.mature && <p role="status">This game has a mature age rating (ESRB M or AO, or PEGI 18), so Mature is switched on. You can turn it off.</p>}
+        {form.edited_by && <p className="muted small">Edited by @{form.edited_by}</p>}
         {form.mature_locked && <p role="status">Staff labeled this broadcast mature, so the label stays on until it ends.</p>}
         <div className="row"><button disabled={busy || !data.eligible || count < 1 || count > 140}>Save details</button><button type="button" className="quiet" disabled={busy} onClick={reloadDetails}>Reload saved details</button></div>
       </form>
     </Section>
+    <Editors />
     <Section title="OBS connection" intro="Use Custom in OBS's Stream settings. Keep your stream key private.">
       {(!data.settings.title.trim() || !data.settings.category_id) && <p role="alert">Save a title and category in Stream details first. Until then S.V.E.R refuses the connection and OBS only reports “Failed to connect to server”.</p>}
       <p>Viewing or replacing a key requires a sign-in confirmation from the last five minutes and a fresh authenticator or recovery code.</p>
@@ -196,4 +198,30 @@ export default function StreamStudio() {
       {broadcast?.observed_at && <p className="small-print">Last media observation: {new Date(broadcast.observed_at).toLocaleTimeString()}. Measurements update while OBS sends media.</p>}
     </Section>
   </>;
+}
+
+type Editor = { username: string; display_name: string };
+/** Channel editors: up to 5 people who can change the title, category and language and switch Mature on. */
+function Editors() {
+  const [list, setList] = useState<Editor[] | null>(null);
+  const [name, setName] = useState("");
+  const [note, setNote] = useState("");
+  const load = useCallback(async () => {
+    const r = await send<{ editors: Editor[] }>("GET", "/api/me/editors");
+    if (r.ok) setList(r.data.editors); else setNote(r.error);
+  }, []);
+  useLoad(load);
+  async function change(method: "POST" | "DELETE", username: string) {
+    setNote("");
+    const r = await send<{ editors: Editor[] }>(method, method === "POST" ? "/api/me/editors" : `/api/me/editors/${encodeURIComponent(username)}`, method === "POST" ? { username } : undefined);
+    if (r.ok) { setList(r.data.editors); setName(""); } else setNote(r.error);
+  }
+  return <Section title="Editors" intro="Editors can change your title, category and language from the watch page and switch the Mature label on. They can't see your stream key, start or stop the stream, see money or change settings. Appointing needs a recent sign-in.">
+    {!list ? <p className="loading">{note || "Loading…"}</p> : <ul className="list">{list.length === 0 ? <li className="muted">No editors yet.</li> : list.map(ed => <li key={ed.username} className="row between"><span>{ed.display_name} <span className="muted">@{ed.username}</span></span><button type="button" className="small quiet" onClick={() => void change("DELETE", ed.username)}>Remove</button></li>)}</ul>}
+    {list && list.length < 5 && <form className="row" onSubmit={e => { e.preventDefault(); void change("POST", name.trim()); }}>
+      <label className="field"><span>Username</span><input value={name} maxLength={30} onChange={e => setName(e.target.value)} /></label>
+      <button className="small" disabled={!name.trim()}>Add editor</button>
+    </form>}
+    {note && <p role="alert" className="form-message">{note}</p>}
+  </Section>;
 }
