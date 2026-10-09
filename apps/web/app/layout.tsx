@@ -6,6 +6,7 @@ import { StaffRemovalAlerts } from "../components/StaffRemovalAlerts";
 import { BellIcon, MagnetMark } from "../components/shell/Icons";
 import { SideNav } from "../components/shell/SideNav";
 import { PlayerMenu } from "../components/shell/PlayerMenu";
+import { DailyOrders } from "../components/shell/DailyOrders";
 import type { LiveCard } from "../components/home/types";
 import { apiGet } from "../lib/server-api";
 import { themeFor } from "../lib/theme";
@@ -77,6 +78,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side</span>{xpBar}</span>
       </Link>)}
     <SideNav faction={faction ? { name: faction.name, slug: faction.slug } : null} />
+    {account && <DailyOrders />}
     {(account || live.length > 0) && <section className="side-section" aria-labelledby="side-live">
       <div className="side-label"><span id="side-live">{account ? "Following · live" : "Picked for you"}</span><span className="magnet"><MagnetMark />MAGNet</span></div>
       {live.length === 0

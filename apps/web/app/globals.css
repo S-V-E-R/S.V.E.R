@@ -380,3 +380,10 @@ a.takedown-link:hover { color: var(--ink); }
 .player-level { font-family: var(--font-display); font-weight: 700; color: var(--ink-muted); }
 .xp-bar { flex: 1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; min-width: 40px; }
 .xp-bar > span { display: block; height: 100%; background: var(--accent); }
+.daily-orders { padding: 10px 12px; }
+.order-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 13px; }
+.order-list li { display: grid; gap: 3px; }
+.order-list li.done .order-label { color: var(--ink-muted); text-decoration: line-through; }
+.order-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--ink-muted); }
+.order-list li[data-rarity="rare"] .order-meta span:first-child, .order-list li[data-rarity="epic"] .order-meta span:first-child, .order-list li[data-rarity="legendary"] .order-meta span:first-child { color: var(--accent); font-weight: 600; }
+.order-list button { justify-self: start; }
