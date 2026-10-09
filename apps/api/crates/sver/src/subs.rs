@@ -335,6 +335,17 @@ async fn subscribe(
             let cents = price(tier);
             support::card_gate(&mut tx, &user.id, cents, input.guardian_consent).await?;
             let origin = &app.config.origin;
+            // Keep a gifted subscription (docs/CHANNEL_ADDITIONS.md): a gifted or Valor month that
+            // is still running becomes a free trial, so the first card charge is when it ends.
+            // ponytail: Stripe needs a trial to end 48 hours out at least, so a month ending
+            // sooner gets up to two extra free days; use billing_cycle_anchor if that matters.
+            let prepaid: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar("SELECT paid_through FROM channel_subs WHERE channel_id=$1 AND user_id=$2 AND stripe_subscription IS NULL AND paid_through>now()")
+                .bind(&channel).bind(&user.id).fetch_optional(&mut *tx).await?;
+            let trial_end = prepaid.map(|t| {
+                t.max(
+                    chrono::Utc::now() + chrono::Duration::hours(48) + chrono::Duration::minutes(5),
+                )
+            });
             let mut form = vec![
                 ("mode", "subscription".into()),
                 ("line_items[0][quantity]", "1".into()),
@@ -354,8 +365,21 @@ async fn subscribe(
                 ("success_url", format!("{origin}/{username}?subscribed=1")),
                 ("cancel_url", format!("{origin}/{username}")),
                 // The renewal terms sit right above Checkout's pay button.
-                ("custom_text[submit][message]", renewal_terms(cents)),
+                (
+                    "custom_text[submit][message]",
+                    match trial_end {
+                        Some(t) => format!(
+                            "Nothing is charged today. Your first charge is on {}, when your current month ends. {}",
+                            t.format("%B %-d, %Y"),
+                            renewal_terms(cents)
+                        ),
+                        None => renewal_terms(cents),
+                    },
+                ),
             ];
+            if let Some(t) = trial_end {
+                form.push(("subscription_data[trial_end]", t.timestamp().to_string()));
+            }
             if pool.len() > 1 {
                 form.push(("subscription_data[metadata][sver_pool]", pool.join(",")));
             }
@@ -679,10 +703,9 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
     if inserted == 0 {
         return Ok(());
     }
-    let month = i32::from(matches!(
-        reason,
-        "subscription_create" | "subscription_cycle"
-    ));
+    // A $0 invoice (a kept gifted month's trial) adds no month: the gift already counted it.
+    let month =
+        i32::from(matches!(reason, "subscription_create" | "subscription_cycle") && cents > 0);
     sqlx::query("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months,stripe_subscription) VALUES($1,$2,$3,to_timestamp($4),$5,$6)
         ON CONFLICT(channel_id,user_id) DO UPDATE SET tier=EXCLUDED.tier,
             paid_through=greatest(channel_subs.paid_through,EXCLUDED.paid_through),
@@ -708,6 +731,24 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
         .await?;
     }
     Ok(())
+}
+
+/// Three days before a gifted or Valor month ends, an in-site reminder offers to keep it
+/// (docs/CHANNEL_ADDITIONS.md "Keep a gifted subscription"); once per month that ends.
+pub async fn remind(app: &App) -> Res<()> {
+    sqlx::query("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload) SELECT gen_random_uuid()::text,s.user_id,'sub_ending',s.channel_id,'sub_ending:'||s.channel_id||':'||extract(epoch FROM s.paid_through)::bigint,jsonb_build_object('title','Your '||c.display_name||' subscription ends in 3 days','body','Keep it by card; nothing is charged until it ends.','url','/'||c.username) FROM channel_subs s JOIN channel_users c ON c.id=s.channel_id AND c.eligible WHERE s.stripe_subscription IS NULL AND s.paid_through BETWEEN now()+interval '2 days' AND now()+interval '3 days' ON CONFLICT DO NOTHING")
+        .execute(&app.db)
+        .await?;
+    Ok(())
+}
+/// GET /api/me/subscriptions: the viewer's active subscriptions (the wallet lists them).
+async fn my_subscriptions(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let items: Value = sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('username',c.username,'display_name',c.display_name,'tier',s.tier,'months',s.months,'paid_through',s.paid_through,'card',s.stripe_subscription IS NOT NULL,'auto_renew',s.stripe_subscription IS NOT NULL AND NOT s.cancel_at_period_end) ORDER BY s.paid_through),'[]') FROM channel_subs s JOIN channel_users c ON c.id=s.channel_id WHERE s.user_id=$1 AND s.paid_through>now()")
+        .bind(&user.id)
+        .fetch_one(&app.db)
+        .await?;
+    Ok(Json(json!({"subscriptions": items})))
 }
 
 /// `customer.subscription.updated` / `.deleted`: auto-renewal state; an ended subscription keeps
@@ -773,6 +814,7 @@ pub fn routes() -> Router<App> {
         .route("/api/channels/{username}/subscription/cancel", post(cancel))
         .route("/api/channels/{username}/gifts", post(gift))
         .route("/api/me/gifts", put(gift_setting))
+        .route("/api/me/subscriptions", get(my_subscriptions))
 }
 
 #[cfg(test)]

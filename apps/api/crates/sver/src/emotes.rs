@@ -8,9 +8,10 @@ use crate::{
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Multipart, Path, Query, State},
-    routing::{delete, get},
+    routing::{delete, get, put},
 };
 use axum_extra::extract::cookie::CookieJar;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 
@@ -52,7 +53,7 @@ pub async fn catalog(app: &App, channel: &str) -> Res<Vec<Value>> {
 }
 async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
-    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',e.id,'code',e.code,'image_key',e.image_key,'status',e.status,'tier',e.tier) FROM channel_emotes e WHERE channel_id=$1 ORDER BY created_at,id")
+    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',e.id,'code',e.code,'image_key',e.image_key,'status',e.status,'tier',e.tier,'signature',e.signature,'reviewed',e.reviewed_at IS NOT NULL) FROM channel_emotes e WHERE channel_id=$1 ORDER BY created_at,id")
         .bind(&user.id).fetch_all(&app.db).await?;
     let held = hidden(&app, &rows).await?;
     for row in &mut rows {
@@ -157,6 +158,89 @@ async fn delete_mine(
     Ok(Json(json!({"saved":true})))
 }
 
+// ---- Signature emotes (docs/CHANNEL_ADDITIONS.md "Signature emote") ----
+
+#[derive(Deserialize)]
+pub struct Signature {
+    on: bool,
+}
+/// PUT /api/me/emotes/{id}/signature: makes one open emote the channel's signature (or clears it).
+/// It works in other chats once staff have reviewed it.
+async fn set_signature(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Json(input): Json<Signature>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let mut tx = app.db.begin().await?;
+    let open: Option<bool> = sqlx::query_scalar("SELECT tier IS NULL AND status='VISIBLE' FROM channel_emotes WHERE id=$1 AND channel_id=$2 FOR UPDATE")
+        .bind(&id).bind(&user.id).fetch_optional(&mut *tx).await?;
+    let open = open.ok_or_else(Fail::missing)?;
+    if input.on && !open {
+        return Err(Fail::bad(
+            "Only an open (non-subscriber) emote can be your signature.",
+        ));
+    }
+    sqlx::query("UPDATE channel_emotes SET signature=false WHERE channel_id=$1 AND signature")
+        .bind(&user.id)
+        .execute(&mut *tx)
+        .await?;
+    if input.on {
+        sqlx::query("UPDATE channel_emotes SET signature=true WHERE id=$1")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(Json(json!({"saved": true})))
+}
+/// Approved signature emotes as chat renders them: `code` is `username/Code`.
+const SIGNATURE: &str = "SELECT jsonb_build_object('id',e.id,'code',c.username||'/'||e.code,'image_key',e.image_key,'owner',c.username,'faction',(SELECT faction FROM faction_members WHERE user_id=c.id)) FROM channel_emotes e JOIN channel_users c ON c.id=e.channel_id AND c.eligible WHERE e.signature AND e.reviewed_at IS NOT NULL AND e.status='VISIBLE'";
+async fn present(app: &App, mut rows: Vec<Value>) -> Res<Vec<Value>> {
+    let held = hidden(app, &rows).await?;
+    rows.retain(|row| !held.contains(row["image_key"].as_str().unwrap_or("")));
+    for row in &mut rows {
+        urls(app, row);
+    }
+    Ok(rows)
+}
+#[derive(Deserialize)]
+pub struct Codes {
+    codes: String,
+}
+/// GET /api/emotes/signatures?codes=user/Code,…: resolves up to 30 codes seen in chat. Looked up
+/// live, so a removed or rejected emote stops rendering everywhere.
+async fn signatures(State(app): State<App>, Query(input): Query<Codes>) -> Res<Json<Value>> {
+    let (users, codes): (Vec<String>, Vec<String>) = input
+        .codes
+        .split(',')
+        .filter_map(|c| c.split_once('/'))
+        .filter(|(u, c)| (3..=25).contains(&u.len()) && (3..=20).contains(&c.len()))
+        .take(30)
+        .map(|(u, c)| (u.to_lowercase(), c.to_string()))
+        .unzip();
+    let rows: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "{SIGNATURE} AND (lower(c.username),e.code) IN (SELECT * FROM unnest($1::text[],$2::text[]))"
+    )))
+    .bind(&users)
+    .bind(&codes)
+    .fetch_all(&app.db)
+    .await?;
+    Ok(Json(json!({"emotes": present(&app, rows).await?})))
+}
+/// GET /api/me/signature-emotes: the picker's Signature tab (channels the viewer follows).
+async fn followed_signatures(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let rows: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "{SIGNATURE} AND e.channel_id IN (SELECT following_id FROM follows WHERE follower_id=$1) ORDER BY 1 LIMIT 100"
+    )))
+    .bind(&user.id)
+    .fetch_all(&app.db)
+    .await?;
+    Ok(Json(json!({"emotes": present(&app, rows).await?})))
+}
+
 // Public module interfaces for moderation, removals and media collection.
 pub async fn target(db: &mut PgConnection, id: &str) -> Res<Option<(String, String, Value)>> {
     let row: Option<(String,String,Value)> = sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('code',e.code,'image',e.image_key||'/112.webp') FROM channel_emotes e JOIN channel_users c ON c.id=e.channel_id WHERE e.id=$1 AND e.status='VISIBLE' AND c.eligible").bind(id).fetch_optional(&mut *db).await?;
@@ -259,5 +343,8 @@ pub fn routes() -> Router<App> {
                 .layer(DefaultBodyLimit::max(1024 * 1024 + 16 * 1024)),
         )
         .route("/api/me/emotes/{id}", delete(delete_mine))
+        .route("/api/me/emotes/{id}/signature", put(set_signature))
+        .route("/api/emotes/signatures", get(signatures))
+        .route("/api/me/signature-emotes", get(followed_signatures))
         .route("/api/admin/media", get(review_queue))
 }

@@ -618,8 +618,9 @@ pub async fn read(
     .bind(&channel)
     .fetch_one(&app.db)
     .await?;
+    let signatures = allow_signatures(&app, &channel).await?;
     Ok(Json(
-        json!({"overlay_fade_seconds": fade, "messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?, "subs_only":crate::moderation::subs_only(&app, &channel).await?}),
+        json!({"overlay_fade_seconds": fade, "allow_signatures": signatures, "messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?, "subs_only":crate::moderation::subs_only(&app, &channel).await?}),
     ))
 }
 pub async fn post(
@@ -634,6 +635,15 @@ pub async fn post(
     Ok(Json(
         json!({"message": send(&app, &jar, &channel, input, None).await?}),
     ))
+}
+/// Whether other channels' signature emotes render in this chat (docs/CHANNEL_ADDITIONS.md).
+async fn allow_signatures(app: &App, channel: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT coalesce((SELECT allow_signatures FROM chat_settings WHERE channel_id=$1),true)",
+    )
+    .bind(channel)
+    .fetch_one(&app.db)
+    .await?)
 }
 /// Chat is closed to under-18 accounts in a channel labeled mature.
 async fn mature_gate(app: &App, channel: &str, viewer: Option<&str>) -> Res<()> {
@@ -857,7 +867,10 @@ async fn session(
     if squad.is_some() {
         pin = Value::Null;
     }
-    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes,"followers_only_until":followers_only,"subs_only":subs_only}).to_string();
+    let Ok(signatures) = allow_signatures(&app, &channel).await else {
+        return;
+    };
+    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes,"followers_only_until":followers_only,"subs_only":subs_only,"allow_signatures":signatures}).to_string();
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
     }

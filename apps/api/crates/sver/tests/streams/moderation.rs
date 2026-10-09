@@ -386,6 +386,78 @@ pub async fn exercise(e: &Env) {
     call(e, "PUT", &format!("{BASE}/chat/settings"), Some(&moderator), json!({"slow_mode_seconds":30,"block_links":true,"banned_words":["bad word"],"reason":"rules"})).await;
     let (_, read) = call(e, "GET", &format!("{BASE}/chat"), None, Value::Null).await;
     assert_eq!(read["overlay_fade_seconds"], 45);
+    // Signature emotes: one open emote, usable everywhere as Streamer/Code once reviewed; live lookup
+    // stops it as soon as it's removed; the picker lists followed channels'; chats can opt out.
+    e.sql("INSERT INTO channel_emotes(id,channel_id,code,image_key,tier,reviewed_at) VALUES('sig-open','stream-owner','Walnut','emotes/sig-open',NULL,NULL),('sig-tier','stream-owner','Acorn','emotes/sig-tier',1,now())").await;
+    assert_eq!(
+        e.request(
+            "PUT",
+            "/api/me/emotes/sig-tier/signature",
+            json!({"on": true}),
+            true,
+            true,
+            false
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        e.request(
+            "PUT",
+            "/api/me/emotes/sig-open/signature",
+            json!({"on": true}),
+            true,
+            true,
+            false
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let lookup = || {
+        call(
+            e,
+            "GET",
+            "/api/emotes/signatures?codes=streamer/Walnut,nobody/Thing",
+            None,
+            Value::Null,
+        )
+    };
+    assert_eq!(
+        lookup().await.1["emotes"],
+        json!([]),
+        "not until staff review it"
+    );
+    e.sql("UPDATE channel_emotes SET reviewed_at=now() WHERE id='sig-open'")
+        .await;
+    let (_, found) = lookup().await;
+    assert_eq!(found["emotes"][0]["code"], "Streamer/Walnut", "{found}");
+    e.sql("INSERT INTO follows(follower_id,following_id) VALUES('mod-outsider','stream-owner') ON CONFLICT DO NOTHING").await;
+    let (_, picker) = call(
+        e,
+        "GET",
+        "/api/me/signature-emotes",
+        Some(&outsider),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(picker["emotes"][0]["code"], "Streamer/Walnut");
+    e.sql("UPDATE channel_emotes SET status='REMOVED' WHERE id='sig-open'")
+        .await;
+    assert_eq!(
+        lookup().await.1["emotes"],
+        json!([]),
+        "removal stops it everywhere"
+    );
+    let (status, _) = call(e, "PUT", &format!("{BASE}/chat/settings"), Some(&moderator), json!({"slow_mode_seconds":30,"block_links":true,"banned_words":["bad word"],"reason":"rules","allow_signatures":false})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        call(e, "GET", &format!("{BASE}/chat"), None, Value::Null)
+            .await
+            .1["allow_signatures"],
+        false
+    );
     tokio::time::sleep(Duration::from_millis(1100)).await;
     assert_eq!(
         say(e, &outsider, "this has a BAD\nword in it").await.0,

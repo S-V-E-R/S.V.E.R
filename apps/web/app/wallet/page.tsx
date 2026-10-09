@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { Wallet } from "../../components/Wallet";
+import { MySubscriptions } from "../../components/MySubscriptions";
 import { currentAccount } from "../session";
 import "../../styles/profiles.css";
 
@@ -10,5 +11,6 @@ export default async function WalletPage({ searchParams }: { searchParams: Promi
   return <div className="settings-page single"><div className="settings-body">
     <h1>Valor</h1>
     <Wallet returned={returned} />
+    <MySubscriptions />
   </div></div>;
 }
