@@ -386,6 +386,7 @@ pub async fn exercise(e: &Env) {
     ] {
         e.sql(statement).await;
     }
+    open_data(e).await;
 }
 
 async fn thumbnails(e: &Env) {
@@ -508,4 +509,44 @@ async fn thumbnails(e: &Env) {
     );
     e.sql("UPDATE broadcasts SET state='LIVE',ended_at=NULL,reconnect_deadline=NULL WHERE id='dv-b-art'").await;
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// Open data: weekly figures with "fewer than 10" for small counts, money folded until 10 creators
+/// were paid, and CSVs that match.
+async fn open_data(e: &Env) {
+    for n in 0..10 {
+        person(e, &format!("od-{n}"), &format!("OpenData{n}"), true).await;
+    }
+    sver::open_data::compute(&e.app).await.unwrap();
+    let (status, data) = get(e, "/api/open-data", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let weeks = data["weekly"].as_array().unwrap();
+    assert_eq!(weeks.len(), 12);
+    let this = weeks.last().unwrap();
+    assert!(this["accounts_total"].as_f64().unwrap() >= 10.0, "{this}");
+    assert_eq!(this["faction_glint"], Value::Null, "fewer than 10");
+    assert_eq!(
+        data["monthly"],
+        json!([]),
+        "no month has had 10 paid creators yet"
+    );
+    let (status, csv) = get_text(e, "/api/open-data/weekly.csv").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        csv.starts_with("period,accounts_total,") && csv.contains("fewer than 10"),
+        "{csv}"
+    );
+}
+async fn get_text(e: &Env, path: &str) -> (StatusCode, String) {
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let request = axum::http::Request::builder()
+        .uri(path)
+        .body(Body::empty())
+        .unwrap();
+    let response = sver::router(e.app.clone()).oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
 }

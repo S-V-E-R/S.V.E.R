@@ -137,6 +137,8 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 
 **Done when:** the page shows the charts from real data, the thresholds hold, and the CSVs match the charts.
 
+**Built October 9, 2026 (migration 0062).** The jobs loop recomputes the last 12 weeks and 12 months once a day into `public_stats`; `GET /api/open-data` and `/api/open-data/{weekly,monthly}.csv` apply the thresholds (so the page and CSVs show the same numbers), and `/open-data` draws simple SVG bars in the theme colors. Fairness is measured by recording every broadcast the rotation pointer puts in first place (`rotation_firsts`) against streams live 10 minutes or more. Money counts card payments at their price and Valor at 1 cent, with the creators' share from earnings accounts; refunds aren't netted out yet. The page is rendered per request rather than cached; the figures are a small table read.
+
 ## Credits
 
 - `/credits`, linked from the footer and About, lists the open-source software S.V.E.R uses: the Rust crates and npm packages that ship, plus SRS, PostgreSQL and the Cinzel and Barlow fonts (SIL Open Font License). Each entry has its name, version, license and a link. The full license texts are on the same page.

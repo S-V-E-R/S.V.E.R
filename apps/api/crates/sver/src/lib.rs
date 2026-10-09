@@ -32,6 +32,7 @@ pub mod magnet;
 pub mod media;
 pub mod moderation;
 pub mod oauth;
+pub mod open_data;
 pub mod parts;
 pub mod payouts;
 pub mod playback;
@@ -432,6 +433,7 @@ pub fn router(app: App) -> Router {
         .merge(staff_push::routes())
         .merge(support::routes())
         .merge(subs::routes())
+        .merge(open_data::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())
         .merge(payouts::routes())
