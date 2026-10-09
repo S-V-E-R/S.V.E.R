@@ -65,6 +65,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** language is saved and shown, the filters and the home setting narrow lists without reordering them, and the API returns and filters by language.
 
+**Built October 9, 2026 (migration 0057).** Studio's Language field (40 languages and Other; the browser's language by default), cards with a language chip when it isn't one of the viewer's, Settings → Preferences → Languages I watch in (up to 10; the browser's until chosen) and "Only show streams in my languages" for home, and Browse's All / My languages filter. `GET /api/discovery/live` takes `language=` as a code, a comma list or `mine` (with `fallback=` for the browser's languages), and cards include `language`. Streams without a language yet are left out only when a language filter is on.
+
 ## Pop-out chat
 
 - `sver.tv/{username}/chat` shows only the channel's chat: no top bar, sidebar or footer, in the owner's faction theme. It works from 280 px wide, so it fits a narrow window.

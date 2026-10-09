@@ -17,6 +17,13 @@ use std::{
     time::Duration as Timeout,
 };
 
+/// Stream languages (ISO 639-1), plus "other" (docs/CHANNEL_ADDITIONS.md "Stream language").
+/// apps/web/lib/languages.ts names them.
+pub const LANGUAGES: &[&str] = &[
+    "ar", "bg", "bn", "cs", "da", "de", "el", "en", "es", "et", "fa", "fi", "fr", "he", "hi", "hr",
+    "hu", "id", "it", "ja", "ko", "lt", "lv", "ms", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sr",
+    "sv", "th", "tl", "tr", "uk", "ur", "vi", "zh", "other",
+];
 #[derive(Clone)]
 pub struct Config {
     pub ingest_url: String,
@@ -390,7 +397,7 @@ pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>>
     settings(&mut tx, &user).await?;
     expire(&mut tx, &user.id).await?;
     let allowed = eligible(&mut tx, &user).await?;
-    let metadata: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',title,'category_id',category_id,'revision',revision,'mature',mature,'mature_locked',EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND mature_locked AND state<>'ENDED')) FROM stream_settings WHERE owner_id=$1")
+    let metadata: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',title,'category_id',category_id,'revision',revision,'mature',mature,'language',language,'mature_locked',EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND mature_locked AND state<>'ENDED')) FROM stream_settings WHERE owner_id=$1")
         .bind(&user.id).fetch_one(&mut *tx).await?;
     let credential: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('created_at',created_at,'revoked',revoked_at IS NOT NULL) FROM stream_credentials WHERE owner_id=$1")
         .bind(&user.id).fetch_optional(&mut *tx).await?;
@@ -417,6 +424,8 @@ pub struct Metadata {
     revision: i64,
     #[serde(default)]
     mature: Option<bool>,
+    #[serde(default)]
+    language: Option<String>,
 }
 pub async fn save(
     State(app): State<App>,
@@ -449,6 +458,13 @@ pub async fn save(
             .bind(&user.id)
             .fetch_one(&mut *tx)
             .await?;
+    if input
+        .language
+        .as_deref()
+        .is_some_and(|l| !LANGUAGES.contains(&l))
+    {
+        return Err(Error::bad("Choose a language from the list."));
+    }
     let locked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND mature_locked AND state<>'ENDED')")
         .bind(&user.id).fetch_one(&mut *tx).await?;
     if locked && input.mature == Some(false) {
@@ -456,8 +472,8 @@ pub async fn save(
             "Staff labeled this broadcast mature; the label stays on until it ends.",
         ));
     }
-    let revision: Option<i64> = sqlx::query_scalar("UPDATE stream_settings SET title=$2,category_id=$3,mature=coalesce($5,mature),revision=revision+1,updated_at=clock_timestamp() WHERE owner_id=$1 AND revision=$4 RETURNING revision")
-        .bind(&user.id).bind(title).bind(&category_id).bind(input.revision).bind(input.mature).fetch_optional(&mut *tx).await?;
+    let revision: Option<i64> = sqlx::query_scalar("UPDATE stream_settings SET title=$2,category_id=$3,mature=coalesce($5,mature),language=coalesce($6,language),revision=revision+1,updated_at=clock_timestamp() WHERE owner_id=$1 AND revision=$4 RETURNING revision")
+        .bind(&user.id).bind(title).bind(&category_id).bind(input.revision).bind(input.mature).bind(&input.language).fetch_optional(&mut *tx).await?;
     let revision = revision
         .ok_or_else(|| conflict("This changed in another tab. Reload to see the latest."))?;
     // A broadcast labeled at any point stays labeled (its VOD and clips inherit it).
@@ -789,20 +805,33 @@ pub async fn hook(
 }
 #[derive(Deserialize)]
 pub struct Preferences {
-    skip_mature_warning: bool,
+    #[serde(default)]
+    skip_mature_warning: Option<bool>,
+    /// "Languages I watch in" (empty: the browser's languages are used).
+    #[serde(default)]
+    languages: Option<Vec<String>>,
+    /// Home shows only streams in those languages.
+    #[serde(default)]
+    only_my_languages: Option<bool>,
+}
+async fn preferences_json(db: &mut PgConnection, user: &str) -> Result<Value> {
+    let adult = auth::is_adult(&mut *db, user).await?;
+    let (skip, languages, only): (bool, Vec<String>, bool) = sqlx::query_as(
+        "SELECT skip_mature_warning,languages,only_my_languages FROM users WHERE id=$1",
+    )
+    .bind(user)
+    .fetch_one(db)
+    .await?;
+    Ok(
+        json!({"skip_mature_warning": skip && adult, "adult": adult, "languages": languages, "only_my_languages": only}),
+    )
 }
 /// GET and PUT /api/me/preferences: "Don't warn me about mature streams" (only adults can use it).
 async fn preferences(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>> {
     let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
-    let adult = auth::is_adult(&mut tx, &user.id).await?;
-    let skip: bool = sqlx::query_scalar("SELECT skip_mature_warning FROM users WHERE id=$1")
-        .bind(&user.id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let body = preferences_json(&mut tx, &user.id).await?;
     tx.commit().await?;
-    Ok(Json(
-        json!({"skip_mature_warning": skip && adult, "adult": adult}),
-    ))
+    Ok(Json(body))
 }
 async fn save_preferences(
     State(app): State<App>,
@@ -811,20 +840,26 @@ async fn save_preferences(
 ) -> Result<Json<Value>> {
     let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
     let adult = auth::is_adult(&mut tx, &user.id).await?;
-    if input.skip_mature_warning && !adult {
+    if input.skip_mature_warning == Some(true) && !adult {
         return Err(Error::bad(
             "Only viewers aged 18 and over can turn off the mature warning.",
         ));
     }
-    sqlx::query("UPDATE users SET skip_mature_warning=$2 WHERE id=$1")
+    if let Some(languages) = &input.languages
+        && (languages.len() > 10 || languages.iter().any(|l| !LANGUAGES.contains(&l.as_str())))
+    {
+        return Err(Error::bad("Choose up to 10 languages from the list."));
+    }
+    sqlx::query("UPDATE users SET skip_mature_warning=coalesce($2,skip_mature_warning),languages=coalesce($3,languages),only_my_languages=coalesce($4,only_my_languages) WHERE id=$1")
         .bind(&user.id)
         .bind(input.skip_mature_warning)
+        .bind(&input.languages)
+        .bind(input.only_my_languages)
         .execute(&mut *tx)
         .await?;
+    let body = preferences_json(&mut tx, &user.id).await?;
     tx.commit().await?;
-    Ok(Json(
-        json!({"skip_mature_warning": input.skip_mature_warning, "adult": adult}),
-    ))
+    Ok(Json(body))
 }
 pub fn routes() -> Router<App> {
     Router::new()

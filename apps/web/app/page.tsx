@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Rotation } from "../components/home/Rotation";
 import { RecentChannels, SectionHead, StreamGrid } from "../components/home/Shelves";
 import type { LiveCard, Recent } from "../components/home/types";
-import { apiGet } from "../lib/server-api";
+import { apiGet, viewerLanguages } from "../lib/server-api";
 import { factionOf, isFaction } from "../lib/factions";
 import { currentAccount } from "./session";
 import "../styles/home.css";
@@ -25,6 +25,7 @@ type Home = { live: LiveCard[]; following: LiveCard[]; faction: LiveCard[] | nul
  */
 export default async function Home() {
   const account = await currentAccount();
+  const languages = await viewerLanguages();
   const [homeRes, clipsRes, warRes, browseRes, beaconsRes] = await Promise.all([
     apiGet<Home>("/api/discovery/home"),
     apiGet<{ clips: VideoCard[] }>("/api/clips/latest"),
@@ -59,7 +60,7 @@ export default async function Home() {
     <section aria-labelledby="live-h" className="home-section">
       <SectionHead id="live-h" title="Live now" note="Ordered by MAGNet, not by viewer count" level={rotation.length ? 2 : 1} href="/browse" link="View all" />
       {live.length
-        ? <StreamGrid streams={live} viewerFaction={viewerFaction} />
+        ? <StreamGrid streams={live} viewerFaction={viewerFaction} languages={languages} />
         : <div className="empty-live panel">
           <p><strong>Nothing live right now.</strong> These channels were live recently; follow them to hear when they&apos;re back.</p>
           {home && <RecentChannels recent={home.recent} />}
@@ -69,7 +70,7 @@ export default async function Home() {
 
     {mine && (home?.faction?.length ?? 0) > 0 && <section aria-labelledby="fac-h" className="home-section">
       <SectionHead id="fac-h" title={`From ${mine.name}`} note="Live from your side" href={`/browse?faction=${mine.slug}`} link="View all" />
-      <StreamGrid streams={home!.faction!} viewerFaction={viewerFaction} />
+      <StreamGrid streams={home!.faction!} viewerFaction={viewerFaction} languages={languages} />
     </section>}
 
     {beacons.length > 0 && <section aria-labelledby="bea-h" className="home-section frame beacon-shelf">
@@ -79,7 +80,7 @@ export default async function Home() {
 
     {(home?.fresh.length ?? 0) > 0 && <section aria-labelledby="new-h" className="home-section">
       <SectionHead id="new-h" title="Just went live" note="MAGNet gives fresh streams a head start." />
-      <StreamGrid streams={home!.fresh} viewerFaction={viewerFaction} />
+      <StreamGrid streams={home!.fresh} viewerFaction={viewerFaction} languages={languages} />
     </section>}
 
     {genres.length > 0 && <section aria-labelledby="ter-h" className="home-section">

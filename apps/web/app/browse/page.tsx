@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { RecentChannels, SectionHead, StreamGrid } from "../../components/home/Shelves";
 import type { LiveCard, Recent } from "../../components/home/types";
-import { apiGet } from "../../lib/server-api";
+import { apiGet, viewerLanguages } from "../../lib/server-api";
 import { FACTIONS, factionOf, isFaction } from "../../lib/factions";
+import { LANGUAGES, languageName } from "../../lib/languages";
 import { Crest } from "../../components/Crest";
 import { holders, TerritoryGrid, type BrowseGenre } from "../../components/Territories";
 import type { War } from "../../lib/war";
@@ -17,17 +18,23 @@ export const metadata = { title: "Browse | S.V.E.R" };
  * each with its crest, then 3:4 category tiles with the holder's crest and live count. A category
  * lists its live streams in fair rotation, with a faction filter.
  */
-export default async function Browse({ searchParams }: { searchParams: Promise<{ genre?: string; category?: string; faction?: string }> }) {
+export default async function Browse({ searchParams }: { searchParams: Promise<{ genre?: string; category?: string; faction?: string; language?: string }> }) {
   const params = await searchParams;
   const faction = isFaction(params.faction) ? params.faction : null;
   const filter = new URLSearchParams();
   if (params.genre) filter.set("genre", params.genre);
   if (params.category) filter.set("category", params.category);
   if (faction) filter.set("faction", faction);
+  // Language: one code, or "mine" (chosen languages, else the browser's). Filters never reorder.
+  const language = params.language === "mine" || LANGUAGES.some(([code]) => code === params.language) ? params.language! : null;
+  const languages = await viewerLanguages();
+  if (language) filter.set("language", language);
+  const query = new URLSearchParams(filter);
+  if (language === "mine") query.set("fallback", languages.join(","));
   const [account, browse, list, warRes] = await Promise.all([
     currentAccount(),
     apiGet<{ genres: BrowseGenre[]; live: number }>("/api/discovery/browse"),
-    apiGet<{ items: LiveCard[]; recent: Recent[] }>(`/api/discovery/live?${filter}`),
+    apiGet<{ items: LiveCard[]; recent: Recent[] }>(`/api/discovery/live?${query}`),
     apiGet<War>("/api/factions/war"),
   ]);
   const war = warRes.data ?? null;
@@ -57,8 +64,13 @@ export default async function Browse({ searchParams }: { searchParams: Promise<{
       <Link href={link({ faction: null })} aria-current={!faction ? "page" : undefined} className="chip">All factions</Link>
       {FACTIONS.map(f => <Link key={f.slug} href={link({ faction: f.slug })} aria-current={faction === f.slug ? "page" : undefined} className="chip">{f.name}</Link>)}
     </nav>
+    <nav className="browse-filters" aria-label="Language filter">
+      <Link href={link({ language: null })} aria-current={!language ? "page" : undefined} className="chip">All languages</Link>
+      <Link href={link({ language: "mine" })} aria-current={language === "mine" ? "page" : undefined} className="chip">My languages</Link>
+      {language && language !== "mine" && <span className="chip" aria-current="page">{languageName(language)}</span>}
+    </nav>
     {!list.data ? <p className="notice" role="alert">Live channels couldn&apos;t be loaded. Please refresh.</p>
-      : list.data.items.length ? <StreamGrid streams={list.data.items} viewerFaction={viewerFaction} />
+      : list.data.items.length ? <StreamGrid streams={list.data.items} viewerFaction={viewerFaction} languages={languages} />
         : <div className="empty-live panel"><p><strong>Nothing live here right now.</strong> These channels were live recently.</p><RecentChannels recent={list.data.recent} /><p><Link href="/war-map" className="button quiet">See the war map</Link></p></div>}
   </div>;
 }

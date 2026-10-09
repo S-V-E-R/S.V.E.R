@@ -48,6 +48,8 @@ pub struct Stream {
     pub charity: Option<String>,
     /// Labeled mature (docs/CHANNEL_ADDITIONS.md): a tag on the card.
     pub mature: bool,
+    /// ISO 639-1 code or "other"; None until the streamer picks one.
+    pub language: Option<String>,
 }
 
 /// Every public live stream: LIVE, or RECONNECTING inside its grace window, on an eligible channel.
@@ -60,7 +62,7 @@ pub async fn live_streams(db: &mut PgConnection) -> Res<Vec<Stream>> {
           NOT EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at) AS first_stream,
           coalesce((SELECT max(p.ended_at) FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at)<b.started_at-interval '30 days',false) AS returning,
           (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id) AS charity,
-          coalesce(s.mature,false) AS mature
+          coalesce(s.mature,false) AS mature, s.language
          FROM broadcasts b JOIN channel_users cu ON cu.id=b.owner_id AND cu.eligible
          LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id
          WHERE b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>now())",
@@ -171,7 +173,7 @@ pub fn card(app: &App, s: &Stream, now: DateTime<Utc>) -> Value {
         "avatar":profiles::avatar_json(app,s.avatar_key.as_deref()),"faction":s.faction,"title":s.title,
         "category":s.category,"category_id":s.category_id,"genre":s.genre,"started_at":s.started_at,"viewers":s.viewers,
         "thumbnail":format!("/api/discovery/thumbnails/{}",s.broadcast_id),"label":label,"charity":s.charity,
-        "fresh":now-s.started_at<Duration::minutes(FRESH_MINUTES),"mature":s.mature})
+        "fresh":now-s.started_at<Duration::minutes(FRESH_MINUTES),"mature":s.mature,"language":s.language})
 }
 
 /// Resolve at image-load time: a lazy card must not point at a still already replaced by capture.
@@ -270,8 +272,13 @@ async fn staff_spotlights(app: &App, db: &mut PgConnection) -> Res<Vec<(String, 
 async fn home(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let now = Utc::now();
     let (viewer, faction) = viewer(&app, &jar).await?;
-    let rotation = rotation_for(&app, viewer.as_deref(), faction.as_deref(), now).await?;
+    let mut rotation = rotation_for(&app, viewer.as_deref(), faction.as_deref(), now).await?;
     let mut db = app.db.acquire().await?;
+    // "Only show streams in my languages" narrows home (still in rotation order).
+    let (languages, only) = viewer_languages(&mut db, viewer.as_deref()).await?;
+    if only && !languages.is_empty() {
+        rotation.retain(|s| s.language.as_ref().is_some_and(|l| languages.contains(l)));
+    }
     let followed: HashSet<String> = match &viewer {
         Some(v) => sqlx::query_scalar("SELECT following_id FROM follows WHERE follower_id=$1")
             .bind(v)
@@ -335,6 +342,30 @@ struct LiveFilter {
     genre: Option<String>,
     category: Option<String>,
     faction: Option<String>,
+    /// A language code, a comma-separated list, or "mine" (the viewer's languages, else `fallback`).
+    language: Option<String>,
+    /// The browser's languages, for "mine" when the viewer hasn't chosen any.
+    fallback: Option<String>,
+}
+/// The viewer's chosen languages ("Languages I watch in") and whether home shows only those.
+async fn viewer_languages(db: &mut PgConnection, viewer: Option<&str>) -> Res<(Vec<String>, bool)> {
+    let Some(viewer) = viewer else {
+        return Ok((Vec::new(), false));
+    };
+    Ok(
+        sqlx::query_as("SELECT languages,only_my_languages FROM users WHERE id=$1")
+            .bind(viewer)
+            .fetch_one(db)
+            .await?,
+    )
+}
+fn codes(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|c| crate::streams::LANGUAGES.contains(c))
+        .take(10)
+        .map(str::to_owned)
+        .collect()
 }
 /// GET /api/discovery/live?genre=&category=&faction=: one browse list, in fair rotation.
 async fn live(
@@ -352,8 +383,28 @@ async fn live(
         return Err(Fail::bad("Unknown faction."));
     }
     let rotation = rotation_for(&app, viewer.as_deref(), faction.as_deref(), now).await?;
+    // Language filters only narrow the list; the order stays MAGNet's rotation.
+    let languages = match filter.language.as_deref() {
+        None | Some("") => None,
+        Some("mine") => {
+            let mine = viewer_languages(&mut *app.db.acquire().await?, viewer.as_deref())
+                .await?
+                .0;
+            Some(if mine.is_empty() {
+                codes(filter.fallback.as_deref().unwrap_or(""))
+            } else {
+                mine
+            })
+        }
+        Some(list) => Some(codes(list)),
+    };
     let items: Vec<Value> = rotation
         .iter()
+        .filter(|s| {
+            languages
+                .as_ref()
+                .is_none_or(|l| s.language.as_ref().is_some_and(|code| l.contains(code)))
+        })
         .filter(|s| filter.genre.is_none() || s.genre == filter.genre)
         .filter(|s| filter.category.is_none() || s.category_id == filter.category)
         .filter(|s| filter.faction.is_none() || s.faction == filter.faction)
@@ -509,6 +560,7 @@ async fn suggestions(
         returning: false,
         charity: None,
         mature: false,
+        language: None,
     };
     let items: Vec<Value> = suggest(&rotation, &current, 8)
         .iter()
@@ -648,6 +700,7 @@ mod tests {
             returning: false,
             charity: None,
             mature: false,
+            language: None,
         }
     }
     fn ids(v: &[Stream]) -> Vec<String> {
