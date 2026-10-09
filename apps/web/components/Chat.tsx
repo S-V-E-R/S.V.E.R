@@ -236,6 +236,14 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
       if (result.ok) setDraft(""); else setError(result.error);
       return;
     }
+    // /help lists what works in this chat, including the channel's custom commands.
+    if (/^\/help$/i.test(body) && !pinDraft) {
+      const result = await send<{ commands: { name: string; access: string }[]; bot: string }>("GET", `/api/channels/${encodeURIComponent(username)}/commands`);
+      const custom = result.ok && result.data.commands.length ? ` · ${result.data.bot}'s commands: ${result.data.commands.map(c => `!${c.name}${c.access === "everyone" ? "" : ` (${c.access})`}`).join(", ")}` : "";
+      setNotice(`Commands: !rally (rally your faction) · counters such as !deaths${canPin ? " · moderators: !marker, +/- on counters, Timeout and Ban from a message's Actions" : ""}${role === "owner" ? " · you: /raid name, /unraid, /flag" : ""}${custom}`);
+      setDraft("");
+      return;
+    }
     if (outsideReply && !pinDraft) {
       setBusy(true);
       const result = await send("POST", "/api/me/linked-chat/reply", { platform: outsideReply.platform, body, reply_to: outsideReply.id });
@@ -277,7 +285,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
   }, [messages, allowSignatures]);
   const shown = allowSignatures ? [...emotes, ...signatures] : emotes;
   if (variant === "overlay") return <section className="chat chat-overlay" aria-label="Chat">
-    <ol className="chat-messages" aria-live="polite">{messages.filter(m => !m.outside && clock - Date.parse(m.created_at) < fade * 1000).map(m => <li key={m.id}>
+    <ol className="chat-messages" aria-live="polite">{messages.filter(m => (!m.outside || m.outside.platform === "bot") && clock - Date.parse(m.created_at) < fade * 1000).map(m => <li key={m.id}>
       <strong>{m.author.display_name}</strong>: <MessageBody message={m} account={null} emotes={shown} />
     </li>)}</ol>
   </section>;
@@ -295,7 +303,13 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Followers-only chat for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
     <ol className="chat-messages" ref={list} aria-live="polite">
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
-      {messages.map(m => m.outside ? <li key={m.id} className="chat-outside">
+      {messages.map(m => m.outside?.platform === "bot" ? <li key={m.id} className="chat-bot">
+        <span className="muted">{time(m.created_at)}</span>{" "}
+        <span className="badge bot-badge" title="This channel's bot">Bot</span> <strong>{m.outside.name}</strong>: <MessageBody message={m} account={account} emotes={shown} />
+        {canPin && <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.outside.name}`}>Actions</summary><div className="chat-message-controls">
+          <button type="button" className="small quiet" onClick={() => outsideAction(m, "hide")}>Hide here</button>
+        </div></details>}
+      </li> : m.outside ? <li key={m.id} className="chat-outside">
         <span className="muted">{time(m.created_at)}</span>{" "}
         <span className={`badge platform-badge ${m.outside.platform}`} title={`From ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}>{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}<span className="sr-only"> message</span></span>{" "}
         {m.outside.url ? <a href={m.outside.url} target="_blank" rel="noopener noreferrer nofollow" title={`${m.outside.name} on ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}><strong>{m.outside.name}</strong></a> : <strong>{m.outside.name}</strong>}

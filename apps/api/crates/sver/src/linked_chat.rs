@@ -190,6 +190,36 @@ pub async fn receive(
         .bind(&channel).bind(platform).execute(&app.db).await?;
     Ok(true)
 }
+/// A message from a S.V.E.R system sender, such as the channel bot (platform `bot`): stored and
+/// shown like an outside message, so it keeps its place in history and counts toward nothing.
+pub async fn post_system(
+    app: &App,
+    channel: &str,
+    platform: &str,
+    sender_id: &str,
+    name: &str,
+    text: &str,
+) -> Res<()> {
+    let body = clean(text);
+    if body.is_empty() {
+        return Ok(());
+    }
+    let id = format!("{platform}:{}", uuid::Uuid::new_v4());
+    let seq: i64 = sqlx::query_scalar("INSERT INTO outside_chat_messages(id,channel_id,platform,sender_id,sender_name,sender_login,body) VALUES($1,$2,$3,$4,$5,$4,$6) RETURNING seq")
+        .bind(&id).bind(channel).bind(platform).bind(sender_id).bind(name).bind(&body)
+        .fetch_one(&app.db).await?;
+    let message: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("{OUTSIDE} WHERE id=$1")))
+        .bind(&id)
+        .fetch_one(&app.db)
+        .await?;
+    app.chat.publish(
+        channel,
+        None,
+        seq,
+        json!({"type":"message","message":message}),
+    );
+    Ok(())
+}
 async fn muted(app: &App, channel: &str, platform: &str, sender: &str) -> Res<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM outside_chat_mutes m WHERE m.channel_id=$1 AND m.platform=$2 AND m.sender_id=$3 AND (m.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=m.broadcast_id AND b.state<>'ENDED')))")
         .bind(channel).bind(platform).bind(sender).fetch_one(&app.db).await?)

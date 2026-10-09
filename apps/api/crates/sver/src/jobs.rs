@@ -75,6 +75,9 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::integrity::tick(app).await.is_err() {
         eprintln!("integrity_event=maintenance outcome=retry");
     }
+    if crate::commands::tick(app).await.is_err() {
+        eprintln!("commands_event=timers outcome=retry");
+    }
     if crate::open_data::tick(app).await.is_err() {
         eprintln!("open_data_event=compute outcome=retry");
     }
