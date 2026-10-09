@@ -182,6 +182,45 @@ pub async fn exercise(e: &Env) {
             && form.contains("custom_text%5Bsubmit%5D%5Bmessage%5D=Renews"),
         "the renewal terms sit above Checkout's pay button: {form}"
     );
+    // Keep a gifted subscription: a reminder 3 days before it ends; card checkout starts as a trial
+    // ending with the gift; the $0 trial invoice turns on renewal without adding a month.
+    let keeper = person(e, "sb-keeper", "SbKeeper", true).await;
+    e.sql("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months) VALUES('stream-owner','sb-keeper',1,now()+interval '60 hours',1)").await;
+    sver::subs::remind(&e.app).await.unwrap();
+    sver::subs::remind(&e.app).await.unwrap();
+    let reminders: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM notifications WHERE user_id='sb-keeper' AND kind='sub_ending'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(reminders, 1, "once per ending month");
+    let (status, kept) = post(
+        e,
+        &keeper,
+        "/subscription",
+        json!({"tier": 1, "pay": "card"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{kept}");
+    let form = e.fake.lock().unwrap().stripe.last().unwrap().1.clone();
+    let paid_through: i64 = sqlx::query_scalar("SELECT extract(epoch FROM paid_through)::bigint FROM channel_subs WHERE user_id='sb-keeper'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert!(
+        form.contains(&format!("trial_end%5D={paid_through}"))
+            && form.contains("Nothing+is+charged+today"),
+        "{form}"
+    );
+    let mut trial = invoice("in_sb_keep", "sb-keeper", 1, 0, "subscription_create", 3);
+    trial["data"]["object"]["parent"]["subscription_details"]["subscription"] =
+        json!("sub_sb_keep");
+    assert_eq!(event(e, trial).await, StatusCode::OK);
+    let kept = mine(e, &keeper).await;
+    assert_eq!(
+        (&kept["mine"]["months"], &kept["mine"]["card"]),
+        (&json!(1), &json!(true)),
+        "{kept}"
+    );
     let mails = || async {
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mail_jobs WHERE user_id='sb-gifter'")
             .fetch_one(&e.app.db)

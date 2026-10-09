@@ -99,6 +99,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** a gifted viewer converts with the first charge at the gift's end, cancels before it with no charge, and the ledger and badge stay correct.
 
+**Built October 9, 2026 (migration 0060).** A card subscription started while a gifted or Valor month is running becomes a Stripe trial ending when that month ends (Checkout says nothing is charged today and when the first charge is), so cancelling before then charges nothing. The $0 trial invoice turns on renewal without adding a month; the first paid invoice adds the next. Stripe needs a trial to end at least 48 hours out, so a month ending sooner gets up to two extra free days. The reminder is an in-site notification three days before (`sub_ending`, once per ending month). `/wallet` lists active subscriptions with Keep your subscription for non-card ones.
+
 ## Signature emote
 
 - Each channel can pick one of its open emotes (not a subscriber emote) as its **signature emote**.

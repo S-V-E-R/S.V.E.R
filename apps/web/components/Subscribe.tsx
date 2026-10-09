@@ -56,6 +56,11 @@ export function Subscribe({ username, squad }: { username: string; squad?: strin
           {status.tiers.filter(t => t.tier > mine.tier).map(t => <button key={t.tier} type="button" className="small" disabled={busy} onClick={() => act("/subscription/upgrade", { tier: t.tier }, `Upgraded to Tier ${t.tier}.`)}>Upgrade to Tier {t.tier} ({dollars(t.cents)}/month)</button>)}
           <button type="button" className="small quiet" disabled={busy} onClick={() => { if (window.confirm("Stop renewing? Your benefits run to the end of the paid month.")) void act("/subscription/cancel", undefined, "Auto-renewal is off."); }}>Cancel renewal</button>
         </div>}
+        {!mine.card && <div className="keep-subscription">
+          <h4>Keep your subscription</h4>
+          <p className="muted small">Pay by card from when this month ends: nothing is charged before {date(mine.paid_through)}, your month count carries on, and you can cancel before then for free.</p>
+          <div className="row wrap">{status.tiers.map(t => <button key={t.tier} type="button" className="small" disabled={busy} onClick={() => subscribe(t.tier, "card")}>Keep Tier {t.tier} · {dollars(t.cents)}/month</button>)}</div>
+        </div>}
         {!mine.card && <div className="row wrap">{status.tiers.map(t => <button key={t.tier} type="button" className="small quiet" disabled={busy} onClick={() => subscribe(t.tier, "valor")}>Add a Tier {t.tier} month for {t.valor.toLocaleString()} Valor</button>)}</div>}
       </section> : <section>
         <h3>Subscribe to {username}</h3>
