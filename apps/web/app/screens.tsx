@@ -7,9 +7,9 @@ import { Avatar } from "../components/Avatar";
 import type { Sizes } from "../lib/types";
 
 type Config = { providers: string[]; turnstile_site_key: string; development: boolean };
-type Me = { username: string; email: string; email_verified: boolean; mfa_enabled: boolean; has_password: boolean; providers: string[]; session_id: string; reauthenticated: boolean; recovery_codes_remaining: number; deletion_due: string | null };
+type Me = { username: string; email: string; email_verified: boolean; mfa_enabled: boolean; has_password: boolean; providers: string[]; session_id: string; reauthenticated: boolean; recovery_codes_remaining: number; deletion_due: string | null; pending_email?: string | null };
 type Session = { id: string; user_agent: string; last_seen_at: string; created_at: string };
-type Reply = { error?: string; requires_mfa?: boolean; url?: string; secret?: string; uri?: string; recovery_codes?: string[] };
+type Reply = { error?: string; requires_mfa?: boolean; url?: string; secret?: string; uri?: string; recovery_codes?: string[]; email_changed?: boolean };
 declare global { interface Window { turnstile?: { render(el: HTMLElement, options: Record<string, unknown>): string; remove(id: string): void } } }
 
 async function request<T = Reply>(path: string, data?: unknown, method?: string): Promise<T> {
@@ -110,7 +110,7 @@ export default function AuthScreen({ screen }: { screen: string }) {
         case "mfa": await request("mfa/login", values); window.location.assign("/"); break;
         case "forgot": await request("password/forgot", { ...values, turnstile_token: botToken }); setMessage("If that account exists, a recovery email has been queued. Check your inbox and spam folder."); break;
         case "reset": await request("password/reset", { ...values, token: linkToken }); setLinkToken(""); setMessage("Your password has been changed. Sign in again to continue."); break;
-        case "verify": await request("email/verify", { token: linkToken }); setLinkToken(""); setMessage("Your email is verified. You’re ready for your next chapter."); break;
+        case "verify": result = await request("email/verify", { token: linkToken }); setLinkToken(""); setMessage(result.email_changed ? "Your email address is changed. Notices go there from now on." : "Your email is verified. You’re ready for your next chapter."); break;
       }
     });
   }
@@ -123,6 +123,25 @@ export default function AuthScreen({ screen }: { screen: string }) {
   }
   async function confirmPrimary() {
     if (primaryPassword) { await request("reauth", { password: primaryPassword }); setPrimaryPassword(""); }
+  }
+  async function accountChange(path: string, body: Record<string, string>, done: string) {
+    await run(async () => {
+      await confirmPrimary();
+      await request(path, { ...body, code: mfaCode }); setMfaCode("");
+      await loadAccount(); setMessage(done);
+    });
+  }
+  async function download() {
+    await run(async () => {
+      await confirmPrimary();
+      const response = await fetch("/api/auth/export", { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? "The download failed. Please try again.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url; link.download = `sver-${me?.username ?? "account"}.json`; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setMessage("Your data has downloaded.");
+    });
   }
   async function securityAction(path: string) {
     await run(async () => {
@@ -161,7 +180,20 @@ export default function AuthScreen({ screen }: { screen: string }) {
         {me.mfa_enabled && <><p>{me.recovery_codes_remaining} recovery codes remaining.</p><div className="stack"><button className="quiet" disabled={busy} onClick={() => securityAction("mfa/recovery")}>Generate new recovery codes</button><button className="quiet danger-text" disabled={busy} onClick={() => securityAction("mfa/disable")}>Disable authenticator</button></div></>}
         {recovery && <div className="recovery"><h3>Save these recovery codes</h3><p>Each code works once. They will not be shown again. Store them somewhere safe before leaving.</p><textarea aria-label="Recovery codes to save" readOnly value={recovery.join("\n")} rows={10} /><button className="quiet" onClick={() => setRecovery(undefined)}>I’ve saved my codes</button></div>}
       </section><section className="panel"><span className="eyebrow">03 / CONNECTIONS</span><h2>Your sign-in methods</h2><p>{me.has_password ? "Email and password is enabled." : "You use a provider to sign in. Password recovery can also add a password after you prove mailbox ownership."}</p><div className="connections">{Object.entries(providerNames).map(([p, name]) => <div className="connection" key={p}><ProviderIcon name={p} /><span>{name}<small>{me.providers.includes(p) ? "Connected" : config?.providers.includes(p) ? "Not connected" : "Not configured yet"}</small></span><button className="quiet small" disabled={busy || (!me.providers.includes(p) && !config?.providers.includes(p))} onClick={() => me.providers.includes(p) ? run(async () => { await confirmPrimary(); await request(`oauth/${p}`, { code: mfaCode }, "DELETE"); setMfaCode(""); await loadAccount(); setMessage(`${name} disconnected.`); }) : oauth(p, "link")}>{me.providers.includes(p) ? "Unlink" : "Connect"}</button></div>)}</div><Link href="/forgot">Reset or add a password</Link></section>
-      <section className="panel"><span className="eyebrow">04 / DEVICES</span><h2>Active sessions</h2><p>Only keep devices you recognize.</p><div className="sessions">{sessions.map(s => <div className="session" key={s.id}><div><strong>{s.id === me.session_id ? "This device" : "Another device"}</strong><small title={s.user_agent}>{s.user_agent}</small><small>Active {new Date(s.last_seen_at).toLocaleString()}</small></div><button className="quiet small" disabled={busy} onClick={() => run(async () => { await request(`sessions/${s.id}`, undefined, "DELETE"); if (s.id === me.session_id) window.location.assign("/login"); else await loadAccount(); })}>Revoke</button></div>)}</div><button className="quiet" disabled={busy} onClick={() => run(async () => { await request("sessions", undefined, "DELETE"); window.location.assign("/login"); })}>Sign out everywhere</button></section></div>
+      <section className="panel"><span className="eyebrow">04 / DEVICES</span><h2>Active sessions</h2><p>Only keep devices you recognize.</p><div className="sessions">{sessions.map(s => <div className="session" key={s.id}><div><strong>{s.id === me.session_id ? "This device" : "Another device"}</strong><small title={s.user_agent}>{s.user_agent}</small><small>Active {new Date(s.last_seen_at).toLocaleString()}</small></div><button className="quiet small" disabled={busy} onClick={() => run(async () => { await request(`sessions/${s.id}`, undefined, "DELETE"); if (s.id === me.session_id) window.location.assign("/login"); else await loadAccount(); })}>Revoke</button></div>)}</div><button className="quiet" disabled={busy} onClick={() => run(async () => { await request("sessions", undefined, "DELETE"); window.location.assign("/login"); })}>Sign out everywhere</button></section>
+      <section className="panel"><span className="eyebrow">05 / EMAIL AND PASSWORD</span><h2>Change your email or password</h2><p>Confirm it&apos;s you above first. Each change sends a notice to {me.email}.</p>
+        <form className="stack" onSubmit={e => { e.preventDefault(); const form = e.currentTarget; const email = String(new FormData(form).get("email")); void accountChange("email/change", { email }, "Check the new inbox for a confirmation link. Your email changes when you open it.").then(() => form.reset()); }}>
+          <Field label="New email address" name="email" type="email" autoComplete="email" />
+          {me.pending_email && <p className="small-text">Waiting for confirmation at {me.pending_email}. <button type="button" className="quiet small" disabled={busy} onClick={() => run(async () => { await request("email/change", undefined, "DELETE"); await loadAccount(); setMessage("Email change cancelled."); })}>Cancel</button></p>}
+          <button className="quiet" disabled={busy}>Send confirmation link</button>
+        </form>
+        <form className="stack" onSubmit={e => { e.preventDefault(); const form = e.currentTarget; const values = new FormData(form); if (values.get("password") !== values.get("confirm")) { setError("The passwords don't match."); return; } void accountChange("password/change", { password: String(values.get("password")) }, me.has_password ? "Password changed. Your other devices were signed out." : "Password added. Your other devices were signed out.").then(() => form.reset()); }}>
+          <Field label={me.has_password ? "New password (10–128 characters)" : "Add a password (10–128 characters)"} name="password" type="password" autoComplete="new-password" />
+          <Field label="Repeat it" name="confirm" type="password" autoComplete="new-password" />
+          <button className="quiet" disabled={busy}>{me.has_password ? "Change password" : "Add password"}</button>
+        </form>
+      </section></div>
+      <section className="panel"><span className="eyebrow">YOUR DATA</span><h2>Download your data</h2><p>A JSON file of your account and everything stored under it: profile, follows, chat messages, subscriptions, Valor, progression and more. Passwords, security codes and anti-abuse signals are left out. Confirm it&apos;s you above first.</p><button className="quiet" disabled={busy} onClick={() => void download()}>Download my data</button></section>
       <section className="panel deletion"><div><span className="eyebrow">ACCOUNT CONTROL</span><h2>Delete your account</h2><p>Start a 14-day grace period. You can sign in and cancel during that time. Afterward, your account is erased.</p><label className="checkbox"><input type="checkbox" checked={deleteConfirmed} onChange={e => setDeleteConfirmed(e.target.checked)} /> I understand and want to schedule deletion.</label></div><button className="danger" disabled={busy || !deleteConfirmed} onClick={() => securityAction("account/delete")}>Schedule deletion</button></section>
       <button className="quiet signout" disabled={busy} onClick={() => run(async () => { await request("logout", {}); window.location.assign("/login"); })}>Sign out of this device</button>
     </>}</div>;

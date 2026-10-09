@@ -10,6 +10,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{sync::Arc, time::Duration};
+pub mod account;
 pub mod activity;
 pub mod alerts;
 pub mod auth;
@@ -436,6 +437,7 @@ pub fn router(app: App) -> Router {
         .merge(subs::routes())
         .merge(open_data::routes())
         .merge(progression::routes())
+        .merge(account::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())
         .merge(payouts::routes())
