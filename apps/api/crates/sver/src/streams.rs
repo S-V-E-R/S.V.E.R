@@ -401,7 +401,7 @@ pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>>
         .bind(&user.id).fetch_one(&mut *tx).await?;
     let credential: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('created_at',created_at,'revoked',revoked_at IS NOT NULL) FROM stream_credentials WHERE owner_id=$1")
         .bind(&user.id).fetch_optional(&mut *tx).await?;
-    let broadcast: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'state',state,'started_at',started_at,'reconnect_deadline',reconnect_deadline,'ended_at',ended_at,'end_reason',end_reason,'observed_at',observed_at,'health',health) FROM broadcasts WHERE owner_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1")
+    let broadcast: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('scouts',(SELECT count(*) FROM scout_awards s WHERE s.broadcast_id=broadcasts.id),'id',id,'state',state,'started_at',started_at,'reconnect_deadline',reconnect_deadline,'ended_at',ended_at,'end_reason',end_reason,'observed_at',observed_at,'health',health) FROM broadcasts WHERE owner_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1")
         .bind(&user.id).fetch_optional(&mut *tx).await?;
     let pending: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM stream_stop_jobs WHERE owner_id=$1)")
