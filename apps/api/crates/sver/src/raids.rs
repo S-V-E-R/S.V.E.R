@@ -211,12 +211,8 @@ pub async fn tick(app: &App) -> Res<()> {
         .fetch_all(&app.db)
         .await?;
     for (target, arrivals, raider) in counted {
-        app.chat.publish(
-            &target,
-            None,
-            0,
-            json!({"type":"system","text":format!("{raider} is raiding with {arrivals}")}),
-        );
+        // The channel bot greets the raid in its personality (docs/COMMUNITY.md).
+        crate::bot::record_raid(app, &target, &raider, arrivals).await?;
     }
     let mut tx = app.db.begin().await?;
     // Hosting stops when the host goes live, the target goes offline or the rules no longer allow it.

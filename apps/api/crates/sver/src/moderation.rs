@@ -328,6 +328,8 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
             None => Fail::denied("Chat is subscribers-only right now."),
         });
     }
+    // AutoMod (caps, repeats, spam) with the channel's warn-and-timeout ladder; roles exempt.
+    crate::bot::automod(app, channel, user, body).await?;
     let slow = check_words(app, channel, user, body).await?;
     if slow > 0 {
         sec::reserve(

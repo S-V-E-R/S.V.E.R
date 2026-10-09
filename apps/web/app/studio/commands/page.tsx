@@ -5,7 +5,10 @@ import { send, useLoad, type Result } from "../../../lib/client-api";
 
 type Command = { name: string; reply: string; access: string; cooldown_seconds: number; uses: number };
 type Timer = { id: string; body: string; every_minutes: number; enabled: boolean; last_sent_at: string | null };
-type Data = { commands: Command[]; timers: Timer[]; bot: { key: string; name: string; chosen: string | null; personality: string }; max_timers: number };
+type Data = { commands: Command[]; timers: Timer[]; bot: { key: string; name: string; chosen: string | null; personality: string }; max_timers: number; automod: AutoMod };
+type AutoMod = { caps: boolean; repeats: boolean; spam: boolean; ladder: number[] };
+type ImportReport = { imported: string[]; skipped: { line: string; why: string }[]; flagged: { name: string; variables: string[] }[] };
+const step = (s: number) => s === 0 ? "Warn" : s < 120 ? `${s}s` : s < 7200 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`;
 
 const BOTS: Record<string, string> = { pyre: "PYRE (Myria)", echo: "ECHO (Aetheron)", favor: "FAVOR (Glint)", volk: "VOLK (neutral)" };
 const ACCESS: Record<string, string> = { everyone: "Everyone", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
@@ -14,6 +17,7 @@ const ACCESS: Record<string, string> = { everyone: "Everyone", followers: "Follo
 export default function CommandsPage() {
   const [data, setData] = useState<Data | null>(null);
   const [message, setMessage] = useState("");
+  const [report, setReport] = useState<ImportReport | null>(null);
   const apply = (result: Result<Data>, saved: string) => {
     if (result.ok) { setData(result.data); setMessage(saved); } else setMessage(result.error);
   };
@@ -38,6 +42,19 @@ export default function CommandsPage() {
     const result = await send<Data>("POST", "/api/me/timers", { body: v.body, every_minutes: Number(v.every) });
     apply(result, "Timed message added.");
     if (result.ok) form.reset();
+  }
+  async function saveAutoMod(change: Partial<AutoMod>, ladderText?: string) {
+    if (!data) return;
+    const next = { ...data.automod, ...change };
+    if (ladderText !== undefined) next.ladder = ladderText.split(/[\s,]+/).filter(Boolean).map(Number);
+    const result = await send<{ automod: AutoMod }>("PUT", "/api/me/automod", next);
+    if (result.ok) { setData({ ...data, automod: result.data.automod }); setMessage("AutoMod saved."); } else setMessage(result.error);
+  }
+  async function importCommands(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const result = await send<ImportReport>("POST", "/api/me/commands-import", { text: String(new FormData(form).get("text") ?? "") });
+    if (result.ok) { setReport(result.data); form.reset(); await load(); } else setMessage(result.error);
   }
   if (!data) return message ? <p role="alert" className="form-message error">{message}</p> : <p className="loading">Loading…</p>;
   return <><h1>Commands &amp; bot</h1>
@@ -68,6 +85,32 @@ export default function CommandsPage() {
         <button type="submit">Save command</button>
         <small className="muted">Saving an existing name changes it.</small>
       </form>
+    </Section>
+    <Section title="AutoMod" intro="Your bot holds messages that break these rules. You and your moderators are exempt. A first strike in an hour is a warning; later ones follow the ladder below. Every timeout is announced by your bot, logged in your moderation log, and can be lifted there.">
+      <div className="stack">
+        <label className="row"><input type="checkbox" checked={data.automod.caps} onChange={e => saveAutoMod({ caps: e.target.checked })} /> Excessive caps</label>
+        <label className="row"><input type="checkbox" checked={data.automod.repeats} onChange={e => saveAutoMod({ repeats: e.target.checked })} /> Repeated messages and stretched letters</label>
+        <label className="row"><input type="checkbox" checked={data.automod.spam} onChange={e => saveAutoMod({ spam: e.target.checked })} /> Symbol and emoji spam</label>
+        <form className="row wrap" onSubmit={e => { e.preventDefault(); void saveAutoMod({}, String(new FormData(e.currentTarget).get("ladder") ?? "")); }}>
+          <label className="field"><span>Ladder in seconds, one step per strike (0 is a warning): now {data.automod.ladder.map(step).join(" → ")}</span><input name="ladder" defaultValue={data.automod.ladder.join(", ")} /></label>
+          <button type="submit" className="small">Save ladder</button>
+        </form>
+        <p className="muted small">Banned words and the link rule are set on the Chat page and always apply.</p>
+      </div>
+    </Section>
+    <Section title="Giveaways" intro="In chat, you or a moderator type !giveaway start KEYWORD. Viewers who are watching (not just chatting) enter by typing the keyword; !giveaway end has your bot pick a random winner, and !giveaway cancel stops it. The prize is yours to give.">
+      <p className="muted small">Banned viewers can&apos;t win.</p>
+    </Section>
+    <Section title="Import from another bot" intro="Paste your Nightbot or Fossabot command list, one command per line (!name reply). $(user), $(touser), $(channel), $(uptime) and $(game) are translated; anything else is flagged for you to fix.">
+      <form className="stack" onSubmit={importCommands}>
+        <label className="field"><span>Commands</span><textarea name="text" rows={5} required maxLength={50000} placeholder="!discord Join us at https://discord.gg/…" /></label>
+        <button type="submit">Import</button>
+      </form>
+      {report && <div className="stack" role="status">
+        <p>Imported {report.imported.length}: {report.imported.map(n => `!${n}`).join(", ") || "none"}.</p>
+        {report.flagged.length > 0 && <p>Check these, their variables weren&apos;t translated: {report.flagged.map(f => `!${f.name} (${f.variables.join(", ")})`).join("; ")}.</p>}
+        {report.skipped.length > 0 && <ul className="list">{report.skipped.map((s, i) => <li key={i} className="muted small">Skipped “{s.line}”: {s.why}</li>)}</ul>}
+      </div>}
     </Section>
     <Section title="Timed messages" intro={`Up to ${data.max_timers} messages your bot posts every N minutes (at least 10) while you're live, and only when chat has been active since the last one.`}>
       {data.timers.length > 0 && <ul className="list">{data.timers.map(t => <li key={t.id} className="row between wrap">

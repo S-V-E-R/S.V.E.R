@@ -612,9 +612,7 @@ pub(crate) async fn send_from(
             .publish(&format!("magnet:{lane}"), Some(&author), 0, event);
     }
     // Custom !commands get the channel bot's reply after the message itself (docs/COMMUNITY.md).
-    if let Some(channel) = channel.filter(|_| squad.is_none() && origin.is_none())
-        && body.starts_with('!')
-    {
+    if let Some(channel) = channel.filter(|_| squad.is_none() && origin.is_none()) {
         crate::commands::respond(app, channel, &user, body).await;
     }
     Ok(visible_message(message, &hidden))

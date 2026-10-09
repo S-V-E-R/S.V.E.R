@@ -119,13 +119,14 @@ async fn grant(
     tier: i16,
     keep_higher: bool,
 ) -> Res<()> {
-    sqlx::query("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months) VALUES($1,$2,$3,now()+interval '1 month',1)
+    let months: i32 = sqlx::query_scalar("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months) VALUES($1,$2,$3,now()+interval '1 month',1)
         ON CONFLICT(channel_id,user_id) DO UPDATE SET
             tier=CASE WHEN $4 AND channel_subs.paid_through>now() THEN greatest(channel_subs.tier,EXCLUDED.tier) ELSE EXCLUDED.tier END,
             paid_through=greatest(channel_subs.paid_through,now())+interval '1 month',
-            months=channel_subs.months+1, updated_at=now()")
+            months=channel_subs.months+1, updated_at=now() RETURNING months")
         .bind(channel).bind(user).bind(tier).bind(keep_higher)
-        .execute(&mut *tx).await?;
+        .fetch_one(&mut *tx).await?;
+    crate::bot::record(tx, channel, "sub", user, months.into()).await?;
     // Subscribing counts toward Surge for a viewer who is watching (docs/CROWDSYNC.md).
     crate::surge::participated(tx, channel, user).await?;
     Ok(())
@@ -706,16 +707,19 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
     // A $0 invoice (a kept gifted month's trial) adds no month: the gift already counted it.
     let month =
         i32::from(matches!(reason, "subscription_create" | "subscription_cycle") && cents > 0);
-    sqlx::query("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months,stripe_subscription) VALUES($1,$2,$3,to_timestamp($4),$5,$6)
+    let months: i32 = sqlx::query_scalar("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months,stripe_subscription) VALUES($1,$2,$3,to_timestamp($4),$5,$6)
         ON CONFLICT(channel_id,user_id) DO UPDATE SET tier=EXCLUDED.tier,
             paid_through=greatest(channel_subs.paid_through,EXCLUDED.paid_through),
             months=channel_subs.months+EXCLUDED.months,
             stripe_subscription=coalesce(EXCLUDED.stripe_subscription,channel_subs.stripe_subscription),
             cancel_at_period_end=CASE WHEN $7 THEN false ELSE channel_subs.cancel_at_period_end END,
-            updated_at=now()")
+            updated_at=now() RETURNING months")
         .bind(channel).bind(user).bind(tier).bind(end as f64).bind(month)
         .bind(details["subscription"].as_str()).bind(reason == "subscription_create")
-        .execute(&mut *tx).await?;
+        .fetch_one(&mut *tx).await?;
+    if month > 0 {
+        crate::bot::record(tx, channel, "sub", user, months.into()).await?;
+    }
     if reason == "subscription_create" {
         acknowledge(app, tx, channel, user, tier, end).await?;
     }
