@@ -36,6 +36,18 @@ pub async fn total(db: &mut PgConnection, user: &str) -> Res<i64> {
             .await?,
     )
 }
+/// Channel loyalty ranks by lifetime Engagement Valor earned there (Proposed thresholds).
+pub const LOYALTY: [(&str, i64); 5] = [
+    ("Newcomer", 0),
+    ("Regular", 200),
+    ("Devoted", 1_000),
+    ("Veteran", 5_000),
+    ("Legend", 20_000),
+];
+/// The loyalty rank (0-4) for an earned total.
+pub fn loyalty(earned: i64) -> i16 {
+    LOYALTY.iter().filter(|(_, at)| earned >= *at).count() as i16 - 1
+}
 pub fn summary(xp: i64) -> Value {
     let level = level(xp);
     json!({"xp": xp, "level": level, "level_xp": xp_for(level), "next_xp": (level < MAX_LEVEL).then(|| xp_for(level + 1))})
@@ -119,6 +131,16 @@ mod tests {
                 level(10_000_000)
             ),
             (1, 1, 2, 10, 100)
+        );
+        assert_eq!(
+            (
+                loyalty(0),
+                loyalty(199),
+                loyalty(200),
+                loyalty(19_999),
+                loyalty(20_000)
+            ),
+            (0, 0, 1, 3, 4)
         );
     }
 }
