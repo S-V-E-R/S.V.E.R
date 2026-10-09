@@ -323,6 +323,8 @@ pub struct TokenRequest {
     code_verifier: Option<String>,
     #[serde(default)]
     refresh_token: Option<String>,
+    #[serde(default)]
+    device_code: Option<String>,
 }
 /// Issues an access and a refresh token under a grant.
 async fn issue(app: &App, grant: &str, scopes: &[String]) -> Res<Value> {
@@ -348,6 +350,8 @@ async fn token(State(app): State<App>, Form(input): Form<TokenRequest>) -> Respo
     }
 }
 type Outcome = Result<Value, (&'static str, &'static str)>;
+/// A device poll: (fresh, polled too soon, decision, approver, scopes).
+type Polled = (bool, bool, Option<String>, Option<String>, Vec<String>);
 type Refresh = (
     String,
     Option<chrono::DateTime<chrono::Utc>>,
@@ -442,6 +446,45 @@ async fn exchange(app: &App, input: TokenRequest) -> Res<Outcome> {
             }
             Ok(Ok(issue(app, &grant, &scopes).await?))
         }
+        "urn:ietf:params:oauth:grant-type:device_code" => {
+            let device = sec::digest(input.device_code.as_deref().unwrap_or_default());
+            let found: Option<Polled> = sqlx::query_as("UPDATE oauth_devices d SET last_poll_at=now() FROM (SELECT device_hash,last_poll_at AS previous FROM oauth_devices WHERE device_hash=$1 AND app_id=$2) p
+                WHERE d.device_hash=p.device_hash RETURNING d.expires_at>now(),coalesce(p.previous>now()-interval '5 seconds',false),d.decision,d.user_id,d.scopes")
+                .bind(&device).bind(&input.client_id).fetch_optional(&app.db).await?;
+            let Some((fresh, too_soon, decision, user, scopes)) = found else {
+                return Ok(Err(("invalid_grant", "Unknown device code.")));
+            };
+            if !fresh {
+                return Ok(Err(("expired_token", "The code expired; start again.")));
+            }
+            match (decision.as_deref(), user) {
+                (Some("approved"), Some(user)) => {
+                    // Used once: the device code is gone after the tokens are issued.
+                    let taken = sqlx::query("DELETE FROM oauth_devices WHERE device_hash=$1")
+                        .bind(&device)
+                        .execute(&app.db)
+                        .await?;
+                    if taken.rows_affected() == 0 {
+                        return Ok(Err(("invalid_grant", "That code was already used.")));
+                    }
+                    let grant: String = sqlx::query_scalar("INSERT INTO oauth_grants(id,app_id,user_id,scopes) VALUES($1,$2,$3,$4) ON CONFLICT(app_id,user_id) WHERE revoked_at IS NULL DO UPDATE SET scopes=EXCLUDED.scopes RETURNING id")
+                        .bind(profiles::new_id()).bind(&input.client_id).bind(&user).bind(&scopes).fetch_one(&app.db).await?;
+                    Ok(Ok(issue(app, &grant, &scopes).await?))
+                }
+                (Some(_), _) => {
+                    sqlx::query("DELETE FROM oauth_devices WHERE device_hash=$1")
+                        .bind(&device)
+                        .execute(&app.db)
+                        .await?;
+                    Ok(Err(("access_denied", "The person refused.")))
+                }
+                _ if too_soon => Ok(Err(("slow_down", "Poll at most every 5 seconds."))),
+                _ => Ok(Err((
+                    "authorization_pending",
+                    "Waiting for approval at sver.tv/go.",
+                ))),
+            }
+        }
         _ => Ok(Err((
             "unsupported_grant_type",
             "Use authorization_code or refresh_token.",
@@ -458,6 +501,127 @@ async fn revoke(State(app): State<App>, Form(input): Form<RevokeRequest>) -> Res
     sqlx::query("UPDATE oauth_grants g SET revoked_at=now() FROM oauth_tokens t WHERE t.token_hash=$1 AND t.grant_id=g.id AND g.app_id=$2 AND g.revoked_at IS NULL")
         .bind(sec::digest(&input.token)).bind(&input.client_id).execute(&app.db).await?;
     Ok(Json(json!({})))
+}
+
+// ---- Device sign-in at sver.tv/go (RFC 8628) ----
+
+/// No vowels (no words) and no lookalikes (0/O, 1/I/L).
+const CODE_ALPHABET: &[u8] = b"BCDFGHJKMNPQRSTVWXZ23456789";
+fn user_code() -> String {
+    let mut bits = uuid::Uuid::new_v4().as_u128();
+    (0..6)
+        .map(|_| {
+            let c = CODE_ALPHABET[(bits % CODE_ALPHABET.len() as u128) as usize] as char;
+            bits /= CODE_ALPHABET.len() as u128;
+            c
+        })
+        .collect()
+}
+/// "abc-def", "ABC DEF" and "ABCDEF" are the same code.
+fn normalize(code: &str) -> String {
+    code.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}
+#[derive(Deserialize)]
+pub struct DeviceRequest {
+    client_id: String,
+    #[serde(default)]
+    scope: String,
+}
+/// POST /api/oauth/device: a desktop, TV or console app asks for a code to show.
+async fn device(
+    State(app): State<App>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    Form(input): Form<DeviceRequest>,
+) -> Response {
+    let ip = sec::client_ip(&app, peer, &headers);
+    if let Err(error) = profiles::rate(&app, format!("oauth-device:{ip}"), 20, 3600).await {
+        return error.into_response();
+    }
+    let known: Result<bool, sqlx::Error> = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM dev_apps WHERE id=$1 AND suspended_at IS NULL)",
+    )
+    .bind(&input.client_id)
+    .fetch_one(&app.db)
+    .await;
+    if !known.unwrap_or(false) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid_client"})),
+        )
+            .into_response();
+    }
+    let Some(scopes) = parse_scopes(&input.scope) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid_scope"})),
+        )
+            .into_response();
+    };
+    let device = format!("svd_{}", sec::token());
+    let code = user_code();
+    let network = app.config.networks.describe(ip);
+    let saved = sqlx::query("INSERT INTO oauth_devices(device_hash,user_code,app_id,scopes,network,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '10 minutes')")
+        .bind(sec::digest(&device)).bind(&code).bind(&input.client_id).bind(&scopes).bind(&network)
+        .execute(&app.db).await;
+    if saved.is_err() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": "temporarily_unavailable"})),
+        )
+            .into_response();
+    }
+    let shown = format!("{}-{}", &code[..3], &code[3..]);
+    let page = format!("{}/go", app.config.origin);
+    Json(json!({"device_code": device, "user_code": shown, "verification_uri": page, "verification_uri_complete": format!("{page}?code={shown}"), "expires_in": 600, "interval": 5})).into_response()
+}
+type Pending = (String, String, Vec<String>, Option<String>);
+async fn pending(app: &App, code: &str) -> Res<Pending> {
+    let found: Option<Pending> = sqlx::query_as("SELECT a.name,u.username,d.scopes,d.network FROM oauth_devices d JOIN dev_apps a ON a.id=d.app_id AND a.suspended_at IS NULL JOIN users u ON u.id=a.owner_id
+        WHERE d.user_code=$1 AND d.expires_at>now() AND d.decision IS NULL")
+        .bind(normalize(code)).fetch_optional(&app.db).await?;
+    found.ok_or_else(|| {
+        Fail::bad("That code is wrong or has expired. Check the code on your device.")
+    })
+}
+/// GET /api/oauth/device/{code}: what /go shows before the person approves.
+async fn device_lookup(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(code): Path<String>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    profiles::rate(&app, format!("oauth-go:{}", user.id), 20, 600).await?;
+    let (name, owner, scopes, network) = pending(&app, &code).await?;
+    let described: Vec<Value> = scopes
+        .iter()
+        .map(|s| json!({"scope": s, "text": SCOPES.iter().find(|(k, _)| k == s).map_or("", |x| x.1)}))
+        .collect();
+    Ok(Json(
+        json!({"app": {"name": name, "owner": owner}, "scopes": described, "network": network}),
+    ))
+}
+#[derive(Deserialize)]
+pub struct DeviceDecision {
+    approve: bool,
+}
+/// POST /api/oauth/device/{code}: approve or refuse; the device then gets its tokens (or not).
+async fn device_decide(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(code): Path<String>,
+    Json(input): Json<DeviceDecision>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    profiles::rate(&app, format!("oauth-go:{}", user.id), 20, 600).await?;
+    pending(&app, &code).await?;
+    sqlx::query("UPDATE oauth_devices SET user_id=$2,decision=$3 WHERE user_code=$1 AND decision IS NULL AND expires_at>now()")
+        .bind(normalize(&code)).bind(&user.id).bind(if input.approve { "approved" } else { "denied" })
+        .execute(&app.db).await?;
+    Ok(Json(json!({"approved": input.approve})))
 }
 
 // ---- Bearer access for the API ----
@@ -623,6 +787,11 @@ pub fn routes() -> Router<App> {
         .route("/api/oauth/authorize", get(consent).post(decide))
         .route("/api/oauth/token", post(token))
         .route("/api/oauth/revoke", post(revoke))
+        .route("/api/oauth/device", post(device))
+        .route(
+            "/api/oauth/device/{code}",
+            get(device_lookup).post(device_decide),
+        )
         .route("/api/v1/me", get(v1_me))
         .route("/api/v1/channels/{name}", get(v1_channel))
         .route("/api/me/connections", get(connections))
@@ -652,6 +821,9 @@ mod tests {
             Some(vec!["user:read".into(), "chat:read".into()])
         );
         assert_eq!(parse_scopes("stream:key"), None);
+        let code = user_code();
+        assert!(code.len() == 6 && code.bytes().all(|b| CODE_ALPHABET.contains(&b)));
+        assert_eq!(normalize("bcd-fg h"), "BCDFGH");
         // RFC 7636 appendix B.
         assert_eq!(
             challenge_of("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),

@@ -78,6 +78,7 @@ pub const RESERVED: &[&str] = &[
     "overlay",
     "auth",
     "oauth",
+    "go",
     "static",
     "assets",
     "media",
