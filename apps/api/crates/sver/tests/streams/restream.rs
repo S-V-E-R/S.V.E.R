@@ -6,7 +6,7 @@ pub async fn exercise(e: &Env) {
         .call(
             "POST",
             "/api/me/restream",
-            json!({"platform":"twitch","key":"live_123_SecretKey"}),
+            json!({"platform":"twitch","key":"live-test-hidden"}),
         )
         .await;
     assert_eq!(
@@ -14,7 +14,7 @@ pub async fn exercise(e: &Env) {
         "rtmp://live.twitch.tv/app"
     );
     assert!(
-        !added.to_string().contains("SecretKey"),
+        !added.to_string().contains("test-hidden"),
         "keys are never returned"
     );
     for bad in [
@@ -58,7 +58,7 @@ pub async fn exercise(e: &Env) {
             .fetch_one(&e.app.db)
             .await
             .unwrap();
-    assert!(!stored.contains("SecretKey"), "keys are sealed at rest");
+    assert!(!stored.contains("test-hidden"), "keys are sealed at rest");
     for d in three["destinations"].as_array().unwrap() {
         e.call(
             "DELETE",
