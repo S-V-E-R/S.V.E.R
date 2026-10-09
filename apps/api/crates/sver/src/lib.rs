@@ -21,6 +21,7 @@ pub mod bot;
 pub mod chat;
 pub mod commands;
 pub mod crowd;
+pub mod devapps;
 pub mod discovery;
 pub mod dms;
 pub mod emotes;
@@ -327,6 +328,8 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         && req.uri().path() != "/api/stripe/webhook"
         // Twitch EventSub posts without an Origin; its HMAC signature is checked in linked_chat.
         && req.uri().path() != "/api/integrations/twitch/eventsub"
+        // OAuth clients post tokens server to server; the client and PKCE checks are in devapps.
+        && !matches!(req.uri().path(), "/api/oauth/token" | "/api/oauth/revoke")
         && req.headers().get("origin").and_then(|v| v.to_str().ok())
         != Some(&app.config.origin)
     {
@@ -450,6 +453,7 @@ pub fn router(app: App) -> Router {
         .merge(commands::routes())
         .merge(bot::routes())
         .merge(dms::routes())
+        .merge(devapps::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())
         .merge(payouts::routes())
