@@ -98,6 +98,12 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::guilds::tick(app).await.is_err() {
         eprintln!("guild_event=maintenance outcome=retry");
     }
+    let _ = sqlx::query("DELETE FROM oauth_devices WHERE expires_at<now()-interval '1 hour'")
+        .execute(&app.db)
+        .await;
+    let _ = sqlx::query("DELETE FROM oauth_codes WHERE expires_at<now()")
+        .execute(&app.db)
+        .await;
     if crate::dms::tick(app).await.is_err() {
         eprintln!("dm_event=expiry outcome=retry");
     }

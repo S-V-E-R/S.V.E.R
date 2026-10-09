@@ -271,4 +271,101 @@ pub async fn exercise(e: &Env) {
         .await
         .unwrap();
     assert_eq!(apps, 0);
+
+    device(e).await;
+}
+
+/// Device sign-in (sver.tv/go): pending, slow down, approval, tokens once.
+async fn device(e: &Env) {
+    let created = e
+        .call(
+            "POST",
+            "/api/me/apps",
+            json!({"name":"TV App","redirect_uris":["https://example.test/tv"]}),
+        )
+        .await;
+    let client = created["created"]["client_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, started) = raw(
+        e,
+        "POST",
+        "/api/oauth/device",
+        Some(&[("client_id", &client), ("scope", "user:read")]),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let device = started["device_code"].as_str().unwrap().to_string();
+    let code = started["user_code"].as_str().unwrap().to_string();
+    assert_eq!(code.len(), 7, "ABC-DEF");
+    let poll = || {
+        let (client, device) = (client.clone(), device.clone());
+        async move {
+            raw(
+                e,
+                "POST",
+                "/api/oauth/token",
+                Some(&[
+                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                    ("client_id", &client),
+                    ("device_code", &device),
+                ]),
+                &[],
+            )
+            .await
+        }
+    };
+    assert_eq!(poll().await.1["error"], "authorization_pending");
+    assert_eq!(poll().await.1["error"], "slow_down", "polled again at once");
+    let (status, _) = e
+        .request(
+            "GET",
+            "/api/oauth/device/ZZZ-ZZZ",
+            Value::Null,
+            true,
+            true,
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "wrong code");
+    let shown = e
+        .call(
+            "GET",
+            &format!("/api/oauth/device/{}", code.to_lowercase()),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(shown["app"]["name"], "TV App");
+    e.call(
+        "POST",
+        &format!("/api/oauth/device/{code}"),
+        json!({"approve": true}),
+    )
+    .await;
+    e.sql("UPDATE oauth_devices SET last_poll_at=now()-interval '10 seconds'")
+        .await;
+    let (status, tokens) = poll().await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    let bearer = format!("Bearer {}", tokens["access_token"].as_str().unwrap());
+    assert_eq!(
+        raw(
+            e,
+            "GET",
+            "/api/v1/me",
+            None,
+            &[("sver-client-id", &client), ("authorization", &bearer)]
+        )
+        .await
+        .1["username"],
+        "Streamer"
+    );
+    assert_eq!(
+        poll().await.1["error"],
+        "invalid_grant",
+        "a device code works once"
+    );
+    e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
+        .await;
 }

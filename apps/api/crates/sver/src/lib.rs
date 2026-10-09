@@ -329,7 +329,7 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         // Twitch EventSub posts without an Origin; its HMAC signature is checked in linked_chat.
         && req.uri().path() != "/api/integrations/twitch/eventsub"
         // OAuth clients post tokens server to server; the client and PKCE checks are in devapps.
-        && !matches!(req.uri().path(), "/api/oauth/token" | "/api/oauth/revoke")
+        && !matches!(req.uri().path(), "/api/oauth/token" | "/api/oauth/revoke" | "/api/oauth/device")
         && req.headers().get("origin").and_then(|v| v.to_str().ok())
         != Some(&app.config.origin)
     {
