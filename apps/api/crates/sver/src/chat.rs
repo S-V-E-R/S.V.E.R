@@ -308,6 +308,14 @@ async fn history(
         .map(|r| visible_message(r.json(app), hidden))
         .collect();
     crate::guilds::hydrate_badges(app, &mut messages).await?;
+    // Linked chat (docs/LINKED_CHAT.md): outside messages share the chat sequence; keep the
+    // newest HISTORY of both, in order.
+    if squad.is_none() {
+        messages.extend(crate::linked_chat::recent(app, channel, HISTORY).await?);
+        messages.sort_by_key(|m| m["seq"].as_i64().unwrap_or_default());
+        let extra = messages.len().saturating_sub(HISTORY as usize);
+        messages.drain(..extra);
+    }
     Ok(messages)
 }
 

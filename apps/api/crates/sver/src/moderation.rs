@@ -57,7 +57,7 @@ pub(crate) async fn actor(app: &App, jar: &CookieJar, channel: &str) -> Res<(aut
         .ok_or_else(|| Fail::denied("You can't moderate this channel."))?;
     Ok((user, role))
 }
-async fn channel(app: &App, name: &str) -> Res<String> {
+pub(crate) async fn channel(app: &App, name: &str) -> Res<String> {
     let mut conn = app.db.acquire().await?;
     Ok(profiles::eligible_by_name(&mut conn, name)
         .await?
@@ -373,7 +373,7 @@ pub async fn check_clip(app: &App, channel: &str, user: &auth::User, title: &str
     }
     Ok(())
 }
-fn check_content(body: &str, words: &[String], links: bool, exempt: bool) -> Res<()> {
+pub(crate) fn check_content(body: &str, words: &[String], links: bool, exempt: bool) -> Res<()> {
     let folded = fold(body);
     if words.iter().any(|word| folded.contains(word)) {
         return Err(Fail::bad("That message isn't allowed in this chat."));

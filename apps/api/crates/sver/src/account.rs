@@ -230,7 +230,7 @@ const EXCLUDED_TABLES: [&str; 18] = [
     "staff_roles",
 ];
 /// Column names never exported (secrets, keys, network data).
-const SECRET_COLUMNS: &str = "(hash|secret|token|password|mfa|seed|fingerprint|payload|endpoint|network|_key$|^key$|^ip$|^ip_|_ip$)";
+const SECRET_COLUMNS: &str = "(hash|secret|token|sealed|password|mfa|seed|fingerprint|payload|endpoint|network|subscriptions|_key$|^key$|^ip$|^ip_|_ip$)";
 
 /// GET /api/auth/export: a JSON file of the account and every row keyed to it (a sign-in confirmed
 /// in the last five minutes; three an hour).

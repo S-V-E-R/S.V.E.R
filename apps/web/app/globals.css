@@ -114,6 +114,10 @@ button:active:not(:disabled), .button:active { box-shadow: inset 0 2px 0 rgba(0,
   font-family: var(--font-label); font-weight: 700; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; padding: 1px 8px; border-radius: 0; vertical-align: middle;
 }
 .badge.verified { border-color: var(--accent); color: var(--accent-light); }
+/* Linked chat platform badges (docs/LINKED_CHAT.md): each platform's brand color. */
+.platform-badge.twitch { border-color: #9146ff; color: #a970ff; }
+.platform-badge.youtube { border-color: #ff0033; color: #ff4e45; }
+.platform-badge.kick { border-color: #53fc18; color: #53fc18; }
 
 /* Inputs: dark fill, 1px --line border, --accent border on focus, labels in Barlow Condensed above. */
 .field { display: block; margin: 0 0 18px; }

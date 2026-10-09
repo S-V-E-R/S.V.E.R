@@ -158,6 +158,9 @@ async fn main() -> Result<(), String> {
             if sver::streams::tick(&media_jobs).await.is_err() {
                 eprintln!("Stream maintenance will retry.");
             }
+            if sver::linked_chat::tick(&media_jobs).await.is_err() {
+                eprintln!("linked_chat_event=supervise outcome=retry");
+            }
             if sver::playback::tick(&media_jobs).await.is_err() {
                 eprintln!("playback_event=delivery outcome=retry");
             }
