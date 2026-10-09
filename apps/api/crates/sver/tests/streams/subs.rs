@@ -204,7 +204,7 @@ pub async fn exercise(e: &Env) {
     .await;
     assert_eq!(status, StatusCode::OK, "{kept}");
     let form = e.fake.lock().unwrap().stripe.last().unwrap().1.clone();
-    let paid_through: i64 = sqlx::query_scalar("SELECT extract(epoch FROM paid_through)::bigint FROM channel_subs WHERE user_id='sb-keeper'")
+    let paid_through: i64 = sqlx::query_scalar("SELECT floor(extract(epoch FROM paid_through))::bigint FROM channel_subs WHERE user_id='sb-keeper'")
         .fetch_one(&e.app.db).await.unwrap();
     assert!(
         form.contains(&format!("trial_end%5D={paid_through}"))
