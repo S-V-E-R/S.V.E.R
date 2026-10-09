@@ -4,7 +4,7 @@ import { Section, Status, type SaveState } from "../../../components/Form";
 import { EmoteImage, type ChannelEmote } from "../../../components/Emote";
 import { send, useLoad } from "../../../lib/client-api";
 
-type Item = ChannelEmote & { status: "VISIBLE" | "REMOVED" | "UNAVAILABLE" };
+type Item = ChannelEmote & { status: "VISIBLE" | "REMOVED" | "UNAVAILABLE"; signature?: boolean; reviewed?: boolean };
 export default function EmotesStudio() {
   const [items, setItems] = useState<Item[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -31,11 +31,16 @@ export default function EmotesStudio() {
     setBusy(false); setState(r.ok ? { saved: "Emote deleted." } : r);
     if (r.ok) await load();
   }
+  async function signature(item: Item) {
+    const r = await send("PUT", `/api/me/emotes/${encodeURIComponent(item.id)}/signature`, { on: !item.signature });
+    if (r.ok) await load(); else setState(r);
+  }
   const open = items.filter(i => !i.tier).length;
   const full = tier ? items.filter(i => i.tier === Number(tier)).length >= 5 : open >= 10;
   return <><h1>Channel emotes</h1><p>Open emotes are for everyone in your chat; subscriber emotes are for subscribers of that tier or higher. Codes are case-sensitive and must be typed as a whole word, separated by spaces.</p>
     <Section title={`Emotes · ${open}/10 open · ${[1, 2, 3].map(t => `Tier ${t} ${items.filter(i => i.tier === t).length}/5`).join(" · ")}`}>
-      {!loaded ? <p>Loading…</p> : items.length === 0 ? <p className="muted">No emotes yet.</p> : <ul className="list">{items.map(item => <li className="row between" key={item.id}><span className="row">{item.status === "VISIBLE" && <EmoteImage emote={item} />}<strong>{item.code}</strong>{item.tier && <span className="badge sub-badge">Tier {item.tier}</span>}{item.status !== "VISIBLE" && <span className="muted">{item.status === "REMOVED" ? "Removed by staff" : "Unavailable"}</span>}</span><button className="quiet small danger-text" disabled={busy} onClick={() => remove(item)}>Delete<span className="sr-only"> {item.code}</span></button></li>)}</ul>}
+      {!loaded ? <p>Loading…</p> : items.length === 0 ? <p className="muted">No emotes yet.</p> : <ul className="list">{items.map(item => <li className="row between" key={item.id}><span className="row">{item.status === "VISIBLE" && <EmoteImage emote={item} />}<strong>{item.code}</strong>{item.tier && <span className="badge sub-badge">Tier {item.tier}</span>}{item.status !== "VISIBLE" && <span className="muted">{item.status === "REMOVED" ? "Removed by staff" : "Unavailable"}</span>}</span><span className="row">{!item.tier && item.status === "VISIBLE" && <button type="button" className="quiet small" disabled={busy} onClick={() => void signature(item)}>{item.signature ? (item.reviewed ? "Signature · works everywhere" : "Signature · awaiting staff review") : "Make signature"}</button>}<button className="quiet small danger-text" disabled={busy} onClick={() => remove(item)}>Delete<span className="sr-only"> {item.code}</span></button></span></li>)}</ul>}
+      <p className="muted small">Your signature emote (one open emote) works in every chat, written as yourname/Code, once staff approve it. Channels can turn signature emotes off in their chat.</p>
     </Section>
     <Section title="Upload emote"><form onSubmit={upload}>
       <p className="muted">Square PNG or WebP, at least 112 × 112 pixels, up to 1 MB. Animated images use their first frame. Emotes publish immediately.</p>

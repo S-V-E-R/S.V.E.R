@@ -7,7 +7,7 @@ import { ReportButton, TakeDownLink } from "./Report";
 import { SkillArt } from "./SkillArt";
 import type { Reward } from "./Rewards";
 
-type Tab = "emotes" | "rewards" | "skills";
+type Tab = "emotes" | "signature" | "rewards" | "skills";
 type Skill = { id: string; name: string; category: string; valor: number; effect: string; enabled: boolean };
 
 /**
@@ -20,12 +20,14 @@ export function ChatDock({ username, account, emotes, onEmote, rewardsVersion, o
   rewardsVersion: number; onHighlight: (cost: number) => void; shared: boolean;
 }) {
   const [tab, setTab] = useState<Tab | null>(null);
-  const tabs: [Tab, string][] = shared ? [["emotes", "Emotes"]] : [["emotes", "Emotes"], ["rewards", "Rewards"], ["skills", "Skills"]];
+  const base: [Tab, string][] = account ? [["emotes", "Emotes"], ["signature", "Signature"]] : [["emotes", "Emotes"]];
+  const tabs: [Tab, string][] = shared ? base : [...base, ["rewards", "Rewards"], ["skills", "Skills"]];
   return <div className="chat-dock">
     {tab && <div className="chat-dock-panel panel" role="dialog" aria-label={tabs.find(t => t[0] === tab)?.[1]}>
       <div className="chat-dock-tabs" role="tablist">{tabs.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className="small quiet" onClick={() => setTab(id)}>{label}</button>)}
         <button type="button" className="small quiet chat-dock-close" aria-label="Close" onClick={() => setTab(null)}>×</button></div>
       {tab === "emotes" && <EmotesTab username={username} account={account} emotes={emotes} onEmote={code => { onEmote(code); setTab(null); }} />}
+      {tab === "signature" && <SignatureTab onEmote={code => { onEmote(code); setTab(null); }} />}
       {tab === "rewards" && <RewardsTab username={username} account={account} version={rewardsVersion} onHighlight={cost => { onHighlight(cost); setTab(null); }} />}
       {tab === "skills" && <SkillsTab username={username} account={account} />}
     </div>}
@@ -111,4 +113,19 @@ function SkillsTab({ username, account }: { username: string; account: string | 
         <SkillArt id={s.id} size={40} /><span className="dock-tile-name">{s.name}</span><span className="dock-cost">{s.valor.toLocaleString()}</span></button></li>)}</ul>
     {note && <p role="status" className="form-message">{note}</p>}
   </>;
+}
+
+/** Signature emotes of channels the viewer follows; they work in any chat as username/Code. */
+function SignatureTab({ onEmote }: { onEmote: (code: string) => void }) {
+  const [emotes, setEmotes] = useState<(ChannelEmote & { owner?: string })[] | null>(null);
+  const load = useCallback(async () => {
+    const r = await send<{ emotes: (ChannelEmote & { owner?: string })[] }>("GET", "/api/me/signature-emotes");
+    setEmotes(r.ok ? r.data.emotes : []);
+  }, []);
+  useLoad(load);
+  if (!emotes) return <p className="loading">Loading…</p>;
+  if (emotes.length === 0) return <p className="muted">Channels you follow haven&apos;t chosen a signature emote yet.</p>;
+  return <ul className="dock-tiles">{emotes.map(emote => <li key={emote.id}>
+    <button type="button" className="dock-tile" onClick={() => onEmote(emote.code)} aria-label={`Insert ${emote.code}`} title={`@${emote.owner}'s signature emote`}><EmoteImage emote={emote} /><span>{emote.code}</span></button>
+  </li>)}</ul>;
 }
