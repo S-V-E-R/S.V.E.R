@@ -91,6 +91,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** an editor can make exactly those changes and nothing else, every edit is attributed, and removal is immediate.
 
+**Built October 9, 2026 (migration 0059).** `channel_editors` (up to 5; appointing needs a recent sign-in), `GET/PATCH /api/channels/{name}/stream` for editors, sharing the owner's save path and revision check, with `stream_settings.edited_by` recording who edited (cleared when the owner saves). Membership is checked on every request, so removal is immediate. Studio → Stream lists editors and shows "Edited by @name"; the watch page has Edit stream info; the player menu lists Channels you edit.
+
 ## Keep a gifted subscription
 
 - A viewer with an active gifted month sees **Keep your subscription** on the channel and on `/wallet`.

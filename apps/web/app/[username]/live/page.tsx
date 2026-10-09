@@ -4,6 +4,7 @@ import { Chat } from "../../../components/Chat";
 import { Crowd } from "../../../components/Crowd";
 import { LivePlayer } from "../../../components/LivePlayer";
 import { PlaysControls } from "../../../components/PlaysControls";
+import { EditStreamInfo } from "../../../components/EditStreamInfo";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../../lib/channel";
 import { currentAccount } from "../../session";
 import { Crest } from "../../../components/FactionIdentity";
@@ -47,6 +48,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
       <Link href={`/${c.username}`} aria-label={`${c.display_name}'s channel`}>{c.faction ? <Crest faction={c.faction} size={48} /> : <Avatar sizes={c.avatar} name={c.display_name} size={48} />}</Link>
       <div className="streamer-name"><h1><Link href={`/${c.username}`}>{c.display_name}</Link></h1><p className="handle">@{c.username}</p><p className="streamer-tags">{c.faction && <Link href={`/factions/${c.faction}`} className="badge faction-tag">{factionInfo(c.faction).name}</Link>}<span className="muted">{c.follower_count.toLocaleString()} followers</span></p></div>
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
+      {account && <EditStreamInfo username={c.username} />}
     </section>
     <div className="watch-interact">
       {c.plays && <PlaysControls username={c.username} />}

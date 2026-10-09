@@ -633,6 +633,77 @@ async fn exercise(e: &Env) {
         .0,
         StatusCode::CONFLICT
     );
+    // Channel editors: title, category, language and Mature on; never Mature off, never the key;
+    // every edit is attributed and removal is immediate.
+    let editor = chat::person(e, "stream-editor", "StreamEditor", true).await;
+    let appointed = e
+        .call(
+            "POST",
+            "/api/me/editors",
+            json!({"username":"StreamEditor"}),
+        )
+        .await;
+    assert_eq!(
+        appointed["editors"][0]["username"], "StreamEditor",
+        "{appointed}"
+    );
+    let (_, editing) = chat::call(e, "GET", "/api/me/editing", Some(&editor), Value::Null).await;
+    assert_eq!(editing["channels"][0]["username"], "Streamer");
+    let edit = |body: Value| {
+        chat::call(
+            e,
+            "PATCH",
+            "/api/channels/streamer/stream",
+            Some(&editor),
+            body,
+        )
+    };
+    let (status, saved) = edit(json!({"title":"Edited by the editor","category_id":"coding","revision":1,"language":"en","mature":true})).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(
+        edit(json!({"title":"Stale edit","category_id":"coding","revision":1}))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        edit(json!({"title":"Off","category_id":"coding","revision":2,"mature":false}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(e.mine().await["settings"]["edited_by"], "StreamEditor");
+    let (status, _) = chat::call(
+        e,
+        "POST",
+        "/api/me/stream/key/reveal",
+        Some(&editor),
+        json!({"code":"000000"}),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "no stream key for editors");
+    e.call("DELETE", "/api/me/editors/StreamEditor", Value::Null)
+        .await;
+    assert_eq!(
+        edit(json!({"title":"After removal","category_id":"coding","revision":2}))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    e.call(
+        "PATCH",
+        "/api/me/stream",
+        json!({"title":"Building together","category_id":"coding","revision":2,"mature":false}),
+    )
+    .await;
+    assert_eq!(
+        e.mine().await["settings"]["edited_by"],
+        Value::Null,
+        "owner edits are the owner's"
+    );
+    // Later checks expect the settings as they were before this block.
+    e.sql("UPDATE stream_settings SET revision=1,language=NULL,mature=false WHERE owner_id='stream-owner'")
+        .await;
     assert_eq!(
         e.request(
             "POST",

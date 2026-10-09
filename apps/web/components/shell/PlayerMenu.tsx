@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { send } from "../../lib/client-api";
 import { FollowingIcon, SettingsIcon, ShieldIcon, StudioIcon, WalletIcon, HomeIcon } from "./Icons";
 
@@ -12,6 +12,9 @@ import { FollowingIcon, SettingsIcon, ShieldIcon, StudioIcon, WalletIcon, HomeIc
 export function PlayerMenu({ username, chip }: { username: string; chip: React.ReactNode }) {
   const menu = useRef<HTMLDetailsElement>(null);
   const pathname = usePathname();
+  // Channels this person edits (docs/CHANNEL_ADDITIONS.md "Channel editors").
+  const [editing, setEditing] = useState<{ username: string; display_name: string }[]>([]);
+  useEffect(() => { void send<{ channels: { username: string; display_name: string }[] }>("GET", "/api/me/editing").then(r => { if (r.ok) setEditing(r.data.channels); }); }, []);
   useEffect(() => { if (menu.current) menu.current.open = false; }, [pathname]);
   useEffect(() => {
     const close = (event: MouseEvent | KeyboardEvent) => {
@@ -36,6 +39,7 @@ export function PlayerMenu({ username, chip }: { username: string; chip: React.R
     <summary className="player-chip" aria-label={`Account menu for ${username}`}>{chip}</summary>
     <nav className="player-menu-links panel" aria-label="Account">
       {items.map(([href, label, icon]) => <Link key={href} href={href} aria-current={pathname === href || (href !== `/${username}` && pathname?.startsWith(href + "/")) ? "page" : undefined}>{icon}{label}</Link>)}
+      {editing.length > 0 && <><span className="eyebrow">Channels you edit</span>{editing.map(c => <Link key={c.username} href={`/${c.username}/live`}>{c.display_name}</Link>)}</>}
       <button type="button" className="player-menu-signout" onClick={async () => { await send("POST", "/api/auth/logout", {}); window.location.assign("/login"); }}>Sign out</button>
     </nav>
   </details>;
