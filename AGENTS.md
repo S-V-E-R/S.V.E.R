@@ -59,6 +59,7 @@ Each module is closed before the next starts:
 8. VODs and clips (`docs/VODS_CLIPS.md`)
    - then the channel and transparency additions (`docs/CHANNEL_ADDITIONS.md`): mature label first, stream language, pop-out chat, channel editors, keeping a gifted subscription, signature emotes, open data and credits. The credits page may ship sooner as a license obligation.
    - with them, the two Motion moments in `docs/MOTION.md` (welcome ceremony, season reveal)
+   - then the Wall (`docs/WALL.md`): 1,000 seats sold once for a tile on `/wall`, buying nothing else. Sales open only after its checklist (Wall terms, tax) is done.
 9. Beacons (`docs/BEACONS.md`)
 
 Modules 1 to 5 make the site functional. Phase 2 (Progression, Raven's Eye) starts only after all nine close. Phase 3 opens with the developer platform (`docs/DEVELOPER_PLATFORM.md`: apps and OAuth, `sver.tv/go` device sign-in, the live events API, and compatibility with streamers' existing tools), then overlays and alerts. Two parts of it come sooner: the CrowdSync "game confirms" hold-and-capture rule ships with CrowdSync's remaining work, and WHIP and SRT ingest follow the load test.

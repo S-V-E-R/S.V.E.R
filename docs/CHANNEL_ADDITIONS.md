@@ -130,6 +130,7 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 **Monthly charts:**
 - money from subscriptions, gift subs and tributes, split into the creators' share and S.V.E.R's share
 - payouts sent
+- Wall sales ([WALL.md](WALL.md)), as their own line
 
 **Privacy rules:** no per-person or per-channel numbers. A weekly figure below 10 is shown as "fewer than 10". If fewer than 10 creators were paid in a month, that month's money is combined with the next.
 
@@ -158,5 +159,5 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 
 - **Pronouns** on profiles (Joe, October 6).
 - **Holding new channels off the homepage** until they have 10 hours of streaming and have been live for 15 minutes. Glimesh did this; S.V.E.R gives new creators a head start instead.
-- **A paid platform supporter subscription** with cosmetic perks. Support (Module 6) is already the funding model.
+- **A paid platform supporter subscription** with cosmetic perks. Support (Module 6) is already the funding model. The Wall ([WALL.md](WALL.md), October 9) is different: a seat is bought once and gives no perks.
 - **Country-based edge selection.** The CDN already routes viewers to the nearest location.
