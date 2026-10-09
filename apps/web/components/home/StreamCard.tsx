@@ -3,15 +3,18 @@ import { Crest } from "../Crest";
 import { factionOf } from "../../lib/factions";
 import { uptime, type LiveCard } from "./types";
 import { LiveThumbnail } from "../LiveThumbnail";
+import { languageName } from "../../lib/languages";
 
 /** A live channel card for the homepage grids (Main mockup: "Live now", "Just went live"). */
-export function StreamCard({ s, viewerFaction, fresh = false }: { s: LiveCard; viewerFaction: string | null; fresh?: boolean }) {
+/** `languages`: the viewer's; a stream in another language shows a language chip. */
+export function StreamCard({ s, viewerFaction, fresh = false, languages }: { s: LiveCard; viewerFaction: string | null; fresh?: boolean; languages?: string[] }) {
+  const foreign = !!s.language && !!languages && !languages.includes(s.language);
   const f = factionOf(s.faction);
   const ally = !!viewerFaction && s.faction === viewerFaction;
   return <Link href={`/${s.username}/live`} className={ally ? "stream-card ally" : "stream-card"}>
     <span className="stream-thumb">
       <LiveThumbnail src={s.thumbnail} label={s.category ?? s.display_name} />
-      <span className="stream-tags"><span className="tag-live">Live</span>{s.mature && <span className="tag-label mature-tag">Mature</span>}{ally && <span className="tag-ally">Ally</span>}{s.label && <span className="tag-label">{s.label}</span>}</span>
+      <span className="stream-tags"><span className="tag-live">Live</span>{s.mature && <span className="tag-label mature-tag">Mature</span>}{ally && <span className="tag-ally">Ally</span>}{s.label && <span className="tag-label">{s.label}</span>}{foreign && <span className="tag-label">{languageName(s.language!)}</span>}</span>
       {fresh
         ? <span className="stream-started">Started {uptime(s.started_at)} ago</span>
         : <><span className="stream-viewers">{s.viewers.toLocaleString()} watching</span><span className="stream-uptime">{uptime(s.started_at)}</span></>}

@@ -1,11 +1,14 @@
 "use client";
 import Link from "next/link";
+import { LANGUAGES, fromBrowser } from "../../../lib/languages";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { send } from "../../../lib/client-api";
 import { GamePicker } from "../../../components/GamePicker";
 
-type Settings = { title: string; category_id: string | null; revision: number; mature?: boolean; mature_locked?: boolean };
+/** A new channel's language defaults to the browser's (then "other"). */
+const defaultLanguage = () => fromBrowser(typeof navigator === "undefined" ? [] : navigator.languages)[0] ?? "other";
+type Settings = { title: string; category_id: string | null; revision: number; mature?: boolean; mature_locked?: boolean; language?: string | null };
 type Health = { video_codec?: string | null; audio_codec?: string | null; width?: number | null; height?: number | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean; keyframe_seconds?: number | null; keyframe_warning?: boolean; b_frames?: boolean | null };
 type Stream = {
   configured: boolean; eligible: boolean; settings: Settings; disconnect_pending: boolean;
@@ -72,7 +75,7 @@ export default function StreamStudio() {
     event.preventDefault();
     if (!form || busy) return;
     setBusy(true); setStatus({});
-    const result = await send<{ revision: number; category_id: string }>("PATCH", "/api/me/stream", form);
+    const result = await send<{ revision: number; category_id: string }>("PATCH", "/api/me/stream", { ...form, language: form.language ?? defaultLanguage() });
     if (result.ok) {
       setForm(previous => previous && { ...previous, revision: result.data.revision, category_id: result.data.category_id ?? previous.category_id });
       setStatus({ saved: "Stream details saved." }); await load();
@@ -139,6 +142,9 @@ export default function StreamStudio() {
       <form onSubmit={save}>
         <label className="field"><span>Title</span><input required maxLength={280} value={form.title} disabled={busy || !data.eligible} aria-describedby="stream-title-count" onChange={event => setForm({ ...form, title: event.target.value })} /><small id="stream-title-count">{count}/140 characters</small></label>
         <GamePicker value={form.category_id ?? ""} disabled={busy || !data.eligible} onChange={(category_id, mature) => { setForm({ ...form, category_id, mature: mature || form.mature }); setRatedMature(mature); }} />
+        <label className="field narrow"><span>Language</span><select required value={form.language ?? defaultLanguage()} disabled={busy || !data.eligible} onChange={event => setForm({ ...form, language: event.target.value })}>
+          {LANGUAGES.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+        </select></label>
         <label className="checkbox"><input type="checkbox" checked={!!form.mature} disabled={busy || !data.eligible || (form.mature_locked && form.mature)} onChange={event => setForm({ ...form, mature: event.target.checked })} /> <strong>Mature</strong>: violent or horror games, strong language or mature themes. Viewers under 18 can&apos;t watch, and others see a warning first. It doesn&apos;t permit anything the <Link href="/guidelines">Community Guidelines</Link> ban. It stays on for your next streams until you turn it off.</label>
         {ratedMature && form.mature && <p role="status">This game has a mature age rating (ESRB M or AO, or PEGI 18), so Mature is switched on. You can turn it off.</p>}
         {form.mature_locked && <p role="status">Staff labeled this broadcast mature, so the label stays on until it ends.</p>}
