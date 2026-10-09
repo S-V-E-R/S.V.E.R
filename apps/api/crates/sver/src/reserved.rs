@@ -62,6 +62,7 @@ pub const RESERVED: &[&str] = &[
     "about",
     "roadmap",
     "contact",
+    "credits",
     "status",
     "report",
     "reports",
