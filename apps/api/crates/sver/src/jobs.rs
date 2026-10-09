@@ -98,6 +98,9 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::guilds::tick(app).await.is_err() {
         eprintln!("guild_event=maintenance outcome=retry");
     }
+    if crate::dms::tick(app).await.is_err() {
+        eprintln!("dm_event=expiry outcome=retry");
+    }
     crate::profile_jobs::tick(app).await?;
     sqlx::query(
         "DELETE FROM users WHERE deleted_at<=now()-interval '14 days' AND NOT legacy_deletion_hold",

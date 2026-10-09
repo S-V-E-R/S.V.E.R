@@ -67,6 +67,7 @@ const TARGETS: &[&str] = &[
     "setup_photo",
     "chat_message",
     "live_stream",
+    "dm_message",
 ];
 pub const STANDING_MAIL: &str =
     "There's an update to your account standing. See sver.tv/settings/standing.";
@@ -266,14 +267,26 @@ pub async fn report(
         let beacon = crate::beacons::load(&mut tx, &input.target_id).await?;
         crate::beacons::accessible(&app, &beacon, Some(&user), true).await?;
     }
-    let target = target(
-        &mut tx,
-        &input.target_type,
-        &input.target_id,
-        input.field.as_deref(),
-        &user.id,
-    )
-    .await?;
+    // A direct message's evidence is sealed (docs/COMMUNITY.md "Direct messages").
+    let target = if input.target_type == "dm_message" {
+        let (owner_id, owner_name, value) =
+            crate::dms::report_target(&app, &mut tx, &input.target_id, &user.id).await?;
+        Target {
+            owner_id,
+            owner_name,
+            target_id: input.target_id.clone(),
+            snapshot: json!({"field": null, "value": value}),
+        }
+    } else {
+        target(
+            &mut tx,
+            &input.target_type,
+            &input.target_id,
+            input.field.as_deref(),
+            &user.id,
+        )
+        .await?
+    };
     if target.owner_id == user.id {
         return Err(Fail::bad("You can't report your own content."));
     }
@@ -897,6 +910,11 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
     if kind == "emote" {
         return crate::emotes::remove(db, id).await;
     }
+    if kind == "dm_message" {
+        let visible = crate::dms::remove(db, id).await?;
+        let previous = if visible { "VISIBLE" } else { "REMOVED" };
+        return Ok(json!({"type": kind, "id": id, "previous": previous}));
+    }
     match kind {
         // A chat delete is a tombstone, like a channel moderator's; it is not restored on appeal.
         "chat_message" => {
@@ -972,6 +990,12 @@ async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
         "guild" | "guild_emblem" => crate::guilds::owner(db, id).await?,
         "faction_post" => crate::factions::owner(db, id).await?,
         "emote" => crate::emotes::owner(db, id).await?,
+        "dm_message" => {
+            sqlx::query_scalar("SELECT sender_id FROM dm_messages WHERE id=$1")
+                .bind(id)
+                .fetch_optional(&mut *db)
+                .await?
+        }
         "profile" => {
             sqlx::query_scalar("SELECT id FROM users WHERE id=$1")
                 .bind(id)
@@ -1040,6 +1064,8 @@ async fn current_content(
         "beacon" => crate::beacons::review::snapshot(db, id).await?,
         "guild" | "guild_emblem" => crate::guilds::snapshot(db, id).await?,
         "emote" => crate::emotes::current(db, id).await?,
+        // Never decrypted here: staff open the sealed excerpt through /api/admin/dm-reports.
+        "dm_message" => sqlx::query_scalar("SELECT jsonb_build_object('sealed',true,'deleted',deleted_at IS NOT NULL) FROM dm_messages WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "profile" => match profile_snapshot(db, id, field).await {
             Ok(v) => v,
             Err(_) => Value::Null,

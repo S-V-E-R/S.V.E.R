@@ -392,3 +392,18 @@ a.takedown-link:hover { color: var(--ink); }
 .order-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--ink-muted); }
 .order-list li[data-rarity="rare"] .order-meta span:first-child, .order-list li[data-rarity="epic"] .order-meta span:first-child, .order-list li[data-rarity="legendary"] .order-meta span:first-child { color: var(--accent); font-weight: 600; }
 .order-list button { justify-self: start; }
+
+/* Direct messages (docs/COMMUNITY.md). */
+.messages-layout { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 760px) { .messages-layout { grid-template-columns: minmax(0, 1fr); } }
+.messages-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.messages-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 1px solid transparent; padding: 8px; color: inherit; cursor: pointer; }
+.messages-item.active, .messages-item:hover { border-color: var(--line); background: var(--tint); }
+.messages-item-text { display: grid; min-width: 0; flex: 1; }
+.messages-item-text .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messages-thread { display: grid; gap: 12px; min-width: 0; }
+.messages-body { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.messages-body li { display: grid; gap: 2px; max-width: 80%; }
+.messages-body li.mine { justify-self: end; text-align: right; }
+.messages-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; border: 1px solid var(--line); background: var(--surface); }
+.messages-body li.mine .messages-text { border-color: var(--accent); }
