@@ -197,6 +197,131 @@ impl Browser {
         .await
     }
 }
+/// Signed-in password and email changes, security notices and the data export (docs/LOGIN.md).
+async fn exercise_account_changes(app: &App, a: &mut Browser, router: &Router, password: &str) {
+    let me = a.ok("GET", "/api/auth/me", Value::Null).await;
+    let user_id = me["id"].as_str().unwrap().to_string();
+    let mut other = Browser::new(router.clone(), 61);
+    other.login("first@example.invalid", password).await;
+    let changed = "Synthetic-only:changed passphrase 4471!";
+    assert_eq!(
+        a.call(
+            "POST",
+            "/api/auth/password/change",
+            json!({"password":"short"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    a.ok(
+        "POST",
+        "/api/auth/password/change",
+        json!({"password":changed}),
+    )
+    .await;
+    assert_eq!(
+        other.call("GET", "/api/auth/me", Value::Null).await.0,
+        StatusCode::UNAUTHORIZED,
+        "other devices are signed out"
+    );
+    other.login("first@example.invalid", changed).await;
+    a.ok(
+        "POST",
+        "/api/auth/password/change",
+        json!({"password":password}),
+    )
+    .await;
+    // Mail for this account: (to, text), newest first.
+    let mails = || async {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT payload FROM mail_jobs WHERE user_id=$1 ORDER BY created_at DESC",
+        )
+        .bind(&user_id)
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+        rows.iter()
+            .map(|r| serde_json::from_str::<Value>(&sec::unseal(app, "mail", r).unwrap()).unwrap())
+            .map(|m| {
+                (
+                    m["to"][0].as_str().unwrap().to_string(),
+                    m["text"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        mails()
+            .await
+            .iter()
+            .any(|(to, text)| to == "first@example.invalid"
+                && text.contains("password was just changed"))
+    );
+    let pending = a
+        .ok(
+            "POST",
+            "/api/auth/email/change",
+            json!({"email":"Changed@Example.invalid"}),
+        )
+        .await;
+    assert_eq!(pending["pending"], "c***@example.invalid");
+    assert_eq!(
+        a.ok("GET", "/api/auth/me", Value::Null).await["pending_email"],
+        "c***@example.invalid"
+    );
+    let sent = mails().await;
+    let (_, link) = sent
+        .iter()
+        .find(|(to, _)| to == "changed@example.invalid")
+        .expect("confirmation to the new address");
+    assert!(
+        sent.iter().any(
+            |(to, text)| to == "first@example.invalid" && text.contains("c***@example.invalid")
+        )
+    );
+    let token = link
+        .split("#token=")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string();
+    a.ok("POST", "/api/auth/email/verify", json!({"token":token}))
+        .await;
+    let me = a.ok("GET", "/api/auth/me", Value::Null).await;
+    assert_eq!(
+        (&me["email"], &me["pending_email"]),
+        (&json!("changed@example.invalid"), &Value::Null)
+    );
+    assert_eq!(
+        a.call("POST", "/api/auth/email/verify", json!({"token":token}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST,
+        "links work once"
+    );
+    // The export: the account and its rows, never secrets.
+    let (status, file, headers) = a.call("GET", "/api/auth/export", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers["content-disposition"]
+            .to_str()
+            .unwrap()
+            .contains("attachment")
+    );
+    assert_eq!(file["account"]["email"], "changed@example.invalid");
+    let text = file.to_string();
+    for secret in ["password_hash", "token_hash", "mfa_secret", "sessions"] {
+        assert!(!text.contains(secret), "export leaks {secret}");
+    }
+    sqlx::query("UPDATE users SET email='first@example.invalid' WHERE id=$1")
+        .bind(&user_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
 async fn mail_token(app: &App, email: &str, kind: &str) -> String {
     let rows:Vec<String>=sqlx::query_scalar("SELECT m.payload FROM mail_jobs m JOIN users u ON u.id=m.user_id WHERE u.email=$1 ORDER BY m.created_at DESC").bind(email).fetch_all(&app.db).await.unwrap();
     for row in rows {
@@ -1423,6 +1548,7 @@ async fn exercise(app: App, mock: Mock) {
     );
     a.ok("POST", "/api/auth/account/restore", json!({})).await;
     assert!(a.ok("GET", "/api/auth/me", Value::Null).await["deletion_due"].is_null());
+    exercise_account_changes(&app, &mut a, &router, new_password).await;
     assert_eq!(
         a.call("DELETE", "/api/auth/oauth/google", json!({}))
             .await
