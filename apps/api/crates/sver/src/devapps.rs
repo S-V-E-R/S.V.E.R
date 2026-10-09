@@ -87,7 +87,7 @@ fn challenge_of(verifier: &str) -> String {
 
 // ---- Developer apps (Settings → Developer) ----
 
-async fn developer(app: &App, jar: &CookieJar) -> Res<auth::User> {
+pub(crate) async fn developer(app: &App, jar: &CookieJar) -> Res<auth::User> {
     let (tx, user, session) = auth::session(app, jar, false).await?;
     tx.commit().await?;
     auth::authorize_streaming(&user, &session).map_err(|_| {

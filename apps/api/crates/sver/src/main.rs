@@ -115,6 +115,16 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     });
+    // Event webhooks too: a slow developer endpoint never delays a game's board webhook.
+    let hooks = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::events::deliver_hooks(&hooks).await.is_err() {
+                eprintln!("events_event=hooks outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    });
     let media_jobs = app.clone();
     if app.config.videos.storage.available() {
         // Segment archival cannot wait behind a long MP4 download or retention sweep.
