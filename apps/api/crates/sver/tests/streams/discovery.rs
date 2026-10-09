@@ -170,6 +170,64 @@ pub async fn exercise(e: &Env) {
     assert_eq!(tagged["mature"], true);
     e.sql("UPDATE stream_settings SET mature=false WHERE owner_id='dv-art'")
         .await;
+    // Stream language: cards carry it; filters narrow without reordering; "mine" uses the viewer's
+    // chosen languages, else the browser's (fallback); home can show only those.
+    e.sql("UPDATE stream_settings SET language=CASE owner_id WHEN 'dv-art' THEN 'en' WHEN 'dv-new' THEN 'pt' END WHERE owner_id IN ('dv-art','dv-new')").await;
+    let (_, pt) = get(e, "/api/discovery/live?genre=art&language=pt", None).await;
+    assert_eq!(names(&pt["items"]), ["DvNewcomer"]);
+    assert_eq!(pt["items"][0]["language"], "pt");
+    let (_, mine) = get(
+        e,
+        "/api/discovery/live?genre=art&language=mine&fallback=en,xx",
+        None,
+    )
+    .await;
+    assert_eq!(
+        names(&mine["items"]),
+        ["DvArtist"],
+        "browser languages for guests"
+    );
+    let (status, _) = call(
+        e,
+        "PUT",
+        "/api/me/preferences",
+        Some(&viewer),
+        json!({"languages": ["xx"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    call(
+        e,
+        "PUT",
+        "/api/me/preferences",
+        Some(&viewer),
+        json!({"languages": ["pt"], "only_my_languages": true}),
+    )
+    .await;
+    let (_, mine) = get(
+        e,
+        "/api/discovery/live?genre=art&language=mine&fallback=en",
+        Some(&viewer),
+    )
+    .await;
+    assert_eq!(
+        names(&mine["items"]),
+        ["DvNewcomer"],
+        "chosen languages win"
+    );
+    let (_, home) = get(e, "/api/discovery/home", Some(&viewer)).await;
+    assert!(
+        names(&home["live"]).iter().all(|n| n == "DvNewcomer"),
+        "{home}"
+    );
+    call(
+        e,
+        "PUT",
+        "/api/me/preferences",
+        Some(&viewer),
+        json!({"languages": [], "only_my_languages": false}),
+    )
+    .await;
     let (_, list) = get(e, "/api/discovery/live?faction=myria", None).await;
     assert_eq!(names(&list["items"]), ["DvShooter"]);
     let (_, list) = get(e, "/api/discovery/live?category=chess", None).await;

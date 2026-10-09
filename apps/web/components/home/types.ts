@@ -8,6 +8,8 @@ export type LiveCard = {
   label?: string | null; fresh?: boolean;
   /** Labeled mature (docs/CHANNEL_ADDITIONS.md). */
   mature?: boolean;
+  /** ISO 639-1 code or "other" (docs/CHANNEL_ADDITIONS.md "Stream language"). */
+  language?: string | null;
 };
 export type Recent = { user: { username: string | null; display_name: string; avatar: Sizes }; ended_at: string };
 

@@ -8,8 +8,8 @@ export function SectionHead({ id, title, note, level = 2, href, link }: { id: st
   return <div className="section-head"><H id={id}>{title}</H><span className="dia" aria-hidden="true" />{note && <span className="section-note">{note}</span>}<span className="rule" aria-hidden="true" />{href && <Link href={href} className="section-link">{link ?? "See all"}</Link>}</div>;
 }
 
-export function StreamGrid({ streams, viewerFaction }: { streams: LiveCard[]; viewerFaction: string | null }) {
-  return <div className="stream-grid">{streams.map(s => <StreamCard key={s.username} s={s} viewerFaction={viewerFaction} fresh={!!s.fresh} />)}</div>;
+export function StreamGrid({ streams, viewerFaction, languages }: { streams: LiveCard[]; viewerFaction: string | null; languages?: string[] }) {
+  return <div className="stream-grid">{streams.map(s => <StreamCard key={s.username} s={s} viewerFaction={viewerFaction} fresh={!!s.fresh} languages={languages} />)}</div>;
 }
 
 /** Nothing live: never an empty page (docs/MAGNET.md "Nothing live"). */

@@ -65,6 +65,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** language is saved and shown, the filters and the home setting narrow lists without reordering them, and the API returns and filters by language.
 
+**Built October 9, 2026 (migration 0057).** Studio's Language field (40 languages and Other; the browser's language by default), cards with a language chip when it isn't one of the viewer's, Settings → Preferences → Languages I watch in (up to 10; the browser's until chosen) and "Only show streams in my languages" for home, and Browse's All / My languages filter. `GET /api/discovery/live` takes `language=` as a code, a comma list or `mine` (with `fallback=` for the browser's languages), and cards include `language`. Streams without a language yet are left out only when a language filter is on.
+
 ## Pop-out chat
 
 - `sver.tv/{username}/chat` shows only the channel's chat: no top bar, sidebar or footer, in the owner's faction theme. It works from 280 px wide, so it fits a narrow window.
@@ -141,6 +143,8 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 - If code from Glimesh, Mixer or another MIT project is reused, it is listed here with its copyright notice.
 
 **Done when:** every shipped dependency appears with its license text, and CI catches a stale list.
+
+**Built October 8, 2026.** 371 shipped packages (Rust crates reachable from the API on Linux through normal dependencies, and the website's production npm packages; per-platform native build tools are left out so the list is the same on every machine) plus SRS, PostgreSQL, Cinzel and Barlow. Where a crate offers a choice that includes MIT, S.V.E.R uses MIT and keeps only that notice; identical texts are stored once. The vendored SRS, PostgreSQL and font license texts are in `scripts/credits/`. CI runs `node scripts/credits.mjs --check` in the Web job.
 
 ## Considered and not taken
 
