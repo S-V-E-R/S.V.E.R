@@ -47,7 +47,18 @@ function MessageBody({ message, account, emotes }: { message: Message; account: 
  * Channel chat. Live over the same-origin WebSocket; if the socket can't connect it polls history
  * and sends over HTTPS, which run the same server checks. Messages render as plain text.
  */
-export function Chat({ username, account, squad }: { username: string; account: string | null; squad?: string }) {
+/**
+ * `variant`: the channel page ("full", with a Pop out button), the pop-out window ("popout"), an OBS
+ * dock ("dock": no header, compact) or a read-only OBS overlay ("overlay": messages fade after `fade`
+ * seconds). See docs/CHANNEL_ADDITIONS.md "Pop-out chat".
+ */
+export function Chat({ username, account, squad, variant = "full", fade = 30 }: { username: string; account: string | null; squad?: string; variant?: "full" | "popout" | "dock" | "overlay"; fade?: number }) {
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (variant !== "overlay") return;
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [variant]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
@@ -229,8 +240,14 @@ export function Chat({ username, account, squad }: { username: string; account: 
     setBusy(false);
   }
 
-  return <section className="chat panel" aria-label="Chat">
-    <h2>Chat {mode !== "live" && <span className="muted small">{mode === "polling" ? "(updates every few seconds)" : "(connecting…)"}</span>}</h2>
+  if (variant === "overlay") return <section className="chat chat-overlay" aria-label="Chat">
+    <ol className="chat-messages" aria-live="polite">{messages.filter(m => clock - Date.parse(m.created_at) < fade * 1000).map(m => <li key={m.id}>
+      <strong>{m.author.display_name}</strong>: <MessageBody message={m} account={null} emotes={emotes} />
+    </li>)}</ol>
+  </section>;
+  return <section className={variant === "dock" ? "chat panel chat-compact" : "chat panel"} aria-label="Chat">
+    {variant !== "dock" && <h2>Chat {mode !== "live" && <span className="muted small">{mode === "polling" ? "(updates every few seconds)" : "(connecting…)"}</span>}
+      {variant === "full" && !squad && <button type="button" className="small quiet chat-popout" onClick={() => window.open(`/${encodeURIComponent(username)}/chat`, `sver-chat-${username}`, "width=400,height=700")}>Pop out</button>}</h2>}
     {pinned && <aside className="chat-pin" aria-label="Pinned message" aria-live="polite">
       <strong>Pinned message</strong><div className="chat-pin-content"><strong>{pinned.author.display_name}: </strong><MessageBody message={pinned} account={account} emotes={emotes} /></div>
       {canPin && <button type="button" className="small quiet" onClick={() => changePin(null)}>Unpin</button>}

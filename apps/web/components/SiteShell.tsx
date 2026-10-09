@@ -22,6 +22,8 @@ export default function SiteShell({ account, alerts, actions, sidebar, children 
   if (pathname?.startsWith("/embed/")) return <main id="main">{children}</main>;
   // The OBS board overlay is a bare, transparent browser source.
   if (pathname?.startsWith("/overlay/")) return <>{children}</>;
+  // Pop-out chat, its OBS dock and overlay: only the chat (docs/CHANNEL_ADDITIONS.md "Pop-out chat").
+  if (pathname && /^\/[^/]+\/chat$/.test(pathname)) return <main id="main">{children}</main>;
   const publicPage = siteLinks.some(([href]) => href === pathname);
   const footer = <SiteFooter />;
   if (!publicPage) return <><a className="skip" href="#main">Skip to content</a><Chrome actions={actions} sidebar={sidebar} footer={footer}>{children}</Chrome></>;

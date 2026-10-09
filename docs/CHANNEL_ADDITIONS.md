@@ -78,6 +78,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** the pop-out, dock and overlay pages work at 280 px and in OBS, moderation actions work in the pop-out, and the overlay removes deleted messages.
 
+**Built October 9, 2026 (migration 0058).** `/{username}/chat` renders only the chat in the channel's faction theme (no site chrome), with `?dock=1` (no header, compact) and `?overlay=1` (read-only, transparent, messages fade after `chat_settings.overlay_fade_seconds`, set under Creator Studio → Chat → Rules). It is the same Chat component, so sign-in, moderation actions and deletions behave as on the channel page. The chat header's **Pop out** opens it at 400 × 700. Studio → Chat explains adding the dock and overlay in OBS. Still to check in OBS itself.
+
 ## Channel editors
 
 - An owner can appoint up to **5** editors, with step-up authentication, the same way as moderators. Editors must have a verified account in good standing.

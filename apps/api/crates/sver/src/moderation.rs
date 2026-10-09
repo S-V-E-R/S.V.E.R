@@ -382,13 +382,13 @@ pub async fn view(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     let (_, role) = actor(&app, &jar, &channel).await?;
-    let settings: Option<(i32, bool, Vec<String>)> = sqlx::query_as(
-        "SELECT slow_mode_seconds, block_links, banned_words FROM chat_settings WHERE channel_id=$1",
+    let settings: Option<(i32, bool, Vec<String>, i16)> = sqlx::query_as(
+        "SELECT slow_mode_seconds, block_links, banned_words, overlay_fade_seconds FROM chat_settings WHERE channel_id=$1",
     )
     .bind(&channel)
     .fetch_optional(&app.db)
     .await?;
-    let (slow, links, words) = settings.unwrap_or((0, false, vec![]));
+    let (slow, links, words, fade) = settings.unwrap_or((0, false, vec![], 30));
     // Only chip_sql with a literal alias is interpolated; channel values are bound.
     let mut moderators: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {} FROM channel_moderators m JOIN channel_users c ON c.id=m.user_id WHERE m.channel_id=$1 ORDER BY m.appointed_at", profiles::chip_sql("c"))))
         .bind(&channel).fetch_all(&app.db).await?;
@@ -410,7 +410,7 @@ pub async fn view(
         "role": role.name(),
         "spike": spike,
         "followers_only_until": followers_only(&app, &channel).await?,
-        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words},
+        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade},
         "moderators": moderators, "restrictions": restrictions, "log": log,
     })))
 }
@@ -569,6 +569,9 @@ pub struct Settings {
     block_links: bool,
     banned_words: Vec<String>,
     reason: String,
+    /// The OBS chat overlay's message lifetime (10–120 seconds).
+    #[serde(default)]
+    overlay_fade_seconds: Option<i16>,
 }
 pub async fn save_settings(
     State(app): State<App>,
@@ -583,6 +586,15 @@ pub async fn save_settings(
         return Err(Fail::field(
             "slow_mode_seconds",
             "Slow mode is off, or 3–120 seconds.",
+        ));
+    }
+    if input
+        .overlay_fade_seconds
+        .is_some_and(|s| !(10..=120).contains(&s))
+    {
+        return Err(Fail::field(
+            "overlay_fade_seconds",
+            "Overlay messages last 10–120 seconds.",
         ));
     }
     let mut words: Vec<String> = input
@@ -600,8 +612,8 @@ pub async fn save_settings(
         ));
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("INSERT INTO chat_settings(channel_id,slow_mode_seconds,block_links,banned_words) VALUES($1,$2,$3,$4) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=$2,block_links=$3,banned_words=$4")
-        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO chat_settings(channel_id,slow_mode_seconds,block_links,banned_words,overlay_fade_seconds) VALUES($1,$2,$3,$4,coalesce($5,30)) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=$2,block_links=$3,banned_words=$4,overlay_fade_seconds=coalesce($5,chat_settings.overlay_fade_seconds)")
+        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).execute(&mut *tx).await?;
     log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len()}), &reason).await?;
     tx.commit().await?;
     Ok(Json(

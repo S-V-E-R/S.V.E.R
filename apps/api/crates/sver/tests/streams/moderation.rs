@@ -357,6 +357,35 @@ pub async fn exercise(e: &Env) {
     let (status, saved) = call(e, "PUT", &format!("{BASE}/chat/settings"), Some(&moderator), json!({"slow_mode_seconds":30,"block_links":true,"banned_words":["Bad   Word","bad word"],"reason":"rules"})).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(saved["banned_words"], json!(["bad word"]));
+    // The OBS chat overlay's fade time: 10-120 seconds, kept when a save leaves it out.
+    let rules = |fade: i64| json!({"slow_mode_seconds":30,"block_links":true,"banned_words":["bad word"],"reason":"rules","overlay_fade_seconds":fade});
+    assert_eq!(
+        call(
+            e,
+            "PUT",
+            &format!("{BASE}/chat/settings"),
+            Some(&moderator),
+            rules(5)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            e,
+            "PUT",
+            &format!("{BASE}/chat/settings"),
+            Some(&moderator),
+            rules(45)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    call(e, "PUT", &format!("{BASE}/chat/settings"), Some(&moderator), json!({"slow_mode_seconds":30,"block_links":true,"banned_words":["bad word"],"reason":"rules"})).await;
+    let (_, read) = call(e, "GET", &format!("{BASE}/chat"), None, Value::Null).await;
+    assert_eq!(read["overlay_fade_seconds"], 45);
     tokio::time::sleep(Duration::from_millis(1100)).await;
     assert_eq!(
         say(e, &outsider, "this has a BAD\nword in it").await.0,
