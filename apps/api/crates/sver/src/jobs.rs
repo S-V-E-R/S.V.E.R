@@ -77,6 +77,7 @@ pub async fn tick(app: &App) -> Result<()> {
     }
     if crate::open_data::tick(app).await.is_err() {
         eprintln!("open_data_event=compute outcome=retry");
+    }
     if crate::subs::remind(app).await.is_err() {
         eprintln!("subs_event=reminder outcome=retry");
     }
