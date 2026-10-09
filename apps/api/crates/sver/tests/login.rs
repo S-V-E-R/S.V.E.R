@@ -313,7 +313,14 @@ async fn exercise_account_changes(app: &App, a: &mut Browser, router: &Router, p
     );
     assert_eq!(file["account"]["email"], "changed@example.invalid");
     let text = file.to_string();
-    for secret in ["password_hash", "token_hash", "mfa_secret", "sessions"] {
+    assert!(
+        file["data"]["sessions"]
+            .as_array()
+            .is_some_and(|s| !s.is_empty()),
+        "sign-in history"
+    );
+    assert!(file["readme"].is_string());
+    for secret in ["password_hash", "token_hash", "mfa_secret"] {
         assert!(!text.contains(secret), "export leaks {secret}");
     }
     sqlx::query("UPDATE users SET email='first@example.invalid' WHERE id=$1")

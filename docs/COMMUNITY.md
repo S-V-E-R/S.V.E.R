@@ -22,6 +22,7 @@ Not coming back: mentorship, team relay, patronage and the social feed. Restream
 - Ready within 7 days (usually minutes); the link is emailed, works for 7 days and needs the user to be signed in. One request per 24 hours.
 - Account deletion is already built (Login module); the Privacy Policy explains both.
 - **Done when:** a user requests an export, receives a link, downloads a complete zip that matches their data, and the link expires.
+- **As built (October 9, 2026; [LOGIN.md](LOGIN.md) "Account changes"):** the account page's **Download my data** returns the file straight away instead of emailing a link: one JSON file with a readme, built from every table keyed to the account (sign-in history included), after a sign-in confirmed in the last five minutes, 3 a day. That is the "usually minutes" case with nothing stored to expire. **Differs from the spec above** (no zip, no emailed 7-day link); Joe to confirm, or ask for the emailed zip for very large accounts.
 
 ## Chat commands and the channel bot
 
@@ -51,6 +52,9 @@ Carried over from legacy: each faction has its own bot persona, and a neutral on
 
 - Commands and bot replies follow the channel's banned-word and link rules.
 - **Done when:** a streamer creates custom and timed commands, viewers trigger them within their permissions and cooldowns, and the bot replies with variables filled in; each channel gets its faction's bot (or VOLK) with the chosen personality; AutoMod catches caps, repeats and spam and follows the warn-and-timeout ladder, with every action reversible by moderators; a giveaway picks a fair winner.
+
+- **As built, part 1 (October 9, 2026; `commands.rs`, migration 0069):** Creator Studio → Commands & bot. Custom `!name` commands (1–25 letters, numbers or underscores; reply up to 300 characters; Everyone, Followers, Subscribers or Moderators; cooldown 0–3600 s; up to 100) with `{user}`, `{channel}`, `{uptime}`, `{game}`, `{followers}`. Names can't take built-ins (`!marker`, `!rally`, `!help`, `!commands`, `!giveaway`, `!bot`) or the channel's counters. The owner, moderators and staff can always use them. Up to 5 timed messages every 10–1440 minutes, posted while LIVE only when chat has been active since the last one, one per channel per tick; "Add starter messages" adds chat rules and the owner's social links. `/help` lists what works in the chat, with the channel's commands. The bot (the owner's faction's PYRE, ECHO or FAVOR, or VOLK; the streamer can choose) speaks with a Bot badge; its lines are stored like linked-chat messages, so they keep their place in history, count toward nothing, and follow the channel's banned words and link rule. The personality setting is saved for part 2.
+- **Part 2 (next):** event lines in the chosen personality (follows, subs, raids, Surge, milestones; Chill and Event lines are drafted in LORE.md for Joe), AutoMod (caps, repeats, symbol and emote spam) with the warn-and-timeout ladder, giveaways, and the Nightbot/Fossabot command import ([DEVELOPER_PLATFORM.md](DEVELOPER_PLATFORM.md) §7).
 
 ## GIFs in chat
 

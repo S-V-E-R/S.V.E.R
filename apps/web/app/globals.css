@@ -115,6 +115,7 @@ button:active:not(:disabled), .button:active { box-shadow: inset 0 2px 0 rgba(0,
 }
 .badge.verified { border-color: var(--accent); color: var(--accent-light); }
 /* Linked chat platform badges (docs/LINKED_CHAT.md): each platform's brand color. */
+.bot-badge { border-color: var(--accent); color: var(--accent-light); }
 .platform-badge.twitch { border-color: #9146ff; color: #a970ff; }
 .platform-badge.youtube { border-color: #ff0033; color: #ff4e45; }
 .platform-badge.kick { border-color: #53fc18; color: #53fc18; }

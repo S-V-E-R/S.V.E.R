@@ -209,8 +209,7 @@ const SUBJECT_COLUMNS: [&str; 10] = [
 ];
 /// Left out: credentials and sessions, anti-abuse signals, staff internals, and tables that hold
 /// other people's personal details (copyright claimants, guardians, Take It Down requesters).
-const EXCLUDED_TABLES: [&str; 18] = [
-    "sessions",
+const EXCLUDED_TABLES: [&str; 17] = [
     "challenges",
     "recovery_codes",
     "mail_jobs",
@@ -232,13 +231,14 @@ const EXCLUDED_TABLES: [&str; 18] = [
 /// Column names never exported (secrets, keys, network data).
 const SECRET_COLUMNS: &str = "(hash|secret|token|sealed|password|mfa|seed|fingerprint|payload|endpoint|network|subscriptions|_key$|^key$|^ip$|^ip_|_ip$)";
 
-/// GET /api/auth/export: a JSON file of the account and every row keyed to it (a sign-in confirmed
-/// in the last five minutes; three an hour).
+/// GET /api/auth/export: a JSON file of the account and every row keyed to it, with a short readme
+/// (a sign-in confirmed in the last five minutes; three a day). Sign-in history comes from
+/// `sessions` without its token digests.
 async fn export(State(app): State<App>, jar: CookieJar) -> Result<impl IntoResponse> {
     let (tx, user, session) = auth::session(&app, &jar, true).await?;
     tx.commit().await?;
     auth::recent(&session)?;
-    sec::reserve(&app, vec![format!("export:{}", user.id)], 3, 3600).await?;
+    sec::reserve(&app, vec![format!("export:{}", user.id)], 3, 86400).await?;
     let mut db = app.db.acquire().await?;
     let account: Value = sqlx::query_scalar("SELECT to_jsonb(u) - ARRAY(SELECT column_name::text FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='users' AND column_name ~ $2) FROM users u WHERE id=$1")
         .bind(&user.id).bind(SECRET_COLUMNS).fetch_one(&mut *db).await?;
@@ -268,7 +268,8 @@ async fn export(State(app): State<App>, jar: CookieJar) -> Result<impl IntoRespo
             data.insert(key, rows);
         }
     }
-    let file = json!({"exported_at": chrono::Utc::now(), "account": account, "data": data});
+    let readme = "Your S.V.E.R data. \"account\" is your account record; \"data\" has one list per kind of record that belongs to you (for example profiles, follows, chat_messages, sessions for your sign-in history, ledger and payout records, subscriptions, strikes and appeals). Each row keeps the field names S.V.E.R uses. Passwords, security codes, keys and anti-abuse signals are left out, as are other people's personal details. Questions: see sver.tv/privacy.";
+    let file = json!({"readme": readme, "exported_at": chrono::Utc::now(), "account": account, "data": data});
     Ok((
         [
             (header::CONTENT_TYPE, "application/json".to_string()),
