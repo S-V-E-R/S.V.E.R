@@ -243,3 +243,6 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 /* Mature label: dark tag (ink text) and the warning shown before a labeled stream plays. */
 .mature-tag{background:var(--bg);color:var(--ink);border:1px solid var(--ink-dim)}
 .mature-warning{aspect-ratio:16/9;display:flex;flex-direction:column;justify-content:center;gap:var(--space-3,12px);padding:var(--space-4,16px);max-width:100%}
+/* /credits: wide tables scroll in place; license texts wrap. */
+.table-scroll{overflow-x:auto;max-width:100%}
+.license-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:0.85em;max-height:24rem;overflow:auto}
