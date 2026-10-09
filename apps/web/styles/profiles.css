@@ -243,3 +243,12 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 /* Mature label: dark tag (ink text) and the warning shown before a labeled stream plays. */
 .mature-tag{background:var(--bg);color:var(--ink);border:1px solid var(--ink-dim)}
 .mature-warning{aspect-ratio:16/9;display:flex;flex-direction:column;justify-content:center;gap:var(--space-3,12px);padding:var(--space-4,16px);max-width:100%}
+/* Pop-out chat (docs/CHANNEL_ADDITIONS.md): chat alone, from 280 px wide; compact OBS dock; overlay. */
+.chat-popout{margin-left:var(--space-2,8px)}
+.popout-chat{min-height:100vh;min-width:280px;padding:8px;display:flex;flex-direction:column;background:var(--bg)}
+.popout-chat .chat{flex:1;display:flex;flex-direction:column;min-height:0;max-height:none}
+.popout-chat .chat-messages{flex:1;overflow-y:auto}
+.popout-dock{padding:0}.chat-compact{padding:6px;font-size:0.92em}
+.popout-overlay{background:transparent;padding:0;min-height:0}
+.chat-overlay{background:transparent;border:0;color:#fff;text-shadow:0 1px 2px #000,0 0 4px #000}
+.chat-overlay .chat-messages{list-style:none;margin:0;padding:8px;display:flex;flex-direction:column;gap:4px}

@@ -612,8 +612,14 @@ pub async fn read(
     let viewer = profiles::viewer(&app, &jar).await?;
     mature_gate(&app, &channel, viewer.as_ref().map(|v| v.id.as_str())).await?;
     let hidden = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await?;
+    let fade: i32 = sqlx::query_scalar(
+        "SELECT coalesce((SELECT overlay_fade_seconds FROM chat_settings WHERE channel_id=$1),30)",
+    )
+    .bind(&channel)
+    .fetch_one(&app.db)
+    .await?;
     Ok(Json(
-        json!({"messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?, "subs_only":crate::moderation::subs_only(&app, &channel).await?}),
+        json!({"overlay_fade_seconds": fade, "messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?, "subs_only":crate::moderation::subs_only(&app, &channel).await?}),
     ))
 }
 pub async fn post(
