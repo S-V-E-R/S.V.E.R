@@ -75,6 +75,12 @@ async fn poll_json(db: &mut PgConnection, id: &str) -> Res<Value> {
 }
 async fn publish_poll(app: &App, channel: &str, id: &str) -> Res<()> {
     let poll = poll_json(&mut *app.db.acquire().await?, id).await?;
+    let kind = if poll["kind"] == "prediction" {
+        "prediction"
+    } else {
+        "poll"
+    };
+    crate::events::emit_after(app, channel, kind, poll.clone()).await?;
     app.chat
         .publish(channel, None, 0, json!({"type": "poll", "poll": poll}));
     Ok(())

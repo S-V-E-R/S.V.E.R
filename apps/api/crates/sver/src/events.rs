@@ -33,8 +33,16 @@ use std::{
 };
 
 /// Public channel topics (client ID only) and private ones (owner or moderator, `events:private`).
-const PUBLIC: [&str; 3] = ["live", "follows", "raids"];
-const PRIVATE: [&str; 3] = ["follows:detail", "subs", "tributes"];
+const PUBLIC: [&str; 7] = [
+    "live",
+    "follows",
+    "raids",
+    "board",
+    "poll",
+    "prediction",
+    "surge",
+];
+const PRIVATE: [&str; 4] = ["follows:detail", "subs", "tributes", "skills"];
 const MAX_TOPICS: usize = 200;
 const MAX_CONNECTIONS: usize = 10;
 /// The hub channel the drain publishes on.
@@ -61,6 +69,14 @@ pub async fn emit(
         .bind(data)
         .execute(db)
         .await?;
+    Ok(())
+}
+
+/// Emits right after a change commits, beside the page's own live update (board presses, poll
+/// tallies, Surge). Like that update, a crash between the commit and this can lose one display
+/// event, never a record.
+pub async fn emit_after(app: &App, channel: &str, kind: &str, data: Value) -> Res<()> {
+    emit(&mut *app.db.acquire().await?, channel, kind, data).await?;
     Ok(())
 }
 
