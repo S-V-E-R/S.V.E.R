@@ -104,6 +104,9 @@ pub async fn tick(app: &App) -> Result<()> {
     let _ = sqlx::query("DELETE FROM oauth_codes WHERE expires_at<now()")
         .execute(&app.db)
         .await;
+    if crate::events::prune(app).await.is_err() {
+        eprintln!("events_event=prune outcome=retry");
+    }
     if crate::dms::tick(app).await.is_err() {
         eprintln!("dm_event=expiry outcome=retry");
     }

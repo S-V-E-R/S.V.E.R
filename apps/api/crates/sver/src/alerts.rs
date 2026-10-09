@@ -149,6 +149,8 @@ pub async fn fan_out(app: &App) -> Res<()> {
         let Some((broadcast, owner)) = row else {
             return Ok(());
         };
+        // Live events: handled once per broadcast here, whether or not alerts are throttled.
+        crate::events::emit(&mut tx, &owner, "live", json!({"live": true})).await?;
         // At most one alert per channel every 6 hours; restricted channels send nothing.
         let channel: Option<(String, String)> = sqlx::query_as("SELECT c.username,c.display_name FROM channel_users c, broadcasts b WHERE c.id=$2 AND c.eligible AND b.id=$1 AND NOT EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.alert_state='sent' AND p.started_at>b.started_at-interval '6 hours')")
             .bind(&broadcast)

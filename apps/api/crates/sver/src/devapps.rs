@@ -631,6 +631,37 @@ fn unauthorized(message: &'static str) -> Fail {
 }
 /// The calling app from `SVER-Client-Id` (required on every API call), and the person when a
 /// bearer token is given; `scope` is required when set. Rate-limited per app and person.
+/// Checks an app (and, with a token, the person and their granted scopes). Shared by the HTTP API
+/// and the events socket, which passes them as query parameters.
+pub async fn identify(
+    app: &App,
+    client: &str,
+    token: Option<&str>,
+) -> Res<Option<(String, Vec<String>)>> {
+    let Some(token) = token else {
+        let known: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM dev_apps WHERE id=$1 AND suspended_at IS NULL)",
+        )
+        .bind(client)
+        .fetch_one(&app.db)
+        .await?;
+        return if known {
+            Ok(None)
+        } else {
+            Err(unauthorized("Unknown or suspended app."))
+        };
+    };
+    let found: Option<(String, String, Vec<String>)> = sqlx::query_as("UPDATE oauth_grants g SET last_used_at=now() FROM oauth_tokens t, dev_apps a
+        WHERE t.token_hash=$1 AND t.kind='access' AND t.expires_at>now() AND g.id=t.grant_id AND g.revoked_at IS NULL AND a.id=g.app_id AND a.suspended_at IS NULL
+        RETURNING g.user_id,g.app_id,g.scopes")
+        .bind(sec::digest(token)).fetch_optional(&app.db).await?;
+    let (user, app_id, scopes) =
+        found.ok_or_else(|| unauthorized("That access token is invalid or expired."))?;
+    if app_id != client {
+        return Err(unauthorized("That token belongs to another app."));
+    }
+    Ok(Some((user, scopes)))
+}
 pub async fn caller(
     app: &App,
     headers: &HeaderMap,
@@ -645,17 +676,8 @@ pub async fn caller(
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    let user = match token {
-        Some(token) => {
-            let found: Option<(String, String, Vec<String>)> = sqlx::query_as("UPDATE oauth_grants g SET last_used_at=now() FROM oauth_tokens t, dev_apps a
-                WHERE t.token_hash=$1 AND t.kind='access' AND t.expires_at>now() AND g.id=t.grant_id AND g.revoked_at IS NULL AND a.id=g.app_id AND a.suspended_at IS NULL
-                RETURNING g.user_id,g.app_id,g.scopes")
-                .bind(sec::digest(token)).fetch_optional(&app.db).await?;
-            let (user, app_id, scopes) =
-                found.ok_or_else(|| unauthorized("That access token is invalid or expired."))?;
-            if app_id != client {
-                return Err(unauthorized("That token belongs to another app."));
-            }
+    let user = match identify(app, &client, token).await? {
+        Some((user, scopes)) => {
             if scope.is_some_and(|s| !scopes.iter().any(|g| g == s)) {
                 return Err(Fail::denied(
                     "This token doesn't have the permission for that.",
@@ -664,18 +686,7 @@ pub async fn caller(
             Some(user)
         }
         None if scope.is_some() => return Err(unauthorized("This call needs an access token.")),
-        None => {
-            let known: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM dev_apps WHERE id=$1 AND suspended_at IS NULL)",
-            )
-            .bind(&client)
-            .fetch_one(&app.db)
-            .await?;
-            if !known {
-                return Err(unauthorized("Unknown or suspended app."));
-            }
-            None
-        }
+        None => None,
     };
     let who = user.as_deref().unwrap_or("-");
     profiles::rate(app, format!("api:{client}:{who}"), 600, 60).await?;

@@ -42,6 +42,8 @@ mod discovery;
 mod dms;
 #[path = "streams/engagement.rs"]
 mod engagement;
+#[path = "streams/events.rs"]
+mod events;
 #[path = "streams/gateway.rs"]
 mod gateway;
 #[path = "streams/integrity.rs"]
@@ -473,6 +475,7 @@ async fn exercise(e: &Env) {
     commands::exercise(e).await;
     dms::exercise(e).await;
     devapps::exercise(e).await;
+    events::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;
     reports::exercise(e).await;

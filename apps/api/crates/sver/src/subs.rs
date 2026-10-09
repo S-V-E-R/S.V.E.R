@@ -111,6 +111,27 @@ async fn payer(app: &App, jar: &CookieJar, name: &str) -> Res<(crate::auth::User
     Ok((user, channel, username))
 }
 
+/// The channel's private `subs` event (docs/DEVELOPER_PLATFORM.md §2).
+async fn sub_event(
+    tx: &mut PgConnection,
+    channel: &str,
+    user: &str,
+    tier: i16,
+    months: i32,
+) -> Res<()> {
+    let name: Option<String> = sqlx::query_scalar("SELECT username FROM users WHERE id=$1")
+        .bind(user)
+        .fetch_optional(&mut *tx)
+        .await?;
+    crate::events::emit(
+        tx,
+        channel,
+        "subs",
+        json!({"user": name, "tier": tier, "months": months}),
+    )
+    .await?;
+    Ok(())
+}
 /// Adds one month (a Valor month or a gift). Gifts keep a higher tier the viewer already has.
 async fn grant(
     tx: &mut PgConnection,
@@ -127,6 +148,7 @@ async fn grant(
         .bind(channel).bind(user).bind(tier).bind(keep_higher)
         .fetch_one(&mut *tx).await?;
     crate::bot::record(tx, channel, "sub", user, months.into()).await?;
+    sub_event(tx, channel, user, tier, months).await?;
     // Subscribing counts toward Surge for a viewer who is watching (docs/CROWDSYNC.md).
     crate::surge::participated(tx, channel, user).await?;
     Ok(())
@@ -719,6 +741,7 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
         .fetch_one(&mut *tx).await?;
     if month > 0 {
         crate::bot::record(tx, channel, "sub", user, months.into()).await?;
+        sub_event(tx, channel, user, tier, months).await?;
     }
     if reason == "subscription_create" {
         acknowledge(app, tx, channel, user, tier, end).await?;

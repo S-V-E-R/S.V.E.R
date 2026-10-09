@@ -26,6 +26,7 @@ pub mod discovery;
 pub mod dms;
 pub mod emotes;
 pub mod engagement;
+pub mod events;
 pub mod factions;
 pub mod gateway;
 pub mod guilds;
@@ -454,6 +455,7 @@ pub fn router(app: App) -> Router {
         .merge(bot::routes())
         .merge(dms::routes())
         .merge(devapps::routes())
+        .merge(events::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())
         .merge(payouts::routes())
