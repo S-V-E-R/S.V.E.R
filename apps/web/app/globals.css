@@ -375,3 +375,8 @@ a.takedown-link, .channel a.takedown-link { min-height: 44px; padding: 0 4px; di
 a.takedown-link:hover { color: var(--ink); }
 .status-mark { display: inline-flex; align-items: center; vertical-align: -2px; margin-right: 6px; color: var(--ink-dim); }
 .status-mark.ok { color: var(--accent); }
+/* Progression: level and XP bar on the player card. */
+.player-card-xp { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.player-level { font-family: var(--font-display); font-weight: 700; color: var(--ink-muted); }
+.xp-bar { flex: 1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; min-width: 40px; }
+.xp-bar > span { display: block; height: 100%; background: var(--accent); }

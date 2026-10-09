@@ -619,5 +619,6 @@ pub async fn card(
         "viewer": {"signed_in": viewer.is_some(), "is_self": is_self, "following": following, "blocked": blocked},
         "faction": crate::factions::membership(&mut db, &me.id).await?,
         "live": crate::playback::is_live(&mut db, &me.id).await?,
+        "level": crate::progression::level(crate::progression::total(&mut db, &me.id).await?),
     })))
 }

@@ -41,6 +41,7 @@ pub mod probe;
 pub mod profile_import;
 pub mod profile_jobs;
 pub mod profiles;
+pub mod progression;
 pub mod raids;
 pub mod rename;
 pub mod reserved;
@@ -434,6 +435,7 @@ pub fn router(app: App) -> Router {
         .merge(support::routes())
         .merge(subs::routes())
         .merge(open_data::routes())
+        .merge(progression::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())
         .merge(payouts::routes())

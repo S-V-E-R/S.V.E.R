@@ -44,7 +44,9 @@ async function sidebarLive(signedIn: boolean): Promise<LiveCard[]> {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const account = await currentAccount();
-  const [alerts, live] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account)]);
+  const [alerts, live, progress] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account), account ? apiGet<{ xp: number; level: number; level_xp: number; next_xp: number | null }>("/api/me/progression").then(r => r.data) : null]);
+  // Level and XP bar on the player card (docs/PROGRESSION.md).
+  const xpBar = progress && <span className="player-card-xp" title={`${progress.xp.toLocaleString()} XP`}><span className="player-level">Lv {progress.level}</span><span className="xp-bar" aria-hidden="true"><span style={{ width: `${progress.next_xp ? Math.round(100 * (progress.xp - progress.level_xp) / (progress.next_xp - progress.level_xp)) : 100}%` }} /></span></span>;
   const initial = account?.username.slice(0, 1).toUpperCase();
 
   const faction = factionOf(account?.faction);
@@ -68,11 +70,11 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     {account && (faction
       ? <Link href={`/${account.username}`} className="player-card frame">
         <Crest faction={account.faction} initial={initial ?? "?"} size={56} label={faction.name} />
-        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">{faction.title}</span></span>
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">{faction.title}</span>{xpBar}</span>
       </Link>
       : <Link href="/welcome" className="player-card frame unchosen">
         <Crest faction={null} initial={initial ?? "?"} size={56} />
-        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side</span></span>
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side</span>{xpBar}</span>
       </Link>)}
     <SideNav faction={faction ? { name: faction.name, slug: faction.slug } : null} />
     {(account || live.length > 0) && <section className="side-section" aria-labelledby="side-live">

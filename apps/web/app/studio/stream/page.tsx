@@ -14,7 +14,7 @@ type Stream = {
   configured: boolean; eligible: boolean; settings: Settings; disconnect_pending: boolean;
   last_broadcast?: { ended_at: string; not_counted: number } | null;
   credential: { created_at: string; revoked: boolean } | null;
-  broadcast: { state: string; started_at: string; reconnect_deadline: string | null; observed_at: string | null; end_reason?: string | null; health: Health } | null;
+  broadcast: { state: string; started_at: string; reconnect_deadline: string | null; observed_at: string | null; end_reason?: string | null; health: Health; scouts?: number } | null;
 };
 type Account = { has_password: boolean; reauthenticated: boolean };
 type Key = { server: string; key: string; whip?: { url: string; token: string } | null; srt?: string | null; disconnect_pending: boolean };
@@ -195,6 +195,7 @@ export default function StreamStudio() {
       {health.keyframe_warning && <p role="alert">Keyframes are about {health.keyframe_seconds} seconds apart. In OBS, set Keyframe Interval to 1 s; longer intervals slow joining and recovery.</p>}
       {health.b_frames && <p role="alert">B-frames are on. In OBS, set B-frames to 0; low-latency playback can stutter with them.</p>}
       {health.bitrate_warning && <p role="alert">Incoming bitrate exceeds the provisional 8 Mbps warning level. Reduce it if playback is unstable.</p>}
+      {!!broadcast?.scouts && <p className="muted">Scouted by {broadcast.scouts} {broadcast.scouts === 1 ? "viewer" : "viewers"}: they found you early and watched for 10 minutes.</p>}
       {broadcast?.observed_at && <p className="small-print">Last media observation: {new Date(broadcast.observed_at).toLocaleTimeString()}. Measurements update while OBS sends media.</p>}
     </Section>
   </>;
