@@ -74,6 +74,18 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
         }
     });
+    // Restreaming relays (docs/LINKED_CHAT.md); off unless RESTREAM_SOURCE is set.
+    if let Some(source) = sver::restream::source() {
+        let relays = app.clone();
+        tokio::spawn(async move {
+            loop {
+                if sver::restream::tick(&relays, &source).await.is_err() {
+                    eprintln!("restream_event=supervise outcome=retry");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        });
+    }
     let jobs = app.clone();
     tokio::spawn(async move {
         loop {

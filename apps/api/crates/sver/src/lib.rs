@@ -46,6 +46,7 @@ pub mod progression;
 pub mod raids;
 pub mod rename;
 pub mod reserved;
+pub mod restream;
 pub mod roadmap;
 pub mod safety;
 pub mod security;
@@ -438,6 +439,7 @@ pub fn router(app: App) -> Router {
         .merge(open_data::routes())
         .merge(progression::routes())
         .merge(account::routes())
+        .merge(restream::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())
         .merge(payouts::routes())

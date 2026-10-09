@@ -60,6 +60,8 @@ mod reports;
 mod resets;
 #[path = "streams/rest.rs"]
 mod rest;
+#[path = "streams/restream.rs"]
+mod restream;
 #[path = "streams/staff_streams.rs"]
 mod staff_streams;
 #[path = "streams/staff_window.rs"]
@@ -458,6 +460,7 @@ async fn exercise(e: &Env) {
     moments::exercise(e).await;
     gateway::exercise(e).await;
     rest::exercise(e).await;
+    restream::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;
     reports::exercise(e).await;

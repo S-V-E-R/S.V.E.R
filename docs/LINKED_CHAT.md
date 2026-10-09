@@ -20,6 +20,17 @@ It has two parts, built together right after Live streams closes: **restreaming*
 - **Studio insight:** after a stream, Creator Studio shows how S.V.E.R chat and viewers compared with the linked platforms' chat activity, so streamers can see their S.V.E.R community grow.
 - **Done when:** a streamer sends one OBS stream and it appears live on S.V.E.R and on two other platforms without re-encoding; a rejected key and a dropped destination show the right status and recover; keys are never exposed in responses or logs; the budget holds and never degrades S.V.E.R viewers.
 
+### Restreaming as built (October 9, 2026)
+
+- Creator Studio → Restream (`/studio/restream`); API `GET|POST /api/me/restream`, `PATCH|DELETE /api/me/restream/{id}` (`restream.rs`, migration 0067). Adding or changing a destination needs a verified account with 2FA, like streaming.
+- Twitch and YouTube use their default ingest servers unless the streamer gives one; Kick and custom destinations need the server from the platform (Kick's differs per account). Servers must be `rtmp://` or `rtmps://`, with no credentials or query in the address, and in production must resolve only to public addresses.
+- Keys are sealed with the site key and are **write-only**: no response ever returns them, and the streamer replaces a key instead of viewing it (simpler and stricter than "shown after 2FA").
+- The relay supervisor runs every 3 seconds inside the API when `RESTREAM_SOURCE` is set (production: `rtmp://127.0.0.1:1936/rebuild`, the media server's local RTMP app). For each enabled destination of a LIVE broadcast it runs `ffmpeg -c copy` from the source to `{server}/{key}`, with ffmpeg's output discarded because it can contain the key. Statuses: Off air, Connecting, Live (up 15 s), Reconnecting (backoff 2, 4… up to 60 s), Key rejected (3 fast failures in a row; retried every 5 minutes, cleared when the key or server is saved) and Waiting for capacity.
+- Capacity: `RESTREAM_MAX` relays at once (default 100; at about 8 Mbps each that is under a tenth of the guaranteed 10 Gbps). Over it, destinations wait with a notice and the S.V.E.R stream is unaffected.
+- An API restart (a deploy) drops relays for a few seconds; the platforms keep the stream session through short reconnects.
+- Tests: `tests/streams/restream.rs` (validation, the 3-destination limit, keys never returned and sealed at rest, and the supervisor going Connecting → Reconnecting → Key rejected against a closed port); unit test `restream::tests`.
+- Not yet: the post-stream comparison with linked platforms' chat (it needs Linked chat).
+
 ## Linked chat
 
 ### What it does
