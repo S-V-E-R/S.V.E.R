@@ -115,6 +115,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** an approved signature emote renders in other channels only in the `username/Code` form, the owner's opt-out works, and removal stops it everywhere.
 
+**Built October 9, 2026 (migration 0061).** `channel_emotes.signature` (one open emote per channel; Studio → Emotes → Make signature). It works elsewhere only once staff have reviewed it (`reviewed_at`, the existing emote review) and while it is visible. Chat resolves `username/Code` tokens through `GET /api/emotes/signatures` (looked up live, once per code per page, so removal or rejection stops it), and the dock has a Signature tab of followed channels' emotes. `chat_settings.allow_signatures` (Studio → Chat → Rules) turns others' off in a chat. The owner shows in the tooltip; a crest on hover is not built yet.
+
 ## Open data
 
 A public page at `/open-data`, linked from About and the footer, showing how S.V.E.R is doing and where the money goes.

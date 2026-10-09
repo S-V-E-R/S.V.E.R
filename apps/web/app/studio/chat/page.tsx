@@ -7,7 +7,7 @@ import type { Chip } from "../../../lib/types";
 
 type View = {
   role: string;
-  settings: { slow_mode_seconds: number; block_links: boolean; banned_words: string[]; overlay_fade_seconds?: number };
+  settings: { slow_mode_seconds: number; block_links: boolean; banned_words: string[]; overlay_fade_seconds?: number; allow_signatures?: boolean };
   moderators: Chip[];
   restrictions: { user: Chip; kind: "timeout" | "ban"; until: string | null }[];
   log: { action: string; actor_role: string; actor: string | null; target: string | null; reason: string; created_at: string }[];
@@ -41,6 +41,7 @@ export default function ChatStudio() {
       slow_mode_seconds: Number(form.get("slow")), block_links: form.get("links") === "on",
       banned_words: words.split("\n").map(w => w.trim()).filter(Boolean), reason: "Updated in Creator Studio",
       overlay_fade_seconds: Number(form.get("fade")) || 30,
+      allow_signatures: form.get("signatures") === "on",
     });
     setState(result.ok ? { saved: "Chat rules saved." } : result);
     if (result.ok) load();
@@ -72,6 +73,7 @@ export default function ChatStudio() {
       <form onSubmit={saveRules} className="stack">
         <label className="field"><span>Slow mode (0 for off, or 3–120 seconds between messages)</span><input name="slow" type="number" min={0} max={120} defaultValue={s.slow_mode_seconds} /></label>
         <label className="row"><input name="links" type="checkbox" defaultChecked={s.block_links} /> Block links</label>
+        <label className="row"><input name="signatures" type="checkbox" defaultChecked={s.allow_signatures ?? true} /> Show other channels&apos; signature emotes in my chat</label>
         <label className="field"><span>Banned words or phrases (one per line, up to 200)</span><textarea value={words} onChange={e => setWords(e.target.value)} rows={5} /></label>
         <label className="field narrow"><span>OBS chat overlay: seconds each message stays (10–120)</span><input name="fade" type="number" min={10} max={120} defaultValue={s.overlay_fade_seconds ?? 30} /></label>
         <button type="submit" className="small">Save rules</button>

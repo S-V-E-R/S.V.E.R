@@ -19,7 +19,9 @@ export function subBadge(months: number) {
   const step = [9, 6, 3].find(m => months >= m) ?? 1;
   return `${step} ${step === 1 ? "month" : "months"}`;
 }
-type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean };
+type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean; allow_signatures?: boolean };
+/** Another channel's signature emote, written username/Code (docs/CHANNEL_ADDITIONS.md "Signature emote"). */
+const SIGNATURE = /(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)/g;
 type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null } | { type: "subs_only"; on: boolean } | { type: "board_effect" } | { type: "board_input" } | { type: "board" } | { type: "poll" } | { type: "counters" } | { type: "rally" } | { type: "surge" } | { type: "board_state" } | { type: "board_result" };
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -27,8 +29,9 @@ const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: 
 function MessageBody({ message, account, emotes }: { message: Message; account: string | null; emotes: ChannelEmote[] }) {
   const parts: React.ReactNode[] = [];
   let cursor = 0;
-  for (const match of message.body.matchAll(/(?<!\S)[A-Za-z0-9]{3,20}(?!\S)|(?<![\p{L}\p{N}_@])@([A-Za-z0-9_]{3,25})(?![\p{L}\p{N}_])/gu)) {
-    const emote = !match[1] && emotes.find(e => e.code === match[0]);
+  for (const match of message.body.matchAll(/(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)|(?<!\S)[A-Za-z0-9]{3,20}(?!\S)|(?<![\p{L}\p{N}_@])@([A-Za-z0-9_]{3,25})(?![\p{L}\p{N}_])/gu)) {
+    // Signature emotes match their username case-insensitively; channel emote codes are exact.
+    const emote = !match[1] && emotes.find(e => e.code === match[0] || (e.code.includes("/") && e.code.toLowerCase() === match[0].toLowerCase()));
     const name = match[1] && message.mentions.find(name => name.toLowerCase() === match[1].toLowerCase());
     if (!name && !emote) continue;
     parts.push(message.body.slice(cursor, match.index));
@@ -67,6 +70,9 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
   const [restrictions, setRestrictions] = useState<{ user: Chip; kind: string; until: string | null }[]>([]);
   const [pinned, setPinned] = useState<Message | null>(null);
   const [emotes, setEmotes] = useState<ChannelEmote[]>([]);
+  const [signatures, setSignatures] = useState<ChannelEmote[]>([]);
+  const [allowSignatures, setAllowSignatures] = useState(true);
+  const askedSignatures = useRef(new Set<string>());
   const [reply, setReply] = useState<Reply | null>(null);
   const [busy, setBusy] = useState(false);
   // Valor to pay with the next message (docs/SUPPORT.md "Purchased Valor"); null when off.
@@ -136,7 +142,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     const fallback = () => {
       if (closed || poll) return;
       setMode("polling");
-      const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
+      const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setAllowSignatures(r.data.allow_signatures ?? true); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
       void load();
       poll = setInterval(() => { if (!document.hidden) void load(); }, 4000);
     };
@@ -148,7 +154,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
       ws.onmessage = event => {
         if (closed) return;
         const data = JSON.parse(event.data) as Event;
-        if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); }
+        if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); }
         else if (data.type === "protect") setFollowersOnly(data.until);
         else if (data.type === "subs_only") setSubsOnly(data.on);
         else if (data.type === "emotes") setEmotes(data.emotes);
@@ -240,16 +246,25 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     setBusy(false);
   }
 
+  // Signature emotes are looked up live (once per code per page), so a removed one stops showing.
+  useEffect(() => {
+    if (!allowSignatures) return;
+    const wanted = [...new Set(messages.flatMap(m => m.body.match(SIGNATURE) ?? []))].filter(code => !askedSignatures.current.has(code.toLowerCase())).slice(0, 30);
+    if (!wanted.length) return;
+    wanted.forEach(code => askedSignatures.current.add(code.toLowerCase()));
+    void send<{ emotes: ChannelEmote[] }>("GET", `/api/emotes/signatures?codes=${encodeURIComponent(wanted.join(","))}`).then(r => { if (r.ok && r.data.emotes.length) setSignatures(known => [...known, ...r.data.emotes]); });
+  }, [messages, allowSignatures]);
+  const shown = allowSignatures ? [...emotes, ...signatures] : emotes;
   if (variant === "overlay") return <section className="chat chat-overlay" aria-label="Chat">
     <ol className="chat-messages" aria-live="polite">{messages.filter(m => clock - Date.parse(m.created_at) < fade * 1000).map(m => <li key={m.id}>
-      <strong>{m.author.display_name}</strong>: <MessageBody message={m} account={null} emotes={emotes} />
+      <strong>{m.author.display_name}</strong>: <MessageBody message={m} account={null} emotes={shown} />
     </li>)}</ol>
   </section>;
   return <section className={variant === "dock" ? "chat panel chat-compact" : "chat panel"} aria-label="Chat">
     {variant !== "dock" && <h2>Chat {mode !== "live" && <span className="muted small">{mode === "polling" ? "(updates every few seconds)" : "(connecting…)"}</span>}
       {variant === "full" && !squad && <button type="button" className="small quiet chat-popout" onClick={() => window.open(`/${encodeURIComponent(username)}/chat`, `sver-chat-${username}`, "width=400,height=700")}>Pop out</button>}</h2>}
     {pinned && <aside className="chat-pin" aria-label="Pinned message" aria-live="polite">
-      <strong>Pinned message</strong><div className="chat-pin-content"><strong>{pinned.author.display_name}: </strong><MessageBody message={pinned} account={account} emotes={emotes} /></div>
+      <strong>Pinned message</strong><div className="chat-pin-content"><strong>{pinned.author.display_name}: </strong><MessageBody message={pinned} account={account} emotes={shown} /></div>
       {canPin && <button type="button" className="small quiet" onClick={() => changePin(null)}>Unpin</button>}
     </aside>}
     {notice && <p className="chat-system" role="status">{notice}</p>}
@@ -269,7 +284,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
         {m.creator_tier ? <span className="badge tier-badge" title="Creator tier">{CREATOR_TIERS[m.creator_tier]}</span> : null}
         {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber`}>{subBadge(m.sub.months)}</span>}
         {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet">MAGNet</span>}
-        {m.role && <span className="badge">{m.role === "owner" && squad && m.author.username?.toLowerCase() !== username.toLowerCase() ? "Co-streamer" : { owner: "Broadcaster", moderator: "Moderator", staff: "Staff" }[m.role]}</span>}: <MessageBody message={m} account={account} emotes={emotes} />
+        {m.role && <span className="badge">{m.role === "owner" && squad && m.author.username?.toLowerCase() !== username.toLowerCase() ? "Co-streamer" : { owner: "Broadcaster", moderator: "Moderator", staff: "Staff" }[m.role]}</span>}: <MessageBody message={m} account={account} emotes={shown} />
         <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.author.display_name}`}>Actions</summary><div className="chat-message-controls">
         {account && <button type="button" className="small quiet" aria-label={`Reply to ${m.author.display_name}`} onClick={() => { setReply({ id: m.id, username: m.author.username, body: Array.from(m.body.replace(/[\r\n]+/g, " ")).slice(0, 80).join("") }); input.current?.focus(); }}>Reply</button>}
         {canPin && <button type="button" className="small quiet" aria-label={`Pin message from ${m.author.display_name}`} onClick={() => changePin(m.id)}>Pin</button>}
