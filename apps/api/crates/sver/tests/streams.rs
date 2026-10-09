@@ -40,6 +40,8 @@ mod engagement;
 mod gateway;
 #[path = "streams/integrity.rs"]
 mod integrity;
+#[path = "streams/linked_chat.rs"]
+mod linked_chat;
 #[path = "streams/magnet.rs"]
 mod magnet;
 #[path = "streams/moderation.rs"]
@@ -461,6 +463,7 @@ async fn exercise(e: &Env) {
     gateway::exercise(e).await;
     rest::exercise(e).await;
     restream::exercise(e).await;
+    linked_chat::exercise(e).await;
     moderation::exercise(e).await;
     chat_social::exercise(e).await;
     reports::exercise(e).await;

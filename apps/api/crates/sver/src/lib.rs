@@ -29,6 +29,7 @@ pub mod integrity;
 pub mod ipinfo;
 pub mod jobs;
 pub mod ledger;
+pub mod linked_chat;
 pub mod magnet;
 pub mod media;
 pub mod moderation;
@@ -321,6 +322,8 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         && req.uri().path() != "/api/notifications/unsubscribe"
         // Stripe posts webhooks without an Origin; the signature is checked in support::webhook.
         && req.uri().path() != "/api/stripe/webhook"
+        // Twitch EventSub posts without an Origin; its HMAC signature is checked in linked_chat.
+        && req.uri().path() != "/api/integrations/twitch/eventsub"
         && req.headers().get("origin").and_then(|v| v.to_str().ok())
         != Some(&app.config.origin)
     {
@@ -440,6 +443,7 @@ pub fn router(app: App) -> Router {
         .merge(progression::routes())
         .merge(account::routes())
         .merge(restream::routes())
+        .merge(linked_chat::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())
         .merge(payouts::routes())

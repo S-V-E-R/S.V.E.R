@@ -26,6 +26,7 @@ export default function PrivacyPage() {
         <li><strong>Technical information:</strong> IP addresses, browser and device information, session records and service logs used for operation, security and troubleshooting.</li>
       </ul>
       <p>When you sign in with Google, Twitch or Discord, we receive a provider account identifier and the email and profile information returned for the requested sign-in permissions. We use this to identify your account and complete sign-in or linking. We do not receive your password for that provider.</p>
+      <p>If you stream and choose <strong>Linked chat</strong>, you link your account on Twitch (and, when available, YouTube or Kick) with permission to read your channel&apos;s chat and post as you. We keep that access encrypted, use it only while you&apos;re live and when you reply, and delete it when you unlink or your account is erased. Chat from those platforms is shown in your S.V.E.R chat; for each message we store the platform, the sender&apos;s ID, name and role there, and the text, for 7 days. If you choose <strong>Restream</strong>, we store the stream keys you give us, encrypted, and send your stream to those platforms while you&apos;re live.</p>
       <p>Information transferred from an earlier S.V.E.R account may be retained to preserve that account and its profile, linked accounts and relationships.</p>
     </> },
     { title: "How we use information", content: <>

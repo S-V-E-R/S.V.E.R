@@ -11,7 +11,10 @@ import { ChatDock } from "./ChatDock";
 import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
-type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null; loyalty?: number };
+type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null; loyalty?: number; outside?: Outside | null };
+/** A message from a linked platform (docs/LINKED_CHAT.md): always badged, never a S.V.E.R account. */
+type Outside = { platform: string; sender_id: string; name: string; login: string; role: string | null; url: string | null };
+const PLATFORM_NAMES: Record<string, string> = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
 const LOYALTY = ["Newcomer", "Regular", "Devoted", "Veteran", "Legend"];
 /** Subscriber badge milestones: 1, 3, 6, 9 and 12 months, then each further year (docs/SUPPORT.md). */
 export function subBadge(months: number) {
@@ -75,6 +78,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
   const [allowSignatures, setAllowSignatures] = useState(true);
   const askedSignatures = useRef(new Set<string>());
   const [reply, setReply] = useState<Reply | null>(null);
+  const [outsideReply, setOutsideReply] = useState<{ id: string; platform: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   // Valor to pay with the next message (docs/SUPPORT.md "Purchased Valor"); null when off.
   const [tribute, setTribute] = useState<number | null>(null);
@@ -203,6 +207,15 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     else if (squad) await loadRole();
   }
 
+  async function outsideAction(m: Message, action: "hide" | "mute" | "mute-forever") {
+    const o = m.outside;
+    if (!o) return;
+    const result = action === "hide"
+      ? await send("POST", `${path}/outside/${encodeURIComponent(m.id)}/hide`)
+      : await send("POST", `${path}/outside-mutes`, { platform: o.platform, sender_id: o.sender_id, permanent: action === "mute-forever" });
+    if (!result.ok) setError(result.error);
+  }
+
   async function changePin(messageId: string | null, reason?: string) {
     reason ??= window.prompt("Reason for changing the pinned message (required)")?.trim();
     if (!reason) return;
@@ -221,6 +234,13 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     if (/^\/flag$/i.test(body) && !pinDraft) {
       const result = await send("POST", "/api/me/magnet/flag");
       if (result.ok) setDraft(""); else setError(result.error);
+      return;
+    }
+    if (outsideReply && !pinDraft) {
+      setBusy(true);
+      const result = await send("POST", "/api/me/linked-chat/reply", { platform: outsideReply.platform, body, reply_to: outsideReply.id });
+      setBusy(false);
+      if (result.ok) { setDraft(""); setOutsideReply(null); } else setError(result.error);
       return;
     }
     const raid = /^\/(raid|unraid)(?:\s+@?([A-Za-z0-9_]{3,25}))?$/i.exec(body);
@@ -257,7 +277,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
   }, [messages, allowSignatures]);
   const shown = allowSignatures ? [...emotes, ...signatures] : emotes;
   if (variant === "overlay") return <section className="chat chat-overlay" aria-label="Chat">
-    <ol className="chat-messages" aria-live="polite">{messages.filter(m => clock - Date.parse(m.created_at) < fade * 1000).map(m => <li key={m.id}>
+    <ol className="chat-messages" aria-live="polite">{messages.filter(m => !m.outside && clock - Date.parse(m.created_at) < fade * 1000).map(m => <li key={m.id}>
       <strong>{m.author.display_name}</strong>: <MessageBody message={m} account={null} emotes={shown} />
     </li>)}</ol>
   </section>;
@@ -275,7 +295,18 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Followers-only chat for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
     <ol className="chat-messages" ref={list} aria-live="polite">
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
-      {messages.map(m => <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
+      {messages.map(m => m.outside ? <li key={m.id} className="chat-outside">
+        <span className="muted">{time(m.created_at)}</span>{" "}
+        <span className={`badge platform-badge ${m.outside.platform}`} title={`From ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}>{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}<span className="sr-only"> message</span></span>{" "}
+        {m.outside.url ? <a href={m.outside.url} target="_blank" rel="noopener noreferrer nofollow" title={`${m.outside.name} on ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}><strong>{m.outside.name}</strong></a> : <strong>{m.outside.name}</strong>}
+        {m.outside.role && <span className="badge">{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform} {m.outside.role === "moderator" ? "mod" : m.outside.role === "subscriber" ? "sub" : "broadcaster"}</span>}: {m.body}
+        {canPin && <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.outside.name}`}>Actions</summary><div className="chat-message-controls">
+          {role === "owner" && <button type="button" className="small quiet" onClick={() => { setOutsideReply({ id: m.id, platform: m.outside!.platform, name: m.outside!.name }); setReply(null); input.current?.focus(); }}>Reply on {PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}</button>}
+          <button type="button" className="small quiet" onClick={() => outsideAction(m, "hide")}>Hide here</button>
+          <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute")}>Mute here for this stream</button>
+          <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute-forever")}>Mute here permanently</button>
+        </div></details>}
+      </li> : <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
         {m.skill && <span className="badge skill-badge">✨ {m.skill}</span>}
         <span className="muted">{time(m.created_at)}</span>{" "}
@@ -302,6 +333,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt("Reason for lifting this restriction")?.trim(); if (!reason || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, { reason }); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
     {account ? <form onSubmit={submit} className="chat-form">
       {reply && <div className="chat-reply-draft"><span>Replying to @{reply.username}: {reply.body}</span><button type="button" className="small quiet" onClick={() => setReply(null)}>Cancel reply</button></div>}
+      {outsideReply && <div className="chat-reply-draft"><span>Replying on {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} to {outsideReply.name}, as your {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} account</span><button type="button" className="small quiet" onClick={() => setOutsideReply(null)}>Cancel reply</button></div>}
       {highlight !== null && <div className="chat-draft-note"><span>Your next message is highlighted · {highlight.toLocaleString()} Engagement Valor</span><button type="button" className="small quiet" onClick={() => setHighlight(null)}>Not highlighted</button></div>}
       <label htmlFor="chat-input" className="sr-only">Message</label>
       <textarea ref={input} id="chat-input" value={draft} disabled={busy} maxLength={500} rows={2} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
