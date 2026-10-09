@@ -255,3 +255,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 /* /credits: wide tables scroll in place; license texts wrap. */
 .table-scroll{overflow-x:auto;max-width:100%}
 .license-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:0.85em;max-height:24rem;overflow:auto}
+/* /open-data: small bar charts in the theme's colors. */
+.open-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--space-3,12px)}
+.open-chart{width:100%;height:auto;max-width:100%}
+.open-bar{fill:var(--accent)}.open-bar-withheld{fill:var(--ink-dim)}.open-tick{fill:var(--ink-muted);font-size:9px}
