@@ -57,5 +57,52 @@ export default function Developer() {
         <li>Scopes: user:read, channel:read, chat:read, chat:write, channel:moderate, channel:edit, events:private, board:control.</li>
       </ol></details>
     </>}
+    <Webhooks />
+  </section>;
+}
+
+type Hook = { id: string; app: string | null; topics: string[]; url: string; failures: number; disabled: boolean };
+type Hooks = { hooks: Hook[]; max: number; created?: { id: string; secret: string } };
+
+/** Webhooks for live events (docs/DEVELOPER_PLATFORM.md §2): the same events as /api/events, posted to a URL. */
+function Webhooks() {
+  const [data, setData] = useState<Hooks | null>(null);
+  const [secret, setSecret] = useState("");
+  const [message, setMessage] = useState("");
+  const load = useCallback(async () => {
+    const r = await send<Hooks>("GET", "/api/hooks");
+    if (r.ok) setData(r.data); else setMessage(r.error);
+  }, []);
+  useLoad(load);
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const v = new FormData(form);
+    const r = await send<Hooks>("POST", "/api/hooks", { url: v.get("url"), topics: String(v.get("topics") ?? "").split(/\s+/).filter(Boolean) });
+    if (!r.ok) { setMessage(r.error); return; }
+    setData(r.data); form.reset(); setMessage("Webhook added.");
+    if (r.data.created) setSecret(r.data.created.secret);
+  }
+  async function remove(id: string) {
+    const r = await send<Hooks>("DELETE", `/api/hooks/${id}`);
+    if (r.ok) { setData(r.data); setMessage("Webhook removed."); } else setMessage(r.error);
+  }
+  return <section className="stack">
+    <h2>Webhooks</h2>
+    <p className="muted small">S.V.E.R posts each event as JSON to your HTTPS URL, signed in the <code>SVER-Signature</code> header with the webhook&apos;s secret. Failed deliveries are retried 8 times; after 50 failures in a row the webhook turns off and you&apos;re notified.</p>
+    {message && <p role="status" className="form-message">{message}</p>}
+    {secret && <div className="panel" role="alert"><p><strong>Signing secret</strong>, shown once.</p><code className="secret">{secret}</code> <button type="button" className="small quiet" onClick={() => setSecret("")}>I&apos;ve saved it</button></div>}
+    {data === null ? <p className="loading">Loading…</p> : <>
+      {data.hooks.length > 0 && <ul className="list">{data.hooks.map(h => <li key={h.id} className="stack">
+        <span><code>{h.url}</code> {h.disabled && <span className="badge">Turned off</span>} {h.app && <span className="muted small">added by {h.app}</span>}</span>
+        <span className="muted small">{h.topics.join(", ")}{h.failures > 0 && !h.disabled && ` · ${h.failures} failed in a row`}</span>
+        <span className="row wrap"><button type="button" className="small quiet danger-text" onClick={() => remove(h.id)}>Remove</button></span>
+      </li>)}</ul>}
+      {data.hooks.length < data.max && <form className="stack" onSubmit={create}>
+        <label className="field"><span>URL</span><input name="url" type="url" required maxLength={500} placeholder="https://" /></label>
+        <label className="field"><span>Topics (one per line, e.g. channel:yourname:follows or channel:yourname:subs)</span><textarea name="topics" required rows={3} /></label>
+        <button type="submit">Add webhook</button>
+      </form>}
+    </>}
   </section>;
 }

@@ -99,10 +99,145 @@ pub async fn exercise(e: &Env) {
         .await
         .unwrap();
     assert_eq!(next_json(&mut late).await["result"], "pong");
+
+    // ---- Webhooks for the same events ----
+    let url = format!("{}/hook", e.app.config.stripe.api_url);
+    let (status, _) = e
+        .request(
+            "POST",
+            "/api/hooks",
+            json!({"topics":["channel:evfan:subs"],"url":url}),
+            true,
+            true,
+            false,
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "another channel's private topic"
+    );
+    let mine = e
+        .call(
+            "POST",
+            "/api/hooks",
+            json!({"topics":["channel:Streamer:follows","channel:streamer:follows:detail"],"url":url}),
+        )
+        .await;
+    let secret = mine["created"]["secret"].as_str().unwrap().to_string();
+    // An app registers its own with the person's token, server to server (no Origin, no cookie).
+    let http = reqwest::Client::new();
+    let api = format!("http://{address}/api/hooks");
+    let denied = http
+        .post(&api)
+        .bearer_auth("ev-owner-token")
+        .json(&json!({"topics":["channel:streamer:subs"],"url":url}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        denied.status().as_u16(),
+        401,
+        "a token needs its app's client ID"
+    );
+    let by_app = http
+        .post(&api)
+        .bearer_auth("ev-owner-token")
+        .header("sver-client-id", &client)
+        .json(&json!({"topics":["channel:streamer:subs"],"url":url}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(by_app.status().as_u16(), 200);
+    let listed: Value = http
+        .get(&api)
+        .bearer_auth("ev-owner-token")
+        .header("sver-client-id", &client)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        listed["hooks"].as_array().unwrap().len(),
+        1,
+        "an app sees only its own hooks"
+    );
+
+    // A follow reaches the person's hook on both topics, signed.
+    e.fake.lock().unwrap().hooks.clear();
+    let fan2 = person(e, "ev-fan2", "EvFanTwo", true).await;
+    call(e, "PUT", "/api/follows/Streamer", Some(&fan2), Value::Null).await;
+    sver::events::deliver_hooks(&e.app).await.unwrap();
+    {
+        let fake = e.fake.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let mut topics: Vec<String> = fake
+            .hooks
+            .iter()
+            .map(|(signature, body)| {
+                assert!(sver::stripe::verify(
+                    &secret,
+                    signature,
+                    body.as_bytes(),
+                    now
+                ));
+                serde_json::from_str::<Value>(body).unwrap()["topic"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        topics.sort();
+        assert_eq!(
+            topics,
+            [
+                "channel:streamer:follows",
+                "channel:streamer:follows:detail"
+            ]
+        );
+    }
+    // Revoking the app removes its hook before anything more is sent.
+    e.sql("UPDATE oauth_grants SET revoked_at=now() WHERE id='ev-grant'")
+        .await;
+    let mut db = e.app.db.acquire().await.unwrap();
+    sver::events::emit(
+        &mut db,
+        "stream-owner",
+        "subs",
+        json!({"user":"EvFan","tier":1,"months":1}),
+    )
+    .await
+    .unwrap();
+    e.fake.lock().unwrap().hooks.clear();
+    sver::events::deliver_hooks(&e.app).await.unwrap();
+    assert!(e.fake.lock().unwrap().hooks.is_empty());
+    let (app_hooks, all_hooks): (i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE app_id IS NOT NULL), count(*) FROM event_hooks",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!((app_hooks, all_hooks), (0, 1));
+    // The 50th failure in a row turns the hook off and tells its owner.
+    e.sql("UPDATE event_hooks SET failures=49").await;
+    e.fake.lock().unwrap().hook_fail = true;
+    sver::events::emit(&mut db, "stream-owner", "follows", json!({"followers":2}))
+        .await
+        .unwrap();
+    sver::events::deliver_hooks(&e.app).await.unwrap();
+    e.fake.lock().unwrap().hook_fail = false;
+    let (off, told): (bool, bool) = sqlx::query_as("SELECT disabled_at IS NOT NULL, EXISTS(SELECT 1 FROM notifications WHERE kind='hook_disabled' AND user_id='stream-owner') FROM event_hooks")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert!(off && told);
+    drop(db);
     server.abort();
     for statement in [
+        "DELETE FROM notifications WHERE kind='hook_disabled'",
+        "DELETE FROM event_hooks",
         "DELETE FROM dev_apps",
-        "DELETE FROM follows WHERE follower_id='ev-fan'",
+        "DELETE FROM follows WHERE follower_id IN ('ev-fan','ev-fan2')",
     ] {
         e.sql(statement).await;
     }

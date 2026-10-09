@@ -2,20 +2,25 @@
 //! `/api/events`, where apps subscribe to topics. Events are written to the `events` outbox in the
 //! same transaction as the change, drained every second onto the in-process hub, and replayed
 //! after a client's last event ID for 5 minutes. Events never carry email, IP addresses or
-//! internal IDs; follower names and subscriptions are private topics.
+//! internal IDs; follower names and subscriptions are private topics. Webhooks (`/api/hooks`)
+//! receive the same events, queued in the statement that writes the event and signed like board
+//! webhooks.
 use crate::{
-    App,
-    profiles::{Fail, Res},
+    App, boards,
+    profiles::{self, Fail, Res},
+    security as sec,
 };
 use axum::{
-    Router,
+    Json, Router,
     extract::{
-        Query, State,
+        Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
+    http::{HeaderMap, StatusCode},
     response::Response,
-    routing::get,
+    routing::{delete, get},
 };
+use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
@@ -40,14 +45,17 @@ type Person = (String, Vec<String>);
 fn event((id, topic, data, at): Row) -> Value {
     json!({"type": "event", "id": id, "topic": topic, "data": data, "at": at})
 }
-/// Writes a channel event (`channel:{username}:{kind}`) in the caller's transaction.
+/// Writes a channel event (`channel:{username}:{kind}`) in the caller's transaction, and queues it
+/// for every enabled webhook on that topic in the same statement.
 pub async fn emit(
     db: &mut PgConnection,
     channel: &str,
     kind: &str,
     data: Value,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO events(topic,data) SELECT 'channel:'||lower(username)||':'||$2,$3 FROM users WHERE id=$1")
+    sqlx::query("WITH e AS (INSERT INTO events(topic,data) SELECT 'channel:'||lower(username)||':'||$2,$3 FROM users WHERE id=$1 RETURNING id,topic,data,at)
+        INSERT INTO hook_deliveries(hook_id,payload) SELECT h.id,jsonb_build_object('type','event','id',e.id,'topic',e.topic,'data',e.data,'at',e.at)
+        FROM e JOIN event_hooks h ON h.topics @> ARRAY[e.topic] AND h.disabled_at IS NULL")
         .bind(channel)
         .bind(kind)
         .bind(data)
@@ -264,6 +272,214 @@ async fn handle(
     }
 }
 
+// ---- Webhooks for the same events ----
+
+const MAX_HOOKS: i64 = 20;
+const HOOK_TOPICS: usize = 50;
+const HOOK_ATTEMPTS: i32 = 8;
+/// Failed deliveries in a row before a hook turns itself off.
+const HOOK_FAILURES: i32 = 50;
+
+/// Who manages hooks: an app with the person's bearer token (and `SVER-Client-Id`), or the
+/// signed-in person with a verified email and two-factor sign-in. Returns (person, app, scopes).
+/// A request with a bearer token never falls back to the cookie (lib.rs skips the origin check
+/// for it).
+async fn hook_owner(
+    app: &App,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+) -> Res<(String, Option<String>, Vec<String>)> {
+    let bearer = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    let Some(token) = bearer else {
+        let user = crate::devapps::developer(app, jar).await?;
+        return Ok((user.id, None, vec!["events:private".into()]));
+    };
+    let client = headers
+        .get("sver-client-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            Fail::new(
+                StatusCode::UNAUTHORIZED,
+                "Send your app's SVER-Client-Id header.",
+            )
+        })?;
+    let (user, scopes) = crate::devapps::identify(app, client, Some(token))
+        .await?
+        .ok_or_else(Fail::missing)?;
+    profiles::rate(app, format!("api:{client}:{user}"), 600, 60).await?;
+    Ok((user, Some(client.to_string()), scopes))
+}
+async fn hooks_of(app: &App, user: &str, client: Option<&str>) -> Res<Json<Value>> {
+    let hooks: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',h.id,'app',a.name,'topics',h.topics,'url',h.url,'failures',h.failures,'disabled',h.disabled_at IS NOT NULL,'created_at',h.created_at)
+        FROM event_hooks h LEFT JOIN dev_apps a ON a.id=h.app_id WHERE h.user_id=$1 AND ($2::text IS NULL OR h.app_id=$2) ORDER BY h.created_at")
+        .bind(user).bind(client).fetch_all(&app.db).await?;
+    Ok(Json(json!({"hooks": hooks, "max": MAX_HOOKS})))
+}
+/// GET /api/hooks: the caller's webhooks (through an app, only that app's).
+async fn list_hooks(
+    State(app): State<App>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Res<Json<Value>> {
+    let (user, client, _) = hook_owner(&app, &headers, &jar).await?;
+    hooks_of(&app, &user, client.as_deref()).await
+}
+#[derive(Deserialize)]
+pub struct NewHook {
+    topics: Vec<String>,
+    url: String,
+}
+/// POST /api/hooks: registers an HTTPS URL for topics the caller may subscribe to. The signing
+/// secret is returned once.
+async fn create_hook(
+    State(app): State<App>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(input): Json<NewHook>,
+) -> Res<Json<Value>> {
+    let (user, client, scopes) = hook_owner(&app, &headers, &jar).await?;
+    let url = boards::webhook_target(&app, input.url.trim())
+        .map_err(|m| Fail::field("url", m))?
+        .to_string();
+    let mut topics: Vec<String> = input
+        .topics
+        .iter()
+        .map(|t| t.trim().to_lowercase())
+        .collect();
+    topics.sort();
+    topics.dedup();
+    if topics.is_empty() || topics.len() > HOOK_TOPICS {
+        return Err(Fail::field("topics", "Choose 1 to 50 topics."));
+    }
+    let person = (user.clone(), scopes);
+    for topic in &topics {
+        if !allowed(&app, topic, Some(&person)).await? {
+            return Err(Fail::field_owned(
+                "topics",
+                format!("You can't receive {topic}."),
+            ));
+        }
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM event_hooks WHERE user_id=$1")
+        .bind(&user)
+        .fetch_one(&app.db)
+        .await?;
+    if count >= MAX_HOOKS {
+        return Err(Fail::denied("You can have up to 20 webhooks."));
+    }
+    let secret = format!("whsec_{}", sec::token());
+    let id = profiles::new_id();
+    sqlx::query(
+        "INSERT INTO event_hooks(id,user_id,app_id,topics,url,secret) VALUES($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(&id)
+    .bind(&user)
+    .bind(&client)
+    .bind(&topics)
+    .bind(&url)
+    .bind(sec::seal(&app, "event-hook", &secret)?)
+    .execute(&app.db)
+    .await?;
+    let Json(mut body) = hooks_of(&app, &user, client.as_deref()).await?;
+    body["created"] = json!({"id": id, "secret": secret});
+    Ok(Json(body))
+}
+/// DELETE /api/hooks/{id}
+async fn delete_hook(
+    State(app): State<App>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Res<Json<Value>> {
+    let (user, client, _) = hook_owner(&app, &headers, &jar).await?;
+    sqlx::query(
+        "DELETE FROM event_hooks WHERE id=$1 AND user_id=$2 AND ($3::text IS NULL OR app_id=$3)",
+    )
+    .bind(&id)
+    .bind(&user)
+    .bind(&client)
+    .execute(&app.db)
+    .await?;
+    hooks_of(&app, &user, client.as_deref()).await
+}
+
+type Due = (
+    i64,
+    String,
+    Value,
+    i32,
+    String,
+    String,
+    String,
+    Option<String>,
+);
+/// Sends due webhook deliveries (its own loop, beside board webhooks). Access is checked again at
+/// send time: a revoked or suspended app removes its hooks, and a topic the person may no longer
+/// receive (a moderator removed, a channel gone) is dropped. 50 failures in a row turn the hook
+/// off and tell its owner.
+pub async fn deliver_hooks(app: &App) -> Res<()> {
+    // ponytail: sequential, 20 per pass with a 5 s timeout each; send concurrently if hooks back up.
+    let due: Vec<Due> = sqlx::query_as("SELECT d.id,d.hook_id,d.payload,d.attempts,h.url,h.secret,h.user_id,h.app_id FROM hook_deliveries d
+        JOIN event_hooks h ON h.id=d.hook_id AND h.disabled_at IS NULL WHERE d.delivered_at IS NULL AND d.available_at<=now() ORDER BY d.id LIMIT 20")
+        .fetch_all(&app.db).await?;
+    for (id, hook, payload, attempts, url, sealed, user, client) in due {
+        let scopes: Option<Vec<String>> = match &client {
+            None => Some(vec!["events:private".into()]),
+            Some(client) => sqlx::query_scalar("SELECT g.scopes FROM oauth_grants g JOIN dev_apps a ON a.id=g.app_id AND a.suspended_at IS NULL WHERE g.app_id=$1 AND g.user_id=$2 AND g.revoked_at IS NULL")
+                .bind(client).bind(&user).fetch_optional(&app.db).await?,
+        };
+        let Some(scopes) = scopes else {
+            sqlx::query("DELETE FROM event_hooks WHERE id=$1")
+                .bind(&hook)
+                .execute(&app.db)
+                .await?;
+            continue;
+        };
+        let topic = payload["topic"].as_str().unwrap_or_default();
+        if !allowed(app, topic, Some(&(user.clone(), scopes))).await? {
+            sqlx::query("DELETE FROM hook_deliveries WHERE id=$1")
+                .bind(id)
+                .execute(&app.db)
+                .await?;
+            continue;
+        }
+        let secret = sec::unseal(app, "event-hook", &sealed)?;
+        let body = serde_json::to_vec(&payload).map_err(|_| Fail::internal())?;
+        match boards::deliver(app, &url, &secret, &body).await {
+            Ok(()) => {
+                sqlx::query("UPDATE hook_deliveries SET delivered_at=now(), attempts=attempts+1, error=NULL WHERE id=$1")
+                    .bind(id).execute(&app.db).await?;
+                sqlx::query("UPDATE event_hooks SET failures=0 WHERE id=$1 AND failures>0")
+                    .bind(&hook)
+                    .execute(&app.db)
+                    .await?;
+            }
+            Err(error) => {
+                sqlx::query("UPDATE hook_deliveries SET attempts=$2, error=$3, available_at=CASE WHEN $2>=$4 THEN 'infinity' ELSE now()+make_interval(secs=>10*power(2,$2-1)) END WHERE id=$1")
+                    .bind(id).bind(attempts + 1).bind(&error).bind(HOOK_ATTEMPTS)
+                    .execute(&app.db).await?;
+                let off: Option<bool> = sqlx::query_scalar("UPDATE event_hooks SET failures=failures+1, disabled_at=CASE WHEN failures+1>=$2 THEN now() END WHERE id=$1 AND disabled_at IS NULL RETURNING disabled_at IS NOT NULL")
+                    .bind(&hook).bind(HOOK_FAILURES).fetch_optional(&app.db).await?;
+                if off == Some(true) {
+                    sqlx::query("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload) VALUES(gen_random_uuid()::text,$1,'hook_disabled',$1,'hook_disabled:'||$2,
+                        jsonb_build_object('title','A webhook was turned off','body','It failed 50 times in a row ('||$3||'). Fix the endpoint, then add it again.','url','/settings/developer')) ON CONFLICT DO NOTHING")
+                        .bind(&user).bind(&hook).bind(&error).execute(&app.db).await?;
+                }
+            }
+        }
+    }
+    sqlx::query("DELETE FROM hook_deliveries WHERE created_at<now()-interval '7 days'")
+        .execute(&app.db)
+        .await?;
+    Ok(())
+}
+
 pub fn routes() -> Router<App> {
-    Router::new().route("/api/events", get(socket))
+    Router::new()
+        .route("/api/events", get(socket))
+        .route("/api/hooks", get(list_hooks).post(create_hook))
+        .route("/api/hooks/{id}", delete(delete_hook))
 }

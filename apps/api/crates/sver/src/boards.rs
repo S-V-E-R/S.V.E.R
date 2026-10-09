@@ -1396,7 +1396,7 @@ fn forward(e: &Arc<Event>, channel: &str, test_room: &str) -> bool {
 
 /// A webhook URL the platform will call: HTTPS (plain HTTP only in development), no credentials,
 /// and never a private address (checked again against DNS at every delivery).
-fn webhook_target(app: &App, url: &str) -> Result<url::Url, &'static str> {
+pub(crate) fn webhook_target(app: &App, url: &str) -> Result<url::Url, &'static str> {
     if url.len() > 500 {
         return Err("The URL is too long.");
     }
@@ -1453,7 +1453,7 @@ pub fn public(ip: IpAddr) -> bool {
         }
     }
 }
-async fn deliver(app: &App, url: &str, secret: &str, body: &[u8]) -> Result<(), String> {
+pub(crate) async fn deliver(app: &App, url: &str, secret: &str, body: &[u8]) -> Result<(), String> {
     let parsed = webhook_target(app, url).map_err(String::from)?;
     let host = parsed.host_str().ok_or("No host")?.to_string();
     let port = parsed.port_or_known_default().ok_or("No port")?;

@@ -331,6 +331,9 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         && req.uri().path() != "/api/integrations/twitch/eventsub"
         // OAuth clients post tokens server to server; the client and PKCE checks are in devapps.
         && !matches!(req.uri().path(), "/api/oauth/token" | "/api/oauth/revoke" | "/api/oauth/device")
+        // Apps manage webhooks with a bearer token (never a cookie); events::hook_owner uses only it.
+        && !(req.uri().path().starts_with("/api/hooks")
+            && req.headers().get("authorization").and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("Bearer ")))
         && req.headers().get("origin").and_then(|v| v.to_str().ok())
         != Some(&app.config.origin)
     {
