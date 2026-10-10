@@ -33,7 +33,7 @@ const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: 
 function MessageBody({ message, account, emotes }: { message: Message; account: string | null; emotes: ChannelEmote[] }) {
   const parts: React.ReactNode[] = [];
   let cursor = 0;
-  for (const match of message.body.matchAll(/(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)|(?<!\S)[A-Za-z0-9]{3,20}(?!\S)|(?<![\p{L}\p{N}_@])@([A-Za-z0-9_]{3,25})(?![\p{L}\p{N}_])/gu)) {
+  for (const match of message.body.matchAll(/(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)|(?<!\S)[A-Za-z0-9_]{1,40}(?!\S)|(?<![\p{L}\p{N}_@])@([A-Za-z0-9_]{3,25})(?![\p{L}\p{N}_])|(?<!\S)[^\s@]{0,39}[^\sA-Za-z0-9_@][^\s@]{0,39}(?!\S)/gu)) {
     // Signature emotes match their username case-insensitively; channel emote codes are exact.
     const emote = !match[1] && emotes.find(e => e.code === match[0] || (e.code.includes("/") && e.code.toLowerCase() === match[0].toLowerCase()));
     const name = match[1] && message.mentions.find(name => name.toLowerCase() === match[1].toLowerCase());
@@ -75,6 +75,8 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
   const [pinned, setPinned] = useState<Message | null>(null);
   const [emotes, setEmotes] = useState<ChannelEmote[]>([]);
   const [signatures, setSignatures] = useState<ChannelEmote[]>([]);
+  const [outside, setOutside] = useState<ChannelEmote[]>([]);
+  const [emotesVersion, setEmotesVersion] = useState(0);
   const [allowSignatures, setAllowSignatures] = useState(true);
   const askedSignatures = useRef(new Set<string>());
   const [reply, setReply] = useState<Reply | null>(null);
@@ -162,7 +164,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
         if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); }
         else if (data.type === "protect") setFollowersOnly(data.until);
         else if (data.type === "subs_only") setSubsOnly(data.on);
-        else if (data.type === "emotes") setEmotes(data.emotes);
+        else if (data.type === "emotes") { setEmotes(data.emotes); setEmotesVersion(v => v + 1); }
         else if (data.type === "pin") setPinned(data.pinned);
         else if (data.type === "message" || data.type === "ack") merge([data.message]);
         else if (data.type === "delete") remove(data.id);
@@ -275,6 +277,11 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     setBusy(false);
   }
 
+  // 7TV, BTTV and FFZ emotes the channel shows (served by S.V.E.R); reloaded when emotes change.
+  useEffect(() => {
+    if (squad) return;
+    void send<{ emotes: ChannelEmote[] }>("GET", `/api/channels/${encodeURIComponent(username)}/outside-emotes`).then(r => { if (r.ok) setOutside(r.data.emotes); });
+  }, [username, squad, emotesVersion]);
   // Signature emotes are looked up live (once per code per page), so a removed one stops showing.
   useEffect(() => {
     if (!allowSignatures) return;
@@ -283,7 +290,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     wanted.forEach(code => askedSignatures.current.add(code.toLowerCase()));
     void send<{ emotes: ChannelEmote[] }>("GET", `/api/emotes/signatures?codes=${encodeURIComponent(wanted.join(","))}`).then(r => { if (r.ok && r.data.emotes.length) setSignatures(known => [...known, ...r.data.emotes]); });
   }, [messages, allowSignatures]);
-  const shown = allowSignatures ? [...emotes, ...signatures] : emotes;
+  const shown = [...emotes, ...(allowSignatures ? signatures : []), ...outside];
   if (variant === "overlay") return <section className="chat chat-overlay" aria-label="Chat">
     <ol className="chat-messages" aria-live="polite">{messages.filter(m => (!m.outside || m.outside.platform === "bot") && clock - Date.parse(m.created_at) < fade * 1000).map(m => <li key={m.id}>
       <strong>{m.author.display_name}</strong>: <MessageBody message={m} account={null} emotes={shown} />
@@ -357,7 +364,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
       {canPin && <button type="button" className="quiet small" disabled={busy || !draft.trim()} onClick={event => submit(event, true)}>Send and pin</button>}
       {error && <p role="alert" className="error">{error}</p>}
     </form> : <p className="muted"><Link href="/login">Sign in</Link> to chat.</p>}
-    <ChatDock username={username} account={account} emotes={emotes} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
+    <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
       onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 500)); input.current?.focus(); }} />
   </section>;
 }

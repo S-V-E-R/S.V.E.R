@@ -224,13 +224,17 @@ pub async fn check_emote_code(db: &mut sqlx::PgConnection, channel: &str, code: 
             .bind(channel)
             .fetch_optional(db)
             .await?;
-    if let Some((links, words)) = rules {
-        let folded = fold(code);
-        if words.iter().any(|w| folded.contains(w)) || (links && has_link(code)) {
-            return Err(Fail::bad("That code isn't allowed in this chat."));
-        }
+    if let Some((links, words)) = rules
+        && !code_allowed(&words, links, code)
+    {
+        return Err(Fail::bad("That code isn't allowed in this chat."));
     }
     Ok(())
+}
+/// Whether an emote code passes a channel's banned words and link rule.
+pub fn code_allowed(words: &[String], links: bool, code: &str) -> bool {
+    let folded = fold(code);
+    !(words.iter().any(|w| folded.contains(w.as_str())) || (links && has_link(code)))
 }
 
 /// Chat rules applied by `chat::send` before a message is stored.

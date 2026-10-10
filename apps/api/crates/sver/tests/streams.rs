@@ -56,6 +56,8 @@ mod magnet;
 mod moderation;
 #[path = "streams/moments.rs"]
 mod moments;
+#[path = "streams/outside_emotes.rs"]
+mod outside_emotes;
 #[path = "streams/playback.rs"]
 mod playback;
 #[path = "streams/plays.rs"]
@@ -434,6 +436,31 @@ async fn streaming_lifecycle_and_security() {
         .await
         .unwrap();
     admin.close().await;
+    result.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn third_party_emotes() {
+    let (admin, db, schema) = isolated_database().await;
+    let mut config = Config::from_env().unwrap();
+    config.resend_key.clear();
+    let media_dir =
+        std::env::temp_dir().join(format!("sver-outside-media-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&media_dir).unwrap();
+    config.media = sver::media::MediaConfig {
+        storage: sver::media::Storage::Filesystem(media_dir.clone()),
+        public_base: format!("{}/api/media", config.origin),
+    };
+    let app = App::new(db.clone(), config).await.unwrap();
+    let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
+    let dir = media_dir.clone();
+    let result = tokio::spawn(async move { outside_emotes::exercise(&env, &dir).await }).await;
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    std::fs::remove_dir_all(media_dir).unwrap();
     result.unwrap();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
