@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-pub const SCOPES: [(&str, &str); 8] = [
+pub const SCOPES: [(&str, &str); 9] = [
     ("user:read", "See your username, display name and faction"),
     ("channel:read", "See your channel's stream settings"),
     ("chat:read", "Read chat as you"),
@@ -35,6 +35,7 @@ pub const SCOPES: [(&str, &str); 8] = [
         "board:control",
         "Control your CrowdSync board like a connected game",
     ),
+    ("whispers:read", "Read your direct messages as they arrive"),
 ];
 const MAX_APPS: i64 = 10;
 const ACCESS_SECONDS: i64 = 3600;

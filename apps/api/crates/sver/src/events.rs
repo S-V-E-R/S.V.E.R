@@ -145,6 +145,45 @@ pub async fn prune(app: &App) -> Res<()> {
     Ok(())
 }
 
+/// A person's own topic (`user:{name}:notifications` with `user:read`, `user:{name}:whispers` with
+/// `whispers:read`): only with their own token. Returns (person ID, kind).
+async fn own_topic(app: &App, topic: &str, user: Option<&Person>) -> Res<Option<(String, String)>> {
+    let Some((name, kind)) = topic
+        .strip_prefix("user:")
+        .and_then(|rest| rest.split_once(':'))
+    else {
+        return Ok(None);
+    };
+    let scope = match kind {
+        "notifications" => "user:read",
+        "whispers" => "whispers:read",
+        _ => return Ok(None),
+    };
+    let Some((id, _)) = user.filter(|(_, s)| s.iter().any(|g| g == scope)) else {
+        return Ok(None);
+    };
+    let mine: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND lower(username)=$2)")
+            .bind(id)
+            .bind(name)
+            .fetch_one(&app.db)
+            .await?;
+    Ok(mine.then(|| (id.clone(), kind.to_string())))
+}
+type Notice = (Value, chrono::DateTime<chrono::Utc>);
+/// New in-site notifications for a person since a time, as the notifications list shows them.
+async fn notifications_since(
+    app: &App,
+    user: &str,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Res<Vec<Notice>> {
+    Ok(sqlx::query_as("SELECT jsonb_build_object('kind',n.kind,'channel',c.username,'payload',n.payload,'created_at',n.created_at),n.created_at
+        FROM notifications n JOIN channel_users c ON c.id=n.channel_id AND c.eligible
+        WHERE n.user_id=$1 AND n.site_visible AND n.created_at>$2
+        AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=$1 AND k.blocked_id=n.channel_id) OR (k.blocker_id=n.channel_id AND k.blocked_id=$1))
+        ORDER BY n.created_at LIMIT 50")
+        .bind(user).bind(since).fetch_all(&app.db).await?)
+}
 /// The channel behind a `chat:{name}` topic this connection may read: an eligible channel, and
 /// not a mature one for an under-18 person.
 async fn chat_channel(app: &App, topic: &str, user: Option<&Person>) -> Res<Option<String>> {
@@ -249,11 +288,31 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
     let mut topics: HashSet<String> = HashSet::new();
     // Chat topics: channel ID -> topic. Messages come straight from the chat hub, not the outbox.
     let mut chats: HashMap<String, String> = HashMap::new();
+    // The person's own topics: hub channel `dm:{id}` -> whispers topic; notifications are polled.
+    let mut own = Own::default();
+    // ponytail: one indexed query per subscribed socket every 5 s; publish notifications on the hub
+    // if many sockets subscribe.
+    let mut poll = tokio::time::interval(std::time::Duration::from_secs(5));
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
+            _ = poll.tick() => {
+                let Some((user, topic, since)) = own.notifications.clone() else { continue; };
+                let Ok(rows) = notifications_since(&app, &user, since).await else { return; };
+                for (data, at) in rows {
+                    own.notifications = Some((user.clone(), topic.clone(), at));
+                    if !reply(&mut ws, json!({"type": "event", "topic": topic, "data": data, "at": at})).await { return; }
+                }
+            }
             incoming = events.recv() => match incoming {
                 Ok(e) if e.channel == HUB => {
                     if e.payload["topic"].as_str().is_some_and(|t| topics.contains(t)) && !reply(&mut ws, e.payload.clone()).await {
+                        return;
+                    }
+                }
+                Ok(e) if own.whispers.as_ref().is_some_and(|(hub, _)| *hub == e.channel) => {
+                    let topic = own.whispers.as_ref().map(|w| w.1.clone()).unwrap_or_default();
+                    if !reply(&mut ws, json!({"type": "event", "topic": topic, "data": e.payload})).await {
                         return;
                     }
                 }
@@ -288,7 +347,7 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
                         continue;
                     };
                     let mut out = json!({"type": "reply", "id": call["id"]});
-                    match handle(&app, user.as_ref(), &mut topics, &mut chats, &call).await {
+                    match handle(&app, user.as_ref(), &mut topics, &mut chats, &mut own, &call).await {
                         Ok((result, replay)) => {
                             out["result"] = result;
                             if !reply(&mut ws, out).await { return; }
@@ -308,6 +367,24 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
         }
     }
 }
+/// A connection's own-topic subscriptions.
+#[derive(Default)]
+struct Own {
+    /// (hub channel, topic)
+    whispers: Option<(String, String)>,
+    /// (person, topic, newest notification sent)
+    notifications: Option<(String, String, chrono::DateTime<chrono::Utc>)>,
+}
+impl Own {
+    fn forget(&mut self, topic: &str) {
+        if self.whispers.as_ref().is_some_and(|w| w.1 == topic) {
+            self.whispers = None;
+        }
+        if self.notifications.as_ref().is_some_and(|n| n.1 == topic) {
+            self.notifications = None;
+        }
+    }
+}
 /// One method call: subscribe (with an optional `since` to replay), unsubscribe, ping, and for
 /// chat `history` (the last 50 messages) and `send` (`chat:write`).
 async fn handle(
@@ -315,6 +392,7 @@ async fn handle(
     user: Option<&Person>,
     topics: &mut HashSet<String>,
     chats: &mut HashMap<String, String>,
+    own: &mut Own,
     call: &Value,
 ) -> Result<(Value, Vec<Value>), String> {
     let retry = |_| "Try again.".to_string();
@@ -370,6 +448,7 @@ async fn handle(
             for topic in &asked {
                 topics.remove(topic);
                 chats.retain(|_, t| t != topic);
+                own.forget(topic);
             }
             Ok((
                 json!({"topics": topics.iter().collect::<Vec<_>>()}),
@@ -379,8 +458,22 @@ async fn handle(
         Some("subscribe") => {
             let (mut added, mut refused) = (Vec::new(), Vec::new());
             for topic in asked {
-                if topics.len() + chats.len() >= MAX_TOPICS {
+                if topics.len() + chats.len() + 2 >= MAX_TOPICS {
                     refused.push(topic);
+                    continue;
+                }
+                if topic.starts_with("user:") {
+                    match own_topic(app, &topic, user).await.map_err(retry)? {
+                        Some((id, kind)) if kind == "whispers" => {
+                            own.whispers = Some((format!("dm:{id}"), topic.clone()));
+                            added.push(topic);
+                        }
+                        Some((id, _)) => {
+                            own.notifications = Some((id, topic.clone(), chrono::Utc::now()));
+                            added.push(topic);
+                        }
+                        None => refused.push(topic),
+                    }
                     continue;
                 }
                 if topic.starts_with("chat:") {
