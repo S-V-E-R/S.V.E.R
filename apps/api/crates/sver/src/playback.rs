@@ -311,8 +311,7 @@ pub async fn live(
     // and open players move within one 15-second poll. Otherwise WebRTC first; the player falls
     // back to HLS on failure, and `?transport=hls` (latency tests, or a viewer who prefers it)
     // asks for HLS. Asking for HLS is always allowed.
-    // ponytail: SRS WHEP stays reachable to a client that keeps an old URL; gate it in nginx
-    // (auth_request) if anyone bypasses the switch.
+    // The nginx playback gate refuses WHEP for a broadcast on the CDN (streams::authorize_playback).
     let webrtc = webrtc.filter(|_| b.delivery == "webrtc" || hls.is_none());
     let preferred = if webrtc.is_some() && query.transport.as_deref() != Some("hls") {
         "webrtc"

@@ -325,6 +325,25 @@ async fn media_gate(e: &Env) {
             "{uri}"
         );
     }
+    e.sql("UPDATE broadcasts SET delivery='cdn' WHERE id='play-gate'")
+        .await;
+    assert_eq!(
+        authorize(
+            e,
+            &format!("/rebuild/whep/?app=rebuild&stream={id}"),
+            "127.0.0.1:1234",
+            secret
+        )
+        .await,
+        StatusCode::FORBIDDEN,
+        "on the CDN, a kept WHEP URL is refused"
+    );
+    assert_eq!(
+        authorize(e, &path, "127.0.0.1:1234", secret).await,
+        StatusCode::NO_CONTENT
+    );
+    e.sql("UPDATE broadcasts SET delivery='webrtc' WHERE id='play-gate'")
+        .await;
     assert_eq!(
         authorize(e, &path, "127.0.0.1:1234", "wrong").await,
         StatusCode::FORBIDDEN
