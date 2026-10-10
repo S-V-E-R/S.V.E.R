@@ -57,6 +57,20 @@ pub(crate) async fn actor(app: &App, jar: &CookieJar, channel: &str) -> Res<(aut
         .ok_or_else(|| Fail::denied("You can't moderate this channel."))?;
     Ok((user, role))
 }
+/// `actor` for an app-callable endpoint: the person from a bearer token (with `scope`) or cookie.
+pub(crate) async fn actor_any(
+    app: &App,
+    headers: &axum::http::HeaderMap,
+    jar: &CookieJar,
+    channel: &str,
+    scope: &str,
+) -> Res<(auth::User, Role)> {
+    let user = crate::devapps::actor(app, headers, jar, scope).await?;
+    let role = role_of(app, channel, &user)
+        .await?
+        .ok_or_else(|| Fail::denied("You can't moderate this channel."))?;
+    Ok((user, role))
+}
 pub(crate) async fn channel(app: &App, name: &str) -> Res<String> {
     let mut conn = app.db.acquire().await?;
     Ok(profiles::eligible_by_name(&mut conn, name)

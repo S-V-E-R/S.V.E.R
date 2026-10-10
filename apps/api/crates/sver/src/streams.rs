@@ -432,11 +432,22 @@ pub struct Metadata {
 }
 pub async fn save(
     State(app): State<App>,
+    headers: HeaderMap,
     jar: CookieJar,
     Json(input): Json<Metadata>,
 ) -> Result<Json<Value>> {
-    let (mut tx, user, session) = auth::session(&app, &jar, false).await?;
-    auth::authorize_streaming(&user, &session)?;
+    // An app (channel:edit) changes the title and category with the person's token; signed in,
+    // the session must have passed two-factor sign-in as for every Studio change.
+    let (mut tx, user) = if headers.contains_key("authorization") {
+        let user = crate::devapps::actor(&app, &headers, &jar, "channel:edit")
+            .await
+            .map_err(|f| Error(f.status, "Use a token with channel:edit.", None))?;
+        (app.db.begin().await?, user)
+    } else {
+        let (tx, user, session) = auth::session(&app, &jar, false).await?;
+        auth::authorize_streaming(&user, &session)?;
+        (tx, user)
+    };
     require_eligible(&mut tx, &user).await?;
     settings(&mut tx, &user).await?;
     let body = apply(&mut tx, &user.id, None, &input).await?;

@@ -18,7 +18,7 @@ pub async fn exercise(e: &Env) {
         .unwrap()
         .to_string();
     // An owner's token with events:private (as the OAuth flow would issue).
-    e.sql("INSERT INTO oauth_grants(id,app_id,user_id,scopes) SELECT 'ev-grant',id,'stream-owner',ARRAY['events:private','chat:write','user:read','whispers:read'] FROM dev_apps WHERE name='Alerts Overlay'").await;
+    e.sql("INSERT INTO oauth_grants(id,app_id,user_id,scopes) SELECT 'ev-grant',id,'stream-owner',ARRAY['events:private','chat:write','user:read','whispers:read','channel:edit'] FROM dev_apps WHERE name='Alerts Overlay'").await;
     sqlx::query("INSERT INTO oauth_tokens(token_hash,grant_id,kind,expires_at) VALUES($1,'ev-grant','access',now()+interval '1 hour')")
         .bind(sver::security::digest("ev-owner-token")).execute(&e.app.db).await.unwrap();
     sver::events::drain(&e.app).await.unwrap();
@@ -209,6 +209,52 @@ pub async fn exercise(e: &Env) {
     let updated: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events WHERE topic='channel:streamer:update' AND data->>'title'='Events title')")
         .fetch_one(&e.app.db).await.unwrap();
     assert!(updated);
+    // Apps act with the person's token and the right scope (Stream Deck, bots), with no Origin.
+    let api = reqwest::Client::new();
+    let act = |method: reqwest::Method, path: &str, body: Value| {
+        api.request(method, format!("http://{address}{path}"))
+            .bearer_auth("ev-owner-token")
+            .header("sver-client-id", &client)
+            .json(&body)
+            .send()
+    };
+    let titled = act(reqwest::Method::PATCH, "/api/me/stream", json!({"title":"From an app","category_id":e.call("GET", "/api/categories", Value::Null).await["categories"][0]["id"],"revision":settings["revision"].as_i64().unwrap() + 1})).await.unwrap();
+    assert_eq!(
+        titled.status().as_u16(),
+        200,
+        "channel:edit changes the title"
+    );
+    let raid = || {
+        act(
+            reqwest::Method::POST,
+            "/api/me/raids",
+            json!({"username":"nobody"}),
+        )
+    };
+    assert_eq!(
+        raid().await.unwrap().status().as_u16(),
+        403,
+        "raids need channel:run"
+    );
+    e.sql("UPDATE oauth_grants SET scopes=scopes||'{channel:run}' WHERE id='ev-grant'")
+        .await;
+    let status = raid().await.unwrap().status().as_u16();
+    assert!(
+        ![401, 403].contains(&status),
+        "with channel:run the raid is judged on its merits ({status})"
+    );
+    let paused = act(
+        reqwest::Method::PUT,
+        "/api/channels/streamer/board/disabled",
+        json!({"disabled":true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        paused.status().as_u16(),
+        404,
+        "past the permission check: this channel has no board"
+    );
     sqlx::query("UPDATE stream_settings SET title=$1,category_id=$2,revision=$3 WHERE owner_id='stream-owner'")
         .bind(settings["title"].as_str())
         .bind(settings["category_id"].as_str())

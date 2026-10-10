@@ -178,12 +178,14 @@ pub struct Start {
 /// prediction (2–10 outcomes) on the live stream.
 async fn start(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path(name): Path<String>,
     Json(input): Json<Start>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
-    let (actor, role) = moderation::actor(&app, &jar, &channel).await?;
+    let (actor, role) =
+        moderation::actor_any(&app, &headers, &jar, &channel, "channel:run").await?;
     let prediction = match input.kind.as_str() {
         "poll" => false,
         "prediction" => true,

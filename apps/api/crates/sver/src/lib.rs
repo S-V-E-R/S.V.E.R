@@ -75,6 +75,16 @@ pub mod tiers;
 pub mod videos;
 pub mod wall;
 
+/// Endpoints an app may call with a person's bearer token (docs/DEVELOPER_PLATFORM.md).
+fn app_callable(path: &str) -> bool {
+    path.starts_with("/api/hooks")
+        || matches!(path, "/api/me/raids" | "/api/me/stream")
+        || (path.starts_with("/api/channels/")
+            && ["/polls", "/close", "/marker", "/board/disabled"]
+                .iter()
+                .any(|end| path.ends_with(end)))
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub origin: String,
@@ -332,8 +342,9 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         && req.uri().path() != "/api/integrations/twitch/eventsub"
         // OAuth clients post tokens server to server; the client and PKCE checks are in devapps.
         && !matches!(req.uri().path(), "/api/oauth/token" | "/api/oauth/revoke" | "/api/oauth/device")
-        // Apps manage webhooks with a bearer token (never a cookie); events::hook_owner uses only it.
-        && !(req.uri().path().starts_with("/api/hooks")
+        // Apps call these with a bearer token (never a cookie); devapps::actor and
+        // events::hook_owner then use only the token.
+        && !(app_callable(req.uri().path())
             && req.headers().get("authorization").and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("Bearer ")))
         && req.headers().get("origin").and_then(|v| v.to_str().ok())
         != Some(&app.config.origin)

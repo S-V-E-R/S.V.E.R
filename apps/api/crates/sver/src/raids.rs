@@ -67,10 +67,11 @@ struct Target {
 /// POST /api/me/raids: a live owner starts a raid (also `/raid username` in their chat).
 async fn start(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Json(input): Json<Target>,
 ) -> Res<Json<Value>> {
-    let user = signed_in(&app, &jar).await?;
+    let user = crate::devapps::actor(&app, &headers, &jar, "channel:run").await?;
     let mut tx = app.db.begin().await?;
     let broadcast: Option<String> = sqlx::query_scalar(
         "SELECT id FROM broadcasts WHERE owner_id=$1 AND state='LIVE' FOR UPDATE",

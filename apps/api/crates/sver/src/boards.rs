@@ -606,6 +606,11 @@ async fn overlay_revoke(State(app): State<App>, jar: CookieJar) -> Res<Json<Valu
 
 async fn runner(app: &App, jar: &CookieJar, channel: &str) -> Res<(auth::User, Role)> {
     let (user, role) = moderation::actor(app, jar, channel).await?;
+    moderators_run(app, channel, role).await?;
+    Ok((user, role))
+}
+/// Moderators run the board only if the streamer lets them.
+async fn moderators_run(app: &App, channel: &str, role: Role) -> Res<()> {
     if role == Role::Moderator {
         let allowed: bool = sqlx::query_scalar(
             "SELECT coalesce((SELECT moderators_run FROM boards WHERE channel_id=$1),false)",
@@ -619,7 +624,7 @@ async fn runner(app: &App, jar: &CookieJar, channel: &str) -> Res<(auth::User, R
             ));
         }
     }
-    Ok((user, role))
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -629,12 +634,15 @@ pub struct Panic {
 /// PUT /api/channels/{username}/board/disabled: the panic switch stops presses and effects at once.
 async fn panic(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path(name): Path<String>,
     Json(input): Json<Panic>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
-    let (actor, role) = runner(&app, &jar, &channel).await?;
+    let (actor, role) =
+        moderation::actor_any(&app, &headers, &jar, &channel, "channel:run").await?;
+    moderators_run(&app, &channel, role).await?;
     let mut tx = app.db.begin().await?;
     let updated = sqlx::query("UPDATE boards SET disabled=$2 WHERE channel_id=$1")
         .bind(&channel)
