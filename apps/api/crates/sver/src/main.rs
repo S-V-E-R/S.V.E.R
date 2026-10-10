@@ -125,6 +125,16 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         }
     });
+    // The Discord bot (go-live posts, role sync) waits on Discord; keep it off the shared loops.
+    let discord = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::discord::tick(&discord).await.is_err() {
+                eprintln!("discord_event=tick outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
     // Event webhooks too: a slow developer endpoint never delays a game's board webhook.
     let hooks = app.clone();
     tokio::spawn(async move {

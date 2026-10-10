@@ -36,6 +36,8 @@ mod commands;
 mod crowd;
 #[path = "streams/devapps.rs"]
 mod devapps;
+#[path = "streams/discord.rs"]
+mod discord;
 #[path = "streams/discovery.rs"]
 mod discovery;
 #[path = "streams/dms.rs"]
@@ -435,6 +437,33 @@ async fn streaming_lifecycle_and_security() {
     // A spawned task catches assertion panics so the disposable schema is still cleaned.
     let result = tokio::spawn(async move { exercise(&env).await }).await;
     upstream.abort();
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    result.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn discord_bot() {
+    let (admin, db, schema) = isolated_database().await;
+    let mut config = Config::from_env().unwrap();
+    config.resend_key.clear();
+    config.providers = vec![sver::oauth::Provider {
+        name: "discord".into(),
+        client_id: "test-client".into(),
+        client_secret: "test-only-secret".into(),
+        authorize_url: "https://discord.example/authorize".into(),
+        token_url: "https://discord.example/token".into(),
+        profile_url: "https://discord.example/me".into(),
+        scopes: "identify".into(),
+        pkce: true,
+        redirect_uri: None,
+    }];
+    let app = App::new(db.clone(), config).await.unwrap();
+    let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
+    let result = tokio::spawn(async move { discord::exercise(&env).await }).await;
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)

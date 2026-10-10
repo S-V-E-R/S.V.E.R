@@ -22,6 +22,7 @@ pub mod chat;
 pub mod commands;
 pub mod crowd;
 pub mod devapps;
+pub mod discord;
 pub mod discovery;
 pub mod dms;
 pub mod emotes;
@@ -455,6 +456,7 @@ pub fn router(app: App) -> Router {
         .merge(staff_console::routes())
         .merge(money::routes())
         .merge(outside_emotes::routes())
+        .merge(discord::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(discovery::routes())
