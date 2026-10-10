@@ -29,6 +29,9 @@ pub struct Config {
     pub cdn_url: Option<String>,
     /// Bunny token authentication key; CDN URLs are signed for one stream's files.
     pub cdn_key: String,
+    /// Shared secret the CDN sends to the origin as `X-Sver-Origin`; nginx refuses origin HLS
+    /// without it, so the API's own probe (which reads `hls_url`) sends it too.
+    pub origin_secret: Option<String>,
     /// Measured direct-WebRTC limits (viewers per broadcast, and across all broadcasts). Unset
     /// means no automatic switching; set privately from the load test (docs/LOAD_TEST.md).
     pub webrtc_per_broadcast: Option<i64>,
@@ -76,6 +79,9 @@ impl Config {
             whep_url: read("STREAM_WHEP_URL")?,
             cdn_url,
             cdn_key,
+            origin_secret: std::env::var("STREAM_ORIGIN_SECRET")
+                .ok()
+                .filter(|v| !v.is_empty()),
             webrtc_per_broadcast: limit("STREAM_WEBRTC_PER_BROADCAST")?,
             webrtc_global: limit("STREAM_WEBRTC_GLOBAL")?,
         })
