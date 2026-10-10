@@ -432,6 +432,9 @@ pub enum Kind {
     SongThumb,
     SetupPhoto,
     Emote,
+    AlertImage,
+    /// Not an image: only its upload limit is used (overlays.rs transcodes sounds).
+    AlertSound,
 }
 impl Kind {
     pub fn name(self) -> &'static str {
@@ -443,6 +446,8 @@ impl Kind {
             Kind::SongThumb => "song_thumb",
             Kind::SetupPhoto => "setup_photo",
             Kind::Emote => "emote",
+            Kind::AlertImage => "alert_image",
+            Kind::AlertSound => "alert_sound",
         }
     }
     pub fn max_bytes(self) -> usize {
@@ -451,7 +456,8 @@ impl Kind {
             Kind::Banner => 10 * 1024 * 1024,
             Kind::SponsorLogo => 2 * 1024 * 1024,
             Kind::SongThumb => 5 * 1024 * 1024,
-            Kind::Emote => 1024 * 1024,
+            Kind::Emote | Kind::AlertSound => 1024 * 1024,
+            Kind::AlertImage => 2 * 1024 * 1024,
         }
     }
     fn too_big(self) -> Fail {
@@ -465,6 +471,8 @@ impl Kind {
                 Kind::SongThumb => "That image is too large to process.",
                 Kind::SetupPhoto => "Setup photos can be up to 5 MB.",
                 Kind::Emote => "Emotes can be up to 1 MB.",
+                Kind::AlertImage => "Alert images can be up to 2 MB.",
+                Kind::AlertSound => "Alert sounds can be up to 1 MB.",
             },
         )
     }
@@ -693,8 +701,13 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
                 })
             }
         }
-        Kind::SponsorLogo | Kind::SongThumb => {
-            let size = if kind == Kind::SponsorLogo { 256 } else { 400 };
+        Kind::AlertSound => Err(Fail::bad("That isn't an image.")),
+        Kind::SponsorLogo | Kind::SongThumb | Kind::AlertImage => {
+            let size = match kind {
+                Kind::SponsorLogo => 256,
+                Kind::AlertImage => 512,
+                _ => 400,
+            };
             if width < 16 || height < 16 {
                 return Err(Fail::field("file", "That image is too small."));
             }
@@ -710,10 +723,10 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
             } else {
                 image
             };
-            let folder = if kind == Kind::SponsorLogo {
-                "sponsors"
-            } else {
-                "songs"
+            let folder = match kind {
+                Kind::SponsorLogo => "sponsors",
+                Kind::AlertImage => "alerts",
+                _ => "songs",
             };
             let key = format!("{folder}/{hash}.webp");
             let (w, h) = resized.dimensions();
