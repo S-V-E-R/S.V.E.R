@@ -13,6 +13,7 @@ use std::{sync::Arc, time::Duration};
 pub mod account;
 pub mod achievements;
 pub mod activity;
+pub mod ads;
 pub mod alerts;
 pub mod auth;
 pub mod bans;
@@ -467,6 +468,7 @@ pub fn router(app: App) -> Router {
         .merge(achievements::routes())
         .merge(lights::routes())
         .merge(username_claims::routes())
+        .merge(ads::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(discovery::routes())

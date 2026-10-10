@@ -20,6 +20,8 @@ use tower::ServiceExt;
 
 #[path = "streams/achievements.rs"]
 mod achievements;
+#[path = "streams/ads.rs"]
+mod ads;
 #[path = "streams/alerts.rs"]
 mod alerts;
 #[path = "streams/bans.rs"]
@@ -567,6 +569,7 @@ async fn exercise(e: &Env) {
     achievements::exercise(e).await;
     lights::exercise(e).await;
     username_claims::exercise(e).await;
+    ads::exercise(e).await;
     // Live events: each flow above wrote its topic (docs/DEVELOPER_PLATFORM.md section 2).
     for kind in ["moderation", "raid:incoming"] {
         let written: bool = sqlx::query_scalar(

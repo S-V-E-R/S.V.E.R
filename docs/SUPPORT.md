@@ -51,7 +51,7 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - Viewer numbers (average and unique viewers) use the Trusted count from Module 3 viewer integrity, so viewbotted viewers never help a streamer climb. A streamer with an open staff integrity case is not promoted until it is closed.
 - Valor tributes pay 0.8¢ per Valor at every tier.
 - Legacy tier benefits not carried over: the discovery boost (MAGNet never ranks by size), and referrals, affiliate, partnerships and priority support (deferred).
-- The ad split is recorded here so the tiers stay in one place; it applies once ads exist (Phase 4). Viewers' 5% becomes Ad Valor.
+- The ad split is recorded here so the tiers stay in one place; it applies once ads exist (Phase 4). Viewers' 5% becomes Ad Valor. The design and the test-data ledger are in [ADS.md](ADS.md).
 
 ## Subscriptions
 

@@ -45,7 +45,7 @@ pub async fn compute(db: &mut PgConnection, day: NaiveDate) -> Res<Value> {
                     coalesce(sum(e.amount) FILTER (WHERE e.unit='valor' AND e.amount>0),0) v,
                     (coalesce(sum(e.amount) FILTER (WHERE e.unit='usd' AND e.amount>0),0)/10)::bigint u
                 FROM ledger_transactions t JOIN ledger_entries e ON e.transaction_id=t.id, w
-                WHERE t.created_at>=a AND t.created_at<b GROUP BY t.kind) m),
+                WHERE t.created_at>=a AND t.created_at<b AND t.kind NOT LIKE 'adtest%' GROUP BY t.kind) m),
             'top_channels', (SELECT coalesce(jsonb_agg(jsonb_build_object('username',username,'watch_hours',round(minutes::numeric/60,1)) ORDER BY minutes DESC),'[]') FROM (
                 SELECT u.username,sum(s.counted+s.trusted) minutes FROM integrity_snapshots s JOIN broadcasts b ON b.id=s.broadcast_id JOIN users u ON u.id=b.owner_id, w
                 WHERE s.taken_at>=a AND s.taken_at<b GROUP BY u.username ORDER BY 2 DESC LIMIT 10) t),
