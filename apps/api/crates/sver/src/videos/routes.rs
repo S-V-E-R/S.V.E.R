@@ -238,6 +238,9 @@ async fn cut(
     {
         return Err(Fail::bad("Invalid cut request."));
     }
+    if input.kind == "CLIP" {
+        crate::switches::guard(&mut *app.db.acquire().await?, "clipping").await?;
+    }
     let source = load(&mut *app.db.acquire().await?, &id).await?;
     accessible(&app, &source, Some(&user), input.age_ack).await?;
     let channel = source.owner_id.as_deref().ok_or_else(Fail::missing)?;

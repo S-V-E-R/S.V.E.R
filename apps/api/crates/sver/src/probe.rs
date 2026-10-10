@@ -100,7 +100,11 @@ pub fn b_frames(ts: &[u8]) -> Option<bool> {
 }
 
 async fn fetch(app: &App, url: &str, limit: usize) -> Option<Vec<u8>> {
-    let mut response = app.http.get(url).send().await.ok()?;
+    let mut request = app.http.get(url);
+    if let Some(secret) = &app.config.playback.origin_secret {
+        request = request.header("x-sver-origin", secret);
+    }
+    let mut response = request.send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -133,15 +137,21 @@ pub async fn tick(app: &App) -> Res<()> {
         let list = segments(&playlist);
         let keyframes = keyframe_seconds(&list);
         let mut reordered = None;
+        let mut captioned = false;
         if let Some((_, uri)) = list.last()
             && let Ok(url) = url::Url::parse(&playlist_url).and_then(|p| p.join(uri))
             && let Some(ts) = fetch(app, url.as_str(), SEGMENT_LIMIT).await
         {
             reordered = b_frames(&ts);
+            captioned = captions(&ts);
             thumbnail(app, &id, ts).await?;
         }
-        let measured = json!({"keyframe_seconds":keyframes,"b_frames":reordered,
+        let mut measured = json!({"keyframe_seconds":keyframes,"b_frames":reordered,
             "keyframe_warning":keyframes.is_some_and(|k|k>KEYFRAME_WARNING_SECONDS),"probed_at":chrono::Utc::now()});
+        // Sticky for the broadcast: OBS sends caption data only while there is text to show.
+        if captioned {
+            measured["captions"] = json!(true);
+        }
         sqlx::query("UPDATE broadcasts SET health=health||$2 WHERE id=$1 AND state='LIVE'")
             .bind(&id)
             .bind(measured)
@@ -152,6 +162,12 @@ pub async fn tick(app: &App) -> Res<()> {
 }
 
 /// Decodes one frame of a segment to a 640-pixel-wide WebP. The stream itself is never altered.
+/// Closed captions in the video (docs/COMMUNITY.md "Live captions from OBS"): OBS carries them as
+/// ATSC A/53 caption data ("GA94" user data in H.264 SEI), which SRS keeps in HLS and WebRTC.
+pub fn captions(ts: &[u8]) -> bool {
+    ts.windows(4).any(|w| w == b"GA94")
+}
+
 pub async fn snapshot(ts: Vec<u8>) -> Option<Vec<u8>> {
     use tokio::io::AsyncWriteExt;
     let mut child = tokio::process::Command::new("ffmpeg")
@@ -344,6 +360,16 @@ mod tests {
         out
     }
 
+    #[test]
+    fn finds_caption_data() {
+        assert!(captions(&segment_with(&[
+            0, 0, 1, 6, 4, 11, 0xb5, 0, 0x31, b'G', b'A', b'9', b'4', 3
+        ])));
+        assert!(!captions(&segment(&[(90_000, Some(90_000))])));
+    }
+    fn segment_with(payload: &[u8]) -> Vec<u8> {
+        packet(0x100, true, payload)
+    }
     #[test]
     fn measures_keyframes_and_b_frames() {
         let playlist = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.004,\nrebuild/a-1.ts\n#EXTINF:3.98,\nrebuild/a-2.ts\n#EXTINF:4.0,\nrebuild/a-3.ts\n";

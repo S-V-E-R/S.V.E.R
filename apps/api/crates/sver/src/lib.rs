@@ -10,17 +10,24 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{sync::Arc, time::Duration};
+pub mod account;
 pub mod activity;
 pub mod alerts;
 pub mod auth;
 pub mod bans;
 pub mod beacons;
 pub mod boards;
+pub mod bot;
 pub mod chat;
+pub mod commands;
 pub mod crowd;
+pub mod devapps;
+pub mod discord;
 pub mod discovery;
+pub mod dms;
 pub mod emotes;
 pub mod engagement;
+pub mod events;
 pub mod factions;
 pub mod gateway;
 pub mod guilds;
@@ -28,10 +35,14 @@ pub mod integrity;
 pub mod ipinfo;
 pub mod jobs;
 pub mod ledger;
+pub mod linked_chat;
 pub mod magnet;
 pub mod media;
 pub mod moderation;
+pub mod money;
 pub mod oauth;
+pub mod open_data;
+pub mod outside_emotes;
 pub mod parts;
 pub mod payouts;
 pub mod playback;
@@ -40,9 +51,11 @@ pub mod probe;
 pub mod profile_import;
 pub mod profile_jobs;
 pub mod profiles;
+pub mod progression;
 pub mod raids;
 pub mod rename;
 pub mod reserved;
+pub mod restream;
 pub mod roadmap;
 pub mod safety;
 pub mod security;
@@ -50,6 +63,7 @@ pub mod shine;
 pub mod skills;
 pub mod social;
 pub mod squads;
+pub mod staff_console;
 pub mod staff_push;
 pub mod staff_streams;
 pub mod streams;
@@ -58,11 +72,22 @@ pub mod studio;
 pub mod subs;
 pub mod support;
 pub mod surge;
+pub mod switches;
 pub mod take_down;
 pub mod text;
 pub mod tiers;
 pub mod videos;
 pub mod wall;
+
+/// Endpoints an app may call with a person's bearer token (docs/DEVELOPER_PLATFORM.md).
+fn app_callable(path: &str) -> bool {
+    path.starts_with("/api/hooks")
+        || matches!(path, "/api/me/raids" | "/api/me/stream")
+        || (path.starts_with("/api/channels/")
+            && ["/polls", "/close", "/marker", "/board/disabled"]
+                .iter()
+                .any(|end| path.ends_with(end)))
+}
 
 #[derive(Clone)]
 pub struct Config {
@@ -317,6 +342,14 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         && req.uri().path() != "/api/notifications/unsubscribe"
         // Stripe posts webhooks without an Origin; the signature is checked in support::webhook.
         && req.uri().path() != "/api/stripe/webhook"
+        // Twitch EventSub posts without an Origin; its HMAC signature is checked in linked_chat.
+        && req.uri().path() != "/api/integrations/twitch/eventsub"
+        // OAuth clients post tokens server to server; the client and PKCE checks are in devapps.
+        && !matches!(req.uri().path(), "/api/oauth/token" | "/api/oauth/revoke" | "/api/oauth/device")
+        // Apps call these with a bearer token (never a cookie); devapps::actor and
+        // events::hook_owner then use only the token.
+        && !(app_callable(req.uri().path())
+            && req.headers().get("authorization").and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("Bearer ")))
         && req.headers().get("origin").and_then(|v| v.to_str().ok())
         != Some(&app.config.origin)
     {
@@ -419,6 +452,11 @@ pub fn router(app: App) -> Router {
         .merge(squads::routes())
         .merge(chat::routes())
         .merge(emotes::routes())
+        .merge(switches::routes())
+        .merge(staff_console::routes())
+        .merge(money::routes())
+        .merge(outside_emotes::routes())
+        .merge(discord::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(discovery::routes())
@@ -432,6 +470,16 @@ pub fn router(app: App) -> Router {
         .merge(staff_push::routes())
         .merge(support::routes())
         .merge(subs::routes())
+        .merge(open_data::routes())
+        .merge(progression::routes())
+        .merge(account::routes())
+        .merge(restream::routes())
+        .merge(linked_chat::routes())
+        .merge(commands::routes())
+        .merge(bot::routes())
+        .merge(dms::routes())
+        .merge(devapps::routes())
+        .merge(events::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())
         .merge(payouts::routes())

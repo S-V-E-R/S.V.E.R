@@ -114,6 +114,11 @@ button:active:not(:disabled), .button:active { box-shadow: inset 0 2px 0 rgba(0,
   font-family: var(--font-label); font-weight: 700; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; padding: 1px 8px; border-radius: 0; vertical-align: middle;
 }
 .badge.verified { border-color: var(--accent); color: var(--accent-light); }
+/* Linked chat platform badges (docs/LINKED_CHAT.md): each platform's brand color. */
+.bot-badge { border-color: var(--accent); color: var(--accent-light); }
+.platform-badge.twitch { border-color: #9146ff; color: #a970ff; }
+.platform-badge.youtube { border-color: #ff0033; color: #ff4e45; }
+.platform-badge.kick { border-color: #53fc18; color: #53fc18; }
 
 /* Inputs: dark fill, 1px --line border, --accent border on focus, labels in Barlow Condensed above. */
 .field { display: block; margin: 0 0 18px; }
@@ -375,3 +380,30 @@ a.takedown-link, .channel a.takedown-link { min-height: 44px; padding: 0 4px; di
 a.takedown-link:hover { color: var(--ink); }
 .status-mark { display: inline-flex; align-items: center; vertical-align: -2px; margin-right: 6px; color: var(--ink-dim); }
 .status-mark.ok { color: var(--accent); }
+/* Progression: level and XP bar on the player card. */
+.player-card-xp { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.player-level { font-family: var(--font-display); font-weight: 700; color: var(--ink-muted); }
+.xp-bar { flex: 1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; min-width: 40px; }
+.xp-bar > span { display: block; height: 100%; background: var(--accent); }
+.daily-orders { padding: 10px 12px; }
+.order-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 13px; }
+.order-list li { display: grid; gap: 3px; }
+.order-list li.done .order-label { color: var(--ink-muted); text-decoration: line-through; }
+.order-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--ink-muted); }
+.order-list li[data-rarity="rare"] .order-meta span:first-child, .order-list li[data-rarity="epic"] .order-meta span:first-child, .order-list li[data-rarity="legendary"] .order-meta span:first-child { color: var(--accent); font-weight: 600; }
+.order-list button { justify-self: start; }
+
+/* Direct messages (docs/COMMUNITY.md). */
+.messages-layout { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 760px) { .messages-layout { grid-template-columns: minmax(0, 1fr); } }
+.messages-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.messages-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 1px solid transparent; padding: 8px; color: inherit; cursor: pointer; }
+.messages-item.active, .messages-item:hover { border-color: var(--line); background: var(--tint); }
+.messages-item-text { display: grid; min-width: 0; flex: 1; }
+.messages-item-text .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messages-thread { display: grid; gap: 12px; min-width: 0; }
+.messages-body { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.messages-body li { display: grid; gap: 2px; max-width: 80%; }
+.messages-body li.mine { justify-self: end; text-align: right; }
+.messages-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; border: 1px solid var(--line); background: var(--surface); }
+.messages-body li.mine .messages-text { border-color: var(--accent); }

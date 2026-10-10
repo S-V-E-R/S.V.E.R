@@ -78,6 +78,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** the pop-out, dock and overlay pages work at 280 px and in OBS, moderation actions work in the pop-out, and the overlay removes deleted messages.
 
+**Built October 9, 2026 (migration 0058).** `/{username}/chat` renders only the chat in the channel's faction theme (no site chrome), with `?dock=1` (no header, compact) and `?overlay=1` (read-only, transparent, messages fade after `chat_settings.overlay_fade_seconds`, set under Creator Studio → Chat → Rules). It is the same Chat component, so sign-in, moderation actions and deletions behave as on the channel page. The chat header's **Pop out** opens it at 400 × 700. Studio → Chat explains adding the dock and overlay in OBS. Still to check in OBS itself.
+
 ## Channel editors
 
 - An owner can appoint up to **5** editors, with step-up authentication, the same way as moderators. Editors must have a verified account in good standing.
@@ -89,6 +91,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** an editor can make exactly those changes and nothing else, every edit is attributed, and removal is immediate.
 
+**Built October 9, 2026 (migration 0059).** `channel_editors` (up to 5; appointing needs a recent sign-in), `GET/PATCH /api/channels/{name}/stream` for editors, sharing the owner's save path and revision check, with `stream_settings.edited_by` recording who edited (cleared when the owner saves). Membership is checked on every request, so removal is immediate. Studio → Stream lists editors and shows "Edited by @name"; the watch page has Edit stream info; the player menu lists Channels you edit.
+
 ## Keep a gifted subscription
 
 - A viewer with an active gifted month sees **Keep your subscription** on the channel and on `/wallet`.
@@ -99,6 +103,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** a gifted viewer converts with the first charge at the gift's end, cancels before it with no charge, and the ledger and badge stay correct.
 
+**Built October 9, 2026 (migration 0060).** A card subscription started while a gifted or Valor month is running becomes a Stripe trial ending when that month ends (Checkout says nothing is charged today and when the first charge is), so cancelling before then charges nothing. The $0 trial invoice turns on renewal without adding a month; the first paid invoice adds the next. Stripe needs a trial to end at least 48 hours out, so a month ending sooner gets up to two extra free days. The reminder is an in-site notification three days before (`sub_ending`, once per ending month). `/wallet` lists active subscriptions with Keep your subscription for non-card ones.
+
 ## Signature emote
 
 - Each channel can pick one of its open emotes (not a subscriber emote) as its **signature emote**.
@@ -108,6 +114,8 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 - Reports, removal, banned words and strikes work as for other emotes. Removing the emote, or rejecting it in review, ends cross-channel use immediately.
 
 **Done when:** an approved signature emote renders in other channels only in the `username/Code` form, the owner's opt-out works, and removal stops it everywhere.
+
+**Built October 9, 2026 (migration 0061).** `channel_emotes.signature` (one open emote per channel; Studio → Emotes → Make signature). It works elsewhere only once staff have reviewed it (`reviewed_at`, the existing emote review) and while it is visible. Chat resolves `username/Code` tokens through `GET /api/emotes/signatures` (looked up live, once per code per page, so removal or rejection stops it), and the dock has a Signature tab of followed channels' emotes. `chat_settings.allow_signatures` (Studio → Chat → Rules) turns others' off in a chat. The owner shows in the tooltip; a crest on hover is not built yet.
 
 ## Open data
 
@@ -122,6 +130,7 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 **Monthly charts:**
 - money from subscriptions, gift subs and tributes, split into the creators' share and S.V.E.R's share
 - payouts sent
+- Wall sales ([WALL.md](WALL.md)), as their own line
 
 **Privacy rules:** no per-person or per-channel numbers. A weekly figure below 10 is shown as "fewer than 10". If fewer than 10 creators were paid in a month, that month's money is combined with the next.
 
@@ -132,6 +141,8 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 - Charts use the theme tokens.
 
 **Done when:** the page shows the charts from real data, the thresholds hold, and the CSVs match the charts.
+
+**Built October 9, 2026 (migration 0062).** The jobs loop recomputes the last 12 weeks and 12 months once a day into `public_stats`; `GET /api/open-data` and `/api/open-data/{weekly,monthly}.csv` apply the thresholds (so the page and CSVs show the same numbers), and `/open-data` draws simple SVG bars in the theme colors. Fairness is measured by recording every broadcast the rotation pointer puts in first place (`rotation_firsts`) against streams live 10 minutes or more. Money counts card payments at their price and Valor at 1 cent, with the creators' share from earnings accounts; refunds aren't netted out yet. The page is rendered per request rather than cached; the figures are a small table read.
 
 ## Credits
 
@@ -148,5 +159,5 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 
 - **Pronouns** on profiles (Joe, October 6).
 - **Holding new channels off the homepage** until they have 10 hours of streaming and have been live for 15 minutes. Glimesh did this; S.V.E.R gives new creators a head start instead.
-- **A paid platform supporter subscription** with cosmetic perks. Support (Module 6) is already the funding model.
+- **A paid platform supporter subscription** with cosmetic perks. Support (Module 6) is already the funding model. The Wall ([WALL.md](WALL.md), October 9) is different: a seat is bought once and gives no perks.
 - **Country-based edge selection.** The CDN already routes viewers to the nearest location.

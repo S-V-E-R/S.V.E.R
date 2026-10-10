@@ -75,6 +75,15 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::integrity::tick(app).await.is_err() {
         eprintln!("integrity_event=maintenance outcome=retry");
     }
+    if crate::commands::tick(app).await.is_err() {
+        eprintln!("commands_event=timers outcome=retry");
+    }
+    if crate::open_data::tick(app).await.is_err() {
+        eprintln!("open_data_event=compute outcome=retry");
+    }
+    if crate::subs::remind(app).await.is_err() {
+        eprintln!("subs_event=reminder outcome=retry");
+    }
     if crate::boards::tick(app).await.is_err() {
         eprintln!("board_event=release outcome=retry");
     }
@@ -88,6 +97,18 @@ pub async fn tick(app: &App) -> Result<()> {
     }
     if crate::guilds::tick(app).await.is_err() {
         eprintln!("guild_event=maintenance outcome=retry");
+    }
+    let _ = sqlx::query("DELETE FROM oauth_devices WHERE expires_at<now()-interval '1 hour'")
+        .execute(&app.db)
+        .await;
+    let _ = sqlx::query("DELETE FROM oauth_codes WHERE expires_at<now()")
+        .execute(&app.db)
+        .await;
+    if crate::events::prune(app).await.is_err() {
+        eprintln!("events_event=prune outcome=retry");
+    }
+    if crate::dms::tick(app).await.is_err() {
+        eprintln!("dm_event=expiry outcome=retry");
     }
     crate::profile_jobs::tick(app).await?;
     sqlx::query(

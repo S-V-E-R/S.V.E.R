@@ -188,6 +188,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .step-up .panel{width:min(440px,100%)}
 
 .chat-emote { display: inline-block; width: 28px; height: 28px; vertical-align: middle; object-fit: contain; }
+.chat-emote.chat-emote-wide { width: auto; max-width: 112px; }
 
 /* Notifications list (go-live alerts). */
 .notifications li { gap: 12px; align-items: center; justify-content: flex-start; }
@@ -243,6 +244,27 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 /* Mature label: dark tag (ink text) and the warning shown before a labeled stream plays. */
 .mature-tag{background:var(--bg);color:var(--ink);border:1px solid var(--ink-dim)}
 .mature-warning{aspect-ratio:16/9;display:flex;flex-direction:column;justify-content:center;gap:var(--space-3,12px);padding:var(--space-4,16px);max-width:100%}
+/* Pop-out chat (docs/CHANNEL_ADDITIONS.md): chat alone, from 280 px wide; compact OBS dock; overlay. */
+.chat-popout{margin-left:var(--space-2,8px)}
+.popout-chat{min-height:100vh;min-width:280px;padding:8px;display:flex;flex-direction:column;background:var(--bg)}
+.popout-chat .chat{flex:1;display:flex;flex-direction:column;min-height:0;max-height:none}
+.popout-chat .chat-messages{flex:1;overflow-y:auto}
+.popout-dock{padding:0}.chat-compact{padding:6px;font-size:0.92em}
+.popout-overlay{background:transparent;padding:0;min-height:0}
+.chat-overlay{background:transparent;border:0;color:#fff;text-shadow:0 1px 2px #000,0 0 4px #000}
+.chat-overlay .chat-messages{list-style:none;margin:0;padding:8px;display:flex;flex-direction:column;gap:4px}
 /* /credits: wide tables scroll in place; license texts wrap. */
 .table-scroll{overflow-x:auto;max-width:100%}
 .license-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:0.85em;max-height:24rem;overflow:auto}
+/* /open-data: small bar charts in the theme's colors. */
+.open-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--space-3,12px)}
+.open-chart{width:100%;height:auto;max-width:100%}
+.open-bar{fill:var(--accent)}.open-bar-withheld{fill:var(--ink-dim)}.open-tick{fill:var(--ink-muted);font-size:9px}
+
+/* Staff site banner (docs/ADMIN.md): one line above the page content, dismissible. */
+.site-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:8px 12px;border:1px solid var(--accent);background:var(--panel);color:var(--ink)}
+.site-banner p{margin:0}
+.player-cc{position:absolute;top:8px;right:8px;z-index:2;min-width:44px}.player-cc[aria-pressed="true"]{outline:2px solid var(--accent, currentColor);outline-offset:1px}
+.chat-gif{display:block;padding:0;margin:4px 0;border:0;background:none;cursor:pointer;max-width:min(220px,100%)}.chat-gif img{display:block;width:100%;height:auto;border-radius:4px}
+.gif-picker{grid-column:1/-1;border:1px solid var(--line);padding:8px;display:grid;gap:6px}.gif-picker-head{display:flex;gap:8px}.gif-picker-head input{flex:1;min-width:0}
+.gif-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;max-height:240px;overflow-y:auto}.gif-grid button{display:block;padding:0;border:0;background:none;width:100%;cursor:pointer}.gif-grid img{display:block;width:100%;height:80px;object-fit:cover}.gif-credit{margin:0;text-align:right}

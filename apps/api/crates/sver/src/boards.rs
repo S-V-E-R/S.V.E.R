@@ -467,6 +467,11 @@ async fn publish(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
 /// Open boards and overlays reload.
 pub(crate) fn changed(app: &App, channel: &str) {
     app.chat.publish(channel, None, 0, json!({"type": "board"}));
+    let (app, channel) = (app.clone(), channel.to_string());
+    tokio::spawn(async move {
+        let _ =
+            crate::events::emit_after(&app, &channel, "board", json!({"type": "changed"})).await;
+    });
 }
 
 #[derive(Deserialize)]
@@ -601,6 +606,11 @@ async fn overlay_revoke(State(app): State<App>, jar: CookieJar) -> Res<Json<Valu
 
 async fn runner(app: &App, jar: &CookieJar, channel: &str) -> Res<(auth::User, Role)> {
     let (user, role) = moderation::actor(app, jar, channel).await?;
+    moderators_run(app, channel, role).await?;
+    Ok((user, role))
+}
+/// Moderators run the board only if the streamer lets them.
+async fn moderators_run(app: &App, channel: &str, role: Role) -> Res<()> {
     if role == Role::Moderator {
         let allowed: bool = sqlx::query_scalar(
             "SELECT coalesce((SELECT moderators_run FROM boards WHERE channel_id=$1),false)",
@@ -614,7 +624,7 @@ async fn runner(app: &App, jar: &CookieJar, channel: &str) -> Res<(auth::User, R
             ));
         }
     }
-    Ok((user, role))
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -624,12 +634,15 @@ pub struct Panic {
 /// PUT /api/channels/{username}/board/disabled: the panic switch stops presses and effects at once.
 async fn panic(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path(name): Path<String>,
     Json(input): Json<Panic>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
-    let (actor, role) = runner(&app, &jar, &channel).await?;
+    let (actor, role) =
+        moderation::actor_any(&app, &headers, &jar, &channel, "channel:run").await?;
+    moderators_run(&app, &channel, role).await?;
     let mut tx = app.db.begin().await?;
     let updated = sqlx::query("UPDATE boards SET disabled=$2 WHERE channel_id=$1")
         .bind(&channel)
@@ -969,6 +982,13 @@ async fn press(
     app.chat.publish(&channel, Some(&user.id), 0, json!({"type": "board_effect", "id": input.id, "confirm": control.confirm, "control": control.id,
         "label": control.label, "effect": control.effect, "user": author, "text": text, "goal": goal,
         "stream_ms": stream_ms, "at": at, "overlay": row.overlay}));
+    // Live events never name under-18 accounts.
+    let minor = crate::support::age(&mut *app.db.acquire().await?, &user.id)
+        .await?
+        .is_some_and(|a| a < 18);
+    crate::events::emit_after(&app, &channel, "board", json!({"type": "press", "id": input.id, "control": control.id,
+        "label": control.label, "effect": control.effect, "user": if minor { Value::Null } else { json!(user.username) },
+        "text": text, "goal": goal, "held": control.confirm})).await?;
     let balance: i64 = sqlx::query_scalar(
         "SELECT coalesce((SELECT balance FROM engagement WHERE channel_id=$1 AND user_id=$2),0)",
     )
@@ -1010,6 +1030,13 @@ pub(crate) async fn settle(app: &App, channel: &str, press: &str, capture: bool)
             .await?;
     }
     tx.commit().await?;
+    crate::events::emit_after(
+        app,
+        channel,
+        "board",
+        json!({"type": "result", "id": press, "control": control, "outcome": outcome}),
+    )
+    .await?;
     // The viewer's panel shows the result; games and bridges see auto-releases too.
     app.chat.publish(
         channel,
@@ -1396,7 +1423,7 @@ fn forward(e: &Arc<Event>, channel: &str, test_room: &str) -> bool {
 
 /// A webhook URL the platform will call: HTTPS (plain HTTP only in development), no credentials,
 /// and never a private address (checked again against DNS at every delivery).
-fn webhook_target(app: &App, url: &str) -> Result<url::Url, &'static str> {
+pub(crate) fn webhook_target(app: &App, url: &str) -> Result<url::Url, &'static str> {
     if url.len() > 500 {
         return Err("The URL is too long.");
     }
@@ -1453,7 +1480,7 @@ pub fn public(ip: IpAddr) -> bool {
         }
     }
 }
-async fn deliver(app: &App, url: &str, secret: &str, body: &[u8]) -> Result<(), String> {
+pub(crate) async fn deliver(app: &App, url: &str, secret: &str, body: &[u8]) -> Result<(), String> {
     let parsed = webhook_target(app, url).map_err(String::from)?;
     let host = parsed.host_str().ok_or("No host")?.to_string();
     let port = parsed.port_or_known_default().ok_or("No port")?;

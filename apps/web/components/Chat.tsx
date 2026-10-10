@@ -8,10 +8,15 @@ import { GuildChatBadge } from "./Guilds";
 import { CREATOR_TIERS, type Chip } from "../lib/types";
 import { EmoteImage, type ChannelEmote } from "./Emote";
 import { ChatDock } from "./ChatDock";
+import { GifImage, GifPicker, type Gif, type GifAccess } from "./GifPicker";
 import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
-type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null };
+type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null; loyalty?: number; outside?: Outside | null; gif?: Gif | null };
+/** A message from a linked platform (docs/LINKED_CHAT.md): always badged, never a S.V.E.R account. */
+type Outside = { platform: string; sender_id: string; name: string; login: string; role: string | null; url: string | null };
+const PLATFORM_NAMES: Record<string, string> = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
+const LOYALTY = ["Newcomer", "Regular", "Devoted", "Veteran", "Legend"];
 /** Subscriber badge milestones: 1, 3, 6, 9 and 12 months, then each further year (docs/SUPPORT.md). */
 export function subBadge(months: number) {
   if (months >= 24) return `${Math.floor(months / 12)} years`;
@@ -19,16 +24,20 @@ export function subBadge(months: number) {
   const step = [9, 6, 3].find(m => months >= m) ?? 1;
   return `${step} ${step === 1 ? "month" : "months"}`;
 }
-type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean };
+type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean; allow_signatures?: boolean; gifs?: GifAccess };
+/** Another channel's signature emote, written username/Code (docs/CHANNEL_ADDITIONS.md "Signature emote"). */
+const SIGNATURE = /(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)/g;
 type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes: ChannelEmote[] } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string } | { type: "delete"; id: string } | { type: "raid"; raid: unknown } | { type: "raid_cancelled"; id: string } | { type: "system"; text: string } | { type: "protect"; until: string | null } | { type: "subs_only"; on: boolean } | { type: "board_effect" } | { type: "board_input" } | { type: "board" } | { type: "poll" } | { type: "counters" } | { type: "rally" } | { type: "surge" } | { type: "board_state" } | { type: "board_result" };
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
 function MessageBody({ message, account, emotes }: { message: Message; account: string | null; emotes: ChannelEmote[] }) {
+  if (message.gif) return <GifImage gif={message.gif} alt={message.body.replace(/^GIF: /, "")} />;
   const parts: React.ReactNode[] = [];
   let cursor = 0;
-  for (const match of message.body.matchAll(/(?<!\S)[A-Za-z0-9]{3,20}(?!\S)|(?<![\p{L}\p{N}_@])@([A-Za-z0-9_]{3,25})(?![\p{L}\p{N}_])/gu)) {
-    const emote = !match[1] && emotes.find(e => e.code === match[0]);
+  for (const match of message.body.matchAll(/(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)|(?<!\S)[A-Za-z0-9_]{1,40}(?!\S)|(?<![\p{L}\p{N}_@])@([A-Za-z0-9_]{3,25})(?![\p{L}\p{N}_])|(?<!\S)[^\s@]{0,39}[^\sA-Za-z0-9_@][^\s@]{0,39}(?!\S)/gu)) {
+    // Signature emotes match their username case-insensitively; channel emote codes are exact.
+    const emote = !match[1] && emotes.find(e => e.code === match[0] || (e.code.includes("/") && e.code.toLowerCase() === match[0].toLowerCase()));
     const name = match[1] && message.mentions.find(name => name.toLowerCase() === match[1].toLowerCase());
     if (!name && !emote) continue;
     parts.push(message.body.slice(cursor, match.index));
@@ -47,7 +56,18 @@ function MessageBody({ message, account, emotes }: { message: Message; account: 
  * Channel chat. Live over the same-origin WebSocket; if the socket can't connect it polls history
  * and sends over HTTPS, which run the same server checks. Messages render as plain text.
  */
-export function Chat({ username, account, squad }: { username: string; account: string | null; squad?: string }) {
+/**
+ * `variant`: the channel page ("full", with a Pop out button), the pop-out window ("popout"), an OBS
+ * dock ("dock": no header, compact) or a read-only OBS overlay ("overlay": messages fade after `fade`
+ * seconds). See docs/CHANNEL_ADDITIONS.md "Pop-out chat".
+ */
+export function Chat({ username, account, squad, variant = "full", fade = 30 }: { username: string; account: string | null; squad?: string; variant?: "full" | "popout" | "dock" | "overlay"; fade?: number }) {
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (variant !== "overlay") return;
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [variant]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
@@ -56,7 +76,15 @@ export function Chat({ username, account, squad }: { username: string; account: 
   const [restrictions, setRestrictions] = useState<{ user: Chip; kind: string; until: string | null }[]>([]);
   const [pinned, setPinned] = useState<Message | null>(null);
   const [emotes, setEmotes] = useState<ChannelEmote[]>([]);
+  const [signatures, setSignatures] = useState<ChannelEmote[]>([]);
+  const [outside, setOutside] = useState<ChannelEmote[]>([]);
+  const [emotesVersion, setEmotesVersion] = useState(0);
+  const [allowSignatures, setAllowSignatures] = useState(true);
+  const [gifs, setGifs] = useState<GifAccess>(null);
+  const [picking, setPicking] = useState(false);
+  const askedSignatures = useRef(new Set<string>());
   const [reply, setReply] = useState<Reply | null>(null);
+  const [outsideReply, setOutsideReply] = useState<{ id: string; platform: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   // Valor to pay with the next message (docs/SUPPORT.md "Purchased Valor"); null when off.
   const [tribute, setTribute] = useState<number | null>(null);
@@ -125,7 +153,7 @@ export function Chat({ username, account, squad }: { username: string; account: 
     const fallback = () => {
       if (closed || poll) return;
       setMode("polling");
-      const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
+      const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setAllowSignatures(r.data.allow_signatures ?? true); setGifs(r.data.gifs ?? null); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
       void load();
       poll = setInterval(() => { if (!document.hidden) void load(); }, 4000);
     };
@@ -137,10 +165,10 @@ export function Chat({ username, account, squad }: { username: string; account: 
       ws.onmessage = event => {
         if (closed) return;
         const data = JSON.parse(event.data) as Event;
-        if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); }
+        if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); }
         else if (data.type === "protect") setFollowersOnly(data.until);
         else if (data.type === "subs_only") setSubsOnly(data.on);
-        else if (data.type === "emotes") setEmotes(data.emotes);
+        else if (data.type === "emotes") { setEmotes(data.emotes); setEmotesVersion(v => v + 1); }
         else if (data.type === "pin") setPinned(data.pinned);
         else if (data.type === "message" || data.type === "ack") merge([data.message]);
         else if (data.type === "delete") remove(data.id);
@@ -185,6 +213,15 @@ export function Chat({ username, account, squad }: { username: string; account: 
     else if (squad) await loadRole();
   }
 
+  async function outsideAction(m: Message, action: "hide" | "mute" | "mute-forever") {
+    const o = m.outside;
+    if (!o) return;
+    const result = action === "hide"
+      ? await send("POST", `${path}/outside/${encodeURIComponent(m.id)}/hide`)
+      : await send("POST", `${path}/outside-mutes`, { platform: o.platform, sender_id: o.sender_id, permanent: action === "mute-forever" });
+    if (!result.ok) setError(result.error);
+  }
+
   async function changePin(messageId: string | null, reason?: string) {
     reason ??= window.prompt("Reason for changing the pinned message (required)")?.trim();
     if (!reason) return;
@@ -203,6 +240,21 @@ export function Chat({ username, account, squad }: { username: string; account: 
     if (/^\/flag$/i.test(body) && !pinDraft) {
       const result = await send("POST", "/api/me/magnet/flag");
       if (result.ok) setDraft(""); else setError(result.error);
+      return;
+    }
+    // /help lists what works in this chat, including the channel's custom commands.
+    if (/^\/help$/i.test(body) && !pinDraft) {
+      const result = await send<{ commands: { name: string; access: string }[]; bot: string }>("GET", `/api/channels/${encodeURIComponent(username)}/commands`);
+      const custom = result.ok && result.data.commands.length ? ` · ${result.data.bot}'s commands: ${result.data.commands.map(c => `!${c.name}${c.access === "everyone" ? "" : ` (${c.access})`}`).join(", ")}` : "";
+      setNotice(`Commands: !rally (rally your faction) · counters such as !deaths${canPin ? " · moderators: !marker, +/- on counters, Timeout and Ban from a message's Actions" : ""}${role === "owner" ? " · you: /raid name, /unraid, /flag" : ""}${custom}`);
+      setDraft("");
+      return;
+    }
+    if (outsideReply && !pinDraft) {
+      setBusy(true);
+      const result = await send("POST", "/api/me/linked-chat/reply", { platform: outsideReply.platform, body, reply_to: outsideReply.id });
+      setBusy(false);
+      if (result.ok) { setDraft(""); setOutsideReply(null); } else setError(result.error);
       return;
     }
     const raid = /^\/(raid|unraid)(?:\s+@?([A-Za-z0-9_]{3,25}))?$/i.exec(body);
@@ -229,10 +281,38 @@ export function Chat({ username, account, squad }: { username: string; account: 
     setBusy(false);
   }
 
-  return <section className="chat panel" aria-label="Chat">
-    <h2>Chat {mode !== "live" && <span className="muted small">{mode === "polling" ? "(updates every few seconds)" : "(connecting…)"}</span>}</h2>
+  // GIFs go over HTTP so a refusal (the channel's GIF setting, slow mode) shows at once.
+  async function sendGif(gif: Gif & { title: string }) {
+    setPicking(false); setError(""); setBusy(true);
+    const result = await send<{ message: Message }>("POST", path, { id: crypto.randomUUID(), body: "", reply_to: reply?.id, gif });
+    if (result.ok) { merge([result.data.message]); setReply(null); } else setError(result.error);
+    setBusy(false);
+  }
+
+  // 7TV, BTTV and FFZ emotes the channel shows (served by S.V.E.R); reloaded when emotes change.
+  useEffect(() => {
+    if (squad) return;
+    void send<{ emotes: ChannelEmote[] }>("GET", `/api/channels/${encodeURIComponent(username)}/outside-emotes`).then(r => { if (r.ok) setOutside(r.data.emotes ?? []); });
+  }, [username, squad, emotesVersion]);
+  // Signature emotes are looked up live (once per code per page), so a removed one stops showing.
+  useEffect(() => {
+    if (!allowSignatures) return;
+    const wanted = [...new Set(messages.flatMap(m => m.body.match(SIGNATURE) ?? []))].filter(code => !askedSignatures.current.has(code.toLowerCase())).slice(0, 30);
+    if (!wanted.length) return;
+    wanted.forEach(code => askedSignatures.current.add(code.toLowerCase()));
+    void send<{ emotes: ChannelEmote[] }>("GET", `/api/emotes/signatures?codes=${encodeURIComponent(wanted.join(","))}`).then(r => { if (r.ok && r.data.emotes.length) setSignatures(known => [...known, ...r.data.emotes]); });
+  }, [messages, allowSignatures]);
+  const shown = [...emotes, ...(allowSignatures ? signatures : []), ...outside];
+  if (variant === "overlay") return <section className="chat chat-overlay" aria-label="Chat">
+    <ol className="chat-messages" aria-live="polite">{messages.filter(m => (!m.outside || m.outside.platform === "bot") && clock - Date.parse(m.created_at) < fade * 1000).map(m => <li key={m.id}>
+      <strong>{m.author.display_name}</strong>: <MessageBody message={m} account={null} emotes={shown} />
+    </li>)}</ol>
+  </section>;
+  return <section className={variant === "dock" ? "chat panel chat-compact" : "chat panel"} aria-label="Chat">
+    {variant !== "dock" && <h2>Chat {mode !== "live" && <span className="muted small">{mode === "polling" ? "(updates every few seconds)" : "(connecting…)"}</span>}
+      {variant === "full" && !squad && <button type="button" className="small quiet chat-popout" onClick={() => window.open(`/${encodeURIComponent(username)}/chat`, `sver-chat-${username}`, "width=400,height=700")}>Pop out</button>}</h2>}
     {pinned && <aside className="chat-pin" aria-label="Pinned message" aria-live="polite">
-      <strong>Pinned message</strong><div className="chat-pin-content"><strong>{pinned.author.display_name}: </strong><MessageBody message={pinned} account={account} emotes={emotes} /></div>
+      <strong>Pinned message</strong><div className="chat-pin-content"><strong>{pinned.author.display_name}: </strong><MessageBody message={pinned} account={account} emotes={shown} /></div>
       {canPin && <button type="button" className="small quiet" onClick={() => changePin(null)}>Unpin</button>}
     </aside>}
     {notice && <p className="chat-system" role="status">{notice}</p>}
@@ -242,17 +322,34 @@ export function Chat({ username, account, squad }: { username: string; account: 
     {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Followers-only chat for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
     <ol className="chat-messages" ref={list} aria-live="polite">
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
-      {messages.map(m => <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
+      {messages.map(m => m.outside?.platform === "bot" ? <li key={m.id} className="chat-bot">
+        <span className="muted">{time(m.created_at)}</span>{" "}
+        <span className="badge bot-badge" title="This channel's bot">Bot</span> <strong>{m.outside.name}</strong>: <MessageBody message={m} account={account} emotes={shown} />
+        {canPin && <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.outside.name}`}>Actions</summary><div className="chat-message-controls">
+          <button type="button" className="small quiet" onClick={() => outsideAction(m, "hide")}>Hide here</button>
+        </div></details>}
+      </li> : m.outside ? <li key={m.id} className="chat-outside">
+        <span className="muted">{time(m.created_at)}</span>{" "}
+        <span className={`badge platform-badge ${m.outside.platform}`} title={`From ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}>{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}<span className="sr-only"> message</span></span>{" "}
+        {m.outside.url ? <a href={m.outside.url} target="_blank" rel="noopener noreferrer nofollow" title={`${m.outside.name} on ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}><strong>{m.outside.name}</strong></a> : <strong>{m.outside.name}</strong>}
+        {m.outside.role && <span className="badge">{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform} {m.outside.role === "moderator" ? "mod" : m.outside.role === "subscriber" ? "sub" : "broadcaster"}</span>}: {m.body}
+        {canPin && <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.outside.name}`}>Actions</summary><div className="chat-message-controls">
+          {role === "owner" && <button type="button" className="small quiet" onClick={() => { setOutsideReply({ id: m.id, platform: m.outside!.platform, name: m.outside!.name }); setReply(null); input.current?.focus(); }}>Reply on {PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}</button>}
+          <button type="button" className="small quiet" onClick={() => outsideAction(m, "hide")}>Hide here</button>
+          <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute")}>Mute here for this stream</button>
+          <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute-forever")}>Mute here permanently</button>
+        </div></details>}
+      </li> : <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
         {m.skill && <span className="badge skill-badge">✨ {m.skill}</span>}
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
-        {m.author.username ? <Link className="faction-name" data-faction={m.author.faction} href={`/${m.author.username}`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
+        {m.author.username ? <Link className="faction-name" data-faction={m.author.faction} href={`/${m.author.username}`} title={`${LOYALTY[m.loyalty ?? 0]} in this channel`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
         {m.creator_tier ? <span className="badge tier-badge" title="Creator tier">{CREATOR_TIERS[m.creator_tier]}</span> : null}
         {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber`}>{subBadge(m.sub.months)}</span>}
         {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet">MAGNet</span>}
-        {m.role && <span className="badge">{m.role === "owner" && squad && m.author.username?.toLowerCase() !== username.toLowerCase() ? "Co-streamer" : { owner: "Broadcaster", moderator: "Moderator", staff: "Staff" }[m.role]}</span>}: <MessageBody message={m} account={account} emotes={emotes} />
+        {m.role && <span className="badge">{m.role === "owner" && squad && m.author.username?.toLowerCase() !== username.toLowerCase() ? "Co-streamer" : { owner: "Broadcaster", moderator: "Moderator", staff: "Staff" }[m.role]}</span>}: <MessageBody message={m} account={account} emotes={shown} />
         <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.author.display_name}`}>Actions</summary><div className="chat-message-controls">
         {account && <button type="button" className="small quiet" aria-label={`Reply to ${m.author.display_name}`} onClick={() => { setReply({ id: m.id, username: m.author.username, body: Array.from(m.body.replace(/[\r\n]+/g, " ")).slice(0, 80).join("") }); input.current?.focus(); }}>Reply</button>}
         {canPin && <button type="button" className="small quiet" aria-label={`Pin message from ${m.author.display_name}`} onClick={() => changePin(m.id)}>Pin</button>}
@@ -269,16 +366,19 @@ export function Chat({ username, account, squad }: { username: string; account: 
     {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt("Reason for lifting this restriction")?.trim(); if (!reason || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, { reason }); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
     {account ? <form onSubmit={submit} className="chat-form">
       {reply && <div className="chat-reply-draft"><span>Replying to @{reply.username}: {reply.body}</span><button type="button" className="small quiet" onClick={() => setReply(null)}>Cancel reply</button></div>}
+      {outsideReply && <div className="chat-reply-draft"><span>Replying on {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} to {outsideReply.name}, as your {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} account</span><button type="button" className="small quiet" onClick={() => setOutsideReply(null)}>Cancel reply</button></div>}
       {highlight !== null && <div className="chat-draft-note"><span>Your next message is highlighted · {highlight.toLocaleString()} Engagement Valor</span><button type="button" className="small quiet" onClick={() => setHighlight(null)}>Not highlighted</button></div>}
       <label htmlFor="chat-input" className="sr-only">Message</label>
       <textarea ref={input} id="chat-input" value={draft} disabled={busy} maxLength={500} rows={2} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
       <button type="submit" disabled={busy}>{tribute ? "Pay tribute" : "Send"}</button>
       {tribute === null ? <button type="button" className="quiet small" disabled={busy} onClick={() => setTribute(10)}>Tribute</button>
         : <span className="tribute-draft"><label htmlFor="tribute-amount">Valor</label> <input id="tribute-amount" type="number" min={10} step={1} value={tribute} onChange={e => setTribute(Math.max(0, Math.floor(Number(e.target.value) || 0)))} /> <button type="button" className="quiet small" onClick={() => setTribute(null)}>No tribute</button> <Link href="/wallet" className="small">Get Valor</Link></span>}
+      {gifs && !outsideReply && <button type="button" className="quiet small" disabled={busy} aria-expanded={picking} onClick={() => setPicking(p => !p)}>GIF</button>}
+      {gifs && picking && <GifPicker access={gifs} account={account} onPick={sendGif} onClose={() => setPicking(false)} />}
       {canPin && <button type="button" className="quiet small" disabled={busy || !draft.trim()} onClick={event => submit(event, true)}>Send and pin</button>}
       {error && <p role="alert" className="error">{error}</p>}
     </form> : <p className="muted"><Link href="/login">Sign in</Link> to chat.</p>}
-    <ChatDock username={username} account={account} emotes={emotes} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
+    <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
       onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 500)); input.current?.focus(); }} />
   </section>;
 }

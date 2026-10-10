@@ -5,7 +5,7 @@ use axum::{
     Json, Router,
     extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Duration, Utc};
@@ -162,13 +162,16 @@ async fn authorize_playback(
     headers: HeaderMap,
 ) -> Result<StatusCode> {
     authorize_hook(&app, peer, &headers)?;
-    let id = headers
+    let uri = headers
         .get("x-original-uri")
         .and_then(|v| v.to_str().ok())
-        .and_then(playback_id)
-        .ok_or_else(|| Error::denied("Playback is unavailable."))?;
-    let owner: Option<String> = sqlx::query_scalar("SELECT b.owner_id FROM broadcasts b JOIN stream_credentials c ON c.owner_id=b.owner_id AND c.public_id=b.public_id AND c.generation=b.generation WHERE b.public_id=$1 AND c.revoked_at IS NULL AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>clock_timestamp()))")
-        .bind(id).fetch_optional(&app.db).await?;
+        .unwrap_or_default();
+    let id = playback_id(uri).ok_or_else(|| Error::denied("Playback is unavailable."))?;
+    // A broadcast moved to the CDN (over its WebRTC limit) refuses new WebRTC viewers here too, so a
+    // kept WHEP URL can't get around the switch.
+    let whep = uri.starts_with("/rebuild/whep/");
+    let owner: Option<String> = sqlx::query_scalar("SELECT b.owner_id FROM broadcasts b JOIN stream_credentials c ON c.owner_id=b.owner_id AND c.public_id=b.public_id AND c.generation=b.generation WHERE b.public_id=$1 AND c.revoked_at IS NULL AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>clock_timestamp())) AND NOT ($2 AND b.delivery<>'webrtc')")
+        .bind(id).bind(whep).fetch_optional(&app.db).await?;
     if let Some(owner) = owner {
         let mut db = app.db.acquire().await?;
         if profiles::channel_user_by_id(&mut db, &owner)
@@ -247,8 +250,11 @@ async fn end(db: &mut PgConnection, owner: &str, reason: &str) -> Result<()> {
         .bind(owner).execute(&mut *db).await?;
     sqlx::query("UPDATE stream_publishers SET retired_at=coalesce(retired_at,clock_timestamp()) WHERE broadcast_id IN (SELECT id FROM broadcasts WHERE owner_id=$1 AND state<>'ENDED')")
         .bind(owner).execute(&mut *db).await?;
-    sqlx::query("UPDATE broadcasts SET state='ENDED',ended_at=clock_timestamp(),end_reason=$2,reconnect_deadline=NULL WHERE owner_id=$1 AND state<>'ENDED'")
+    let ended = sqlx::query("UPDATE broadcasts SET state='ENDED',ended_at=clock_timestamp(),end_reason=$2,reconnect_deadline=NULL WHERE owner_id=$1 AND state<>'ENDED'")
         .bind(owner).bind(reason).execute(&mut *db).await?;
+    if ended.rows_affected() > 0 {
+        crate::events::emit(db, owner, "live", serde_json::json!({"live": false})).await?;
+    }
     crate::videos::ended(db, owner)
         .await
         .map_err(|_| Error::internal())?;
@@ -397,11 +403,11 @@ pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>>
     settings(&mut tx, &user).await?;
     expire(&mut tx, &user.id).await?;
     let allowed = eligible(&mut tx, &user).await?;
-    let metadata: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',title,'category_id',category_id,'revision',revision,'mature',mature,'language',language,'mature_locked',EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND mature_locked AND state<>'ENDED')) FROM stream_settings WHERE owner_id=$1")
+    let metadata: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',title,'category_id',category_id,'revision',revision,'mature',mature,'language',language,'edited_by',(SELECT username FROM users WHERE id=edited_by),'mature_locked',EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND mature_locked AND state<>'ENDED')) FROM stream_settings WHERE owner_id=$1")
         .bind(&user.id).fetch_one(&mut *tx).await?;
     let credential: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('created_at',created_at,'revoked',revoked_at IS NOT NULL) FROM stream_credentials WHERE owner_id=$1")
         .bind(&user.id).fetch_optional(&mut *tx).await?;
-    let broadcast: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'state',state,'started_at',started_at,'reconnect_deadline',reconnect_deadline,'ended_at',ended_at,'end_reason',end_reason,'observed_at',observed_at,'health',health) FROM broadcasts WHERE owner_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1")
+    let broadcast: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('scouts',(SELECT count(*) FROM scout_awards s WHERE s.broadcast_id=broadcasts.id),'id',id,'state',state,'started_at',started_at,'reconnect_deadline',reconnect_deadline,'ended_at',ended_at,'end_reason',end_reason,'observed_at',observed_at,'health',health) FROM broadcasts WHERE owner_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1")
         .bind(&user.id).fetch_optional(&mut *tx).await?;
     let pending: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM stream_stop_jobs WHERE owner_id=$1)")
@@ -429,20 +435,48 @@ pub struct Metadata {
 }
 pub async fn save(
     State(app): State<App>,
+    headers: HeaderMap,
     jar: CookieJar,
     Json(input): Json<Metadata>,
 ) -> Result<Json<Value>> {
+    // An app (channel:edit) changes the title and category with the person's token; signed in,
+    // the session must have passed two-factor sign-in as for every Studio change.
+    let (mut tx, user) = if headers.contains_key("authorization") {
+        let user = crate::devapps::actor(&app, &headers, &jar, "channel:edit")
+            .await
+            .map_err(|f| Error(f.status, "Use a token with channel:edit.", None))?;
+        (app.db.begin().await?, user)
+    } else {
+        let (tx, user, session) = auth::session(&app, &jar, false).await?;
+        auth::authorize_streaming(&user, &session)?;
+        (tx, user)
+    };
+    require_eligible(&mut tx, &user).await?;
+    settings(&mut tx, &user).await?;
+    let body = apply(&mut tx, &user.id, None, &input).await?;
+    tx.commit().await?;
+    Ok(Json(body))
+}
+/// Saves the stream's details for the owner or, with `editor`, one of their channel editors (who
+/// can't turn the Mature label off). Same revision check either way; the edit records who made it.
+async fn apply(
+    tx: &mut PgConnection,
+    owner: &str,
+    editor: Option<&str>,
+    input: &Metadata,
+) -> Result<Value> {
     let title = input.title.trim();
     if title.is_empty() || title.chars().count() > 140 || title.chars().any(char::is_control) {
         return Err(Error::bad(
             "Use a stream title with 1–140 characters and no control characters.",
         ));
     }
-    let (mut tx, user, session) = auth::session(&app, &jar, false).await?;
-    auth::authorize_streaming(&user, &session)?;
-    require_eligible(&mut tx, &user).await?;
-    settings(&mut tx, &user).await?;
-    let category_id = catalog::select(&mut tx, &input.category_id)
+    if editor.is_some() && input.mature == Some(false) {
+        return Err(Error::bad(
+            "Only the channel owner can turn the Mature label off.",
+        ));
+    }
+    let category_id = catalog::select(&mut *tx, &input.category_id)
         .await
         .map_err(|e| Error(e.status, "Choose an available stream category.", None))?;
     let active: bool =
@@ -453,11 +487,12 @@ pub async fn save(
     if !active {
         return Err(Error::bad("Choose an available stream category."));
     }
-    let previous: Option<String> =
+    let previous: Option<Option<String>> =
         sqlx::query_scalar("SELECT category_id FROM stream_settings WHERE owner_id=$1")
-            .bind(&user.id)
-            .fetch_one(&mut *tx)
+            .bind(owner)
+            .fetch_optional(&mut *tx)
             .await?;
+    let previous = previous.ok_or_else(|| conflict("This channel hasn't set up streaming yet."))?;
     if input
         .language
         .as_deref()
@@ -466,27 +501,27 @@ pub async fn save(
         return Err(Error::bad("Choose a language from the list."));
     }
     let locked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND mature_locked AND state<>'ENDED')")
-        .bind(&user.id).fetch_one(&mut *tx).await?;
+        .bind(owner).fetch_one(&mut *tx).await?;
     if locked && input.mature == Some(false) {
         return Err(Error::bad(
             "Staff labeled this broadcast mature; the label stays on until it ends.",
         ));
     }
-    let revision: Option<i64> = sqlx::query_scalar("UPDATE stream_settings SET title=$2,category_id=$3,mature=coalesce($5,mature),language=coalesce($6,language),revision=revision+1,updated_at=clock_timestamp() WHERE owner_id=$1 AND revision=$4 RETURNING revision")
-        .bind(&user.id).bind(title).bind(&category_id).bind(input.revision).bind(input.mature).bind(&input.language).fetch_optional(&mut *tx).await?;
+    let revision: Option<i64> = sqlx::query_scalar("UPDATE stream_settings SET title=$2,category_id=$3,mature=coalesce($5,mature),language=coalesce($6,language),edited_by=$7,revision=revision+1,updated_at=clock_timestamp() WHERE owner_id=$1 AND revision=$4 RETURNING revision")
+        .bind(owner).bind(title).bind(&category_id).bind(input.revision).bind(input.mature).bind(&input.language).bind(editor).fetch_optional(&mut *tx).await?;
     let revision = revision
         .ok_or_else(|| conflict("This changed in another tab. Reload to see the latest."))?;
     // A broadcast labeled at any point stays labeled (its VOD and clips inherit it).
     sqlx::query("UPDATE broadcasts b SET mature=true FROM stream_settings s WHERE b.owner_id=$1 AND s.owner_id=$1 AND s.mature AND b.state<>'ENDED'")
-        .bind(&user.id).execute(&mut *tx).await?;
+        .bind(owner).execute(&mut *tx).await?;
     if previous.as_deref() != Some(category_id.as_str()) {
         let label: String = sqlx::query_scalar("SELECT name FROM stream_categories WHERE id=$1")
             .bind(&category_id)
             .fetch_one(&mut *tx)
             .await?;
         crate::videos::chapter(
-            &mut tx,
-            &user.id,
+            &mut *tx,
+            owner,
             "CATEGORY",
             Some(&revision.to_string()),
             &label,
@@ -494,10 +529,151 @@ pub async fn save(
         .await
         .map_err(|_| Error::internal())?;
     }
+    let info: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',s.title,'category',k.name,'language',s.language,'mature',s.mature) FROM stream_settings s LEFT JOIN stream_categories k ON k.id=s.category_id WHERE s.owner_id=$1")
+        .bind(owner).fetch_one(&mut *tx).await?;
+    crate::events::emit(&mut *tx, owner, "update", info).await?;
+    Ok(json!({"saved":true,"revision":revision,"category_id":category_id}))
+}
+
+// ---- Channel editors (docs/CHANNEL_ADDITIONS.md "Channel editors") ----
+
+const MAX_EDITORS: i64 = 5;
+/// The channel `name` if the signed-in user is its owner or one of its editors (checked on every
+/// action, so removal takes effect at once); None otherwise.
+async fn editable(
+    db: &mut PgConnection,
+    user: &auth::User,
+    name: &str,
+) -> Result<Option<(String, bool)>> {
+    let channel: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM channel_users WHERE lower(username)=lower($1) AND eligible",
+    )
+    .bind(name)
+    .fetch_optional(&mut *db)
+    .await?;
+    let Some(channel) = channel else {
+        return Ok(None);
+    };
+    if channel == user.id {
+        return Ok(Some((channel, true)));
+    }
+    let editor: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_editors e JOIN channel_users u ON u.id=e.user_id AND u.eligible AND u.email_verified WHERE e.channel_id=$1 AND e.user_id=$2)")
+        .bind(&channel).bind(&user.id).fetch_one(&mut *db).await?;
+    Ok(editor.then_some((channel, false)))
+}
+/// GET /api/channels/{name}/stream: the stream's details, for its owner and editors only.
+async fn stream_info(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+) -> Result<Json<Value>> {
+    let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
+    let (channel, owner) = editable(&mut tx, &user, &name).await?.ok_or(Error(
+        axum::http::StatusCode::NOT_FOUND,
+        "That isn't a channel you edit.",
+        None,
+    ))?;
+    let settings: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('title',title,'category_id',category_id,'revision',revision,'mature',mature,'language',language) FROM stream_settings WHERE owner_id=$1")
+        .bind(&channel).fetch_optional(&mut *tx).await?;
     tx.commit().await?;
-    Ok(Json(
-        json!({"saved":true,"revision":revision,"category_id":category_id}),
-    ))
+    Ok(Json(json!({"settings": settings, "owner": owner})))
+}
+/// PATCH /api/channels/{name}/stream: an editor (or the owner) changes title, category, language
+/// or switches Mature on.
+async fn editor_save(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Json(input): Json<Metadata>,
+) -> Result<Json<Value>> {
+    let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
+    let (channel, owner) = editable(&mut tx, &user, &name).await?.ok_or(Error(
+        axum::http::StatusCode::NOT_FOUND,
+        "That isn't a channel you edit.",
+        None,
+    ))?;
+    let body = apply(
+        &mut tx,
+        &channel,
+        (!owner).then_some(user.id.as_str()),
+        &input,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(body))
+}
+async fn editors_json(db: &mut PgConnection, channel: &str) -> Result<Value> {
+    Ok(sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('username',u.username,'display_name',u.display_name,'appointed_at',e.appointed_at) ORDER BY e.appointed_at),'[]') FROM channel_editors e JOIN channel_users u ON u.id=e.user_id WHERE e.channel_id=$1")
+        .bind(channel).fetch_one(db).await?)
+}
+/// GET /api/me/editors: the owner's editors.
+async fn editors(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>> {
+    let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
+    let list = editors_json(&mut tx, &user.id).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"editors": list, "max": MAX_EDITORS})))
+}
+#[derive(Deserialize)]
+pub struct Appoint {
+    username: String,
+}
+/// POST /api/me/editors: appoint (recent sign-in required, like moderators; up to 5).
+async fn appoint_editor(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<Appoint>,
+) -> Result<Json<Value>> {
+    let (mut tx, user, session) = auth::session(&app, &jar, false).await?;
+    auth::recent(&session)?;
+    let target: Option<String> = sqlx::query_scalar("SELECT id FROM channel_users WHERE lower(username)=lower($1) AND eligible AND email_verified")
+        .bind(input.username.trim()).fetch_optional(&mut *tx).await?;
+    let target =
+        target.ok_or_else(|| Error::bad("Editors need a verified account in good standing."))?;
+    if target == user.id {
+        return Err(Error::bad("You already edit your own channel."));
+    }
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('editors:'||$1, 7))")
+        .bind(&user.id)
+        .execute(&mut *tx)
+        .await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_editors WHERE channel_id=$1")
+        .bind(&user.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if count >= MAX_EDITORS {
+        return Err(conflict("A channel can have up to 5 editors."));
+    }
+    sqlx::query(
+        "INSERT INTO channel_editors(channel_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+    )
+    .bind(&user.id)
+    .bind(&target)
+    .execute(&mut *tx)
+    .await?;
+    let list = editors_json(&mut tx, &user.id).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"editors": list, "max": MAX_EDITORS})))
+}
+/// DELETE /api/me/editors/{username}: takes effect on the editor's next action.
+async fn remove_editor(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(username): Path<String>,
+) -> Result<Json<Value>> {
+    let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
+    sqlx::query("DELETE FROM channel_editors e USING users u WHERE e.channel_id=$1 AND e.user_id=u.id AND lower(u.username)=lower($2)")
+        .bind(&user.id).bind(&username).execute(&mut *tx).await?;
+    let list = editors_json(&mut tx, &user.id).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"editors": list, "max": MAX_EDITORS})))
+}
+/// GET /api/me/editing: channels the signed-in user edits (the player menu lists them).
+async fn editing(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>> {
+    let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
+    let channels: Value = sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('username',c.username,'display_name',c.display_name) ORDER BY lower(c.username)),'[]') FROM channel_editors e JOIN channel_users c ON c.id=e.channel_id AND c.eligible WHERE e.user_id=$1")
+        .bind(&user.id).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"channels": channels})))
 }
 #[derive(Deserialize)]
 pub struct Proof {
@@ -733,6 +909,12 @@ pub async fn hook(
         if keys.len() != 1 || keys[0].len() != 43 {
             return Err(Error::denied("Invalid publishing credential."));
         }
+        if crate::switches::off(&mut tx, "going_live")
+            .await
+            .map_err(|_| Error::unavailable())?
+        {
+            return Err(Error::denied("Going live is paused right now."));
+        }
         let generation: Option<i64> = sqlx::query_scalar("SELECT generation FROM stream_credentials WHERE owner_id=$1 AND public_id=$2 AND secret_hash=$3 AND revoked_at IS NULL")
             .bind(&owner).bind(&input.stream).bind(sec::digest(&keys[0])).fetch_optional(&mut *tx).await?;
         let generation =
@@ -869,6 +1051,13 @@ pub fn routes() -> Router<App> {
         )
         .route("/api/internal/streams/playback", get(authorize_playback))
         .route("/api/categories", get(categories))
+        .route("/api/me/editors", get(editors).post(appoint_editor))
+        .route("/api/me/editors/{username}", delete(remove_editor))
+        .route("/api/me/editing", get(editing))
+        .route(
+            "/api/channels/{name}/stream",
+            get(stream_info).patch(editor_save),
+        )
         .route("/api/me/stream", get(mine).patch(save))
         .route("/api/me/stream/health", get(mine))
         .route("/api/me/stream/key", post(create_key))
@@ -1035,7 +1224,7 @@ pub async fn tick(app: &App) -> Result<()> {
                             "height":stream["video"]["height"].as_u64(),"input_kbps":kbps,
                             "codec_warning":video.is_some()&&!compatible,
                             "bitrate_warning":kbps.is_some_and(|n|n>8000.0),"bitrate_warning_provisional":true});
-                        sqlx::query("UPDATE broadcasts SET confirmed_live_at=CASE WHEN $2 AND $3 THEN coalesce(confirmed_live_at,clock_timestamp()) ELSE confirmed_live_at END,state=CASE WHEN $2 AND $3 THEN 'LIVE' ELSE state END,recv_bytes=$4,health=$5::jsonb||jsonb_strip_nulls(jsonb_build_object('keyframe_seconds',health->'keyframe_seconds','b_frames',health->'b_frames','keyframe_warning',health->'keyframe_warning','probed_at',health->'probed_at')),observed_at=CASE WHEN $3 THEN clock_timestamp() ELSE observed_at END WHERE id=$1 AND state IN ('STARTING','LIVE')")
+                        sqlx::query("UPDATE broadcasts SET confirmed_live_at=CASE WHEN $2 AND $3 THEN coalesce(confirmed_live_at,clock_timestamp()) ELSE confirmed_live_at END,state=CASE WHEN $2 AND $3 THEN 'LIVE' ELSE state END,recv_bytes=$4,health=$5::jsonb||jsonb_strip_nulls(jsonb_build_object('keyframe_seconds',health->'keyframe_seconds','b_frames',health->'b_frames','keyframe_warning',health->'keyframe_warning','probed_at',health->'probed_at','captions',health->'captions')),observed_at=CASE WHEN $3 THEN clock_timestamp() ELSE observed_at END WHERE id=$1 AND state IN ('STARTING','LIVE')")
                             .bind(&b.id).bind(compatible).bind(fresh).bind(bytes).bind(health).execute(&mut *tx).await?;
                     }
                 } else if b.state != "STARTING" {

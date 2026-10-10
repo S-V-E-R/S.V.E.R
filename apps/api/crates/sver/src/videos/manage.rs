@@ -89,11 +89,12 @@ pub async fn marker(
 }
 async fn add_marker(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path(name): Path<String>,
     Json(input): Json<Marker>,
 ) -> Res<Json<Value>> {
-    let user = profiles::signed_in(&app, &jar).await?;
+    let user = crate::devapps::actor(&app, &headers, &jar, "channel:run").await?;
     let channel = profiles::eligible_by_name(&mut *app.db.acquire().await?, &name)
         .await?
         .ok_or_else(Fail::channel_missing)?;

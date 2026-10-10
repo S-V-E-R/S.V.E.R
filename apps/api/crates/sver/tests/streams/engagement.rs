@@ -113,6 +113,74 @@ pub async fn exercise(e: &Env) {
     sver::engagement::award_watch(&e.app).await.unwrap();
     assert_eq!(balance(e, "ev-viewer").await, 315, "once per interval");
     assert_eq!(balance(e, "ev-lurker").await, 0);
+    // Account XP (docs/PROGRESSION.md): chat at most once a minute, watching once per interval,
+    // and a Scout bonus for 10+ minutes that began early in a new channel's broadcast, once.
+    let progression = || async {
+        call(e, "GET", "/api/me/progression", Some(&viewer), Value::Null)
+            .await
+            .1
+    };
+    assert_eq!(
+        progression().await["xp"],
+        12,
+        "2 for chat (once) + 10 for a minute watched"
+    );
+    e.sql("UPDATE broadcasts SET started_at=now()-interval '12 minutes' WHERE id='ev-b'")
+        .await;
+    e.sql("UPDATE playback_leases SET created_at=now()-interval '11 minutes' WHERE broadcast_id='ev-b'").await;
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    let mine = progression().await;
+    assert_eq!(
+        (&mine["xp"], &mine["level"], &mine["next_xp"]),
+        (&json!(62), &json!(1), &json!(100)),
+        "{mine}"
+    );
+    let (_, studio) = call(e, "GET", "/api/me/stream", Some(&owner), Value::Null).await;
+    assert_eq!(studio["broadcast"]["scouts"], 1, "{studio}");
+    // Daily orders: three on first view, completed from event records by the minute tick.
+    let orders = || async {
+        call(e, "GET", "/api/me/orders", Some(&viewer), Value::Null)
+            .await
+            .1
+    };
+    assert_eq!(orders().await["orders"].as_array().unwrap().len(), 3);
+    e.sql("UPDATE daily_orders SET kind=CASE slot WHEN 0 THEN 'watch' ELSE 'poll' END,rarity=0,target=CASE slot WHEN 0 THEN 1 ELSE 5 END WHERE user_id='ev-viewer'").await;
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    let today = orders().await;
+    assert_eq!(
+        (
+            &today["orders"][0]["done"],
+            &today["orders"][0]["xp"],
+            &today["orders"][1]["done"],
+            &today["streak"],
+            &today["week"]
+        ),
+        (
+            &json!(true),
+            &json!(40),
+            &json!(false),
+            &json!(1),
+            &json!(1)
+        ),
+        "{today}"
+    );
+    assert_eq!(progression().await["level"], 2, "62 + 40 XP");
+    let token = viewer.as_str();
+    let reroll = |slot: i32| async move {
+        call(
+            e,
+            "POST",
+            &format!("/api/me/orders/{slot}/reroll"),
+            Some(token),
+            Value::Null,
+        )
+        .await
+        .0
+    };
+    assert_eq!(reroll(0).await, StatusCode::BAD_REQUEST, "done orders stay");
+    assert_eq!(reroll(1).await, StatusCode::OK);
+    assert_eq!(reroll(2).await, StatusCode::BAD_REQUEST, "one reroll a day");
 
     // The viewer's view of the channel's rewards and balance.
     let (_, listed) = call(

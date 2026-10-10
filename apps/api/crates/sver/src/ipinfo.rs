@@ -53,6 +53,24 @@ impl Networks {
         lookup(&db.reader, ip)
     }
 
+    /// The network in plain words ("Comcast Cable, United States") for a sign-in approval screen.
+    pub fn describe(&self, ip: IpAddr) -> Option<String> {
+        let guard = self.db.read().ok()?;
+        let db = guard.as_ref()?;
+        let found = db.reader.lookup(ip.to_canonical()).ok()?;
+        let name = found
+            .decode_path::<String>(&maxminddb::path!["as_name"])
+            .ok()??;
+        let country = found
+            .decode_path::<String>(&maxminddb::path!["country"])
+            .ok()
+            .flatten();
+        Some(match country {
+            Some(country) => format!("{name}, {country}"),
+            None => name,
+        })
+    }
+
     /// Reads the file already on disk, if it opens and answers a known address.
     fn load(&self) {
         let Some(path) = &self.path else { return };

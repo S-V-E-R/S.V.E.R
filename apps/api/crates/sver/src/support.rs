@@ -32,7 +32,7 @@ pub const PACKS: [(i64, i64); 7] = [
 const MINOR_CAP_CENTS: i64 = 5_000;
 
 /// Age in whole years from the date of birth; None when it isn't on file.
-async fn age(db: &mut PgConnection, user: &str) -> Res<Option<i32>> {
+pub(crate) async fn age(db: &mut PgConnection, user: &str) -> Res<Option<i32>> {
     Ok(sqlx::query_scalar(
         "SELECT date_part('year', age(date_of_birth))::int FROM users WHERE id=$1",
     )
@@ -170,6 +170,7 @@ pub async fn checkout(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::ensure_verified(&user, "Verify your email address to buy Valor.")?;
+    crate::switches::guard(&mut *app.db.acquire().await?, "purchases").await?;
     let Some(&(cents, valor)) = PACKS.iter().find(|p| p.0 == input.cents) else {
         return Err(Fail::field("cents", "Choose one of the Valor packs."));
     };

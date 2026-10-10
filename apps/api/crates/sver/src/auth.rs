@@ -228,6 +228,16 @@ pub async fn create_user(
     password: Option<&str>,
     verified: bool,
 ) -> Result<User> {
+    if crate::switches::off(&mut *db, "signups")
+        .await
+        .map_err(|_| Error::internal())?
+    {
+        return Err(Error(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Sign-ups are paused right now. Please try again soon.",
+            None,
+        ));
+    }
     let held: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM username_holds WHERE handle_canonical=lower($1) AND released_at>now())")
         .bind(username)
         .fetch_one(&mut *db)
@@ -443,11 +453,12 @@ pub async fn me(State(app): State<App>, jar: CookieJar) -> Result<(CookieJar, Js
     let faction = crate::factions::membership(&mut tx, &user.id)
         .await
         .map_err(|_| Error::internal())?;
+    let pending_email = crate::account::pending_email(&mut tx, &user.id).await?;
     tx.commit().await?;
     Ok((
         renew(&app, jar),
         Json(
-            json!({"id":user.id,"email":user.email,"username":user.username,"faction":faction,"email_verified":user.email_verified,"mfa_enabled":user.mfa_enabled,"has_password":user.password_hash.is_some(),"providers":providers,"recovery_codes_remaining":remaining,"session_id":session.id,"reauthenticated":recent(&session).is_ok(),"deletion_due":user.deleted_at.map(|d|d+Duration::days(14))}),
+            json!({"id":user.id,"email":user.email,"username":user.username,"faction":faction,"email_verified":user.email_verified,"mfa_enabled":user.mfa_enabled,"has_password":user.password_hash.is_some(),"providers":providers,"recovery_codes_remaining":remaining,"session_id":session.id,"reauthenticated":recent(&session).is_ok(),"deletion_due":user.deleted_at.map(|d|d+Duration::days(14)),"pending_email":pending_email}),
         ),
     ))
 }
@@ -606,6 +617,11 @@ pub async fn consume<'a>(
     Ok((tx, user))
 }
 pub async fn verify_email(State(app): State<App>, Json(input): Json<Token>) -> Result<Json<Value>> {
+    // The same link page confirms a new address from an email change (docs/LOGIN.md).
+    if crate::account::is_email_change(&app, &input.token).await? {
+        crate::account::confirm_email(&app, &input.token).await?;
+        return Ok(Json(json!({"verified":true,"email_changed":true})));
+    }
     let (mut tx, user) = consume(&app, &input.token, "verify").await?;
     sqlx::query("UPDATE users SET email_verified=true WHERE id=$1")
         .bind(user.id)

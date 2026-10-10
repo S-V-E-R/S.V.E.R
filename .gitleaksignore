@@ -1,0 +1,2 @@
+# Synthetic test values flagged by generic-api-key (not secrets).
+614bd2d2edb622a50bbf4fa793af60cf6b7b375c:apps/api/crates/sver/tests/streams/restream.rs:generic-api-key:9

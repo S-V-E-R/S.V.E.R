@@ -75,6 +75,12 @@ async fn poll_json(db: &mut PgConnection, id: &str) -> Res<Value> {
 }
 async fn publish_poll(app: &App, channel: &str, id: &str) -> Res<()> {
     let poll = poll_json(&mut *app.db.acquire().await?, id).await?;
+    let kind = if poll["kind"] == "prediction" {
+        "prediction"
+    } else {
+        "poll"
+    };
+    crate::events::emit_after(app, channel, kind, poll.clone()).await?;
     app.chat
         .publish(channel, None, 0, json!({"type": "poll", "poll": poll}));
     Ok(())
@@ -172,12 +178,14 @@ pub struct Start {
 /// prediction (2–10 outcomes) on the live stream.
 async fn start(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path(name): Path<String>,
     Json(input): Json<Start>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
-    let (actor, role) = moderation::actor(&app, &jar, &channel).await?;
+    let (actor, role) =
+        moderation::actor_any(&app, &headers, &jar, &channel, "channel:run").await?;
     let prediction = match input.kind.as_str() {
         "poll" => false,
         "prediction" => true,
@@ -328,12 +336,14 @@ pub struct Close {
 /// refunds every stake.
 async fn close(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path((name, id)): Path<(String, String)>,
     Json(input): Json<Close>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
-    let (actor, role) = moderation::actor(&app, &jar, &channel).await?;
+    let (actor, role) =
+        moderation::actor_any(&app, &headers, &jar, &channel, "channel:run").await?;
     let mut tx = app.db.begin().await?;
     // POLL is fixed SQL; values are bound.
     let poll: Poll = sqlx::query_as(sqlx::AssertSqlSafe(format!(

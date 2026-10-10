@@ -30,22 +30,38 @@ mod boards;
 mod chat;
 #[path = "streams/chat_social.rs"]
 mod chat_social;
+#[path = "streams/commands.rs"]
+mod commands;
 #[path = "streams/crowd.rs"]
 mod crowd;
+#[path = "streams/devapps.rs"]
+mod devapps;
+#[path = "streams/discord.rs"]
+mod discord;
 #[path = "streams/discovery.rs"]
 mod discovery;
+#[path = "streams/dms.rs"]
+mod dms;
 #[path = "streams/engagement.rs"]
 mod engagement;
+#[path = "streams/events.rs"]
+mod events;
 #[path = "streams/gateway.rs"]
 mod gateway;
+#[path = "streams/gifs.rs"]
+mod gifs;
 #[path = "streams/integrity.rs"]
 mod integrity;
+#[path = "streams/linked_chat.rs"]
+mod linked_chat;
 #[path = "streams/magnet.rs"]
 mod magnet;
 #[path = "streams/moderation.rs"]
 mod moderation;
 #[path = "streams/moments.rs"]
 mod moments;
+#[path = "streams/outside_emotes.rs"]
+mod outside_emotes;
 #[path = "streams/playback.rs"]
 mod playback;
 #[path = "streams/plays.rs"]
@@ -60,6 +76,8 @@ mod reports;
 mod resets;
 #[path = "streams/rest.rs"]
 mod rest;
+#[path = "streams/restream.rs"]
+mod restream;
 #[path = "streams/staff_streams.rs"]
 mod staff_streams;
 #[path = "streams/staff_window.rs"]
@@ -68,6 +86,8 @@ mod staff_window;
 mod subs;
 #[path = "streams/support.rs"]
 mod support;
+#[path = "streams/switches.rs"]
+mod switches;
 #[path = "streams/teams.rs"]
 mod teams;
 #[path = "streams/videos.rs"]
@@ -380,6 +400,7 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/invoice_payments", get(stripe))
         .route("/v1/transfers", post(stripe))
         .route("/v1/payouts", post(stripe))
+        .route("/v1/refunds", post(stripe))
         .route("/v1/subscriptions/{id}", get(stripe).post(stripe))
         .route("/v1/accounts/{id}/login_links", post(stripe))
         .route("/hook", post(board_hook))
@@ -425,6 +446,58 @@ async fn streaming_lifecycle_and_security() {
     result.unwrap();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn discord_bot() {
+    let (admin, db, schema) = isolated_database().await;
+    let mut config = Config::from_env().unwrap();
+    config.resend_key.clear();
+    config.providers = vec![sver::oauth::Provider {
+        name: "discord".into(),
+        client_id: "test-client".into(),
+        client_secret: "test-only-secret".into(),
+        authorize_url: "https://discord.example/authorize".into(),
+        token_url: "https://discord.example/token".into(),
+        profile_url: "https://discord.example/me".into(),
+        scopes: "identify".into(),
+        pkce: true,
+        redirect_uri: None,
+    }];
+    let app = App::new(db.clone(), config).await.unwrap();
+    let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
+    let result = tokio::spawn(async move { discord::exercise(&env).await }).await;
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    result.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn third_party_emotes() {
+    let (admin, db, schema) = isolated_database().await;
+    let mut config = Config::from_env().unwrap();
+    config.resend_key.clear();
+    let media_dir =
+        std::env::temp_dir().join(format!("sver-outside-media-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&media_dir).unwrap();
+    config.media = sver::media::MediaConfig {
+        storage: sver::media::Storage::Filesystem(media_dir.clone()),
+        public_base: format!("{}/api/media", config.origin),
+    };
+    let app = App::new(db.clone(), config).await.unwrap();
+    let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
+    let dir = media_dir.clone();
+    let result = tokio::spawn(async move { outside_emotes::exercise(&env, &dir).await }).await;
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    std::fs::remove_dir_all(media_dir).unwrap();
+    result.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn guilds_and_squads() {
     let (admin, db, schema) = isolated_database().await;
     let mut config = Config::from_env().unwrap();
@@ -458,19 +531,38 @@ async fn exercise(e: &Env) {
     moments::exercise(e).await;
     gateway::exercise(e).await;
     rest::exercise(e).await;
+    restream::exercise(e).await;
+    linked_chat::exercise(e).await;
+    commands::exercise(e).await;
+    dms::exercise(e).await;
+    devapps::exercise(e).await;
+    events::exercise(e).await;
     moderation::exercise(e).await;
+    gifs::exercise(e).await;
     chat_social::exercise(e).await;
     reports::exercise(e).await;
     bans::exercise(e).await;
     resets::exercise(e).await;
     integrity::exercise(e).await;
     staff_window::exercise(e).await;
+    switches::exercise(e).await;
     alerts::exercise(e).await;
     raids::exercise(e).await;
     staff_streams::exercise(e).await;
     discovery::exercise(e).await;
     plays::exercise(e).await;
     magnet::exercise(e).await;
+    // Live events: each flow above wrote its topic (docs/DEVELOPER_PLATFORM.md section 2).
+    for kind in ["moderation", "raid:incoming"] {
+        let written: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM events WHERE topic LIKE 'channel:%:'||$1)",
+        )
+        .bind(kind)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+        assert!(written, "no {kind} event");
+    }
     let forged = Request::builder()
         .method("POST")
         .uri("/api/internal/srs/publish")
@@ -633,6 +725,77 @@ async fn exercise(e: &Env) {
         .0,
         StatusCode::CONFLICT
     );
+    // Channel editors: title, category, language and Mature on; never Mature off, never the key;
+    // every edit is attributed and removal is immediate.
+    let editor = chat::person(e, "stream-editor", "StreamEditor", true).await;
+    let appointed = e
+        .call(
+            "POST",
+            "/api/me/editors",
+            json!({"username":"StreamEditor"}),
+        )
+        .await;
+    assert_eq!(
+        appointed["editors"][0]["username"], "StreamEditor",
+        "{appointed}"
+    );
+    let (_, editing) = chat::call(e, "GET", "/api/me/editing", Some(&editor), Value::Null).await;
+    assert_eq!(editing["channels"][0]["username"], "Streamer");
+    let edit = |body: Value| {
+        chat::call(
+            e,
+            "PATCH",
+            "/api/channels/streamer/stream",
+            Some(&editor),
+            body,
+        )
+    };
+    let (status, saved) = edit(json!({"title":"Edited by the editor","category_id":"coding","revision":1,"language":"en","mature":true})).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(
+        edit(json!({"title":"Stale edit","category_id":"coding","revision":1}))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        edit(json!({"title":"Off","category_id":"coding","revision":2,"mature":false}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(e.mine().await["settings"]["edited_by"], "StreamEditor");
+    let (status, _) = chat::call(
+        e,
+        "POST",
+        "/api/me/stream/key/reveal",
+        Some(&editor),
+        json!({"code":"000000"}),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "no stream key for editors");
+    e.call("DELETE", "/api/me/editors/StreamEditor", Value::Null)
+        .await;
+    assert_eq!(
+        edit(json!({"title":"After removal","category_id":"coding","revision":2}))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    e.call(
+        "PATCH",
+        "/api/me/stream",
+        json!({"title":"Building together","category_id":"coding","revision":2,"mature":false}),
+    )
+    .await;
+    assert_eq!(
+        e.mine().await["settings"]["edited_by"],
+        Value::Null,
+        "owner edits are the owner's"
+    );
+    // Later checks expect the settings as they were before this block.
+    e.sql("UPDATE stream_settings SET revision=1,language=NULL,mature=false WHERE owner_id='stream-owner'")
+        .await;
     assert_eq!(
         e.request(
             "POST",

@@ -213,6 +213,9 @@ pub async fn exercise(e: &Env) {
         (700, 900)
     );
     assert_eq!(crowd(e, &b).await["prediction"]["pools"], json!([300, 100]));
+    let evented: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events WHERE topic LIKE 'channel:%:prediction' AND data->'pools'='[300,100]'::jsonb)")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert!(evented, "prediction tallies are live events");
     // It locks at its stream time (plus grace), then only the owner resolves it.
     e.sql("UPDATE polls SET ends_at=now()-interval '20 seconds' WHERE id IN (SELECT id FROM polls WHERE kind='prediction' AND status='open')").await;
     sver::crowd::tick(&e.app).await.unwrap();

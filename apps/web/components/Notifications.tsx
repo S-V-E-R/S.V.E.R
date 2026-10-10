@@ -7,8 +7,10 @@ import { Avatar } from "./Avatar";
 import { Section } from "./Form";
 
 type CommunityKind = "guild_application" | "guild_decision" | "guild_invite" | "squad_invite";
+/** In-site only (no settings row): "Your subscription ends in 3 days" (docs/CHANNEL_ADDITIONS.md), "A webhook was turned off". */
+type NoticeKind = CommunityKind | "sub_ending" | "hook_disabled";
 const names: Record<CommunityKind, string> = { guild_application: "New guild applications", guild_decision: "Guild application decisions", guild_invite: "Invitations to apply to guilds", squad_invite: "Co-stream invitations" };
-type Item = { id: string; created_at: string; read: boolean } & ({ kind: "live"; live: boolean; channel: { username: string; display_name: string; avatar: Sizes } } | { kind: CommunityKind; payload: { title: string; body: string; url: string } });
+type Item = { id: string; created_at: string; read: boolean } & ({ kind: "live"; live: boolean; channel: { username: string; display_name: string; avatar: Sizes } } | { kind: NoticeKind; payload: { title: string; body: string; url: string } });
 type Settings = { site: boolean; push: boolean; email: boolean; push_devices: number; push_key: string; community: { kind: CommunityKind; site: boolean; push: boolean }[] };
 
 /** The notifications list (go-live alerts, last 30 days). Opening it marks everything read. */

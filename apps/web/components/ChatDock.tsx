@@ -7,7 +7,7 @@ import { ReportButton, TakeDownLink } from "./Report";
 import { SkillArt } from "./SkillArt";
 import type { Reward } from "./Rewards";
 
-type Tab = "emotes" | "rewards" | "skills";
+type Tab = "emotes" | "signature" | "rewards" | "skills";
 type Skill = { id: string; name: string; category: string; valor: number; effect: string; enabled: boolean };
 
 /**
@@ -15,17 +15,20 @@ type Skill = { id: string; name: string; category: string; valor: number; effect
  * Emotes, Rewards (Engagement Valor) and Skills (Valor). Each opens a panel over the bottom of the
  * chat with tiles; the chat column itself stays messages plus the box.
  */
-export function ChatDock({ username, account, emotes, onEmote, rewardsVersion, onHighlight, shared }: {
-  username: string; account: string | null; emotes: ChannelEmote[]; onEmote: (code: string) => void;
+export function ChatDock({ username, account, emotes, outside = [], onOutsideReported, onEmote, rewardsVersion, onHighlight, shared }: {
+  username: string; account: string | null; emotes: ChannelEmote[]; outside?: ChannelEmote[]; onOutsideReported?: () => void; onEmote: (code: string) => void;
   rewardsVersion: number; onHighlight: (cost: number) => void; shared: boolean;
 }) {
   const [tab, setTab] = useState<Tab | null>(null);
-  const tabs: [Tab, string][] = shared ? [["emotes", "Emotes"]] : [["emotes", "Emotes"], ["rewards", "Rewards"], ["skills", "Skills"]];
+  const base: [Tab, string][] = account ? [["emotes", "Emotes"], ["signature", "Signature"]] : [["emotes", "Emotes"]];
+  const tabs: [Tab, string][] = shared ? base : [...base, ["rewards", "Rewards"], ["skills", "Skills"]];
   return <div className="chat-dock">
     {tab && <div className="chat-dock-panel panel" role="dialog" aria-label={tabs.find(t => t[0] === tab)?.[1]}>
       <div className="chat-dock-tabs" role="tablist">{tabs.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className="small quiet" onClick={() => setTab(id)}>{label}</button>)}
         <button type="button" className="small quiet chat-dock-close" aria-label="Close" onClick={() => setTab(null)}>×</button></div>
-      {tab === "emotes" && <EmotesTab username={username} account={account} emotes={emotes} onEmote={code => { onEmote(code); setTab(null); }} />}
+      {tab === "emotes" && <><EmotesTab username={username} account={account} emotes={emotes} onEmote={code => { onEmote(code); setTab(null); }} />
+        {outside.length > 0 && <OutsideTab username={username} account={account} emotes={outside} onReported={onOutsideReported} onEmote={code => { onEmote(code); setTab(null); }} />}</>}
+      {tab === "signature" && <SignatureTab onEmote={code => { onEmote(code); setTab(null); }} />}
       {tab === "rewards" && <RewardsTab username={username} account={account} version={rewardsVersion} onHighlight={cost => { onHighlight(cost); setTab(null); }} />}
       {tab === "skills" && <SkillsTab username={username} account={account} />}
     </div>}
@@ -40,6 +43,26 @@ function EmotesTab({ username, account, emotes, onEmote }: { username: string; a
       : <span className="dock-tile"><EmoteImage emote={emote} /><span>{emote.code}</span></span>}
     {account && account.toLowerCase() !== username.toLowerCase() ? <ReportButton label={`Report ${emote.code}`} target={{ target_type: "emote", target_id: emote.id }} /> : <TakeDownLink target={{ target_type: "emote", target_id: emote.id }} />}
   </li>)}</ul>;
+}
+
+/** The channel's 7TV, BTTV and FFZ emotes. Reporting one hides it here until the streamer reviews it. */
+function OutsideTab({ username, account, emotes, onEmote, onReported }: { username: string; account: string | null; emotes: ChannelEmote[]; onEmote: (code: string) => void; onReported?: () => void }) {
+  const [message, setMessage] = useState("");
+  async function report(emote: ChannelEmote) {
+    if (!emote.provider || !window.confirm(`Report ${emote.code}? It's hidden in this chat until the streamer reviews it.`)) return;
+    const r = await send("POST", `/api/channels/${encodeURIComponent(username)}/outside-emotes/${emote.provider}/${encodeURIComponent(emote.id)}/report`);
+    setMessage(r.ok ? `${emote.code} is hidden until the streamer reviews it.` : r.error);
+    if (r.ok) onReported?.();
+  }
+  const own = account?.toLowerCase() === username.toLowerCase();
+  return <section aria-label="7TV, BTTV and FFZ emotes"><h3 className="small">From 7TV, BTTV and FFZ</h3>
+    {message && <p role="status" className="small">{message}</p>}
+    <ul className="dock-tiles">{emotes.map(emote => <li key={`${emote.provider}:${emote.id}`}>
+      {account ? <button type="button" className="dock-tile" onClick={() => onEmote(emote.code)} aria-label={`Insert ${emote.code}`}><EmoteImage emote={emote} /><span>{emote.code}</span></button>
+        : <span className="dock-tile"><EmoteImage emote={emote} /><span>{emote.code}</span></span>}
+      {account && !own && <button type="button" className="quiet small" onClick={() => void report(emote)}>Report<span className="sr-only"> {emote.code}</span></button>}
+    </li>)}</ul>
+  </section>;
 }
 
 /** Channel rewards bought with Engagement Valor (docs/SUPPORT.md). Highlight arms the chat box. */
@@ -111,4 +134,19 @@ function SkillsTab({ username, account }: { username: string; account: string | 
         <SkillArt id={s.id} size={40} /><span className="dock-tile-name">{s.name}</span><span className="dock-cost">{s.valor.toLocaleString()}</span></button></li>)}</ul>
     {note && <p role="status" className="form-message">{note}</p>}
   </>;
+}
+
+/** Signature emotes of channels the viewer follows; they work in any chat as username/Code. */
+function SignatureTab({ onEmote }: { onEmote: (code: string) => void }) {
+  const [emotes, setEmotes] = useState<(ChannelEmote & { owner?: string })[] | null>(null);
+  const load = useCallback(async () => {
+    const r = await send<{ emotes: (ChannelEmote & { owner?: string })[] }>("GET", "/api/me/signature-emotes");
+    setEmotes(r.ok ? r.data.emotes : []);
+  }, []);
+  useLoad(load);
+  if (!emotes) return <p className="loading">Loading…</p>;
+  if (emotes.length === 0) return <p className="muted">Channels you follow haven&apos;t chosen a signature emote yet.</p>;
+  return <ul className="dock-tiles">{emotes.map(emote => <li key={emote.id}>
+    <button type="button" className="dock-tile" onClick={() => onEmote(emote.code)} aria-label={`Insert ${emote.code}`} title={`@${emote.owner}'s signature emote`}><EmoteImage emote={emote} /><span>{emote.code}</span></button>
+  </li>)}</ul>;
 }

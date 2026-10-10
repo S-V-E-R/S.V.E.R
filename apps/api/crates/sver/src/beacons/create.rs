@@ -148,6 +148,9 @@ async fn create(
     {
         return Err(Fail::bad("Invalid Beacon request."));
     }
+    if input.source == "UPLOAD" {
+        crate::switches::guard(&mut *app.db.acquire().await?, "beacon_uploads").await?;
+    }
     if !app.config.videos.storage.available() {
         return Err(Fail::unavailable("Beacons aren't available yet."));
     }

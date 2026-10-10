@@ -78,6 +78,27 @@ pub async fn follow(
         .await?;
         refresh_counts(&mut tx, &[&user.id, &target.id]).await?;
         crate::engagement::followed(&mut tx, &app.config.engagement, &target.id, &user.id).await?;
+        crate::bot::record(&mut tx, &target.id, "follow", &user.id, 0).await?;
+        // Live events: the count is public, who followed is the channel's private topic.
+        let followers: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM follows WHERE following_id=$1")
+                .bind(&target.id)
+                .fetch_one(&mut *tx)
+                .await?;
+        crate::events::emit(
+            &mut tx,
+            &target.id,
+            "follows",
+            json!({"followers": followers}),
+        )
+        .await?;
+        crate::events::emit(
+            &mut tx,
+            &target.id,
+            "follows:detail",
+            json!({"user": user.username}),
+        )
+        .await?;
         crate::activity::record(
             &mut tx,
             &user.id,
@@ -619,5 +640,6 @@ pub async fn card(
         "viewer": {"signed_in": viewer.is_some(), "is_self": is_self, "following": following, "blocked": blocked},
         "faction": crate::factions::membership(&mut db, &me.id).await?,
         "live": crate::playback::is_live(&mut db, &me.id).await?,
+        "level": crate::progression::level(crate::progression::total(&mut db, &me.id).await?),
     })))
 }

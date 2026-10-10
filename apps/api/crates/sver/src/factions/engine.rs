@@ -231,6 +231,14 @@ async fn checkpoint(
             }
         }
     }
+    for faction in FACTIONS {
+        crate::events::emit_topic(
+            &mut *db,
+            &format!("faction:{faction}:war"),
+            json!({"type": "checkpoint", "week": week.id, "result": result}),
+        )
+        .await?;
+    }
     sqlx::query("UPDATE faction_weeks SET completed_at=$2,result=$3,last_error=NULL,attempts=attempts+1 WHERE id=$1 AND completed_at IS NULL")
         .bind(week.id).bind(at).bind(result).execute(db).await?;
     Ok(())

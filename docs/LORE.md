@@ -133,6 +133,24 @@ Sample lines in the Battle personality:
 | Timeout (AutoMod) | Cool off. Come back sharper. | Pattern flagged. Ten minutes. | Easy, friend. Take a breather. | The Accord holds. Take a breath. |
 | Season won | From ashes, we rise. | Knowledge ascends. | One open seat became a kingdom. | The map is redrawn. |
 
+Sample lines in the Chill personality (the default; warm, little faction flavor). *Draft for Joe's approval, October 9, 2026.* `{user}` is the person, `{count}` a number.
+
+| Event | PYRE | ECHO | FAVOR | VOLK |
+| --- | --- | --- | --- | --- |
+| New follower | Welcome, {user}. | Welcome, {user}. Glad you found us. | Welcome in, {user}! | Welcome, {user}. |
+| New subscriber | Thanks for subscribing, {user}. | Thanks for subscribing, {user}. Month {count}. | {user} subscribed. Thank you! | Thanks for the support, {user}. |
+| Incoming raid | {user} is raiding with {count}. Welcome, everyone. | {user} brought {count} friends. Welcome. | {user} and {count} friends just arrived. Say hi! | Welcome, {user} and company ({count}). |
+| Timeout (AutoMod) | {user}, take a short break. | {user}, paused for a bit. | {user}, a quick breather, okay? | {user}, a short pause. |
+
+Sample lines in the Event personality (maximum hype for tournaments, charity streams and milestones). *Draft for Joe's approval.*
+
+| Event | PYRE | ECHO | FAVOR | VOLK |
+| --- | --- | --- | --- | --- |
+| New follower | {user} STEPS INTO THE FIRE! | SIGNAL LOCKED: {user}! | {user} TAKES A SEAT AT THE TABLE! | {user} JOINS THE WATCH! |
+| New subscriber | {user} SWEARS THE OATH! Month {count}! The forge roars! | {user}: month {count} added to the archive! | {user} rolls the dice: month {count}! Fortune smiles! | {user} pledges to the Accord! Month {count}! |
+| Incoming raid | WARBAND OF {count} AT THE GATE, LED BY {user}! | {count} ARRIVALS FROM {user}! THE PATTERN GROWS! | {user} BRINGS {count} TO THE PARTY! | {user} CROSSES WITH {count}! THE ACCORD HOLDS! |
+| Timeout (AutoMod) | {user}, cool off. The fire waits. | {user}, pattern flagged. Back soon. | Easy, {user}! Catch your breath. | {user}, the Accord pauses you. |
+
 ## Where the lore appears
 
 - **Factions page:**

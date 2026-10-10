@@ -97,6 +97,10 @@ pub(crate) struct Row {
     creator_tier: Option<i16>,
     /// The Skill this paid message played.
     skill: Option<String>,
+    /// Lifetime Engagement Valor the author earned in this channel (their loyalty rank).
+    earned: Option<i64>,
+    /// A KLIPY GIF (docs/COMMUNITY.md "GIFs in chat"); the body then holds its alt text.
+    gif: Option<Value>,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -106,13 +110,14 @@ impl Row {
     }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier, "skill":self.skill})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier, "skill":self.skill, "gif":self.gif, "loyalty":crate::progression::loyalty(self.earned.unwrap_or(0))})
     }
 }
 pub(crate) fn select() -> String {
     format!(
-        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,m.skill,
+        "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,m.skill,m.gif,
         (SELECT t.tier FROM creator_tiers t WHERE t.user_id=m.author_id AND t.tier>0) AS creator_tier,
+        (SELECT e.earned FROM engagement e WHERE e.channel_id=m.channel_id AND e.user_id=m.author_id) AS earned,
         (SELECT jsonb_build_object('tier',s.tier,'months',s.months) FROM channel_subs s WHERE s.channel_id=m.channel_id AND s.user_id=m.author_id AND s.paid_through>now()) AS sub,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
         CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
@@ -282,7 +287,7 @@ pub(crate) async fn hidden(app: &App, viewer: Option<&str>) -> Res<HashSet<Strin
         .bind(viewer).fetch_all(&app.db).await?;
     Ok(ids.into_iter().collect())
 }
-async fn history(
+pub(crate) async fn history(
     app: &App,
     channel: &str,
     hidden: &HashSet<String>,
@@ -305,6 +310,14 @@ async fn history(
         .map(|r| visible_message(r.json(app), hidden))
         .collect();
     crate::guilds::hydrate_badges(app, &mut messages).await?;
+    // Linked chat (docs/LINKED_CHAT.md): outside messages share the chat sequence; keep the
+    // newest HISTORY of both, in order.
+    if squad.is_none() {
+        messages.extend(crate::linked_chat::recent(app, channel, HISTORY).await?);
+        messages.sort_by_key(|m| m["seq"].as_i64().unwrap_or_default());
+        let extra = messages.len().saturating_sub(HISTORY as usize);
+        messages.drain(..extra);
+    }
     Ok(messages)
 }
 
@@ -322,6 +335,114 @@ pub struct Send {
     /// Play a Skill (docs/CROWDSYNC.md "Skills"), paid in Valor like a tribute.
     #[serde(default)]
     skill: Option<String>,
+    /// A GIF the browser picked from KLIPY search; the body is then ignored.
+    #[serde(default)]
+    gif: Option<Gif>,
+}
+
+/// A KLIPY result as the browser received it. KLIPY's terms have media load straight from their
+/// URLs, so only those URLs are stored, after checking they point at KLIPY's media host.
+#[derive(Deserialize)]
+pub struct Gif {
+    slug: String,
+    title: String,
+    /// The still frame shown until the viewer hovers or taps.
+    still: String,
+    /// The animated version (webp).
+    play: String,
+    width: i32,
+    height: i32,
+}
+const GIF_HOST: &str = "https://static.klipy.com/";
+impl Gif {
+    /// The stored reference, or None when it isn't a KLIPY GIF.
+    fn checked(&self) -> Option<Value> {
+        let url = |u: &str| {
+            u.len() <= 300
+                && u.strip_prefix(GIF_HOST).is_some_and(|rest| {
+                    !rest.is_empty()
+                        && rest
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c))
+                })
+        };
+        let ok = (1..=100).contains(&self.slug.len())
+            && self
+                .slug
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            && url(&self.still)
+            && url(&self.play)
+            && (1..=2000).contains(&self.width)
+            && (1..=2000).contains(&self.height);
+        ok.then(|| json!({"slug": self.slug, "still": self.still, "play": self.play, "width": self.width, "height": self.height}))
+    }
+    /// Alt text and the text every other reader (linked chat, apps, replay) sees.
+    fn body(&self) -> String {
+        let title: String = self
+            .title
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(100)
+            .collect();
+        match title.trim() {
+            "" => "GIF".into(),
+            t => format!("GIF: {t}"),
+        }
+    }
+}
+/// The KLIPY app key, sent to browsers (KLIPY wants searches made from the viewer's device);
+/// unset turns GIFs off everywhere.
+fn klipy_key() -> Option<String> {
+    std::env::var("KLIPY_APP_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+}
+/// Who may send GIFs in a channel: off, everyone, followers or subscribers.
+pub(crate) async fn gif_setting(app: &App, channel: &str) -> Res<String> {
+    Ok(sqlx::query_scalar(
+        "SELECT coalesce((SELECT gifs FROM chat_settings WHERE channel_id=$1),'everyone')",
+    )
+    .bind(channel)
+    .fetch_one(&app.db)
+    .await?)
+}
+/// What the chat composer needs: the key and who may send GIFs here, or null when nobody can.
+async fn gifs(app: &App, channel: &str) -> Res<Value> {
+    let who = gif_setting(app, channel).await?;
+    Ok(match klipy_key() {
+        Some(key) if who != "off" => json!({"key": key, "who": who}),
+        _ => Value::Null,
+    })
+}
+/// The channel's GIF setting for this sender; channel roles are exempt from the audience limit.
+async fn check_gif(app: &App, channel: &str, user: &crate::auth::User) -> Res<()> {
+    let who = gif_setting(app, channel).await?;
+    let allowed = match who.as_str() {
+        "everyone" => true,
+        "off" => false,
+        _ if moderation::role_of(app, channel, user).await?.is_some() => true,
+        "followers" => {
+            sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2)",
+            )
+            .bind(&user.id)
+            .bind(channel)
+            .fetch_one(&app.db)
+            .await?
+        }
+        _ => crate::subs::active_tier(app, channel, &user.id)
+            .await?
+            .is_some(),
+    };
+    if allowed {
+        return Ok(());
+    }
+    Err(Fail::denied(match who.as_str() {
+        "off" => "GIFs are off in this chat.",
+        "followers" => "GIFs here are for followers.",
+        _ => "GIFs here are for subscribers.",
+    }))
 }
 
 /// Persists one message to a channel's own chat and fans it out.
@@ -332,7 +453,8 @@ async fn send(
     input: Send,
     squad: Option<&str>,
 ) -> Res<Value> {
-    send_from(app, jar, Some(channel), input, None, squad).await
+    let user = profiles::signed_in(app, jar).await?;
+    send_from(app, user, Some(channel), input, None, squad).await
 }
 
 /// Persists one message and fans it out. Acknowledged only after the insert commits. `origin` is
@@ -340,14 +462,14 @@ async fn send(
 /// its rules; without one, a message in the lane's own room (docs/MAGNET.md "Hype chat").
 pub(crate) async fn send_from(
     app: &App,
-    jar: &CookieJar,
+    user: crate::auth::User,
     channel: Option<&str>,
     input: Send,
     origin: Option<&str>,
     squad: Option<&str>,
 ) -> Res<Value> {
-    // Rechecked on every send, so a revoked session or new restriction takes effect at once.
-    let user = profiles::signed_in(app, jar).await?;
+    // Callers resolve the person on every send, so a revoked session or new restriction takes
+    // effect at once.
     let members = if let Some(id) = squad {
         let members = crate::squads::chat_context(app, id, Some(&user.id)).await?;
         if members.first().map(String::as_str) != channel {
@@ -360,7 +482,24 @@ pub(crate) async fn send_from(
     if uuid::Uuid::parse_str(&input.id).is_err() {
         return Err(Fail::bad("Invalid message ID."));
     }
-    let body = input.body.trim();
+    let gif = match &input.gif {
+        Some(_) if klipy_key().is_none() => {
+            return Err(Fail::denied("GIFs aren't available right now."));
+        }
+        Some(_) if channel.is_none() || origin.is_some() => {
+            return Err(Fail::field("gif", "GIFs work in a channel's own chat."));
+        }
+        Some(g) => Some((
+            g.checked()
+                .ok_or_else(|| Fail::field("gif", "Pick a GIF from the GIF search."))?,
+            g.body(),
+        )),
+        None => None,
+    };
+    let body = match &gif {
+        Some((_, alt)) => alt.as_str(),
+        None => input.body.trim(),
+    };
     let length = body.chars().count();
     if length == 0 || length > 500 {
         return Err(Fail::field("body", "Messages are 1–500 characters."));
@@ -396,6 +535,12 @@ pub(crate) async fn send_from(
         Some((false, _)) => return Err(Fail::denied("Verify your email address to chat.")),
         Some((true, true)) => {}
         _ => return Err(Fail::denied("Your account can't chat right now.")),
+    }
+    // Before slow mode and rate limits, so a refused GIF costs the sender nothing.
+    if gif.is_some() {
+        for member in &members {
+            check_gif(app, member, &user).await?;
+        }
     }
     let role = match channel {
         Some(channel) => {
@@ -501,8 +646,8 @@ pub(crate) async fn send_from(
     .bind(mention_names(body))
     .fetch_all(&mut *tx)
     .await?;
-    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted,skill) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO NOTHING")
-        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.map(|s| s.id)).execute(&mut *tx).await?.rows_affected();
+    let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted,skill,gif) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO NOTHING")
+        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.map(|s| s.id)).bind(gif.as_ref().map(|(g, _)| g.clone())).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
@@ -539,6 +684,22 @@ pub(crate) async fn send_from(
             &entries,
         )
         .await?;
+        crate::events::emit(
+            &mut tx,
+            channel,
+            "tributes",
+            json!({"user": user.username, "valor": valor, "message": body}),
+        )
+        .await?;
+        if let Some(skill) = skill {
+            crate::events::emit(
+                &mut tx,
+                channel,
+                "skills",
+                json!({"user": user.username, "skill": skill.id, "valor": valor}),
+            )
+            .await?;
+        }
     }
     // A moderator's counter command (`!deaths`) changed a counter; viewers are told after commit.
     let mut counters = false;
@@ -600,6 +761,10 @@ pub(crate) async fn send_from(
         app.chat
             .publish(&format!("magnet:{lane}"), Some(&author), 0, event);
     }
+    // Custom !commands get the channel bot's reply after the message itself (docs/COMMUNITY.md).
+    if let Some(channel) = channel.filter(|_| squad.is_none() && origin.is_none()) {
+        crate::commands::respond(app, channel, &user, body).await;
+    }
     Ok(visible_message(message, &hidden))
 }
 
@@ -612,8 +777,15 @@ pub async fn read(
     let viewer = profiles::viewer(&app, &jar).await?;
     mature_gate(&app, &channel, viewer.as_ref().map(|v| v.id.as_str())).await?;
     let hidden = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await?;
+    let fade: i32 = sqlx::query_scalar(
+        "SELECT coalesce((SELECT overlay_fade_seconds FROM chat_settings WHERE channel_id=$1),30)",
+    )
+    .bind(&channel)
+    .fetch_one(&app.db)
+    .await?;
+    let signatures = allow_signatures(&app, &channel).await?;
     Ok(Json(
-        json!({"messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?, "subs_only":crate::moderation::subs_only(&app, &channel).await?}),
+        json!({"overlay_fade_seconds": fade, "allow_signatures": signatures, "gifs": gifs(&app, &channel).await?, "messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?, "subs_only":crate::moderation::subs_only(&app, &channel).await?}),
     ))
 }
 pub async fn post(
@@ -628,6 +800,15 @@ pub async fn post(
     Ok(Json(
         json!({"message": send(&app, &jar, &channel, input, None).await?}),
     ))
+}
+/// Whether other channels' signature emotes render in this chat (docs/CHANNEL_ADDITIONS.md).
+async fn allow_signatures(app: &App, channel: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT coalesce((SELECT allow_signatures FROM chat_settings WHERE channel_id=$1),true)",
+    )
+    .bind(channel)
+    .fetch_one(&app.db)
+    .await?)
 }
 /// Chat is closed to under-18 accounts in a channel labeled mature.
 async fn mature_gate(app: &App, channel: &str, viewer: Option<&str>) -> Res<()> {
@@ -851,7 +1032,13 @@ async fn session(
     if squad.is_some() {
         pin = Value::Null;
     }
-    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes,"followers_only_until":followers_only,"subs_only":subs_only}).to_string();
+    let Ok(signatures) = allow_signatures(&app, &channel).await else {
+        return;
+    };
+    let Ok(gifs) = gifs(&app, &channel).await else {
+        return;
+    };
+    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes,"followers_only_until":followers_only,"subs_only":subs_only,"allow_signatures":signatures,"gifs":gifs}).to_string();
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
     }
@@ -889,17 +1076,9 @@ async fn session(
                         let Ok(pin) = pinned(&app, &channel, &hidden).await else { return; };
                         payload["pinned"] = pin;
                     } else if payload["type"] == "message" {
-                        // Re-read after queueing: deletion or a new block must not leak a stale quote.
-                        // ponytail: one indexed read per recipient/event; batch fanout if measured chat load requires it.
-                        let row = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND {VISIBLE}", select())))
-                            .bind(payload["message"]["id"].as_str().unwrap_or(""))
-                            .fetch_optional(&app.db).await;
-                        let Ok(Some(row)) = row else {
-                            if row.is_err() { return; }
-                            continue;
-                        };
-                        let Ok(message) = row.hydrated(&app).await else { return; };
-                        payload["message"] = visible_message(message, &hidden);
+                        let Ok(message) = fresh(&app, &payload, &hidden).await else { return; };
+                        let Some(message) = message else { continue; };
+                        payload["message"] = message;
                     }
                     if ws.send(Message::Text(payload.to_string().into())).await.is_err() {
                         return;
@@ -934,6 +1113,51 @@ async fn session(
             },
         }
     }
+}
+
+/// A queued chat message re-read as the recipient sees it: deletion or a new block must not leak
+/// a stale quote. None when it's gone.
+pub(crate) async fn fresh(
+    app: &App,
+    payload: &Value,
+    hidden: &HashSet<String>,
+) -> Res<Option<Value>> {
+    // ponytail: one indexed read per recipient/event; batch fanout if measured chat load requires it.
+    let row = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(format!(
+        "{} WHERE m.id=$1 AND {VISIBLE}",
+        select()
+    )))
+    .bind(payload["message"]["id"].as_str().unwrap_or(""))
+    .fetch_optional(&app.db)
+    .await?;
+    Ok(match row {
+        Some(row) => Some(visible_message(row.hydrated(app).await?, hidden)),
+        None => None,
+    })
+}
+/// A message sent by an app as the person (events socket, `chat:write`): chat only. Money is never
+/// reachable through an app, so tributes, Skills and highlights are refused, and a banned account
+/// can't post.
+pub(crate) async fn send_as_app(
+    app: &App,
+    user: &str,
+    channel: &str,
+    params: &Value,
+) -> Res<Value> {
+    let input: Send = serde_json::from_value(params.clone())
+        .map_err(|_| Fail::bad("Send {\"channel\",\"id\",\"body\"}."))?;
+    if input.tribute.is_some() || input.skill.is_some() || input.highlight {
+        return Err(Fail::denied("Apps can't spend Valor."));
+    }
+    let person = crate::devapps::person(app, user)
+        .await?
+        .ok_or_else(|| Fail::denied("Your account can't chat right now."))?;
+    if crate::streams::mature_blocked(&mut *app.db.acquire().await?, channel, Some(user)).await? {
+        return Err(Fail::denied(
+            "This channel is labeled mature, so its chat isn't available on your account.",
+        ));
+    }
+    send_from(app, person, Some(channel), input, None, None).await
 }
 
 /// What a Hype lane's chat is merged with right now: the featured channel's chat, or a merged
@@ -1087,7 +1311,7 @@ async fn hype_post(
             }
             send_from(
                 &app,
-                &jar,
+                user,
                 Some(&m.channel),
                 input,
                 Some(&lane),
@@ -1095,7 +1319,7 @@ async fn hype_post(
             )
             .await?
         }
-        None => send_from(&app, &jar, None, input, Some(&lane), None).await?,
+        None => send_from(&app, user, None, input, Some(&lane), None).await?,
     };
     Ok(Json(json!({"message": message})))
 }
