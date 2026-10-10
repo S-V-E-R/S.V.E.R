@@ -265,3 +265,6 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .site-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:8px 12px;border:1px solid var(--accent);background:var(--panel);color:var(--ink)}
 .site-banner p{margin:0}
 .player-cc{position:absolute;top:8px;right:8px;z-index:2;min-width:44px}.player-cc[aria-pressed="true"]{outline:2px solid var(--accent, currentColor);outline-offset:1px}
+.chat-gif{display:block;padding:0;margin:4px 0;border:0;background:none;cursor:pointer;max-width:min(220px,100%)}.chat-gif img{display:block;width:100%;height:auto;border-radius:4px}
+.gif-picker{grid-column:1/-1;border:1px solid var(--line);padding:8px;display:grid;gap:6px}.gif-picker-head{display:flex;gap:8px}.gif-picker-head input{flex:1;min-width:0}
+.gif-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;max-height:240px;overflow-y:auto}.gif-grid button{display:block;padding:0;border:0;background:none;width:100%;cursor:pointer}.gif-grid img{display:block;width:100%;height:80px;object-fit:cover}.gif-credit{margin:0;text-align:right}
