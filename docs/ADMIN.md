@@ -111,6 +111,8 @@ The page only reads. Every action happens on its own page.
 - **Refunds** go through Stripe from this page and post reversing ledger entries.
 - **Valor adjustments** are double-entry ledger rows with a reason. Any adjustment above a cap (in the private tuning config) needs a second staff member's approval once there's more than one person who can approve. Legacy allowed one admin to grant any amount. They are never edits to a balance.
 
+*Money as built (October 10, 2026; `money.rs`):* `/admin/money` shows the latest 50 payments, subscription invoices, tributes, payouts and Early Pay, refunds and chargebacks; active subscription counts; negative Valor and earnings balances by username; payout accounts with tax-information and guardian status. "Refund" sends a full refund to Stripe for a payment S.V.E.R took (the `charge.refunded` webhook posts the reversal). "Adjust Valor" posts a balanced `valor_adjustment` against `valor:adjustments` (up to 100,000 either way, never on the staff member's own account). Every action has a note and an audit row. The second approval above a private cap waits until someone besides Joe can approve.
+
 **Operations**
 
 - **Emergency switches** (`/admin/switches`): instant on and off for the risky features, to use during an incident.

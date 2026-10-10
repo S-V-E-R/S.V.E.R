@@ -38,6 +38,7 @@ pub mod linked_chat;
 pub mod magnet;
 pub mod media;
 pub mod moderation;
+pub mod money;
 pub mod oauth;
 pub mod open_data;
 pub mod outside_emotes;
@@ -452,6 +453,7 @@ pub fn router(app: App) -> Router {
         .merge(emotes::routes())
         .merge(switches::routes())
         .merge(staff_console::routes())
+        .merge(money::routes())
         .merge(outside_emotes::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
