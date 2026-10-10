@@ -3,13 +3,19 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import "../../../../styles/overlays.css";
 
-type Alert = { type: "alert"; id: number; kind: string; text: string; message: string | null; seconds: number; sound: "chime" | "horn" | "none"; volume: number; image?: string | null; audio?: string | null };
+type Alert = { type: "alert"; id: number; kind: string; text: string; message: string | null; seconds: number; sound: "chime" | "horn" | "none"; volume: number; image?: string | null; audio?: string | null; speak?: string | null };
 type Settings = { goal: { kind: "followers" | "subs" | null; target: number; label: string } };
 type Frame = { type: "hello"; settings: Settings; goal_count: number | null; recent: Alert[] } | { type: "settings"; settings: Settings; goal_count: number | null } | { type: "goal"; goal_count: number } | Alert;
 
 /** The alert's uploaded sound (re-encoded WAV from S.V.E.R's media host), or a short tone made in the browser. */
-function play({ sound, volume, audio: file }: Alert) {
+function play({ sound, volume, audio: file, speak }: Alert) {
   if (volume <= 0) return;
+  // Text-to-speech for tribute messages, after the sound, with the PC's own voices.
+  if (speak && "speechSynthesis" in window) setTimeout(() => {
+    const line = new SpeechSynthesisUtterance(speak);
+    line.volume = volume / 100;
+    speechSynthesis.speak(line);
+  }, 900);
   if (file) {
     const audio = new Audio(file);
     audio.volume = volume / 100;

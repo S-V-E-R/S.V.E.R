@@ -43,7 +43,7 @@ fn defaults() -> Value {
     json!({
         "follow": {"on": true, "text": "{name} followed!", "seconds": 6},
         "sub": {"on": true, "text": "{name} subscribed at Tier {tier} ({months} months)!", "seconds": 8},
-        "tribute": {"on": true, "text": "{name} paid {valor} Valor", "seconds": 8, "min": 10, "show_message": true},
+        "tribute": {"on": true, "text": "{name} paid {valor} Valor", "seconds": 8, "min": 10, "show_message": true, "tts": false},
         "skill": {"on": true, "text": "{name} played {skill}!", "seconds": 6},
         "raid": {"on": true, "text": "{name} is raiding!", "seconds": 8},
         "sound": "chime", "volume": 60,
@@ -77,6 +77,7 @@ fn validate(input: &Value) -> Res<Value> {
     out["tribute"]["min"] = json!(min);
     out["tribute"]["show_message"] =
         json!(input["tribute"]["show_message"].as_bool().unwrap_or(true));
+    out["tribute"]["tts"] = json!(input["tribute"]["tts"].as_bool().unwrap_or(false));
     let sound = input["sound"].as_str().unwrap_or_default();
     if !SOUNDS.contains(&sound) {
         return Err(bad("sound", "Choose a sound."));
@@ -166,10 +167,17 @@ fn alert(settings: &Value, topic_kind: &str, data: &Value, id: i64, base: &str) 
         .then(|| data["message"].as_str())
         .flatten();
     let url = |key: &str| config[key].as_str().map(|k| format!("{base}/{k}"));
+    // Text-to-speech reads a tribute's message (it already passed the channel's chat rules) with
+    // the streaming PC's own voices; nothing is sent to a speech service.
+    let speak = (*kind == "tribute" && config["tts"] == true)
+        .then(|| data["message"].as_str())
+        .flatten()
+        .filter(|m| !m.trim().is_empty())
+        .map(|m| format!("{name} says: {}", m.chars().take(200).collect::<String>()));
     Some(
         json!({"type": "alert", "id": id, "kind": kind, "text": text, "message": message,
         "seconds": config["seconds"], "sound": settings["sound"], "volume": settings["volume"],
-        "image": url("image"), "audio": url("audio")}),
+        "image": url("image"), "audio": url("audio"), "speak": speak}),
     )
 }
 
@@ -606,6 +614,21 @@ mod tests {
             (tribute["text"].as_str(), tribute["message"].as_str()),
             (Some("Bo paid 50 Valor"), Some("gg"))
         );
+        assert!(
+            tribute["speak"].is_null(),
+            "text-to-speech is off by default"
+        );
+        let mut tts = s.clone();
+        tts["tribute"]["tts"] = json!(true);
+        let spoken = alert(
+            &tts,
+            "tributes",
+            &json!({"user": "Bo", "valor": 50, "message": "gg"}),
+            6,
+            "",
+        )
+        .unwrap();
+        assert_eq!(spoken["speak"], "Bo says: gg");
         let raid = alert(
             &s,
             "raid:incoming",

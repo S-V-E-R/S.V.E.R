@@ -4,7 +4,7 @@ import { Section } from "../../../components/Form";
 import { send, useLoad, type Result } from "../../../lib/client-api";
 
 type Kind = "follow" | "sub" | "tribute" | "skill" | "raid";
-type AlertSetting = { on: boolean; text: string; seconds: number; min?: number; show_message?: boolean; image?: string | null; audio?: string | null };
+type AlertSetting = { on: boolean; text: string; seconds: number; min?: number; show_message?: boolean; tts?: boolean; image?: string | null; audio?: string | null };
 type Settings = Record<Kind, AlertSetting> & { sound: "chime" | "horn" | "none"; volume: number; goal: { kind: "followers" | "subs" | null; target: number; label: string } };
 type View = { settings: Settings; linked: boolean; connected: boolean };
 const KINDS: [Kind, string, string][] = [
@@ -43,6 +43,7 @@ export default function OverlaysStudio() {
     }
     settings.tribute.min = Number(form.get("tribute-min"));
     settings.tribute.show_message = form.get("tribute-message") === "on";
+    settings.tribute.tts = form.get("tribute-tts") === "on";
     settings.sound = form.get("sound") as Settings["sound"];
     settings.volume = Number(form.get("volume"));
     const goal = String(form.get("goal-kind") ?? "");
@@ -86,6 +87,7 @@ export default function OverlaysStudio() {
           {kind === "tribute" && <>
             <label className="field narrow"><span>Only tributes of at least (Valor)</span><input name="tribute-min" type="number" min={10} defaultValue={s.tribute.min} /></label>
             <label className="row"><input type="checkbox" name="tribute-message" defaultChecked={s.tribute.show_message} /> Show the tribute&apos;s message</label>
+            <label className="row"><input type="checkbox" name="tribute-tts" defaultChecked={s.tribute.tts ?? false} /> Read the message aloud (text-to-speech with your PC&apos;s voices, at the overlay volume)</label>
           </>}
           <div className="row wrap">
             <label className="field narrow"><span>Image (PNG, JPEG or WebP, up to 2 MB){s[kind].image ? " · set" : ""}</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void media(kind, "image", f); }} /></label>

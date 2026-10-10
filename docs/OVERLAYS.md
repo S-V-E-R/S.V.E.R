@@ -29,9 +29,15 @@ Phase 3, after the developer platform ([DEVELOPER_PLATFORM.md](DEVELOPER_PLATFOR
 - Images and sounds change only through their upload and remove buttons; saving the other settings keeps them. Open overlays update at once.
 - The overlay loads those files from S.V.E.R's media host and nothing else.
 
+## Text-to-speech (part 2b)
+
+- Off by default. When on, a tribute alert reads its message aloud as "{name} says: {message}" (up to 200 characters), after the alert's sound, at the overlay volume.
+- Only tribute messages are read: they already passed the channel's banned words, link rules and moderation as chat messages. Names come from usernames, so they're safe to read.
+- The browser source speaks with the streaming PC's own installed voices (the Web Speech API). Nothing is sent to a speech service and there is no cost; if the PC has no voices, nothing is read.
+
 ## Not in this part
 
-Text-to-speech, then the StreamElements/Streamlabs custom-widget adapter, in that order.
+The StreamElements/Streamlabs custom-widget adapter comes next.
 
 ## Done when
 
