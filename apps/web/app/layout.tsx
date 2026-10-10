@@ -3,6 +3,7 @@ import { Barlow, Barlow_Condensed, Cinzel } from "next/font/google";
 import Link from "next/link";
 import SiteShell from "../components/SiteShell";
 import { StaffRemovalAlerts } from "../components/StaffRemovalAlerts";
+import { SiteBanner, type Banner } from "../components/SiteBanner";
 import { BellIcon, MagnetMark, MessageIcon } from "../components/shell/Icons";
 import { SideNav } from "../components/shell/SideNav";
 import { PlayerMenu } from "../components/shell/PlayerMenu";
@@ -45,7 +46,7 @@ async function sidebarLive(signedIn: boolean): Promise<LiveCard[]> {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const account = await currentAccount();
-  const [alerts, live, progress, dms] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account), account ? apiGet<{ xp: number; level: number; level_xp: number; next_xp: number | null }>("/api/me/progression").then(r => r.data) : null, account ? apiGet<{ unread: number }>("/api/dms/unread").then(r => r.data?.unread ?? 0) : 0]);
+  const [alerts, live, progress, dms, site] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account), account ? apiGet<{ xp: number; level: number; level_xp: number; next_xp: number | null }>("/api/me/progression").then(r => r.data) : null, account ? apiGet<{ unread: number }>("/api/dms/unread").then(r => r.data?.unread ?? 0) : 0, apiGet<{ banner: Banner | null }>("/api/site").then(r => r.data)]);
   // Level and XP bar on the player card (docs/PROGRESSION.md).
   const xpBar = progress && <span className="player-card-xp" title={`${progress.xp.toLocaleString()} XP`}><span className="player-level">Lv {progress.level}</span><span className="xp-bar" aria-hidden="true"><span style={{ width: `${progress.next_xp ? Math.round(100 * (progress.xp - progress.level_xp) / (progress.next_xp - progress.level_xp)) : 100}%` }} /></span></span>;
   const initial = account?.username.slice(0, 1).toUpperCase();
@@ -94,7 +95,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   return <html lang="en" data-theme={themeFor(account)} className={`${cinzel.variable} ${barlow.variable} ${barlowCondensed.variable}`}>
     <body>
-      <SiteShell account={account} alerts={alerts} actions={actions} sidebar={sidebar}>{children}</SiteShell>
+      <SiteShell account={account} alerts={alerts} actions={actions} sidebar={sidebar} banner={site?.banner ? <SiteBanner banner={site.banner} /> : null}>{children}</SiteShell>
     </body>
   </html>;
 }

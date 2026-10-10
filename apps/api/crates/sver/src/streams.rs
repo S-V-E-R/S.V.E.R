@@ -909,6 +909,12 @@ pub async fn hook(
         if keys.len() != 1 || keys[0].len() != 43 {
             return Err(Error::denied("Invalid publishing credential."));
         }
+        if crate::switches::off(&mut tx, "going_live")
+            .await
+            .map_err(|_| Error::unavailable())?
+        {
+            return Err(Error::denied("Going live is paused right now."));
+        }
         let generation: Option<i64> = sqlx::query_scalar("SELECT generation FROM stream_credentials WHERE owner_id=$1 AND public_id=$2 AND secret_hash=$3 AND revoked_at IS NULL")
             .bind(&owner).bind(&input.stream).bind(sec::digest(&keys[0])).fetch_optional(&mut *tx).await?;
         let generation =

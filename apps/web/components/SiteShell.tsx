@@ -11,11 +11,13 @@ const siteLinks = [
   ["/take-it-down", "Take It Down requests"], ["/open-data", "Open data"], ["/credits", "Credits"],
 ] as const;
 
-export default function SiteShell({ account, alerts, actions, sidebar, children }: {
+export default function SiteShell({ account, alerts, actions, sidebar, banner, children }: {
   account: { username: string } | null;
   alerts: boolean;
   actions: React.ReactNode;
   sidebar: React.ReactNode;
+  /** Staff's site banner; never on embeds, overlays or pop-out chat. */
+  banner?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -26,7 +28,7 @@ export default function SiteShell({ account, alerts, actions, sidebar, children 
   if (pathname && /^\/[^/]+\/chat$/.test(pathname)) return <main id="main">{children}</main>;
   const publicPage = siteLinks.some(([href]) => href === pathname);
   const footer = <SiteFooter />;
-  if (!publicPage) return <><a className="skip" href="#main">Skip to content</a><Chrome actions={actions} sidebar={sidebar} footer={footer}>{children}</Chrome></>;
+  if (!publicPage) return <><a className="skip" href="#main">Skip to content</a><Chrome actions={actions} sidebar={sidebar} footer={footer}>{banner}{children}</Chrome></>;
 
   return <div className="site-shell public-shell">
     <a className="skip" href="#main">Skip to content</a>
@@ -43,7 +45,7 @@ export default function SiteShell({ account, alerts, actions, sidebar, children 
       </> : <><Link href="/login">Log in</Link><Link href="/signup" className="button small">Enlist</Link></>}</nav>
     </header>
     <div className="workspace">
-      <main id="main">{children}</main>
+      <main id="main">{banner}{children}</main>
     </div>
     {footer}
   </div>;

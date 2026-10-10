@@ -69,6 +69,7 @@ pub mod studio;
 pub mod subs;
 pub mod support;
 pub mod surge;
+pub mod switches;
 pub mod take_down;
 pub mod text;
 pub mod tiers;
@@ -448,6 +449,7 @@ pub fn router(app: App) -> Router {
         .merge(squads::routes())
         .merge(chat::routes())
         .merge(emotes::routes())
+        .merge(switches::routes())
         .merge(outside_emotes::routes())
         .merge(alerts::routes())
         .merge(raids::routes())

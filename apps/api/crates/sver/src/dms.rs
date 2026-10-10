@@ -200,6 +200,7 @@ async fn send(
     Json(input): Json<Send>,
 ) -> Res<Json<Value>> {
     let me = profiles::signed_in(&app, &jar).await?;
+    crate::switches::guard(&mut *app.db.acquire().await?, "dms").await?;
     let body = input.body.trim();
     if body.is_empty()
         || body.chars().count() > MAX_CHARS

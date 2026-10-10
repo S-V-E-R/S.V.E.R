@@ -117,6 +117,7 @@ The page only reads. Every action happens on its own page.
   - The switches: sign-ups, going live, restreaming, Linked chat (per platform), clipping, Beacon uploads, DMs, purchases and payouts.
   - Turning one off shows a short message where the feature would be. It doesn't break pages.
   - Every flip is audited, and it can't reach any setting other than on and off.
+  - *As built (October 10, 2026; `switches.rs`, migration 0077):* `/admin/switches` holds the switches and the banner. Sign-ups (every new account, email or OAuth), going live (the publish hook; running broadcasts continue), restreaming (relays stop within a pass), Linked chat per platform (outside messages dropped, replies refused), clipping (viewer clips), Beacon uploads, DMs (sending), purchases (Valor packs, subscriptions, upgrades, gifts) and payouts (Early Pay refused; payday waits until they're back on). A refusal reads "Paused right now: {feature}. Please try again soon." `GET /api/site` lists paused features and the banner for every page.
 - **Site banner** (`/admin/banner`): one dismissible message across the top of every page for maintenance or incidents, with an optional end time.
 - **Jobs** (`/admin/jobs`): failed and stuck jobs from the Postgres queue (media, notifications, payouts, checkpoints), with their error and a retry button. A job retried by hand still runs exactly once.
 - **Audit log** (`/admin/audit`): `moderation_actions`, searchable by staff member, action, target and date. It is read-only, and nobody can edit or delete rows, admins included.

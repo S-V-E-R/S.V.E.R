@@ -138,6 +138,14 @@ pub async fn receive(
     role: Option<&str>,
     text: &str,
 ) -> Res<bool> {
+    if crate::switches::off(
+        &mut *app.db.acquire().await?,
+        &format!("linked_chat_{platform}"),
+    )
+    .await?
+    {
+        return Ok(false);
+    }
     let channel: Option<String> = sqlx::query_scalar(
         "SELECT owner_id FROM linked_chat_accounts WHERE platform=$1 AND subject=$2 AND enabled",
     )
@@ -656,6 +664,7 @@ async fn reply(
     Json(input): Json<Reply>,
 ) -> Res<Json<Value>> {
     let user = streamer(&app, &jar).await?;
+    crate::switches::guard(&mut *app.db.acquire().await?, "linked_chat_twitch").await?;
     let p = twitch(&app)
         .filter(|_| input.platform == "twitch")
         .ok_or_else(|| Fail::bad("Replies aren't available for that platform yet."))?;
