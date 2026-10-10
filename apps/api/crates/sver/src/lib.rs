@@ -61,6 +61,7 @@ pub mod shine;
 pub mod skills;
 pub mod social;
 pub mod squads;
+pub mod staff_console;
 pub mod staff_push;
 pub mod staff_streams;
 pub mod streams;
@@ -439,6 +440,7 @@ pub fn router(app: App) -> Router {
         .merge(chat::routes())
         .merge(emotes::routes())
         .merge(switches::routes())
+        .merge(staff_console::routes())
         .merge(outside_emotes::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
