@@ -2667,7 +2667,7 @@
   {
    "kind": "rust",
    "name": "tokio",
-   "version": "1.53.1",
+   "version": "1.53.2",
    "license": "MIT",
    "url": "https://github.com/tokio-rs/tokio",
    "text": "3e1bef82aa0dfee4"
