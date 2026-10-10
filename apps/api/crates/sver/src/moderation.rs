@@ -455,7 +455,7 @@ pub async fn view(
         "role": role.name(),
         "spike": spike,
         "followers_only_until": followers_only(&app, &channel).await?,
-        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade, "allow_signatures": signatures, "min_loyalty": min_loyalty},
+        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade, "allow_signatures": signatures, "min_loyalty": min_loyalty, "gifs": crate::chat::gif_setting(&app, &channel).await?},
         "moderators": moderators, "restrictions": restrictions, "log": log,
     })))
 }
@@ -623,6 +623,9 @@ pub struct Settings {
     /// The chat rank gate: the loyalty rank (0 off, 1-4) needed to chat.
     #[serde(default)]
     min_loyalty: Option<i16>,
+    /// Who can send GIFs: off, everyone, followers or subscribers.
+    #[serde(default)]
+    gifs: Option<String>,
 }
 pub async fn save_settings(
     State(app): State<App>,
@@ -651,6 +654,13 @@ pub async fn save_settings(
     if input.min_loyalty.is_some_and(|r| !(0..=4).contains(&r)) {
         return Err(Fail::field("min_loyalty", "Choose a loyalty rank."));
     }
+    if input
+        .gifs
+        .as_deref()
+        .is_some_and(|g| !["off", "everyone", "followers", "subscribers"].contains(&g))
+    {
+        return Err(Fail::field("gifs", "Choose who can send GIFs."));
+    }
     let mut words: Vec<String> = input
         .banned_words
         .iter()
@@ -666,9 +676,9 @@ pub async fn save_settings(
         ));
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("INSERT INTO chat_settings(channel_id,slow_mode_seconds,block_links,banned_words,overlay_fade_seconds) VALUES($1,$2,$3,$4,coalesce($5,30)) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=$2,block_links=$3,banned_words=$4,overlay_fade_seconds=coalesce($5,chat_settings.overlay_fade_seconds),allow_signatures=coalesce($6,chat_settings.allow_signatures),min_loyalty=coalesce($7,chat_settings.min_loyalty)")
-        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).bind(input.allow_signatures).bind(input.min_loyalty).execute(&mut *tx).await?;
-    log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len(), "min_loyalty": input.min_loyalty}), &reason).await?;
+    sqlx::query("INSERT INTO chat_settings(channel_id,slow_mode_seconds,block_links,banned_words,overlay_fade_seconds) VALUES($1,$2,$3,$4,coalesce($5,30)) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=$2,block_links=$3,banned_words=$4,overlay_fade_seconds=coalesce($5,chat_settings.overlay_fade_seconds),allow_signatures=coalesce($6,chat_settings.allow_signatures),min_loyalty=coalesce($7,chat_settings.min_loyalty),gifs=coalesce($8,chat_settings.gifs)")
+        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).bind(input.allow_signatures).bind(input.min_loyalty).bind(&input.gifs).execute(&mut *tx).await?;
+    log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len(), "min_loyalty": input.min_loyalty, "gifs": input.gifs}), &reason).await?;
     tx.commit().await?;
     Ok(Json(
         json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words}),
