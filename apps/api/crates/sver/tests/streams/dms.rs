@@ -35,6 +35,21 @@ pub async fn exercise(e: &Env) {
     assert!(!stored.contains("secret"), "bodies are sealed at rest");
     let (_, unread) = call(e, "GET", "/api/dms/unread", Some(&b), Value::Null).await;
     assert_eq!(unread["unread"], 1);
+    // One notification per unread streak, never with the message text.
+    let notes = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT payload::text FROM notifications WHERE user_id='dm-b' AND kind='dm'",
+        )
+        .fetch_all(&e.app.db)
+        .await
+        .unwrap()
+    };
+    let first = notes().await;
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert!(
+        !first[0].contains("secret") && first[0].contains("DmAlpha"),
+        "{first:?}"
+    );
     let (_, list) = call(e, "GET", "/api/dms", Some(&b), Value::Null).await;
     assert_eq!(
         list["conversations"][0]["last"],
@@ -52,6 +67,11 @@ pub async fn exercise(e: &Env) {
             .1["unread"],
         0
     );
+    // After reading, a new streak of two messages notifies once more.
+    send(&a, "DmBravo", "new streak").await;
+    send(&a, "DmBravo", "same streak").await;
+    assert_eq!(notes().await.len(), 2);
+    call(e, "POST", "/api/dms/DmAlpha/read", Some(&b), Value::Null).await;
     assert_eq!(
         send(&a, "DmBravo", &"x".repeat(1001)).await.0,
         StatusCode::BAD_REQUEST
@@ -144,7 +164,8 @@ pub async fn exercise(e: &Env) {
             .as_array()
             .unwrap()
             .len(),
-        1
+        3,
+        "the other side still sees all three messages"
     );
 
     // A report keeps a sealed excerpt; staff read it only through the audited endpoint.
