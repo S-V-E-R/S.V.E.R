@@ -125,6 +125,16 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         }
     });
+    // Achievements are earned from records every 10 minutes (docs/ACHIEVEMENTS.md).
+    let milestones = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::achievements::award(&milestones).await.is_err() {
+                eprintln!("achievements_event=award outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+        }
+    });
     // Raven's Eye keeps each finished day's platform numbers (docs/ADMIN.md).
     let analytics = app.clone();
     tokio::spawn(async move {

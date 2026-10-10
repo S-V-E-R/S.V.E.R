@@ -421,3 +421,11 @@ a.takedown-link:hover { color: var(--ink); }
 .stat-tile strong { font-size: 1.5rem; font-family: var(--font-display); }
 .spark { width: 100%; height: 30px; color: var(--accent, currentColor); }
 .top-lists > section { flex: 1 1 220px; }
+/* Name styles in chat (docs/ACHIEVEMENTS.md), always in the faction's colors; no glows. */
+.faction-name[data-style="bold"] { font-weight: 800; }
+.faction-name[data-style="smallcaps"] { font-variant: small-caps; letter-spacing: .04em; }
+.faction-name[data-style="accent"] { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.faction-name[data-style="outlined"] { padding: 0 3px; border: 1px solid currentColor; border-radius: 3px; }
+.achievement-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.achievement-list .showcased strong { text-decoration: underline; text-underline-offset: 3px; }
+.card-showcase { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }

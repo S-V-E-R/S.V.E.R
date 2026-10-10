@@ -163,6 +163,7 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let faction = crate::factions::membership(&mut db, &user.id).await?;
     let mut value = summary(xp);
     value["title"] = json!(title(level(xp), faction.as_deref()));
+    value["frame"] = json!(crate::achievements::frame(&mut db, &user.id, level(xp)).await?);
     Ok(Json(value))
 }
 

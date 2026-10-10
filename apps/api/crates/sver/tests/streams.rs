@@ -18,6 +18,8 @@ use std::{
 use sver::{App, Config, security as sec, streams};
 use tower::ServiceExt;
 
+#[path = "streams/achievements.rs"]
+mod achievements;
 #[path = "streams/alerts.rs"]
 mod alerts;
 #[path = "streams/bans.rs"]
@@ -558,6 +560,7 @@ async fn exercise(e: &Env) {
     plays::exercise(e).await;
     magnet::exercise(e).await;
     ravens_eye::exercise(e).await;
+    achievements::exercise(e).await;
     // Live events: each flow above wrote its topic (docs/DEVELOPER_PLATFORM.md section 2).
     for kind in ["moderation", "raid:incoming"] {
         let written: bool = sqlx::query_scalar(

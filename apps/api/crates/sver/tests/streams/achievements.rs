@@ -1,0 +1,100 @@
+//! Achievements and cosmetics (docs/ACHIEVEMENTS.md): earned once from records, shown publicly,
+//! and cosmetics limited to what the account unlocked or earned.
+use super::Env;
+use super::chat::{call, person};
+use axum::http::StatusCode;
+use serde_json::{Value, json};
+
+pub async fn exercise(e: &Env) {
+    // Its own preconditions: a finished stream (First Light) and a follow (First Follow).
+    e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,ended_at,confirmed_live_at) VALUES('ach-b','stream-owner','ach-b',1,'ENDED','s','v','c',now()-interval '2 hours',now()-interval '2 hours',now()-interval '2 hours',now()-interval '1 hour',now()-interval '2 hours')").await;
+    person(e, "ach-fan", "AchFan", true).await;
+    e.sql("INSERT INTO follows(follower_id,following_id) VALUES('ach-fan','stream-owner') ON CONFLICT DO NOTHING").await;
+    sver::achievements::award(&e.app).await.unwrap();
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM user_achievements")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    let first = count().await;
+    sver::achievements::award(&e.app).await.unwrap();
+    assert_eq!(count().await, first, "earned once");
+    let (status, public) = call(
+        e,
+        "GET",
+        "/api/users/Streamer/achievements",
+        None,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let keys: Vec<&str> = public["achievements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["key"].as_str().unwrap())
+        .collect();
+    assert!(keys.contains(&"first_light"), "{public}");
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM user_achievements WHERE key='first_follow' AND user_id='ach-fan')"
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    );
+
+    // Cosmetics: only what's unlocked or earned.
+    e.sql("DELETE FROM xp_days WHERE user_id='stream-owner'")
+        .await;
+    let mine = e.call("GET", "/api/me/cosmetics", Value::Null).await;
+    assert_eq!(
+        (mine["level"].as_i64(), mine["max_frame"].as_i64()),
+        (Some(1), Some(0))
+    );
+    for bad in [
+        json!({"name_style": "bold", "showcase": []}),
+        json!({"name_style": "plain", "frame": 1, "showcase": []}),
+        json!({"name_style": "plain", "showcase": ["first_light", "first_light"]}),
+        json!({"name_style": "plain", "showcase": ["level_100"]}),
+        json!({"name_style": "rainbow", "showcase": []}),
+    ] {
+        let (status, _) = e
+            .request("PUT", "/api/me/cosmetics", bad.clone(), true, true, false)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    // Enough XP for level 10 unlocks Bold and the first frame.
+    e.sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO xp_days(user_id,day,source,xp) VALUES('stream-owner',current_date,'chat',{})",
+        sver::progression::xp_for(10)
+    )))
+    .await;
+    let saved = e
+        .call(
+            "PUT",
+            "/api/me/cosmetics",
+            json!({"name_style": "bold", "frame": 1, "showcase": ["first_light"]}),
+        )
+        .await;
+    assert_eq!(
+        (saved["name_style"].as_str(), saved["frame"].as_i64()),
+        (Some("bold"), Some(1))
+    );
+    // The style rides on every chip; the showcase on the user card.
+    let chat = e
+        .call("GET", "/api/channels/streamer/chat", Value::Null)
+        .await;
+    let own = chat["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["author"]["username"] == "Streamer");
+    if let Some(own) = own {
+        assert_eq!(own["author"]["name_style"], "bold");
+    }
+    let (_, card) = call(e, "GET", "/api/users/Streamer/card", None, Value::Null).await;
+    assert_eq!(card["showcase"][0]["key"], "first_light", "{card}");
+    assert_eq!(card["frame"], 1);
+}

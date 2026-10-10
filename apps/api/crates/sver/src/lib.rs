@@ -11,6 +11,7 @@ use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{sync::Arc, time::Duration};
 pub mod account;
+pub mod achievements;
 pub mod activity;
 pub mod alerts;
 pub mod auth;
@@ -461,6 +462,7 @@ pub fn router(app: App) -> Router {
         .merge(discord::routes())
         .merge(overlays::routes())
         .merge(ravens_eye::routes())
+        .merge(achievements::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(discovery::routes())
