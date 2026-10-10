@@ -99,9 +99,15 @@ pub async fn exercise(e: &Env) {
     e.sql("UPDATE profiles SET restricted_until=NULL WHERE user_id='stream-owner'")
         .await;
     assert_eq!(live["is_owner"], false);
+    // Each URL carries the playback grant the media gate checks.
+    let token = sver::playback::grant(
+        &e.app.config.key,
+        "pub-play",
+        chrono::Utc::now().timestamp(),
+    );
     assert_eq!(
         live["playback"],
-        json!({"webrtc":"https://media.example/rtc/v1/whep/?app=rebuild&stream=pub-play","hls":"https://media.example/rebuild/pub-play.m3u8","preferred":"webrtc"})
+        json!({"webrtc":format!("https://media.example/rtc/v1/whep/?app=rebuild&stream=pub-play&token={token}"),"hls":format!("https://media.example/rebuild/pub-play.m3u8?token={token}"),"preferred":"webrtc"})
     );
     assert!(!live.to_string().contains("key="), "no secret in playback");
     let (_, hls_only) = guest(
@@ -121,7 +127,7 @@ pub async fn exercise(e: &Env) {
     let (_, scaled) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(
         scaled["playback"],
-        json!({"webrtc":null,"hls":"https://media.example/rebuild/pub-play.m3u8","preferred":"hls"})
+        json!({"webrtc":null,"hls":format!("https://media.example/rebuild/pub-play.m3u8?token={token}"),"preferred":"hls"})
     );
     e.sql("UPDATE broadcasts SET delivery='webrtc' WHERE public_id='pub-play'")
         .await;
@@ -304,7 +310,9 @@ async fn authorize(e: &Env, uri: &str, peer: &str, secret: &str) -> StatusCode {
 }
 async fn media_gate(e: &Env) {
     let id = "0123456789abcdef0123456789abcdef";
-    let path = format!("/rebuild/{id}.m3u8");
+    let now = chrono::Utc::now().timestamp();
+    let token = sver::playback::grant(&e.app.config.key, id, now);
+    let path = format!("/rebuild/{id}.m3u8?token={token}");
     let secret = &e.app.config.streaming.as_ref().unwrap().hook_secret;
     e.sql("INSERT INTO stream_credentials(owner_id,public_id,generation,secret_hash,secret_cipher) VALUES('stream-owner','0123456789abcdef0123456789abcdef',1,'synthetic','synthetic')").await;
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('play-gate','stream-owner','0123456789abcdef0123456789abcdef',1,'STARTING','s','v','c',now(),now(),now()+interval '15 seconds')").await;
@@ -317,7 +325,7 @@ async fn media_gate(e: &Env) {
     for uri in [
         &path,
         &format!("/rebuild/{id}-1728000000000-1.ts"),
-        &format!("/rebuild/whep/?app=rebuild&stream={id}"),
+        &format!("/rebuild/whep/?app=rebuild&stream={id}&token={token}"),
     ] {
         assert_eq!(
             authorize(e, uri, "127.0.0.1:1234", secret).await,
@@ -334,7 +342,18 @@ async fn media_gate(e: &Env) {
         StatusCode::FORBIDDEN,
         "A forwarded header cannot impersonate the media proxy"
     );
+    // No playback grant (only `/live` issues one, after its ban and 18+ checks): refused.
+    let other = sver::playback::grant(&e.app.config.key, "fedcba9876543210fedcba9876543210", now);
+    let expired = sver::playback::grant(&e.app.config.key, id, now - 13 * 3600);
+    let forged = sver::playback::grant(b"some-other-key", id, now);
     for uri in [
+        format!("/rebuild/{id}.m3u8"),
+        format!("/rebuild/whep/?app=rebuild&stream={id}"),
+        format!("/rebuild/{id}.m3u8?token={other}"),
+        format!("/rebuild/{id}.m3u8?token={expired}"),
+        format!("/rebuild/whep/?app=rebuild&stream={id}&token={forged}"),
+        format!("/rebuild/{id}.m3u8?token={token}&token={token}"),
+        format!("/rebuild/whep/?app=rebuild&stream={id}&token="),
         format!("/live/{id}.m3u8"),
         format!("/rebuild/../{id}.m3u8"),
         format!("/rebuild/{id}-x-1.ts"),
@@ -343,6 +362,7 @@ async fn media_gate(e: &Env) {
         format!("/rebuild/whep/?app=live&stream={id}"),
         format!("/rebuild/whep/?app=rebuild&stream={id}&stream={id}"),
         format!("/rebuild/whep/?app=rebuild&stream={id}&vhost=other"),
+        format!("/rebuild/whep/?app=rebuild&stream={id}&token={token}&vhost=other"),
         format!("https://elsewhere.invalid/rebuild/{id}.m3u8"),
     ] {
         assert_eq!(

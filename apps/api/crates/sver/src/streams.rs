@@ -112,8 +112,9 @@ fn identifier(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
-// Only paths emitted by our HLS config and the public WHEP endpoint may reach SRS.
-fn playback_id(uri: &str) -> Option<String> {
+// Only paths emitted by our HLS config and the public WHEP endpoint may reach SRS. The WHEP offer
+// and the playlist must carry the `playback::grant` token (returned second); segments need none.
+fn playback_id(uri: &str) -> Option<(String, Option<String>)> {
     if uri.len() > 1024 {
         return None;
     }
@@ -121,22 +122,34 @@ fn playback_id(uri: &str) -> Option<String> {
     if uri.scheme().is_some() || uri.authority().is_some() {
         return None;
     }
-    let id = if uri.path() == "/rebuild/whep/" {
-        let params: Vec<_> = url::form_urlencoded::parse(uri.query()?.as_bytes()).collect();
-        if params.len() != 2
-            || params
-                .iter()
-                .filter(|(k, v)| k == "app" && v == "rebuild")
-                .count()
-                != 1
-        {
+    let query = || -> Option<Vec<(String, String)>> {
+        Some(
+            url::form_urlencoded::parse(uri.query()?.as_bytes())
+                .into_owned()
+                .collect(),
+        )
+    };
+    let param = |params: &[(String, String)], name: &str| {
+        params
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+    };
+    let (id, token) = if uri.path() == "/rebuild/whep/" {
+        let params = query()?;
+        // Three distinct names: app=rebuild, stream and token, each exactly once.
+        if params.len() != 3 || param(&params, "app")? != "rebuild" {
             return None;
         }
-        params.iter().find(|(k, _)| k == "stream")?.1.to_string()
+        (param(&params, "stream")?, Some(param(&params, "token")?))
     } else {
         let file = uri.path().strip_prefix("/rebuild/")?;
         if let Some(id) = file.strip_suffix(".m3u8") {
-            id.to_string()
+            let params = query()?;
+            if params.len() != 1 {
+                return None;
+            }
+            (id.to_string(), Some(param(&params, "token")?))
         } else {
             let parts: Vec<_> = file.strip_suffix(".ts")?.split('-').collect();
             if parts.len() != 3
@@ -146,14 +159,14 @@ fn playback_id(uri: &str) -> Option<String> {
             {
                 return None;
             }
-            parts[0].to_string()
+            (parts[0].to_string(), None)
         }
     };
     (id.len() == 32
         && id
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-    .then_some(id)
+    .then_some((id, token))
 }
 /// Nginx auth_request gate. A stopped/revoked publisher must not leave replayable HLS files.
 async fn authorize_playback(
@@ -166,7 +179,13 @@ async fn authorize_playback(
         .get("x-original-uri")
         .and_then(|v| v.to_str().ok())
         .and_then(playback_id)
-        .ok_or_else(|| Error::denied("Playback is unavailable."))?;
+        .filter(|(id, token)| {
+            token.as_ref().is_none_or(|t| {
+                crate::playback::granted(&app.config.key, id, t, chrono::Utc::now().timestamp())
+            })
+        })
+        .ok_or_else(|| Error::denied("Playback is unavailable."))?
+        .0;
     let owner: Option<String> = sqlx::query_scalar("SELECT b.owner_id FROM broadcasts b JOIN stream_credentials c ON c.owner_id=b.owner_id AND c.public_id=b.public_id AND c.generation=b.generation WHERE b.public_id=$1 AND c.revoked_at IS NULL AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>clock_timestamp()))")
         .bind(id).fetch_optional(&app.db).await?;
     if let Some(owner) = owner {

@@ -111,6 +111,40 @@ pub fn cdn_hls(base: &str, key: &str, id: &str, now: i64) -> String {
     )
 }
 
+/// Playback grant (`token=` on the WHEP URL and the HLS playlist), issued only by `live` after its
+/// ban, 18+ and eligibility checks, and verified by the nginx gate (`streams::authorize_playback`).
+/// Segments carry none, so the CDN caches them once per stream. Same six-hour rounding as
+/// `cdn_hls`, so polling never changes the URL mid-window.
+/// ponytail: a saved grant keeps working (while the stream is live) until it expires, up to 12
+/// hours, e.g. for a viewer banned after loading; bind it to the viewer or shorten it if abused.
+pub fn grant(key: &[u8], id: &str, now: i64) -> String {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use hmac::Mac;
+    let expires = (now.div_euclid(6 * 3600) + 2) * 6 * 3600;
+    let sig = URL_SAFE_NO_PAD.encode(grant_mac(key, id, expires).finalize().into_bytes());
+    format!("{expires}.{sig}")
+}
+pub fn granted(key: &[u8], id: &str, token: &str, now: i64) -> bool {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use hmac::Mac;
+    let Some((expires, sig)) = token.split_once('.') else {
+        return false;
+    };
+    let (Ok(expires), Ok(sig)) = (expires.parse::<i64>(), URL_SAFE_NO_PAD.decode(sig)) else {
+        return false;
+    };
+    expires > now
+        && expires <= now + 12 * 3600
+        && grant_mac(key, id, expires).verify_slice(&sig).is_ok()
+}
+fn grant_mac(key: &[u8], id: &str, expires: i64) -> hmac::Hmac<sha2::Sha256> {
+    use hmac::{KeyInit, Mac};
+    let mut mac =
+        hmac::Hmac::<sha2::Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(format!("sver-playback:{id}:{expires}").as_bytes());
+    mac
+}
+
 #[derive(sqlx::FromRow)]
 struct Live {
     id: String,
@@ -291,28 +325,27 @@ pub async fn live(
         .as_ref()
         .map_or("rebuild", |c| c.app.as_str());
     let p = &app.config.playback;
+    let now = Utc::now().timestamp();
+    let token = grant(&app.config.key, &b.public_id, now);
     let webrtc = p
         .whep_url
         .as_ref()
-        .map(|u| format!("{u}/?app={stream_app}&stream={}", b.public_id));
+        .map(|u| format!("{u}/?app={stream_app}&stream={}&token={token}", b.public_id));
+    // The CDN forwards the query to the origin on a playlist miss, so the grant reaches the gate.
     let hls = match &p.cdn_url {
-        Some(cdn) => Some(cdn_hls(
-            cdn,
-            &p.cdn_key,
-            &b.public_id,
-            Utc::now().timestamp(),
-        )),
+        Some(cdn) => Some(cdn_hls(cdn, &p.cdn_key, &b.public_id, now)),
         None => p
             .hls_url
             .as_ref()
             .map(|u| format!("{u}/{}.m3u8", b.public_id)),
-    };
+    }
+    .map(|u| format!("{u}?token={token}"));
     // Over the measured WebRTC limit the broadcast is on the CDN (`tick`): no WHEP URL is offered,
     // and open players move within one 15-second poll. Otherwise WebRTC first; the player falls
     // back to HLS on failure, and `?transport=hls` (latency tests, or a viewer who prefers it)
     // asks for HLS. Asking for HLS is always allowed.
-    // ponytail: SRS WHEP stays reachable to a client that keeps an old URL; gate it in nginx
-    // (auth_request) if anyone bypasses the switch.
+    // ponytail: a client that keeps an old WHEP URL (and its grant) can bypass the switch; drop
+    // the grant from WHEP in CDN mode if anyone does.
     let webrtc = webrtc.filter(|_| b.delivery == "webrtc" || hls.is_none());
     let preferred = if webrtc.is_some() && query.transport.as_deref() != Some("hls") {
         "webrtc"

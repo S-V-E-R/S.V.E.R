@@ -408,7 +408,7 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
         assert_eq!(first["health"]["audio_codec"], "AAC");
         let mut competing = Encoder::new(&format!("{ingest}/{key}")); competing.rejected().await;
         assert_eq!(e.mine().await["broadcast"]["id"], first["id"]);
-        let media_url = format!("{public}/rebuild/{id}.m3u8");
+        let media_url = format!("{public}/rebuild/{id}.m3u8?token={}", sver::playback::grant(&e.app.config.key, id, chrono::Utc::now().timestamp()));
         let mut decode = command("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-i", &media_url, "-map", "0:v:0", "-map", "0:a:0", "-t", "2", "-f", "null", "-"]).stdout(Stdio::null()).spawn().unwrap();
         let decode_status = tokio::time::timeout(Duration::from_secs(20), async {
             loop { if let Some(status) = decode.try_wait().unwrap() { break status; } tokio::time::sleep(Duration::from_millis(100)).await; }
@@ -516,7 +516,8 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
         let removal_public_id = removal_key.split('?').next().unwrap();
         let mut removal_publisher = Encoder::new(&format!("{ingest}/{removal_key}"));
         let removal_broadcast = wait_state(&e,"LIVE").await;
-        let removal_url = format!("{public}/rebuild/{removal_public_id}.m3u8");
+        let removal_token = sver::playback::grant(&e.app.config.key, removal_public_id, chrono::Utc::now().timestamp());
+        let removal_url = format!("{public}/rebuild/{removal_public_id}.m3u8?token={removal_token}");
         let until = Instant::now()+Duration::from_secs(12);
         let saved_segment = loop {
             let response = e.app.http.get(&removal_url).send().await.unwrap();
@@ -543,7 +544,7 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
             assert_eq!(e.app.http.get(url).send().await.unwrap().status(),StatusCode::FORBIDDEN,"Stopped media must be inaccessible even while SRS retains the file");
             assert_eq!(e.app.http.head(url).send().await.unwrap().status(),StatusCode::FORBIDDEN);
         }
-        let whep=e.app.http.post(format!("{public}/rebuild/whep/?app=rebuild&stream={removal_public_id}")).body("synthetic SDP").send().await.unwrap();
+        let whep=e.app.http.post(format!("{public}/rebuild/whep/?app=rebuild&stream={removal_public_id}&token={removal_token}")).body("synthetic SDP").send().await.unwrap();
         assert_eq!(whep.status(),StatusCode::FORBIDDEN,"New WebRTC sessions cannot reconnect to a removed stream");
         let origin_saved=e.app.http.get(format!("{origin}/rebuild/{saved_segment}")).send().await.unwrap();
         assert_eq!(origin_saved.status(),StatusCode::OK,"The check must prove denial before SRS deletes its rolling files");

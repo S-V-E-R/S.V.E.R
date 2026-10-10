@@ -147,10 +147,12 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   // Plain strings so a poll returning the same URLs does not restart playback.
   const webrtc = live?.live ? live.playback?.webrtc ?? null : null;
   const hls = live?.live ? live.playback?.hls ?? null : null;
-  // A renewed CDN token changes the URL but not the stream: keep playing, use the newest on a restart.
-  const hlsKey = hls?.replace(/\/bcdn_token=[^/]*/, "") ?? null;
+  // A renewed CDN token or playback grant changes the URL but not the stream: keep playing, use the newest on a restart.
+  const hlsKey = hls?.replace(/\/bcdn_token=[^/]*/, "").replace(/\?token=.*$/, "") ?? null;
+  const webrtcKey = webrtc?.replace(/&token=[^&]*/, "") ?? null;
   const hlsUrl = useRef(hls);
-  useEffect(() => { hlsUrl.current = hls; }, [hls]);
+  const webrtcUrl = useRef(webrtc);
+  useEffect(() => { hlsUrl.current = hls; webrtcUrl.current = webrtc; }, [hls, webrtc]);
   const preferred = live?.live ? live.playback?.preferred ?? null : null;
   const isOwner = live?.live ? live.is_owner : false;
   const accepted = useSyncExternalStore(onMature, () => matureAccepted(username, !!signedIn), () => false);
@@ -191,13 +193,14 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   // Start (or restart, on `attempt`) playback for the current broadcast; the cleanup stops the retired transport.
   useEffect(() => {
     const element = video.current;
-    if (rewind || warning || !broadcast || !element || (!webrtc && !hlsKey)) return;
+    if (rewind || warning || !broadcast || !element || (!webrtcKey && !hlsKey)) return;
     let stop: (() => void) | null = null;
     let cancelled = false;
     const fail = () => { if (!cancelled) setPhase("reconnecting"); };
     (async () => {
       setPhase("loading");
       const current = hlsUrl.current;
+      const webrtc = webrtcUrl.current;
       const order = preferred === "webrtc" ? [webrtc, current] : [current, webrtc];
       for (const url of order) {
         if (!url || cancelled) continue;
@@ -225,7 +228,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       if (!cancelled) setPhase("failed");
     })();
     return () => { cancelled = true; stop?.(); };
-  }, [broadcast, webrtc, hlsKey, preferred, attempt, rewind, warning]);
+  }, [broadcast, webrtcKey, hlsKey, preferred, attempt, rewind, warning]);
 
   // Retry a dropped transport a few seconds later; the broadcast's 60-second reconnect grace keeps it live meanwhile.
   useEffect(() => {
