@@ -180,9 +180,61 @@ pub async fn exercise(e: &Env) {
     );
     e.sql("DELETE FROM outbox WHERE channel_id='stream-owner' AND payload='{}'")
         .await;
+
+    // Money: read-only views, a refund through Stripe, Valor adjustments with a reason.
+    let (status, money) = call(e, "GET", "/api/admin/money", Some(&admin), Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{money}");
+    assert!(money["payments"].is_array() && money["subscriptions"]["active"].is_number());
+    assert_eq!(
+        call(e, "GET", "/api/admin/money", Some(&fan), Value::Null)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let adjust = |user: &str, valor: i64| {
+        call(
+            e,
+            "POST",
+            "/api/admin/money/valor",
+            Some(&admin),
+            json!({"username": user, "valor": valor, "note": "Goodwill"}),
+        )
+    };
+    assert_eq!(adjust("SwFan", 0).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        adjust("SwStaff", 50).await.0,
+        StatusCode::FORBIDDEN,
+        "not on their own account"
+    );
+    assert_eq!(adjust("SwFan", 50).await.0, StatusCode::OK);
+    let (_, wallet) = call(e, "GET", "/api/me/wallet", Some(&fan), Value::Null).await;
+    assert_eq!(wallet["valor"], 50);
+    let refund = |pi: &str| {
+        call(
+            e,
+            "POST",
+            "/api/admin/money/refund",
+            Some(&admin),
+            json!({"payment_intent": pi, "note": "Charged twice"}),
+        )
+    };
+    assert_eq!(
+        refund("pi_unknown").await.0,
+        StatusCode::NOT_FOUND,
+        "only payments S.V.E.R took"
+    );
+    e.sql("INSERT INTO checkout_sessions(id,user_id,kind,amount_cents,valor,payment_intent,status) VALUES('cs_money','sw-fan','valor',499,525,'pi_money','paid')").await;
+    assert_eq!(refund("pi_money").await.0, StatusCode::OK);
+    let (path, form) = e.fake.lock().unwrap().stripe.last().unwrap().clone();
+    assert_eq!(
+        (path.as_str(), form.contains("payment_intent=pi_money")),
+        ("/v1/refunds", true)
+    );
+    e.sql("DELETE FROM checkout_sessions WHERE id='cs_money'")
+        .await;
     for statement in [
         "DELETE FROM feature_switches",
-        "DELETE FROM moderation_actions WHERE action LIKE 'switch_%' OR action LIKE 'banner_%' OR action='job_retry'",
+        "DELETE FROM moderation_actions WHERE action LIKE 'switch_%' OR action LIKE 'banner_%' OR action IN ('job_retry','refund','valor_adjustment')",
         "DELETE FROM staff_roles WHERE user_id='sw-staff'",
     ] {
         e.sql(statement).await;
