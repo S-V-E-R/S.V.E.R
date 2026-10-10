@@ -5,13 +5,14 @@
 //! Templates are filled here; the page only draws plain text.
 use crate::{
     App,
+    media::{self, Kind},
     profiles::{self, Fail, Res},
     security as sec,
 };
 use axum::{
     Json, Router,
     extract::{
-        ConnectInfo, Query, State,
+        ConnectInfo, DefaultBodyLimit, Multipart, Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::HeaderMap,
@@ -32,6 +33,10 @@ const KINDS: [(&str, &str); 5] = [
     ("raid", "raid:incoming"),
 ];
 const SOUNDS: [&str; 3] = ["chime", "horn", "none"];
+/// Uploaded alert sounds are cut to this many seconds and stored as mono 16-bit WAV (OBS's browser
+/// source has no proprietary codecs; WAV needs none).
+const SOUND_SECONDS: u32 = 10;
+const SOUND_RATE: u32 = 22_050;
 
 /// The Proposed defaults; saved settings replace them type by type.
 fn defaults() -> Value {
@@ -128,7 +133,7 @@ async fn goal_count(app: &App, channel: &str, kind: Option<&str>) -> Res<Option<
 }
 
 /// An alert to show for a live event, or None when this channel's settings leave it out.
-fn alert(settings: &Value, topic_kind: &str, data: &Value, id: i64) -> Option<Value> {
+fn alert(settings: &Value, topic_kind: &str, data: &Value, id: i64, base: &str) -> Option<Value> {
     let (kind, _) = KINDS.iter().find(|(_, t)| *t == topic_kind)?;
     let config = &settings[*kind];
     if config["on"] != true {
@@ -160,9 +165,11 @@ fn alert(settings: &Value, topic_kind: &str, data: &Value, id: i64) -> Option<Va
     let message = (*kind == "tribute" && config["show_message"] == true)
         .then(|| data["message"].as_str())
         .flatten();
+    let url = |key: &str| config[key].as_str().map(|k| format!("{base}/{k}"));
     Some(
         json!({"type": "alert", "id": id, "kind": kind, "text": text, "message": message,
-        "seconds": config["seconds"], "sound": settings["sound"], "volume": settings["volume"]}),
+        "seconds": config["seconds"], "sound": settings["sound"], "volume": settings["volume"],
+        "image": url("image"), "audio": url("audio")}),
     )
 }
 
@@ -184,7 +191,16 @@ async fn save(
     Json(input): Json<Value>,
 ) -> Res<Json<Value>> {
     let me = profiles::signed_in(&app, &jar).await?;
-    let settings = validate(&input)?;
+    let mut settings = validate(&input)?;
+    // Images and sounds change only through their upload routes.
+    let old = self::settings(&app, &me.id).await?;
+    for (kind, _) in KINDS {
+        for key in ["image", "audio"] {
+            if old[kind][key].is_string() {
+                settings[kind][key] = old[kind][key].clone();
+            }
+        }
+    }
     sqlx::query("INSERT INTO overlay_settings(channel_id,settings) VALUES($1,$2) ON CONFLICT(channel_id) DO UPDATE SET settings=EXCLUDED.settings")
         .bind(&me.id).bind(&settings).execute(&app.db).await?;
     let count = goal_count(&app, &me.id, settings["goal"]["kind"].as_str()).await?;
@@ -234,11 +250,189 @@ async fn test(State(app): State<App>, jar: CookieJar, Json(input): Json<Test>) -
     // A test always plays, even for a type that's off.
     settings[input.kind.as_str()]["on"] = json!(true);
     settings["tribute"]["min"] = json!(10);
-    if let Some(alert) = alert(&settings, topic, &data, 0) {
+    if let Some(alert) = alert(&settings, topic, &data, 0, &app.config.media.public_base) {
         app.chat
             .publish(&format!("alerts:{}", me.id), None, 0, alert);
     }
     Ok(Json(json!({"sent": true})))
+}
+
+/// Replaces one alert type's image or sound (`slot` is "image" or "audio"; None removes it) and
+/// updates open overlays.
+async fn set_media(app: &App, me: &str, kind: &str, slot: &str, key: Option<&str>) -> Res<()> {
+    let mut tx = app.db.begin().await?;
+    sqlx::query("INSERT INTO overlay_settings(channel_id,settings) VALUES($1,$2) ON CONFLICT(channel_id) DO NOTHING")
+        .bind(me).bind(defaults()).execute(&mut *tx).await?;
+    let mut settings: Value = sqlx::query_scalar(
+        "SELECT coalesce(settings,$2) FROM overlay_settings WHERE channel_id=$1 FOR UPDATE",
+    )
+    .bind(me)
+    .bind(defaults())
+    .fetch_one(&mut *tx)
+    .await?;
+    let old = settings[kind][slot].as_str().map(str::to_string);
+    settings[kind][slot] = json!(key);
+    sqlx::query("UPDATE overlay_settings SET settings=$2 WHERE channel_id=$1")
+        .bind(me)
+        .bind(&settings)
+        .execute(&mut *tx)
+        .await?;
+    media::queue_delete(&mut tx, old.as_deref(), key).await?;
+    tx.commit().await?;
+    let count = goal_count(app, me, settings["goal"]["kind"].as_str()).await?;
+    app.chat.publish(
+        &format!("alerts:{me}"),
+        None,
+        0,
+        json!({"type": "settings", "settings": settings, "goal_count": count}),
+    );
+    Ok(())
+}
+fn alert_kind(kind: &str) -> Res<&'static str> {
+    KINDS
+        .iter()
+        .map(|(k, _)| *k)
+        .find(|k| *k == kind)
+        .ok_or_else(Fail::missing)
+}
+/// Signed in, unrestricted, a known alert type, and storage available.
+async fn uploader(app: &App, jar: &CookieJar, kind: &str) -> Res<(String, &'static str)> {
+    let me = profiles::signed_in(app, jar).await?;
+    let kind = alert_kind(kind)?;
+    profiles::ensure_unrestricted(&mut *app.db.acquire().await?, &me.id).await?;
+    if !app.config.media.storage.available() {
+        return Err(Fail::unavailable("Uploads aren't available yet."));
+    }
+    Ok((me.id, kind))
+}
+/// POST /api/me/overlays/{kind}/image: an image shown with that alert (checked and fingerprinted
+/// like every upload, so Take It Down covers it).
+async fn upload_image(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(kind): Path<String>,
+    multipart: Multipart,
+) -> Res<Json<Value>> {
+    let (me, kind) = uploader(&app, &jar, &kind).await?;
+    let (bytes, _, _) = media::read_upload(multipart, Kind::AlertImage).await?;
+    profiles::rate(&app, format!("image-upload:{me}"), 20, 3600).await?;
+    let processed = media::process_async(bytes, Kind::AlertImage, None).await?;
+    media::store(&app, &processed).await?;
+    let mut tx = app.db.begin().await?;
+    media::record(&mut tx, &me, Kind::AlertImage, &processed).await?;
+    tx.commit().await?;
+    set_media(&app, &me, kind, "image", Some(&processed.stored)).await?;
+    mine(State(app), jar).await
+}
+/// POST /api/me/overlays/{kind}/sound: a sound for that alert, cut to 10 seconds and re-encoded,
+/// so nothing the streamer uploaded is served as is.
+async fn upload_sound(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(kind): Path<String>,
+    multipart: Multipart,
+) -> Res<Json<Value>> {
+    let (me, kind) = uploader(&app, &jar, &kind).await?;
+    let (bytes, _, _) = media::read_upload(multipart, Kind::AlertSound).await?;
+    profiles::rate(&app, format!("sound-upload:{me}"), 20, 3600).await?;
+    let wav = transcode(bytes).await.ok_or_else(|| {
+        Fail::field(
+            "file",
+            "Use an MP3, OGG or WAV sound; the first 10 seconds play.",
+        )
+    })?;
+    use sha2::Digest;
+    let hash: String = sha2::Sha256::digest(&wav)
+        .iter()
+        .take(16)
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let key = format!("alerts/sounds/{hash}.wav");
+    let size = wav.len() as i64;
+    app.config
+        .media
+        .storage
+        .put_typed(
+            &app.http,
+            &key,
+            wav,
+            "audio/wav",
+            "public, max-age=31536000, immutable",
+        )
+        .await?;
+    sqlx::query("INSERT INTO media_objects(key,owner_id,kind,bytes,fingerprinted) VALUES($1,$2,'alert_sound',$3,true) ON CONFLICT (key) DO UPDATE SET delete_after=NULL,owner_id=EXCLUDED.owner_id")
+        .bind(&key).bind(&me).bind(size).execute(&app.db).await?;
+    set_media(&app, &me, kind, "audio", Some(&key)).await?;
+    mine(State(app), jar).await
+}
+/// DELETE /api/me/overlays/{kind}/image
+async fn remove_image(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(kind): Path<String>,
+) -> Res<Json<Value>> {
+    let me = profiles::signed_in(&app, &jar).await?;
+    set_media(&app, &me.id, alert_kind(&kind)?, "image", None).await?;
+    mine(State(app), jar).await
+}
+/// DELETE /api/me/overlays/{kind}/sound
+async fn remove_sound(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(kind): Path<String>,
+) -> Res<Json<Value>> {
+    let me = profiles::signed_in(&app, &jar).await?;
+    set_media(&app, &me.id, alert_kind(&kind)?, "audio", None).await?;
+    mine(State(app), jar).await
+}
+/// Decodes any sound ffmpeg reads from a pipe into mono 16-bit PCM, at most 10 seconds, wrapped in
+/// a WAV header. None when it isn't a sound or is shorter than a fifth of a second.
+async fn transcode(input: Vec<u8>) -> Option<Vec<u8>> {
+    use tokio::io::AsyncWriteExt;
+    let (seconds, rate) = (SOUND_SECONDS.to_string(), SOUND_RATE.to_string());
+    let mut child = tokio::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i", "pipe:0"])
+        .args(["-vn", "-map_metadata", "-1", "-t", &seconds, "-ac", "1"])
+        .args(["-ar", &rate, "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    let mut stdin = child.stdin.take()?;
+    // ffmpeg may stop reading once it has 10 seconds; a broken pipe then is fine.
+    let feed = tokio::spawn(async move {
+        let _ = stdin.write_all(&input).await;
+    });
+    let output = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output())
+        .await
+        .ok()?
+        .ok()?;
+    let _ = feed.await;
+    let pcm = output.stdout;
+    let max = (SOUND_SECONDS * SOUND_RATE * 2) as usize;
+    (output.status.success() && pcm.len() >= (SOUND_RATE * 2 / 5) as usize && pcm.len() <= max)
+        .then(|| wav(&pcm))
+}
+/// A canonical 44-byte WAV header for mono 16-bit PCM, then the samples.
+fn wav(pcm: &[u8]) -> Vec<u8> {
+    let len = pcm.len() as u32;
+    let mut out = Vec::with_capacity(44 + pcm.len());
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + len).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&SOUND_RATE.to_le_bytes());
+    out.extend_from_slice(&(SOUND_RATE * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&len.to_le_bytes());
+    out.extend_from_slice(pcm);
+    out
 }
 
 #[derive(Deserialize)]
@@ -277,7 +471,15 @@ async fn opening(app: &App, channel: &str, topics: &[String]) -> Res<Value> {
     .await?;
     let recent: Vec<Value> = rows
         .iter()
-        .filter_map(|(id, topic, data)| alert(&settings, kind_of(topic), data, *id))
+        .filter_map(|(id, topic, data)| {
+            alert(
+                &settings,
+                kind_of(topic),
+                data,
+                *id,
+                &app.config.media.public_base,
+            )
+        })
         .take(5)
         .collect();
     Ok(json!({"type": "hello", "settings": settings, "goal_count": count, "recent": recent}))
@@ -324,7 +526,7 @@ async fn session(app: App, channel: String, username: String, digest: String, mu
                 }
                 Ok(e) if e.channel == crate::events::HUB && e.payload["topic"].as_str().is_some_and(|t| topics.iter().any(|x| x == t)) => {
                     let kind = kind_of(e.payload["topic"].as_str().unwrap_or_default()).to_string();
-                    let out = alert(&current, &kind, &e.payload["data"], e.payload["id"].as_i64().unwrap_or(0));
+                    let out = alert(&current, &kind, &e.payload["data"], e.payload["id"].as_i64().unwrap_or(0), &app.config.media.public_base);
                     // Follows and subscriptions move the goal bar.
                     let goal = current["goal"]["kind"].as_str();
                     if ((kind == "follows:detail" && goal == Some("followers")) || (kind == "subs" && goal == Some("subs")))
@@ -358,6 +560,18 @@ pub fn routes() -> Router<App> {
         .route("/api/me/overlays", get(mine).put(save))
         .route("/api/me/overlays/link", post(link).delete(revoke))
         .route("/api/me/overlays/test", post(test))
+        .route(
+            "/api/me/overlays/{kind}/image",
+            post(upload_image)
+                .delete(remove_image)
+                .layer(DefaultBodyLimit::max(2 * 1024 * 1024 + 16 * 1024)),
+        )
+        .route(
+            "/api/me/overlays/{kind}/sound",
+            post(upload_sound)
+                .delete(remove_sound)
+                .layer(DefaultBodyLimit::max(1024 * 1024 + 16 * 1024)),
+        )
         .route("/api/overlays/ws", get(socket))
 }
 
@@ -372,11 +586,12 @@ mod tests {
             "subs",
             &json!({"user": "Ann", "tier": 2, "months": 5}),
             1,
+            "",
         )
         .unwrap();
         assert_eq!(sub["text"], "Ann subscribed at Tier 2 (5 months)!");
         assert!(
-            alert(&s, "tributes", &json!({"user": "Bo", "valor": 9}), 2).is_none(),
+            alert(&s, "tributes", &json!({"user": "Bo", "valor": 9}), 2, "").is_none(),
             "under the minimum"
         );
         let tribute = alert(
@@ -384,6 +599,7 @@ mod tests {
             "tributes",
             &json!({"user": "Bo", "valor": 50, "message": "gg"}),
             3,
+            "",
         )
         .unwrap();
         assert_eq!(
@@ -395,16 +611,23 @@ mod tests {
             "raid:incoming",
             &json!({"from": "Cy", "seconds": 10}),
             4,
+            "",
         )
         .unwrap();
         assert_eq!(raid["text"], "Cy is raiding!");
         let mut off = s.clone();
         off["follow"]["on"] = json!(false);
-        assert!(alert(&off, "follows:detail", &json!({"user": "Di"}), 5).is_none());
+        assert!(alert(&off, "follows:detail", &json!({"user": "Di"}), 5, "").is_none());
         assert!(validate(&s).is_ok());
         let mut long = s.clone();
         long["follow"]["text"] = json!("x".repeat(121));
         assert!(validate(&long).is_err());
         assert_eq!(kind_of("channel:streamer:raid:incoming"), "raid:incoming");
+        let header = wav(&[0, 0, 1, 0]);
+        assert_eq!(
+            (&header[..4], &header[8..12], header.len()),
+            (&b"RIFF"[..], &b"WAVE"[..], 48)
+        );
+        assert_eq!(u32::from_le_bytes(header[40..44].try_into().unwrap()), 4);
     }
 }

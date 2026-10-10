@@ -19,11 +19,19 @@ Phase 3, after the developer platform ([DEVELOPER_PLATFORM.md](DEVELOPER_PLATFOR
 - Alerts come from the same records as the live events API (Section 2), so anything the events API leaves out also stays off the overlay: people the streamer blocked, chat refused by moderation, Valor that didn't move.
 - Names are S.V.E.R usernames. A tribute's message is the chat message that carried it, which already passed the channel's chat rules.
 - Background is transparent; motion is fades and short slides only (no glows), per DESIGN.md.
-- The overlay page loads nothing from other sites.
+- The overlay page loads nothing from other sites (uploaded alert images and sounds come from S.V.E.R's media host).
+
+## Uploaded images and sounds (part 2)
+
+- Each alert type can have its own **image** (PNG, JPEG or WebP up to 2 MB, resized to fit 512 pixels and re-encoded as WebP) and its own **sound** (MP3, OGG or WAV up to 1 MB; the first 10 seconds are re-encoded by the server as mono 16-bit WAV, which OBS's browser source plays without proprietary codecs). Nothing uploaded is served as is.
+- An alert with its own sound plays it at the overlay volume; otherwise the chime or horn plays.
+- Review: images pass the same checks as every upload (known-abuse fingerprints at upload, Take It Down removal). They appear only in the streamer's own broadcast, so reports about them go through the stream. Sounds aren't images and aren't fingerprinted; staff can remove one through the media records like any upload.
+- Images and sounds change only through their upload and remove buttons; saving the other settings keeps them. Open overlays update at once.
+- The overlay loads those files from S.V.E.R's media host and nothing else.
 
 ## Not in this part
 
-Uploaded images and sounds per alert (they need the emote-style media review), text-to-speech, and the StreamElements/Streamlabs custom-widget adapter. They come next, in that order.
+Text-to-speech, then the StreamElements/Streamlabs custom-widget adapter, in that order.
 
 ## Done when
 

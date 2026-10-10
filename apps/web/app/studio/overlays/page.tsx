@@ -4,7 +4,7 @@ import { Section } from "../../../components/Form";
 import { send, useLoad, type Result } from "../../../lib/client-api";
 
 type Kind = "follow" | "sub" | "tribute" | "skill" | "raid";
-type AlertSetting = { on: boolean; text: string; seconds: number; min?: number; show_message?: boolean };
+type AlertSetting = { on: boolean; text: string; seconds: number; min?: number; show_message?: boolean; image?: string | null; audio?: string | null };
 type Settings = Record<Kind, AlertSetting> & { sound: "chime" | "horn" | "none"; volume: number; goal: { kind: "followers" | "subs" | null; target: number; label: string } };
 type View = { settings: Settings; linked: boolean; connected: boolean };
 const KINDS: [Kind, string, string][] = [
@@ -49,6 +49,14 @@ export default function OverlaysStudio() {
     settings.goal = { kind: goal ? goal as "followers" | "subs" : null, target: Number(form.get("goal-target")), label: String(form.get("goal-label") ?? "") };
     apply(await send<View>("PUT", "/api/me/overlays", settings), "Saved. Open overlays updated.");
   }
+  async function media(kind: Kind, slot: "image" | "sound", file: File | null) {
+    const path = `/api/me/overlays/${kind}/${slot}`;
+    if (!file) { apply(await send<View>("DELETE", path), slot === "image" ? "Image removed." : "Sound removed."); return; }
+    const form = new FormData();
+    form.append("file", file);
+    setMessage("Uploading…");
+    apply(await send<View>("POST", path, form), slot === "image" ? "Image saved." : "Sound saved.");
+  }
   async function test(kind: Kind) {
     const r = await send("POST", "/api/me/overlays/test", { kind });
     setMessage(r.ok ? "Test sent to open overlays." : r.error);
@@ -79,9 +87,15 @@ export default function OverlaysStudio() {
             <label className="field narrow"><span>Only tributes of at least (Valor)</span><input name="tribute-min" type="number" min={10} defaultValue={s.tribute.min} /></label>
             <label className="row"><input type="checkbox" name="tribute-message" defaultChecked={s.tribute.show_message} /> Show the tribute&apos;s message</label>
           </>}
+          <div className="row wrap">
+            <label className="field narrow"><span>Image (PNG, JPEG or WebP, up to 2 MB){s[kind].image ? " · set" : ""}</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void media(kind, "image", f); }} /></label>
+            {s[kind].image && <button type="button" className="small quiet" onClick={() => void media(kind, "image", null)}>Remove image</button>}
+            <label className="field narrow"><span>Sound (MP3, OGG or WAV, first 10 seconds, up to 1 MB){s[kind].audio ? " · set" : ""}</span><input type="file" accept="audio/mpeg,audio/ogg,audio/wav,audio/x-wav" onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void media(kind, "sound", f); }} /></label>
+            {s[kind].audio && <button type="button" className="small quiet" onClick={() => void media(kind, "sound", null)}>Remove sound</button>}
+          </div>
           <button type="button" className="small quiet" onClick={() => void test(kind)}>Send a test</button>
         </fieldset>)}
-        <label className="field narrow"><span>Sound</span><select name="sound" defaultValue={s.sound}><option value="chime">Chime</option><option value="horn">Horn</option><option value="none">None</option></select></label>
+        <label className="field narrow"><span>Sound when an alert has no uploaded sound</span><select name="sound" defaultValue={s.sound}><option value="chime">Chime</option><option value="horn">Horn</option><option value="none">None</option></select></label>
         <label className="field narrow"><span>Volume (0–100)</span><input name="volume" type="number" min={0} max={100} defaultValue={s.volume} /></label>
         <fieldset className="stack"><legend>Goal bar</legend>
           <label className="field narrow"><span>Count</span><select name="goal-kind" defaultValue={s.goal.kind ?? ""}><option value="">No goal</option><option value="followers">Followers</option><option value="subs">Active subscribers</option></select></label>

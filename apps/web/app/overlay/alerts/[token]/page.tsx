@@ -3,13 +3,20 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import "../../../../styles/overlays.css";
 
-type Alert = { type: "alert"; id: number; kind: string; text: string; message: string | null; seconds: number; sound: "chime" | "horn" | "none"; volume: number };
+type Alert = { type: "alert"; id: number; kind: string; text: string; message: string | null; seconds: number; sound: "chime" | "horn" | "none"; volume: number; image?: string | null; audio?: string | null };
 type Settings = { goal: { kind: "followers" | "subs" | null; target: number; label: string } };
 type Frame = { type: "hello"; settings: Settings; goal_count: number | null; recent: Alert[] } | { type: "settings"; settings: Settings; goal_count: number | null } | { type: "goal"; goal_count: number } | Alert;
 
-/** A short tone made in the browser (no sound files to host or review). */
-function play(sound: Alert["sound"], volume: number) {
-  if (sound === "none" || volume <= 0) return;
+/** The alert's uploaded sound (re-encoded WAV from S.V.E.R's media host), or a short tone made in the browser. */
+function play({ sound, volume, audio: file }: Alert) {
+  if (volume <= 0) return;
+  if (file) {
+    const audio = new Audio(file);
+    audio.volume = volume / 100;
+    void audio.play().catch(() => { /* autoplay blocked outside OBS */ });
+    return;
+  }
+  if (sound === "none") return;
   try {
     const audio = new AudioContext();
     const gain = audio.createGain();
@@ -53,7 +60,7 @@ export default function AlertsOverlay() {
       if (!alert) { busy.current = false; setShowing(null); return; }
       busy.current = true;
       setShowing(alert);
-      play(alert.sound, alert.volume);
+      play(alert);
       setTimeout(next, alert.seconds * 1000);
     };
     const connect = () => {
@@ -85,6 +92,8 @@ export default function AlertsOverlay() {
     </section>
       : widget === "events" ? <ol className="overlay-recent" aria-label="Recent events">{recent.map(a => <li key={`${a.id}-${a.text}`}>{a.text}</li>)}</ol>
         : showing && <div className={`overlay-alert kind-${showing.kind}`} role="status" key={`${showing.id}-${showing.text}`} style={{ animationDuration: `${showing.seconds}s` }}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- the streamer's uploaded image, already resized */}
+          {showing.image && <img className="overlay-alert-image" src={showing.image} alt="" />}
           <p className="overlay-alert-text">{showing.text}</p>
           {showing.message && <p className="overlay-alert-message">{showing.message}</p>}
         </div>}
