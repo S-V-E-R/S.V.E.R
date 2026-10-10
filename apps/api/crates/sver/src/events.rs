@@ -145,6 +145,21 @@ pub async fn prune(app: &App) -> Res<()> {
     Ok(())
 }
 
+/// The channel behind a `chat:{name}` topic this connection may read: an eligible channel, and
+/// not a mature one for an under-18 person.
+async fn chat_channel(app: &App, topic: &str, user: Option<&Person>) -> Res<Option<String>> {
+    let Some(name) = topic.strip_prefix("chat:") else {
+        return Ok(None);
+    };
+    let mut db = app.db.acquire().await?;
+    let Some(channel) = profiles::eligible_by_name(&mut db, name).await? else {
+        return Ok(None);
+    };
+    if crate::streams::mature_blocked(&mut db, &channel.id, user.map(|u| u.0.as_str())).await? {
+        return Ok(None);
+    }
+    Ok(Some(channel.id))
+}
 /// Whether a topic exists and this connection may subscribe to it.
 async fn allowed(app: &App, topic: &str, user: Option<&Person>) -> Res<bool> {
     if let Some(faction) = topic
@@ -232,11 +247,30 @@ async fn reply(ws: &mut WebSocket, value: Value) -> bool {
 async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket) {
     let mut events = app.chat.subscribe();
     let mut topics: HashSet<String> = HashSet::new();
+    // Chat topics: channel ID -> topic. Messages come straight from the chat hub, not the outbox.
+    let mut chats: HashMap<String, String> = HashMap::new();
     loop {
         tokio::select! {
             incoming = events.recv() => match incoming {
                 Ok(e) if e.channel == HUB => {
                     if e.payload["topic"].as_str().is_some_and(|t| topics.contains(t)) && !reply(&mut ws, e.payload.clone()).await {
+                        return;
+                    }
+                }
+                Ok(e) if chats.contains_key(&e.channel) => {
+                    let Ok(hidden) = crate::chat::hidden(&app, user.as_ref().map(|u| u.0.as_str())).await else { return; };
+                    if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
+                    let mut data = e.payload.clone();
+                    match data["type"].as_str() {
+                        Some("message") => {
+                            let Ok(message) = crate::chat::fresh(&app, &data, &hidden).await else { return; };
+                            let Some(message) = message else { continue; };
+                            data["message"] = message;
+                        }
+                        Some("delete") => {}
+                        _ => continue,
+                    }
+                    if !reply(&mut ws, json!({"type": "event", "topic": chats[&e.channel], "data": data})).await {
                         return;
                     }
                 }
@@ -254,7 +288,7 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
                         continue;
                     };
                     let mut out = json!({"type": "reply", "id": call["id"]});
-                    match handle(&app, user.as_ref(), &mut topics, &call).await {
+                    match handle(&app, user.as_ref(), &mut topics, &mut chats, &call).await {
                         Ok((result, replay)) => {
                             out["result"] = result;
                             if !reply(&mut ws, out).await { return; }
@@ -274,13 +308,16 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
         }
     }
 }
-/// One method call: subscribe (with an optional `since` to replay), unsubscribe or ping.
+/// One method call: subscribe (with an optional `since` to replay), unsubscribe, ping, and for
+/// chat `history` (the last 50 messages) and `send` (`chat:write`).
 async fn handle(
     app: &App,
     user: Option<&Person>,
     topics: &mut HashSet<String>,
+    chats: &mut HashMap<String, String>,
     call: &Value,
 ) -> Result<(Value, Vec<Value>), String> {
+    let retry = |_| "Try again.".to_string();
     if call["type"] != "method" {
         return Err("Send {\"type\":\"method\",…}.".into());
     }
@@ -295,9 +332,44 @@ async fn handle(
         .unwrap_or_default();
     match call["method"].as_str() {
         Some("ping") => Ok((json!("pong"), Vec::new())),
+        Some("history") => {
+            let topic = call["params"]["topic"]
+                .as_str()
+                .unwrap_or_default()
+                .to_lowercase();
+            let channel = chat_channel(app, &topic, user)
+                .await
+                .map_err(retry)?
+                .ok_or("Use a chat:{name} topic you can read.")?;
+            let hidden = crate::chat::hidden(app, user.map(|u| u.0.as_str()))
+                .await
+                .map_err(retry)?;
+            let mut messages = crate::chat::history(app, &channel, &hidden, None)
+                .await
+                .map_err(retry)?;
+            let extra = messages.len().saturating_sub(50);
+            messages.drain(..extra);
+            Ok((json!({"topic": topic, "messages": messages}), Vec::new()))
+        }
+        Some("send") => {
+            let (person, scopes) = user.ok_or("Sending chat needs an access token.")?;
+            if !scopes.iter().any(|s| s == "chat:write") {
+                return Err("This token doesn't have chat:write.".into());
+            }
+            let name = call["params"]["channel"].as_str().unwrap_or_default();
+            let channel = chat_channel(app, &format!("chat:{}", name.to_lowercase()), user)
+                .await
+                .map_err(retry)?
+                .ok_or("That channel's chat isn't available.")?;
+            crate::chat::send_as_app(app, person, &channel, &call["params"])
+                .await
+                .map(|message| (json!({"message": message}), Vec::new()))
+                .map_err(|f| f.message.to_string())
+        }
         Some("unsubscribe") => {
             for topic in &asked {
                 topics.remove(topic);
+                chats.retain(|_, t| t != topic);
             }
             Ok((
                 json!({"topics": topics.iter().collect::<Vec<_>>()}),
@@ -307,11 +379,21 @@ async fn handle(
         Some("subscribe") => {
             let (mut added, mut refused) = (Vec::new(), Vec::new());
             for topic in asked {
-                let ok = topics.len() < MAX_TOPICS
-                    && allowed(app, &topic, user)
-                        .await
-                        .map_err(|_| "Try again.".to_string())?;
-                if ok {
+                if topics.len() + chats.len() >= MAX_TOPICS {
+                    refused.push(topic);
+                    continue;
+                }
+                if topic.starts_with("chat:") {
+                    match chat_channel(app, &topic, user).await.map_err(retry)? {
+                        Some(channel) => {
+                            chats.insert(channel, topic.clone());
+                            added.push(topic);
+                        }
+                        None => refused.push(topic),
+                    }
+                    continue;
+                }
+                if allowed(app, &topic, user).await.map_err(retry)? {
                     topics.insert(topic.clone());
                     added.push(topic);
                 } else {
@@ -326,7 +408,7 @@ async fn handle(
             }
             Ok((json!({"subscribed": added, "refused": refused}), replay))
         }
-        _ => Err("Use subscribe, unsubscribe or ping.".into()),
+        _ => Err("Use subscribe, unsubscribe, ping, history or send.".into()),
     }
 }
 

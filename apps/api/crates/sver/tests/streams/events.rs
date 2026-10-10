@@ -18,7 +18,7 @@ pub async fn exercise(e: &Env) {
         .unwrap()
         .to_string();
     // An owner's token with events:private (as the OAuth flow would issue).
-    e.sql("INSERT INTO oauth_grants(id,app_id,user_id,scopes) SELECT 'ev-grant',id,'stream-owner',ARRAY['events:private'] FROM dev_apps WHERE name='Alerts Overlay'").await;
+    e.sql("INSERT INTO oauth_grants(id,app_id,user_id,scopes) SELECT 'ev-grant',id,'stream-owner',ARRAY['events:private','chat:write'] FROM dev_apps WHERE name='Alerts Overlay'").await;
     sqlx::query("INSERT INTO oauth_tokens(token_hash,grant_id,kind,expires_at) VALUES($1,'ev-grant','access',now()+interval '1 hour')")
         .bind(sver::security::digest("ev-owner-token")).execute(&e.app.db).await.unwrap();
     sver::events::drain(&e.app).await.unwrap();
@@ -99,6 +99,63 @@ pub async fn exercise(e: &Env) {
         .await
         .unwrap();
     assert_eq!(next_json(&mut late).await["result"], "pong");
+
+    // Chat over the socket: an app with chat:write posts as the person; readers need only the
+    // client ID. Apps can't spend Valor.
+    late.send(send(
+        json!({"type":"method","id":4,"method":"subscribe","params":{"topics":["chat:Streamer"]}}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        next_json(&mut late).await["result"]["subscribed"],
+        json!(["chat:streamer"])
+    );
+    let say = |id: i64, extra: Value| {
+        let mut params = json!({"channel":"streamer","id":uuid::Uuid::new_v4().to_string(),"body":"Hello from an app"});
+        params
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        send(json!({"type":"method","id":id,"method":"send","params":params}))
+    };
+    owner.send(say(5, json!({"tribute": 10}))).await.unwrap();
+    assert_eq!(
+        next_json(&mut owner).await["error"],
+        "Apps can't spend Valor."
+    );
+    owner.send(say(6, json!({}))).await.unwrap();
+    assert_eq!(
+        next_json(&mut owner).await["result"]["message"]["body"],
+        "Hello from an app"
+    );
+    let heard = next_json(&mut late).await;
+    assert_eq!(
+        (
+            heard["topic"].as_str(),
+            heard["data"]["message"]["body"].as_str()
+        ),
+        (Some("chat:streamer"), Some("Hello from an app"))
+    );
+    late.send(say(7, json!({}))).await.unwrap();
+    assert_eq!(
+        next_json(&mut late).await["error"],
+        "Sending chat needs an access token."
+    );
+    late.send(send(
+        json!({"type":"method","id":8,"method":"history","params":{"topic":"chat:streamer"}}),
+    ))
+    .await
+    .unwrap();
+    let history = next_json(&mut late).await;
+    assert_eq!(
+        history["result"]["messages"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["body"],
+        "Hello from an app"
+    );
 
     // Stream details are a public update event.
     let settings = e.mine().await["settings"].clone();
