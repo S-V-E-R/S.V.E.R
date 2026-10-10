@@ -19,28 +19,37 @@ pub enum Event {
     Sub,
     Raid,
     Timeout,
+    Surge,
+    Milestone,
 }
 /// Lines per bot (PYRE, ECHO, FAVOR, VOLK), personality (chill, battle, event) and event (follow,
-/// sub, raid, timeout). `{user}` is the person, `{count}` a month or raid size.
-const LINES: [[[&str; 4]; 3]; 4] = [
+/// sub, raid, timeout, Surge level, follower milestone). `{user}` is the person, `{count}` a month,
+/// raid size, Surge level or follower count.
+const LINES: [[[&str; 6]; 3]; 4] = [
     [
         [
             "Welcome, {user}.",
             "Thanks for subscribing, {user}.",
             "{user} is raiding with {count}. Welcome, everyone.",
             "{user}, take a short break.",
+            "Surge level {count}. Keep it burning.",
+            "{count} followers. Thank you, all of you.",
         ],
         [
             "Another one walks into the fire. Welcome, {user}.",
             "Oath sworn, {user}. The forge remembers. Month {count}.",
             "Warband at the gate: {user} with {count}. Stand and greet them.",
             "Cool off, {user}. Come back sharper.",
+            "Surge {count}! The fire climbs.",
+            "{count} sworn to the flame. Onward.",
         ],
         [
             "{user} STEPS INTO THE FIRE!",
             "{user} SWEARS THE OATH! Month {count}! The forge roars!",
             "WARBAND OF {count} AT THE GATE, LED BY {user}!",
             "{user}, cool off. The fire waits.",
+            "SURGE LEVEL {count}! THE FORGE ROARS!",
+            "{count} FOLLOWERS! THE FIRE SPREADS!",
         ],
     ],
     [
@@ -49,18 +58,24 @@ const LINES: [[[&str; 4]; 3]; 4] = [
             "Thanks for subscribing, {user}. Month {count}.",
             "{user} brought {count} friends. Welcome.",
             "{user}, paused for a bit.",
+            "Surge level {count} reached.",
+            "{count} followers. Thank you.",
         ],
         [
             "New signal detected: {user}. Logging it.",
             "A pattern begins: {user}, month {count}.",
             "Arrivals inbound: {user} with {count}. Adjusting the model.",
             "Pattern flagged, {user}. Take a pause.",
+            "Surge level {count}: the signal strengthens.",
+            "Signal count: {count} followers.",
         ],
         [
             "SIGNAL LOCKED: {user}!",
             "{user}: month {count} added to the archive!",
             "{count} ARRIVALS FROM {user}! THE PATTERN GROWS!",
             "{user}, pattern flagged. Back soon.",
+            "SURGE {count}! THE SIGNAL SURGES!",
+            "{count} SIGNALS IN THE ARCHIVE!",
         ],
     ],
     [
@@ -69,18 +84,24 @@ const LINES: [[[&str; 4]; 3]; 4] = [
             "{user} subscribed. Thank you!",
             "{user} and {count} friends just arrived. Say hi!",
             "{user}, a quick breather, okay?",
+            "Surge level {count}! Nice.",
+            "{count} followers! Thank you!",
         ],
         [
             "There's a seat for you, {user}. There always was.",
             "{user}, your fortune's in the hall now. Month {count}.",
             "Open the doors, {user} brought {count}!",
             "Easy, {user}. Take a breather.",
+            "Fortune climbs: Surge level {count}.",
+            "{count} seats at the table now.",
         ],
         [
             "{user} TAKES A SEAT AT THE TABLE!",
             "{user} rolls the dice: month {count}! Fortune smiles!",
             "{user} BRINGS {count} TO THE PARTY!",
             "Easy, {user}! Catch your breath.",
+            "SURGE LEVEL {count}! JACKPOT ENERGY!",
+            "{count} AT THE TABLE! FORTUNE SMILES!",
         ],
     ],
     [
@@ -89,18 +110,24 @@ const LINES: [[[&str; 4]; 3]; 4] = [
             "Thanks for the support, {user}.",
             "Welcome, {user} and company ({count}).",
             "{user}, a short pause.",
+            "Surge level {count}.",
+            "{count} followers.",
         ],
         [
             "Noted. Welcome under the Accord, {user}.",
             "The Accord thanks you, {user}. Month {count}.",
             "{user} and a company of {count} cross under the Accord.",
             "The Accord holds, {user}. Take a breath.",
+            "The Accord notes Surge level {count}.",
+            "{count} now keep the watch.",
         ],
         [
             "{user} JOINS THE WATCH!",
             "{user} pledges to the Accord! Month {count}!",
             "{user} CROSSES WITH {count}! THE ACCORD HOLDS!",
             "{user}, the Accord pauses you.",
+            "SURGE {count}! THE WATCH RISES!",
+            "{count} STAND THE WATCH!",
         ],
     ],
 ];
@@ -157,6 +184,45 @@ pub async fn record_raid(app: &App, channel: &str, raider: &str, arrivals: i64) 
         .await?;
     Ok(())
 }
+/// Follower counts the bot celebrates, each once per channel.
+pub const MILESTONES: [i64; 10] = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+/// After a follow (in its transaction): a milestone line the first time the count reaches one.
+pub async fn follower_milestone(db: &mut PgConnection, channel: &str) -> Res<()> {
+    let followers: i64 = sqlx::query_scalar("SELECT count(*) FROM follows WHERE following_id=$1")
+        .bind(channel)
+        .fetch_one(&mut *db)
+        .await?;
+    if !MILESTONES.contains(&followers) {
+        return Ok(());
+    }
+    let first = sqlx::query(
+        "INSERT INTO bot_milestones(channel_id,followers) VALUES($1,$2) ON CONFLICT DO NOTHING",
+    )
+    .bind(channel)
+    .bind(followers)
+    .execute(&mut *db)
+    .await?
+    .rows_affected();
+    if first == 1 {
+        sqlx::query(
+            "INSERT INTO bot_events(channel_id,kind,name,count) VALUES($1,'milestone','',$2)",
+        )
+        .bind(channel)
+        .bind(followers as i32)
+        .execute(&mut *db)
+        .await?;
+    }
+    Ok(())
+}
+/// A Surge reaching a new level.
+pub async fn surge_level(app: &App, channel: &str, level: i16) -> Res<()> {
+    sqlx::query("INSERT INTO bot_events(channel_id,kind,name,count) VALUES($1,'surge','',$2)")
+        .bind(channel)
+        .bind(i32::from(level))
+        .execute(&app.db)
+        .await?;
+    Ok(())
+}
 /// Every few seconds: greets recent events on live channels; anything else is dropped.
 pub async fn drain(app: &App) -> Res<()> {
     let events: Vec<(String, String, String, i32, bool)> = sqlx::query_as("DELETE FROM bot_events e RETURNING e.channel_id,e.kind,e.name,e.count,
@@ -170,6 +236,8 @@ pub async fn drain(app: &App) -> Res<()> {
         let event = match kind.as_str() {
             "follow" => Event::Follow,
             "sub" => Event::Sub,
+            "surge" => Event::Surge,
+            "milestone" => Event::Milestone,
             _ => Event::Raid,
         };
         announce(app, &channel, event, &name, count.into()).await?;
@@ -502,6 +570,21 @@ pub fn routes() -> Router<App> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn surge_and_milestone_lines() {
+        assert_eq!(
+            line("pyre", "chill", Event::Surge, "x", 3),
+            "Surge level 3. Keep it burning."
+        );
+        assert_eq!(
+            line("volk", "event", Event::Milestone, "x", 100),
+            "100 STAND THE WATCH!"
+        );
+        assert_eq!(
+            line("favor", "battle", Event::Timeout, "Ana", 0),
+            "Easy, Ana. Take a breather."
+        );
+    }
     #[test]
     fn rules_and_lines() {
         assert_eq!(
