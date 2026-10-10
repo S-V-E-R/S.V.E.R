@@ -293,7 +293,7 @@ pub async fn tick(app: &App, source: &str) -> Result<()> {
     let wanted: Vec<Wanted> = sqlx::query_as("SELECT d.id,d.server,d.key_sealed,b.id,b.public_id FROM restream_destinations d
         JOIN users u ON u.id=d.owner_id AND u.email_verified AND u.mfa_enabled AND u.deleted_at IS NULL
         JOIN broadcasts b ON b.owner_id=d.owner_id AND b.state='LIVE'
-        WHERE d.enabled ORDER BY d.created_at")
+        WHERE d.enabled AND NOT EXISTS(SELECT 1 FROM feature_switches WHERE name='restreaming' AND off) ORDER BY d.created_at")
         .fetch_all(&app.db)
         .await?;
     let mut updates: Vec<(String, &'static str, Option<&'static str>)> = Vec::new();

@@ -228,6 +228,16 @@ pub async fn create_user(
     password: Option<&str>,
     verified: bool,
 ) -> Result<User> {
+    if crate::switches::off(&mut *db, "signups")
+        .await
+        .map_err(|_| Error::internal())?
+    {
+        return Err(Error(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Sign-ups are paused right now. Please try again soon.",
+            None,
+        ));
+    }
     let held: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM username_holds WHERE handle_canonical=lower($1) AND released_at>now())")
         .bind(username)
         .fetch_one(&mut *db)

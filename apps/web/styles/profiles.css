@@ -260,3 +260,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .open-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--space-3,12px)}
 .open-chart{width:100%;height:auto;max-width:100%}
 .open-bar{fill:var(--accent)}.open-bar-withheld{fill:var(--ink-dim)}.open-tick{fill:var(--ink-muted);font-size:9px}
+
+/* Staff site banner (docs/ADMIN.md): one line above the page content, dismissible. */
+.site-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:8px 12px;border:1px solid var(--accent);background:var(--panel);color:var(--ink)}
+.site-banner p{margin:0}

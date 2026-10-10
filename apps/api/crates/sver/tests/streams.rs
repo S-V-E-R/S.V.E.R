@@ -82,6 +82,8 @@ mod staff_window;
 mod subs;
 #[path = "streams/support.rs"]
 mod support;
+#[path = "streams/switches.rs"]
+mod switches;
 #[path = "streams/teams.rs"]
 mod teams;
 #[path = "streams/videos.rs"]
@@ -510,6 +512,7 @@ async fn exercise(e: &Env) {
     resets::exercise(e).await;
     integrity::exercise(e).await;
     staff_window::exercise(e).await;
+    switches::exercise(e).await;
     alerts::exercise(e).await;
     raids::exercise(e).await;
     staff_streams::exercise(e).await;

@@ -170,6 +170,7 @@ pub async fn checkout(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::ensure_verified(&user, "Verify your email address to buy Valor.")?;
+    crate::switches::guard(&mut *app.db.acquire().await?, "purchases").await?;
     let Some(&(cents, valor)) = PACKS.iter().find(|p| p.0 == input.cents) else {
         return Err(Fail::field("cents", "Choose one of the Valor packs."));
     };

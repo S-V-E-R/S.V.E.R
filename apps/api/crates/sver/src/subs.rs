@@ -95,6 +95,7 @@ async fn channel(app: &App, name: &str) -> Res<(String, String)> {
 async fn payer(app: &App, jar: &CookieJar, name: &str) -> Res<(crate::auth::User, String, String)> {
     let user = profiles::signed_in(app, jar).await?;
     profiles::ensure_verified(&user, "Verify your email address to subscribe.")?;
+    crate::switches::guard(&mut *app.db.acquire().await?, "purchases").await?;
     let (channel, username) = channel(app, name).await?;
     if channel == user.id {
         return Err(Fail::bad("You can't subscribe to your own channel."));
