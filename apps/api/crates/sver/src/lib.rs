@@ -36,6 +36,7 @@ pub mod integrity;
 pub mod ipinfo;
 pub mod jobs;
 pub mod ledger;
+pub mod lights;
 pub mod linked_chat;
 pub mod magnet;
 pub mod media;
@@ -463,6 +464,7 @@ pub fn router(app: App) -> Router {
         .merge(overlays::routes())
         .merge(ravens_eye::routes())
         .merge(achievements::routes())
+        .merge(lights::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(discovery::routes())
