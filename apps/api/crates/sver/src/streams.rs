@@ -162,13 +162,16 @@ async fn authorize_playback(
     headers: HeaderMap,
 ) -> Result<StatusCode> {
     authorize_hook(&app, peer, &headers)?;
-    let id = headers
+    let uri = headers
         .get("x-original-uri")
         .and_then(|v| v.to_str().ok())
-        .and_then(playback_id)
-        .ok_or_else(|| Error::denied("Playback is unavailable."))?;
-    let owner: Option<String> = sqlx::query_scalar("SELECT b.owner_id FROM broadcasts b JOIN stream_credentials c ON c.owner_id=b.owner_id AND c.public_id=b.public_id AND c.generation=b.generation WHERE b.public_id=$1 AND c.revoked_at IS NULL AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>clock_timestamp()))")
-        .bind(id).fetch_optional(&app.db).await?;
+        .unwrap_or_default();
+    let id = playback_id(uri).ok_or_else(|| Error::denied("Playback is unavailable."))?;
+    // A broadcast moved to the CDN (over its WebRTC limit) refuses new WebRTC viewers here too, so a
+    // kept WHEP URL can't get around the switch.
+    let whep = uri.starts_with("/rebuild/whep/");
+    let owner: Option<String> = sqlx::query_scalar("SELECT b.owner_id FROM broadcasts b JOIN stream_credentials c ON c.owner_id=b.owner_id AND c.public_id=b.public_id AND c.generation=b.generation WHERE b.public_id=$1 AND c.revoked_at IS NULL AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>clock_timestamp())) AND NOT ($2 AND b.delivery<>'webrtc')")
+        .bind(id).bind(whep).fetch_optional(&app.db).await?;
     if let Some(owner) = owner {
         let mut db = app.db.acquire().await?;
         if profiles::channel_user_by_id(&mut db, &owner)
