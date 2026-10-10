@@ -336,12 +336,14 @@ pub struct Close {
 /// refunds every stake.
 async fn close(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path((name, id)): Path<(String, String)>,
     Json(input): Json<Close>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
-    let (actor, role) = moderation::actor(&app, &jar, &channel).await?;
+    let (actor, role) =
+        moderation::actor_any(&app, &headers, &jar, &channel, "channel:run").await?;
     let mut tx = app.db.begin().await?;
     // POLL is fixed SQL; values are bound.
     let poll: Poll = sqlx::query_as(sqlx::AssertSqlSafe(format!(
