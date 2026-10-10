@@ -25,6 +25,7 @@ export default function ProfileSettings() {
     <p className="intro">Changes show on <Link href={`/${me.username}`}>your channel</Link> right away.</p>
     {me.restricted_until && <p className="panel notice">Your channel is restricted. See <Link href="/settings/standing">Account standing</Link>.</p>}
     <Username me={me} onSaved={refresh} />
+    <Claim />
     <Identity me={me} onSaved={refresh} />
     <Images me={me} onSaved={refresh} />
     <Links me={me} onSaved={refresh} />
@@ -51,6 +52,41 @@ function Username({ me, onSaved }: { me: Me; onSaved: () => void }) {
       <button type="submit" className="small">Change username</button>
       <Status state={state} />
     </form>
+  </Section>;
+}
+
+type ClaimRow = { id: string; username: string; status: "WAITING" | "KEPT" | "READY" | "RELEASED" | "REJECTED" | "WITHDRAWN"; created_at: string; reason: string | null };
+const claimStatus: Record<ClaimRow["status"], string> = { WAITING: "Waiting for the holder (30 days)", KEPT: "The holder kept it", READY: "Waiting for staff", RELEASED: "Yours", REJECTED: "Not released", WITHDRAWN: "Withdrawn" };
+
+/** Username claims: ask for a name held by an account inactive for 12 months. */
+function Claim() {
+  const [claims, setClaims] = useState<ClaimRow[]>([]);
+  const [state, setState] = useState<SaveState>({});
+  const load = useCallback(async () => {
+    const r = await send<{ claims: ClaimRow[] }>("GET", "/api/me/username-claims");
+    if (r.ok) setClaims(r.data.claims);
+  }, []);
+  useLoad(load);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const r = await send("POST", "/api/me/username-claims", { username: new FormData(event.currentTarget).get("username") });
+    setState(r.ok ? { saved: "Asked. The holder has 30 days to sign in and keep it." } : r);
+    await load();
+  }
+  async function withdraw(id: string) {
+    const r = await send<{ claims: ClaimRow[] }>("DELETE", `/api/me/username-claims/${encodeURIComponent(id)}`);
+    if (r.ok) setClaims(r.data.claims);
+  }
+  return <Section title="Claim an inactive username" intro="If the name you want belongs to an account nobody has used for 12 months, you can ask for it. The holder is emailed and keeps it by signing in within 30 days; otherwise staff review it. One open claim at a time, never for money.">
+    <form onSubmit={submit}>
+      <label className="field"><span>Username</span><input name="username" minLength={3} maxLength={25} pattern="[A-Za-z0-9_]{3,25}" required /></label>
+      <button type="submit" className="small">Ask for this name</button>
+      <Status state={state} />
+    </form>
+    {claims.length > 0 && <ul className="list">{claims.map(c => <li key={c.id} className="row">
+      <strong>@{c.username}</strong> <span className="muted">{claimStatus[c.status]} · {date(c.created_at)}</span>
+      {(c.status === "WAITING" || c.status === "READY") && <button type="button" className="small quiet" onClick={() => withdraw(c.id)}>Withdraw</button>}
+    </li>)}</ul>}
   </Section>;
 }
 

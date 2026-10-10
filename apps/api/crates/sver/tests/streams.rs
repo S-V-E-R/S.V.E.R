@@ -98,6 +98,8 @@ mod support;
 mod switches;
 #[path = "streams/teams.rs"]
 mod teams;
+#[path = "streams/username_claims.rs"]
+mod username_claims;
 #[path = "streams/videos.rs"]
 mod videos;
 
@@ -564,6 +566,7 @@ async fn exercise(e: &Env) {
     ravens_eye::exercise(e).await;
     achievements::exercise(e).await;
     lights::exercise(e).await;
+    username_claims::exercise(e).await;
     // Live events: each flow above wrote its topic (docs/DEVELOPER_PLATFORM.md section 2).
     for kind in ["moderation", "raid:incoming"] {
         let written: bool = sqlx::query_scalar(

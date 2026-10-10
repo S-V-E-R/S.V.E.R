@@ -126,6 +126,12 @@ Not done in this module: email or push notifications of any kind, live state, fa
   - format errors (400)
   - step-up required (403, using Login's reauth flow)
 
+### Claiming an inactive username
+- Added October 10, 2026 by Joe's decision (replaces the archived "username negotiation"; no escrow, decay or money).
+- A verified, unrestricted user who hasn't renamed in 60 days can ask for a name whose holder has had no session for 12 months, has an account at least that old, and is not staff, internal or deleted. Every refusal gives the same message, so accounts can't be probed. One open claim per name and per requester.
+- The holder is emailed and keeps the name by signing in within 30 days (the claim becomes KEPT). After 30 days it waits for staff at `/admin/usernames`.
+- Release re-checks inactivity, renames the holder to a generated `user…` name (`username_history` reason `released`), gives the requester the name (reason `claim`, counts toward the 60-day rule) and holds the requester's old name with a 30-day redirect. Release and reject are audited.
+
 ## Identity fields
 
 All profile text is NFC-normalized and trimmed. Control characters, bidi overrides and zero-width characters are rejected (ZWJ is allowed only inside emoji sequences). Text is plain and rendered escaped; nothing is interpreted as HTML or markdown unless a section below says so. A shared text filter (the existing abuse list plus slur list, **Proposed** home `apps/api/crates/sver/src/security.rs`) rejects with "Remove the blocked word and try again." without naming the word. Owner edits apply immediately; there is no pre-publication review.
