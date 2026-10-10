@@ -163,7 +163,22 @@ pub(crate) async fn log(
 ) -> Res<()> {
     sqlx::query("INSERT INTO channel_moderation_log(id,channel_id,actor_id,actor_role,action,target_id,message_id,detail,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
         .bind(profiles::new_id()).bind(channel).bind(actor).bind(role.name()).bind(action).bind(target).bind(message).bind(detail).bind(reason)
-        .execute(db).await?;
+        .execute(&mut *db).await?;
+    // Live events: the channel's private moderation topic, by username (never internal IDs).
+    let (by, user): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT (SELECT username FROM users WHERE id=$1),(SELECT username FROM users WHERE id=$2)",
+    )
+    .bind(actor)
+    .bind(target)
+    .fetch_one(&mut *db)
+    .await?;
+    crate::events::emit(
+        db,
+        channel,
+        "moderation",
+        json!({"action": action, "by": by, "role": role.name(), "user": user, "message": message, "reason": reason}),
+    )
+    .await?;
     Ok(())
 }
 

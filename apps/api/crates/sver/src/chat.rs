@@ -557,6 +557,15 @@ pub(crate) async fn send_from(
             json!({"user": user.username, "valor": valor, "message": body}),
         )
         .await?;
+        if let Some(skill) = skill {
+            crate::events::emit(
+                &mut tx,
+                channel,
+                "skills",
+                json!({"user": user.username, "skill": skill.id, "valor": valor}),
+            )
+            .await?;
+        }
     }
     // A moderator's counter command (`!deaths`) changed a counter; viewers are told after commit.
     let mut counters = false;

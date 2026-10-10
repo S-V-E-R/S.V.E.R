@@ -467,6 +467,11 @@ async fn publish(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
 /// Open boards and overlays reload.
 pub(crate) fn changed(app: &App, channel: &str) {
     app.chat.publish(channel, None, 0, json!({"type": "board"}));
+    let (app, channel) = (app.clone(), channel.to_string());
+    tokio::spawn(async move {
+        let _ =
+            crate::events::emit_after(&app, &channel, "board", json!({"type": "changed"})).await;
+    });
 }
 
 #[derive(Deserialize)]
@@ -969,6 +974,13 @@ async fn press(
     app.chat.publish(&channel, Some(&user.id), 0, json!({"type": "board_effect", "id": input.id, "confirm": control.confirm, "control": control.id,
         "label": control.label, "effect": control.effect, "user": author, "text": text, "goal": goal,
         "stream_ms": stream_ms, "at": at, "overlay": row.overlay}));
+    // Live events never name under-18 accounts.
+    let minor = crate::support::age(&mut *app.db.acquire().await?, &user.id)
+        .await?
+        .is_some_and(|a| a < 18);
+    crate::events::emit_after(&app, &channel, "board", json!({"type": "press", "id": input.id, "control": control.id,
+        "label": control.label, "effect": control.effect, "user": if minor { Value::Null } else { json!(user.username) },
+        "text": text, "goal": goal, "held": control.confirm})).await?;
     let balance: i64 = sqlx::query_scalar(
         "SELECT coalesce((SELECT balance FROM engagement WHERE channel_id=$1 AND user_id=$2),0)",
     )
@@ -1010,6 +1022,13 @@ pub(crate) async fn settle(app: &App, channel: &str, press: &str, capture: bool)
             .await?;
     }
     tx.commit().await?;
+    crate::events::emit_after(
+        app,
+        channel,
+        "board",
+        json!({"type": "result", "id": press, "control": control, "outcome": outcome}),
+    )
+    .await?;
     // The viewer's panel shows the result; games and bridges see auto-releases too.
     app.chat.publish(
         channel,

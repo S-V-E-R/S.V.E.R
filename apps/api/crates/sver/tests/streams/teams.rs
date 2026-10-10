@@ -759,4 +759,11 @@ pub async fn exercise(e: &Env) {
             .0,
         StatusCode::NOT_FOUND
     );
+    let costream: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM events WHERE topic LIKE 'channel:%:costream' AND jsonb_array_length(data->'members')>1)",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert!(costream, "co-stream rosters are live events");
 }
