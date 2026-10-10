@@ -135,7 +135,7 @@ impl Rig {
             );
             fs::remove_dir_all(recordings).map_err(|_| "Recording fixture cleanup failed")?;
         }
-        for name in ["srs.conf", "nginx.conf", "secret.conf"] {
+        for name in ["srs.conf", "nginx.conf", "secret.conf", "origin.conf"] {
             let file = self.directory.join(name);
             if file.exists() {
                 fs::remove_file(file).map_err(|_| "Temporary file cleanup failed")?;
@@ -287,7 +287,13 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
     .replace(
         "/etc/nginx/sver-rebuild-hook-secret.conf",
         "/fixture/secret.conf",
+    )
+    // The rig has no CDN in front, so the origin lock is an empty include here.
+    .replace(
+        "/etc/nginx/sver-rebuild-cdn-origin.conf",
+        "/fixture/origin.conf",
     );
+    fs::write(rig.directory.join("origin.conf"), "").unwrap();
     fs::write(
         rig.directory.join("secret.conf"),
         format!("proxy_set_header x-srs-secret {secret};\n"),

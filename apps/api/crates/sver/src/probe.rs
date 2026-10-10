@@ -100,7 +100,11 @@ pub fn b_frames(ts: &[u8]) -> Option<bool> {
 }
 
 async fn fetch(app: &App, url: &str, limit: usize) -> Option<Vec<u8>> {
-    let mut response = app.http.get(url).send().await.ok()?;
+    let mut request = app.http.get(url);
+    if let Some(secret) = &app.config.playback.origin_secret {
+        request = request.header("x-sver-origin", secret);
+    }
+    let mut response = request.send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }
