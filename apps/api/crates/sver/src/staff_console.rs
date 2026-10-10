@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 /// Queues staff can see and retry: (name, label, table, has delivered_at, error column). A row is
 /// pending until it's deleted or delivered. Table and column names are fixed here, never input.
-const QUEUES: [(&str, &str, &str, bool, &str); 7] = [
+const QUEUES: [(&str, &str, &str, bool, &str); 8] = [
     ("video", "Video processing", "video_jobs", false, "NULL"),
     ("beacon", "Beacon processing", "beacon_jobs", false, "NULL"),
     ("push", "Browser push", "push_jobs", false, "NULL"),
@@ -31,6 +31,7 @@ const QUEUES: [(&str, &str, &str, bool, &str); 7] = [
         true,
         "error",
     ),
+    ("discord", "Discord posts", "discord_posts", true, "error"),
 ];
 fn pending(delivered: bool) -> &'static str {
     if delivered {

@@ -201,6 +201,9 @@ pub async fn fan_out(app: &App) -> Res<()> {
             sqlx::query("INSERT INTO mail_jobs(id,user_id,payload,expires_at) VALUES($1,$2,$3,now()+interval '2 hours')")
                 .bind(profiles::new_id()).bind(id).bind(sec::seal(app, "mail", &payload.to_string())?).execute(&mut *tx).await?;
         }
+        // The channel's own Discord server, under the same throttle (docs/COMMUNITY.md "Discord bot").
+        sqlx::query("INSERT INTO discord_posts(broadcast_id,channel_id) SELECT $1,channel_id FROM discord_servers WHERE channel_id=$2 AND post_channel IS NOT NULL ON CONFLICT DO NOTHING")
+            .bind(&broadcast).bind(&owner).execute(&mut *tx).await?;
         sqlx::query("UPDATE broadcasts SET alert_state='sent' WHERE id=$1")
             .bind(&broadcast)
             .execute(&mut *tx)
