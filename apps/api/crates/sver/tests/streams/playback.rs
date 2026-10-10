@@ -115,6 +115,12 @@ pub async fn exercise(e: &Env) {
         hls_only["playback"]["preferred"], "hls",
         "a viewer may ask for HLS"
     );
+    // Captions: offered once the probe has found caption data in the video.
+    assert_eq!(live["captions"], false);
+    e.sql("UPDATE broadcasts SET health=health||'{\"captions\":true}' WHERE public_id='pub-play'")
+        .await;
+    let (_, captioned) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
+    assert_eq!(captioned["captions"], true);
     // Over the WebRTC limit the broadcast is on the CDN: no WHEP URL is offered.
     e.sql("UPDATE broadcasts SET delivery='cdn' WHERE public_id='pub-play'")
         .await;
