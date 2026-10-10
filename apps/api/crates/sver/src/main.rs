@@ -74,6 +74,28 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
         }
     });
+    // Restreaming relays (docs/LINKED_CHAT.md); off unless RESTREAM_SOURCE is set.
+    if let Some(source) = sver::restream::source() {
+        let relays = app.clone();
+        tokio::spawn(async move {
+            loop {
+                if sver::restream::tick(&relays, &source).await.is_err() {
+                    eprintln!("restream_event=supervise outcome=retry");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        });
+    }
+    // Live events (docs/DEVELOPER_PLATFORM.md §2): the outbox goes out every second.
+    let events = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::events::drain(&events).await.is_err() {
+                eprintln!("events_event=drain outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    });
     let jobs = app.clone();
     tokio::spawn(async move {
         loop {
@@ -91,6 +113,36 @@ async fn main() -> Result<(), String> {
                 eprintln!("boards_event=outbox outcome=retry");
             }
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    });
+    // Third-party emote lists and images come from outside services; never hold up other work.
+    let outside = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::outside_emotes::sync(&outside).await.is_err() {
+                eprintln!("outside_emotes_event=sync outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
+    });
+    // The Discord bot (go-live posts, role sync) waits on Discord; keep it off the shared loops.
+    let discord = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::discord::tick(&discord).await.is_err() {
+                eprintln!("discord_event=tick outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
+    // Event webhooks too: a slow developer endpoint never delays a game's board webhook.
+    let hooks = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::events::deliver_hooks(&hooks).await.is_err() {
+                eprintln!("events_event=hooks outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     });
     let media_jobs = app.clone();
@@ -145,6 +197,12 @@ async fn main() -> Result<(), String> {
             interval.tick().await;
             if sver::streams::tick(&media_jobs).await.is_err() {
                 eprintln!("Stream maintenance will retry.");
+            }
+            if sver::bot::drain(&media_jobs).await.is_err() {
+                eprintln!("bot_event=drain outcome=retry");
+            }
+            if sver::linked_chat::tick(&media_jobs).await.is_err() {
+                eprintln!("linked_chat_event=supervise outcome=retry");
             }
             if sver::playback::tick(&media_jobs).await.is_err() {
                 eprintln!("playback_event=delivery outcome=retry");

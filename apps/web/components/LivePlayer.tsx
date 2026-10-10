@@ -13,7 +13,7 @@ type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc"
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string; mature?: boolean } };
 type Live =
   | { live: false; hosting?: { username: string; display_name: string } }
-  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null };
+  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean };
 type Phase = "loading" | "playing" | "reconnecting" | "blocked" | "failed";
 
 let cachedBrowserId = "";
@@ -45,6 +45,20 @@ function acceptMature(username: string, signedIn: boolean) {
   matureListeners.forEach(listener => listener());
 }
 function onMature(listener: () => void) { matureListeners.add(listener); return () => { matureListeners.delete(listener); }; }
+
+// Closed captions on or off, remembered per browser (in memory only when storage is blocked).
+const captionListeners = new Set<() => void>();
+let captionsMemory: boolean | null = null;
+function captionsPreferred(): boolean {
+  if (captionsMemory !== null) return captionsMemory;
+  try { return localStorage.getItem("sver-captions") === "on"; } catch { return false; }
+}
+function setCaptionsPreferred(on: boolean) {
+  captionsMemory = on;
+  try { localStorage.setItem("sver-captions", on ? "on" : "off"); } catch { /* storage blocked: this page only */ }
+  captionListeners.forEach(listener => listener());
+}
+function onCaptions(listener: () => void) { captionListeners.add(listener); return () => { captionListeners.delete(listener); }; }
 
 async function startWebRtc(video: HTMLVideoElement, url: string, onFatal: () => void): Promise<() => void> {
   const pc = new RTCPeerConnection();
@@ -108,6 +122,9 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const [transport, setTransport] = useState<"webrtc" | "hls" | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [rewind, setRewind] = useState<string | null>(null);
+  // Closed captions from OBS (docs/COMMUNITY.md). Browsers drop caption data from WebRTC, so
+  // turning them on plays the stream over HLS, a few seconds further behind live.
+  const captionsOn = useSyncExternalStore(onCaptions, captionsPreferred, () => false);
   const video = useRef<HTMLVideoElement>(null);
   // Guests pass a security check once per session before they count (viewer integrity).
   const [sitekey, setSitekey] = useState<string | null>(null);
@@ -153,6 +170,8 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   useEffect(() => { hlsUrl.current = hls; }, [hls]);
   const preferred = live?.live ? live.playback?.preferred ?? null : null;
   const isOwner = live?.live ? live.is_owner : false;
+  const captioned = !!(live?.live && live.captions);
+  const wantCaptions = captioned && captionsOn;
   const accepted = useSyncExternalStore(onMature, () => matureAccepted(username, !!signedIn), () => false);
   // A labeled stream waits behind the warning: nothing plays until the viewer chooses Watch.
   const warning = !!(live?.live && live.mature && live.mature_warn !== false && !live.is_owner && !accepted);
@@ -198,7 +217,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     (async () => {
       setPhase("loading");
       const current = hlsUrl.current;
-      const order = preferred === "webrtc" ? [webrtc, current] : [current, webrtc];
+      const order = preferred === "webrtc" && !wantCaptions ? [webrtc, current] : [current, webrtc];
       for (const url of order) {
         if (!url || cancelled) continue;
         try {
@@ -225,7 +244,17 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       if (!cancelled) setPhase("failed");
     })();
     return () => { cancelled = true; stop?.(); };
-  }, [broadcast, webrtc, hlsKey, preferred, attempt, rewind, warning]);
+  }, [broadcast, webrtc, hlsKey, preferred, attempt, rewind, warning, wantCaptions]);
+
+  // hls.js adds a caption track once caption data arrives; show it only when captions are on.
+  useEffect(() => {
+    const tracks = video.current?.textTracks;
+    if (!tracks) return;
+    const apply = () => { for (const t of Array.from(tracks)) if (t.kind === "captions" || t.kind === "subtitles") t.mode = wantCaptions ? "showing" : "disabled"; };
+    apply();
+    tracks.addEventListener("addtrack", apply);
+    return () => tracks.removeEventListener("addtrack", apply);
+  }, [wantCaptions, transport, broadcast]);
 
   // Retry a dropped transport a few seconds later; the broadcast's 60-second reconnect grace keeps it live meanwhile.
   useEffect(() => {
@@ -278,6 +307,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     {!rewind && status && <p className="player-status" role="status">{status}</p>}
     {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {!rewind && autoMuted && phase === "playing" && <button type="button" className="player-action" onClick={() => { if (video.current) video.current.muted = false; }}>Unmute</button>}
+    {!rewind && captioned && <button type="button" className="player-cc small" aria-pressed={captionsOn} onClick={() => setCaptionsPreferred(!captionsOn)} title={captionsOn ? "Turn captions off" : "Turn captions on (the stream plays a few seconds further behind live)"}>CC</button>}
     {!rewind && phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} size={nested ? "compact" : "normal"} />}

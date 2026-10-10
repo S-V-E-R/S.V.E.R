@@ -20,6 +20,17 @@ It has two parts, built together right after Live streams closes: **restreaming*
 - **Studio insight:** after a stream, Creator Studio shows how S.V.E.R chat and viewers compared with the linked platforms' chat activity, so streamers can see their S.V.E.R community grow.
 - **Done when:** a streamer sends one OBS stream and it appears live on S.V.E.R and on two other platforms without re-encoding; a rejected key and a dropped destination show the right status and recover; keys are never exposed in responses or logs; the budget holds and never degrades S.V.E.R viewers.
 
+### Restreaming as built (October 9, 2026)
+
+- Creator Studio → Restream (`/studio/restream`); API `GET|POST /api/me/restream`, `PATCH|DELETE /api/me/restream/{id}` (`restream.rs`, migration 0067). Adding or changing a destination needs a verified account with 2FA, like streaming.
+- Twitch and YouTube use their default ingest servers unless the streamer gives one; Kick and custom destinations need the server from the platform (Kick's differs per account). Servers must be `rtmp://` or `rtmps://`, with no credentials or query in the address, and in production must resolve only to public addresses.
+- Keys are sealed with the site key and are **write-only**: no response ever returns them, and the streamer replaces a key instead of viewing it (simpler and stricter than "shown after 2FA").
+- The relay supervisor runs every 3 seconds inside the API when `RESTREAM_SOURCE` is set (production: `rtmp://127.0.0.1:1936/rebuild`, the media server's local RTMP app). For each enabled destination of a LIVE broadcast it runs `ffmpeg -c copy` from the source to `{server}/{key}`, with ffmpeg's output discarded because it can contain the key. Statuses: Off air, Connecting, Live (up 15 s), Reconnecting (backoff 2, 4… up to 60 s), Key rejected (3 fast failures in a row; retried every 5 minutes, cleared when the key or server is saved) and Waiting for capacity.
+- Capacity: `RESTREAM_MAX` relays at once (default 100; at about 8 Mbps each that is under a tenth of the guaranteed 10 Gbps). Over it, destinations wait with a notice and the S.V.E.R stream is unaffected.
+- An API restart (a deploy) drops relays for a few seconds; the platforms keep the stream session through short reconnects.
+- Tests: `tests/streams/restream.rs` (validation, the 3-destination limit, keys never returned and sealed at rest, and the supervisor going Connecting → Reconnecting → Key rejected against a closed port); unit test `restream::tests`.
+- Not yet: the post-stream comparison with linked platforms' chat (it needs Linked chat).
+
 ## Linked chat
 
 ### What it does
@@ -76,6 +87,18 @@ Some platforms don't allow showing other platforms' chat inside the stream video
 ### Storage and API outline
 
 Tables: linked platform accounts (encrypted tokens, scopes, enabled flag), outside chat users (platform, ID, display name, S.V.E.R mute state), and outside messages stored with S.V.E.R chat using the chat origin field from the MAGNet's spec (origin: platform). Platform connectors run as workers inside the API process, one per live linked channel per platform, with bounded queues. No Redis.
+
+### Linked chat as built (October 9, 2026): Twitch
+
+- **Linking:** Creator Studio → Linked chat (`/studio/linked-chat`) starts the platform's OAuth with the intent `chat` (verified accounts with 2FA). Twitch asks for `user:read:chat user:write:chat user:bot channel:bot` only. Tokens are sealed in `linked_chat_accounts` (migration 0068), refreshed when a reply needs them, and revoked at Twitch and deleted on Unlink. One Twitch account links to one S.V.E.R channel.
+- **Receiving:** Twitch EventSub **webhooks** (`channel.chat.message`, `channel.chat.message_delete`) to `POST /api/integrations/twitch/eventsub`, so no connection is held open and an API restart loses nothing (Twitch retries a 5xx). Each delivery is checked with its HMAC-SHA256 signature (a secret derived from the site key) and refused if older than 10 minutes. The supervisor in the 5-second stream loop subscribes when the broadcast goes LIVE and unsubscribes when it ends (not during RECONNECTING); a refused subscription shows "Needs linking again", a failed one retries every 30 seconds with "Twitch chat disconnected, reconnecting". Shared-chat copies of other channels' messages are ignored.
+- **Storage:** outside messages are in their own table, `outside_chat_messages`, sharing `chat_messages`' sequence so they interleave in order. Nothing that counts S.V.E.R chat (viewers, Valor, influence, MAGNet, integrity, orders, tiers) reads that table, which is how they "provably don't count"; the test also checks chat rows and Engagement Valor are unchanged. Only the platform, the sender's ID, login, display name and role there, and the text are kept, for 7 days. History merges the newest 100 of both.
+- **Showing:** a platform badge before the name ("Twitch", in the platform's color, labelled for screen readers), a role marker such as "Twitch mod", the name linking to their channel on the platform, plain text. The OBS overlay leaves outside messages out.
+- **Moderation on S.V.E.R:** banned words and the link rule decide whether an outside message is shown; owners and moderators can hide a message and mute a sender for this stream or permanently (`outside_chat_mutes`, logged in the channel moderation log), and the channel's mutes are listed in Studio. A delete on Twitch hides the message here.
+- **Replies:** the owner's "Reply on Twitch" posts with Helix Send Chat Message as their own account (`POST /api/me/linked-chat/reply`, 20 per 30 seconds); Twitch's refusal reason is shown. The reply comes back through EventSub like any message.
+- **Tests:** `tests/streams/linked_chat.rs` (signature, challenge, dedupe, counts unchanged, banned words, platform delete, hide, mute and unmute, tokens never returned, unlink).
+- **Not yet:** YouTube (needs Google's verification of the `youtube.force-ssl` scope; its chat API is polled against a daily quota) and Kick (needs a Kick developer app); both show "Coming soon" in Studio until Joe registers them. Reporting outside messages to staff, and the post-stream comparison in Studio.
+- **Twitch app settings (for activation):** the existing Twitch sign-in app needs no new redirect; the EventSub callback is `https://sver.tv/api/integrations/twitch/eventsub`.
 
 ### Done when (Linked chat)
 

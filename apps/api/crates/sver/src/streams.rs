@@ -162,13 +162,16 @@ async fn authorize_playback(
     headers: HeaderMap,
 ) -> Result<StatusCode> {
     authorize_hook(&app, peer, &headers)?;
-    let id = headers
+    let uri = headers
         .get("x-original-uri")
         .and_then(|v| v.to_str().ok())
-        .and_then(playback_id)
-        .ok_or_else(|| Error::denied("Playback is unavailable."))?;
-    let owner: Option<String> = sqlx::query_scalar("SELECT b.owner_id FROM broadcasts b JOIN stream_credentials c ON c.owner_id=b.owner_id AND c.public_id=b.public_id AND c.generation=b.generation WHERE b.public_id=$1 AND c.revoked_at IS NULL AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>clock_timestamp()))")
-        .bind(id).fetch_optional(&app.db).await?;
+        .unwrap_or_default();
+    let id = playback_id(uri).ok_or_else(|| Error::denied("Playback is unavailable."))?;
+    // A broadcast moved to the CDN (over its WebRTC limit) refuses new WebRTC viewers here too, so a
+    // kept WHEP URL can't get around the switch.
+    let whep = uri.starts_with("/rebuild/whep/");
+    let owner: Option<String> = sqlx::query_scalar("SELECT b.owner_id FROM broadcasts b JOIN stream_credentials c ON c.owner_id=b.owner_id AND c.public_id=b.public_id AND c.generation=b.generation WHERE b.public_id=$1 AND c.revoked_at IS NULL AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>clock_timestamp())) AND NOT ($2 AND b.delivery<>'webrtc')")
+        .bind(id).bind(whep).fetch_optional(&app.db).await?;
     if let Some(owner) = owner {
         let mut db = app.db.acquire().await?;
         if profiles::channel_user_by_id(&mut db, &owner)
@@ -247,8 +250,11 @@ async fn end(db: &mut PgConnection, owner: &str, reason: &str) -> Result<()> {
         .bind(owner).execute(&mut *db).await?;
     sqlx::query("UPDATE stream_publishers SET retired_at=coalesce(retired_at,clock_timestamp()) WHERE broadcast_id IN (SELECT id FROM broadcasts WHERE owner_id=$1 AND state<>'ENDED')")
         .bind(owner).execute(&mut *db).await?;
-    sqlx::query("UPDATE broadcasts SET state='ENDED',ended_at=clock_timestamp(),end_reason=$2,reconnect_deadline=NULL WHERE owner_id=$1 AND state<>'ENDED'")
+    let ended = sqlx::query("UPDATE broadcasts SET state='ENDED',ended_at=clock_timestamp(),end_reason=$2,reconnect_deadline=NULL WHERE owner_id=$1 AND state<>'ENDED'")
         .bind(owner).bind(reason).execute(&mut *db).await?;
+    if ended.rows_affected() > 0 {
+        crate::events::emit(db, owner, "live", serde_json::json!({"live": false})).await?;
+    }
     crate::videos::ended(db, owner)
         .await
         .map_err(|_| Error::internal())?;
@@ -401,7 +407,7 @@ pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>>
         .bind(&user.id).fetch_one(&mut *tx).await?;
     let credential: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('created_at',created_at,'revoked',revoked_at IS NOT NULL) FROM stream_credentials WHERE owner_id=$1")
         .bind(&user.id).fetch_optional(&mut *tx).await?;
-    let broadcast: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'state',state,'started_at',started_at,'reconnect_deadline',reconnect_deadline,'ended_at',ended_at,'end_reason',end_reason,'observed_at',observed_at,'health',health) FROM broadcasts WHERE owner_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1")
+    let broadcast: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('scouts',(SELECT count(*) FROM scout_awards s WHERE s.broadcast_id=broadcasts.id),'id',id,'state',state,'started_at',started_at,'reconnect_deadline',reconnect_deadline,'ended_at',ended_at,'end_reason',end_reason,'observed_at',observed_at,'health',health) FROM broadcasts WHERE owner_id=$1 ORDER BY started_at DESC,id DESC LIMIT 1")
         .bind(&user.id).fetch_optional(&mut *tx).await?;
     let pending: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM stream_stop_jobs WHERE owner_id=$1)")
@@ -429,11 +435,22 @@ pub struct Metadata {
 }
 pub async fn save(
     State(app): State<App>,
+    headers: HeaderMap,
     jar: CookieJar,
     Json(input): Json<Metadata>,
 ) -> Result<Json<Value>> {
-    let (mut tx, user, session) = auth::session(&app, &jar, false).await?;
-    auth::authorize_streaming(&user, &session)?;
+    // An app (channel:edit) changes the title and category with the person's token; signed in,
+    // the session must have passed two-factor sign-in as for every Studio change.
+    let (mut tx, user) = if headers.contains_key("authorization") {
+        let user = crate::devapps::actor(&app, &headers, &jar, "channel:edit")
+            .await
+            .map_err(|f| Error(f.status, "Use a token with channel:edit.", None))?;
+        (app.db.begin().await?, user)
+    } else {
+        let (tx, user, session) = auth::session(&app, &jar, false).await?;
+        auth::authorize_streaming(&user, &session)?;
+        (tx, user)
+    };
     require_eligible(&mut tx, &user).await?;
     settings(&mut tx, &user).await?;
     let body = apply(&mut tx, &user.id, None, &input).await?;
@@ -512,6 +529,9 @@ async fn apply(
         .await
         .map_err(|_| Error::internal())?;
     }
+    let info: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',s.title,'category',k.name,'language',s.language,'mature',s.mature) FROM stream_settings s LEFT JOIN stream_categories k ON k.id=s.category_id WHERE s.owner_id=$1")
+        .bind(owner).fetch_one(&mut *tx).await?;
+    crate::events::emit(&mut *tx, owner, "update", info).await?;
     Ok(json!({"saved":true,"revision":revision,"category_id":category_id}))
 }
 
@@ -889,6 +909,12 @@ pub async fn hook(
         if keys.len() != 1 || keys[0].len() != 43 {
             return Err(Error::denied("Invalid publishing credential."));
         }
+        if crate::switches::off(&mut tx, "going_live")
+            .await
+            .map_err(|_| Error::unavailable())?
+        {
+            return Err(Error::denied("Going live is paused right now."));
+        }
         let generation: Option<i64> = sqlx::query_scalar("SELECT generation FROM stream_credentials WHERE owner_id=$1 AND public_id=$2 AND secret_hash=$3 AND revoked_at IS NULL")
             .bind(&owner).bind(&input.stream).bind(sec::digest(&keys[0])).fetch_optional(&mut *tx).await?;
         let generation =
@@ -1198,7 +1224,7 @@ pub async fn tick(app: &App) -> Result<()> {
                             "height":stream["video"]["height"].as_u64(),"input_kbps":kbps,
                             "codec_warning":video.is_some()&&!compatible,
                             "bitrate_warning":kbps.is_some_and(|n|n>8000.0),"bitrate_warning_provisional":true});
-                        sqlx::query("UPDATE broadcasts SET confirmed_live_at=CASE WHEN $2 AND $3 THEN coalesce(confirmed_live_at,clock_timestamp()) ELSE confirmed_live_at END,state=CASE WHEN $2 AND $3 THEN 'LIVE' ELSE state END,recv_bytes=$4,health=$5::jsonb||jsonb_strip_nulls(jsonb_build_object('keyframe_seconds',health->'keyframe_seconds','b_frames',health->'b_frames','keyframe_warning',health->'keyframe_warning','probed_at',health->'probed_at')),observed_at=CASE WHEN $3 THEN clock_timestamp() ELSE observed_at END WHERE id=$1 AND state IN ('STARTING','LIVE')")
+                        sqlx::query("UPDATE broadcasts SET confirmed_live_at=CASE WHEN $2 AND $3 THEN coalesce(confirmed_live_at,clock_timestamp()) ELSE confirmed_live_at END,state=CASE WHEN $2 AND $3 THEN 'LIVE' ELSE state END,recv_bytes=$4,health=$5::jsonb||jsonb_strip_nulls(jsonb_build_object('keyframe_seconds',health->'keyframe_seconds','b_frames',health->'b_frames','keyframe_warning',health->'keyframe_warning','probed_at',health->'probed_at','captions',health->'captions')),observed_at=CASE WHEN $3 THEN clock_timestamp() ELSE observed_at END WHERE id=$1 AND state IN ('STARTING','LIVE')")
                             .bind(&b.id).bind(compatible).bind(fresh).bind(bytes).bind(health).execute(&mut *tx).await?;
                     }
                 } else if b.state != "STARTING" {

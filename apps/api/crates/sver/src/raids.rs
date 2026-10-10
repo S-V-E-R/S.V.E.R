@@ -67,10 +67,11 @@ struct Target {
 /// POST /api/me/raids: a live owner starts a raid (also `/raid username` in their chat).
 async fn start(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Json(input): Json<Target>,
 ) -> Res<Json<Value>> {
-    let user = signed_in(&app, &jar).await?;
+    let user = crate::devapps::actor(&app, &headers, &jar, "channel:run").await?;
     let mut tx = app.db.begin().await?;
     let broadcast: Option<String> = sqlx::query_scalar(
         "SELECT id FROM broadcasts WHERE owner_id=$1 AND state='LIVE' FOR UPDATE",
@@ -93,6 +94,13 @@ async fn start(
     sqlx::query("INSERT INTO raids(id,raider_id,broadcast_id,target_id,target_broadcast_id,execute_at) VALUES($1,$2,$3,$4,$5,now()+make_interval(secs=>$6))")
         .bind(&id).bind(&user.id).bind(&broadcast).bind(&target_id).bind(&target_broadcast).bind(COUNTDOWN_SECONDS)
         .execute(&mut *tx).await?;
+    crate::events::emit(
+        &mut tx,
+        &target_id,
+        "raid:incoming",
+        json!({"from": user.username, "seconds": COUNTDOWN_SECONDS}),
+    )
+    .await?;
     tx.commit().await?;
     let raid = raid_json(&app, &id).await?;
     app.chat
@@ -211,12 +219,15 @@ pub async fn tick(app: &App) -> Res<()> {
         .fetch_all(&app.db)
         .await?;
     for (target, arrivals, raider) in counted {
-        app.chat.publish(
+        // The channel bot greets the raid in its personality (docs/COMMUNITY.md).
+        crate::bot::record_raid(app, &target, &raider, arrivals).await?;
+        crate::events::emit(
+            &mut *app.db.acquire().await?,
             &target,
-            None,
-            0,
-            json!({"type":"system","text":format!("{raider} is raiding with {arrivals}")}),
-        );
+            "raids",
+            json!({"from": raider, "viewers": arrivals}),
+        )
+        .await?;
     }
     let mut tx = app.db.begin().await?;
     // Hosting stops when the host goes live, the target goes offline or the rules no longer allow it.

@@ -29,6 +29,9 @@ pub struct Config {
     pub cdn_url: Option<String>,
     /// Bunny token authentication key; CDN URLs are signed for one stream's files.
     pub cdn_key: String,
+    /// Shared secret the CDN sends to the origin as `X-Sver-Origin`; nginx refuses origin HLS
+    /// without it, so the API's own probe (which reads `hls_url`) sends it too.
+    pub origin_secret: Option<String>,
     /// Measured direct-WebRTC limits (viewers per broadcast, and across all broadcasts). Unset
     /// means no automatic switching; set privately from the load test (docs/LOAD_TEST.md).
     pub webrtc_per_broadcast: Option<i64>,
@@ -76,6 +79,9 @@ impl Config {
             whep_url: read("STREAM_WHEP_URL")?,
             cdn_url,
             cdn_key,
+            origin_secret: std::env::var("STREAM_ORIGIN_SECRET")
+                .ok()
+                .filter(|v| !v.is_empty()),
             webrtc_per_broadcast: limit("STREAM_WEBRTC_PER_BROADCAST")?,
             webrtc_global: limit("STREAM_WEBRTC_GLOBAL")?,
         })
@@ -117,6 +123,8 @@ struct Live {
     public_id: String,
     state: String,
     delivery: String,
+    /// The probe found closed captions in this broadcast's video.
+    captions: bool,
     started_at: DateTime<Utc>,
     title: String,
     category: Option<String>,
@@ -237,7 +245,7 @@ pub async fn live(
     axum::extract::Query(query): axum::extract::Query<LiveQuery>,
 ) -> Res<Json<Value>> {
     let owner = owner_id(&app, &name).await?;
-    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,b.state,b.delivery,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
+    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,b.state,b.delivery,coalesce((b.health->>'captions')::bool,false) AS captions,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
         .bind(&owner).fetch_optional(&app.db).await?;
     let Some(b) = current else {
         // An offline channel may host a live one; its page shows that stream.
@@ -311,8 +319,7 @@ pub async fn live(
     // and open players move within one 15-second poll. Otherwise WebRTC first; the player falls
     // back to HLS on failure, and `?transport=hls` (latency tests, or a viewer who prefers it)
     // asks for HLS. Asking for HLS is always allowed.
-    // ponytail: SRS WHEP stays reachable to a client that keeps an old URL; gate it in nginx
-    // (auth_request) if anyone bypasses the switch.
+    // The nginx playback gate refuses WHEP for a broadcast on the CDN (streams::authorize_playback).
     let webrtc = webrtc.filter(|_| b.delivery == "webrtc" || hls.is_none());
     let preferred = if webrtc.is_some() && query.transport.as_deref() != Some("hls") {
         "webrtc"
@@ -325,6 +332,8 @@ pub async fn live(
         "is_owner": viewer.as_ref().is_some_and(|v| v.id == owner), "mature": mature,
         "mature_warn": mature && !skip_warning,
         "playback": {"webrtc": webrtc, "hls": hls, "preferred": preferred},
+        // Browsers drop caption data from WebRTC, so the player shows captions over HLS.
+        "captions": b.captions && hls.is_some(),
         "raid": crate::raids::for_viewers(&app, &b.id, viewer.as_ref().map(|v| v.id.as_str())).await?,
     })))
 }

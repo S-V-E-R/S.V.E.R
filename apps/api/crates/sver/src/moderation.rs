@@ -57,7 +57,21 @@ pub(crate) async fn actor(app: &App, jar: &CookieJar, channel: &str) -> Res<(aut
         .ok_or_else(|| Fail::denied("You can't moderate this channel."))?;
     Ok((user, role))
 }
-async fn channel(app: &App, name: &str) -> Res<String> {
+/// `actor` for an app-callable endpoint: the person from a bearer token (with `scope`) or cookie.
+pub(crate) async fn actor_any(
+    app: &App,
+    headers: &axum::http::HeaderMap,
+    jar: &CookieJar,
+    channel: &str,
+    scope: &str,
+) -> Res<(auth::User, Role)> {
+    let user = crate::devapps::actor(app, headers, jar, scope).await?;
+    let role = role_of(app, channel, &user)
+        .await?
+        .ok_or_else(|| Fail::denied("You can't moderate this channel."))?;
+    Ok((user, role))
+}
+pub(crate) async fn channel(app: &App, name: &str) -> Res<String> {
     let mut conn = app.db.acquire().await?;
     Ok(profiles::eligible_by_name(&mut conn, name)
         .await?
@@ -163,7 +177,22 @@ pub(crate) async fn log(
 ) -> Res<()> {
     sqlx::query("INSERT INTO channel_moderation_log(id,channel_id,actor_id,actor_role,action,target_id,message_id,detail,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
         .bind(profiles::new_id()).bind(channel).bind(actor).bind(role.name()).bind(action).bind(target).bind(message).bind(detail).bind(reason)
-        .execute(db).await?;
+        .execute(&mut *db).await?;
+    // Live events: the channel's private moderation topic, by username (never internal IDs).
+    let (by, user): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT (SELECT username FROM users WHERE id=$1),(SELECT username FROM users WHERE id=$2)",
+    )
+    .bind(actor)
+    .bind(target)
+    .fetch_one(&mut *db)
+    .await?;
+    crate::events::emit(
+        db,
+        channel,
+        "moderation",
+        json!({"action": action, "by": by, "role": role.name(), "user": user, "message": message, "reason": reason}),
+    )
+    .await?;
     Ok(())
 }
 
@@ -209,13 +238,17 @@ pub async fn check_emote_code(db: &mut sqlx::PgConnection, channel: &str, code: 
             .bind(channel)
             .fetch_optional(db)
             .await?;
-    if let Some((links, words)) = rules {
-        let folded = fold(code);
-        if words.iter().any(|w| folded.contains(w)) || (links && has_link(code)) {
-            return Err(Fail::bad("That code isn't allowed in this chat."));
-        }
+    if let Some((links, words)) = rules
+        && !code_allowed(&words, links, code)
+    {
+        return Err(Fail::bad("That code isn't allowed in this chat."));
     }
     Ok(())
+}
+/// Whether an emote code passes a channel's banned words and link rule.
+pub fn code_allowed(words: &[String], links: bool, code: &str) -> bool {
+    let folded = fold(code);
+    !(words.iter().any(|w| folded.contains(w.as_str())) || (links && has_link(code)))
 }
 
 /// Chat rules applied by `chat::send` before a message is stored.
@@ -306,6 +339,15 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
             ));
         }
     }
+    // The chat rank gate (docs/PROGRESSION.md section 5); channel roles are exempt.
+    let (min, earned): (i16, i64) = sqlx::query_as("SELECT coalesce((SELECT min_loyalty FROM chat_settings WHERE channel_id=$1),0::smallint),coalesce((SELECT earned FROM engagement WHERE channel_id=$1 AND user_id=$2),0)")
+        .bind(channel).bind(&user.id).fetch_one(&app.db).await?;
+    if crate::progression::loyalty(earned) < min && role_of(app, channel, user).await?.is_none() {
+        return Err(Fail::denied(format!(
+            "Chat here needs the {} loyalty rank. Watch and chat on this channel to earn it.",
+            crate::progression::LOYALTY[min as usize].0
+        )));
+    }
     // Subscriber-only chat and subscriber emotes; channel roles are exempt.
     let tier = crate::subs::active_tier(app, channel, &user.id).await?;
     let tokens: Vec<&str> = body.split_whitespace().collect();
@@ -319,6 +361,8 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
             None => Fail::denied("Chat is subscribers-only right now."),
         });
     }
+    // AutoMod (caps, repeats, spam) with the channel's warn-and-timeout ladder; roles exempt.
+    crate::bot::automod(app, channel, user, body).await?;
     let slow = check_words(app, channel, user, body).await?;
     if slow > 0 {
         sec::reserve(
@@ -364,7 +408,7 @@ pub async fn check_clip(app: &App, channel: &str, user: &auth::User, title: &str
     }
     Ok(())
 }
-fn check_content(body: &str, words: &[String], links: bool, exempt: bool) -> Res<()> {
+pub(crate) fn check_content(body: &str, words: &[String], links: bool, exempt: bool) -> Res<()> {
     let folded = fold(body);
     if words.iter().any(|word| folded.contains(word)) {
         return Err(Fail::bad("That message isn't allowed in this chat."));
@@ -382,13 +426,14 @@ pub async fn view(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     let (_, role) = actor(&app, &jar, &channel).await?;
-    let settings: Option<(i32, bool, Vec<String>, i16, bool)> = sqlx::query_as(
-        "SELECT slow_mode_seconds, block_links, banned_words, overlay_fade_seconds, allow_signatures FROM chat_settings WHERE channel_id=$1",
+    let settings: Option<(i32, bool, Vec<String>, i16, bool, i16)> = sqlx::query_as(
+        "SELECT slow_mode_seconds, block_links, banned_words, overlay_fade_seconds, allow_signatures, min_loyalty FROM chat_settings WHERE channel_id=$1",
     )
     .bind(&channel)
     .fetch_optional(&app.db)
     .await?;
-    let (slow, links, words, fade, signatures) = settings.unwrap_or((0, false, vec![], 30, true));
+    let (slow, links, words, fade, signatures, min_loyalty) =
+        settings.unwrap_or((0, false, vec![], 30, true, 0));
     // Only chip_sql with a literal alias is interpolated; channel values are bound.
     let mut moderators: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {} FROM channel_moderators m JOIN channel_users c ON c.id=m.user_id WHERE m.channel_id=$1 ORDER BY m.appointed_at", profiles::chip_sql("c"))))
         .bind(&channel).fetch_all(&app.db).await?;
@@ -410,7 +455,7 @@ pub async fn view(
         "role": role.name(),
         "spike": spike,
         "followers_only_until": followers_only(&app, &channel).await?,
-        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade, "allow_signatures": signatures},
+        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade, "allow_signatures": signatures, "min_loyalty": min_loyalty, "gifs": crate::chat::gif_setting(&app, &channel).await?},
         "moderators": moderators, "restrictions": restrictions, "log": log,
     })))
 }
@@ -575,6 +620,12 @@ pub struct Settings {
     /// Other channels' signature emotes render in this chat (default on).
     #[serde(default)]
     allow_signatures: Option<bool>,
+    /// The chat rank gate: the loyalty rank (0 off, 1-4) needed to chat.
+    #[serde(default)]
+    min_loyalty: Option<i16>,
+    /// Who can send GIFs: off, everyone, followers or subscribers.
+    #[serde(default)]
+    gifs: Option<String>,
 }
 pub async fn save_settings(
     State(app): State<App>,
@@ -600,6 +651,16 @@ pub async fn save_settings(
             "Overlay messages last 10–120 seconds.",
         ));
     }
+    if input.min_loyalty.is_some_and(|r| !(0..=4).contains(&r)) {
+        return Err(Fail::field("min_loyalty", "Choose a loyalty rank."));
+    }
+    if input
+        .gifs
+        .as_deref()
+        .is_some_and(|g| !["off", "everyone", "followers", "subscribers"].contains(&g))
+    {
+        return Err(Fail::field("gifs", "Choose who can send GIFs."));
+    }
     let mut words: Vec<String> = input
         .banned_words
         .iter()
@@ -615,9 +676,9 @@ pub async fn save_settings(
         ));
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("INSERT INTO chat_settings(channel_id,slow_mode_seconds,block_links,banned_words,overlay_fade_seconds) VALUES($1,$2,$3,$4,coalesce($5,30)) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=$2,block_links=$3,banned_words=$4,overlay_fade_seconds=coalesce($5,chat_settings.overlay_fade_seconds),allow_signatures=coalesce($6,chat_settings.allow_signatures)")
-        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).bind(input.allow_signatures).execute(&mut *tx).await?;
-    log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len()}), &reason).await?;
+    sqlx::query("INSERT INTO chat_settings(channel_id,slow_mode_seconds,block_links,banned_words,overlay_fade_seconds) VALUES($1,$2,$3,$4,coalesce($5,30)) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=$2,block_links=$3,banned_words=$4,overlay_fade_seconds=coalesce($5,chat_settings.overlay_fade_seconds),allow_signatures=coalesce($6,chat_settings.allow_signatures),min_loyalty=coalesce($7,chat_settings.min_loyalty),gifs=coalesce($8,chat_settings.gifs)")
+        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).bind(input.allow_signatures).bind(input.min_loyalty).bind(&input.gifs).execute(&mut *tx).await?;
+    log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len(), "min_loyalty": input.min_loyalty, "gifs": input.gifs}), &reason).await?;
     tx.commit().await?;
     Ok(Json(
         json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words}),

@@ -136,9 +136,14 @@ async fn leader(app: &App, streams: &[Stream], slot: i64) -> Res<Option<Place>> 
     if current.is_none() {
         current = next_place(&places, None);
     }
+    // Every broadcast the pointer passes through had first place (Open data's fairness figure).
+    let mut reached: Vec<String> = current.iter().map(|c| c.1.clone()).collect();
     for _ in 0..steps {
         current = next_place(&places, current.as_ref());
+        reached.extend(current.iter().map(|c| c.1.clone()));
     }
+    sqlx::query("INSERT INTO rotation_firsts(broadcast_id) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING")
+        .bind(&reached).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO discovery_rotation(singleton,slot,leader_started_at,leader_id) VALUES(true,$1,$2,$3) ON CONFLICT(singleton) DO UPDATE SET slot=greatest(discovery_rotation.slot,EXCLUDED.slot),leader_started_at=EXCLUDED.leader_started_at,leader_id=EXCLUDED.leader_id")
         .bind(slot.max(at)).bind(current.as_ref().map(|c| c.0)).bind(current.as_ref().map(|c| &c.1)).execute(&mut *tx).await?;
     tx.commit().await?;

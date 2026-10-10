@@ -190,6 +190,10 @@ pub async fn tick(app: &App) -> Res<()> {
         return Ok(());
     }
     LAST_MINUTE.store(now, Ordering::Relaxed);
+    // While payouts are switched off, payday waits; its run starts once they're back on.
+    if crate::switches::off(&mut *app.db.acquire().await?, "payouts").await? {
+        return Ok(());
+    }
     match last_payday(Utc::now()) {
         Some(period) => payday(app, period).await,
         None => Ok(()),
@@ -271,6 +275,7 @@ async fn early(
     Json(input): Json<Early>,
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
+    crate::switches::guard(&mut *app.db.acquire().await?, "payouts").await?;
     let kind = match input.method.as_str() {
         "standard" => "early_standard",
         "instant" => "early_instant",

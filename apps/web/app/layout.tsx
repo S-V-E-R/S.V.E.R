@@ -3,9 +3,11 @@ import { Barlow, Barlow_Condensed, Cinzel } from "next/font/google";
 import Link from "next/link";
 import SiteShell from "../components/SiteShell";
 import { StaffRemovalAlerts } from "../components/StaffRemovalAlerts";
-import { BellIcon, MagnetMark } from "../components/shell/Icons";
+import { SiteBanner, type Banner } from "../components/SiteBanner";
+import { BellIcon, MagnetMark, MessageIcon } from "../components/shell/Icons";
 import { SideNav } from "../components/shell/SideNav";
 import { PlayerMenu } from "../components/shell/PlayerMenu";
+import { DailyOrders } from "../components/shell/DailyOrders";
 import type { LiveCard } from "../components/home/types";
 import { apiGet } from "../lib/server-api";
 import { themeFor } from "../lib/theme";
@@ -44,7 +46,9 @@ async function sidebarLive(signedIn: boolean): Promise<LiveCard[]> {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const account = await currentAccount();
-  const [alerts, live] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account)]);
+  const [alerts, live, progress, dms, site] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account), account ? apiGet<{ xp: number; level: number; level_xp: number; next_xp: number | null }>("/api/me/progression").then(r => r.data) : null, account ? apiGet<{ unread: number }>("/api/dms/unread").then(r => r.data?.unread ?? 0) : 0, apiGet<{ banner: Banner | null }>("/api/site").then(r => r.data)]);
+  // Level and XP bar on the player card (docs/PROGRESSION.md).
+  const xpBar = progress && <span className="player-card-xp" title={`${progress.xp.toLocaleString()} XP`}><span className="player-level">Lv {progress.level}</span><span className="xp-bar" aria-hidden="true"><span style={{ width: `${progress.next_xp ? Math.round(100 * (progress.xp - progress.level_xp) / (progress.next_xp - progress.level_xp)) : 100}%` }} /></span></span>;
   const initial = account?.username.slice(0, 1).toUpperCase();
 
   const faction = factionOf(account?.faction);
@@ -52,6 +56,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const actions = account
     ? <>
       <StaffRemovalAlerts />
+      <Link href="/messages" className="icon-button" aria-label={dms ? `Messages, ${dms} unread` : "Messages"}><MessageIcon />{dms > 0 && <span className="alert-badge" aria-hidden="true" />}</Link>
       <Link href="/notifications" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
       <PlayerMenu username={account.username} chip={<>
         <Crest faction={account.faction} initial={initial ?? "?"} size={36} label={faction?.name} />
@@ -68,13 +73,14 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     {account && (faction
       ? <Link href={`/${account.username}`} className="player-card frame">
         <Crest faction={account.faction} initial={initial ?? "?"} size={56} label={faction.name} />
-        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">{faction.title}</span></span>
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">{faction.title}</span>{xpBar}</span>
       </Link>
       : <Link href="/welcome" className="player-card frame unchosen">
         <Crest faction={null} initial={initial ?? "?"} size={56} />
-        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side</span></span>
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side</span>{xpBar}</span>
       </Link>)}
     <SideNav faction={faction ? { name: faction.name, slug: faction.slug } : null} />
+    {account && <DailyOrders />}
     {(account || live.length > 0) && <section className="side-section" aria-labelledby="side-live">
       <div className="side-label"><span id="side-live">{account ? "Following · live" : "Picked for you"}</span><span className="magnet"><MagnetMark />MAGNet</span></div>
       {live.length === 0
@@ -89,7 +95,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   return <html lang="en" data-theme={themeFor(account)} className={`${cinzel.variable} ${barlow.variable} ${barlowCondensed.variable}`}>
     <body>
-      <SiteShell account={account} alerts={alerts} actions={actions} sidebar={sidebar}>{children}</SiteShell>
+      <SiteShell account={account} alerts={alerts} actions={actions} sidebar={sidebar} banner={site?.banner ? <SiteBanner banner={site.banner} /> : null}>{children}</SiteShell>
     </body>
   </html>;
 }

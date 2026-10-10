@@ -167,13 +167,17 @@ pub async fn exercise(e: &Env) {
         StatusCode::CONFLICT,
         "once a day"
     );
+    // Move the earnings and the Early Pay back a day together, so the answer is the same whether
+    // or not a payday (every 14 days from October 9, 2026) falls inside that day.
     e.sql("UPDATE payout_runs SET created_at=now()-interval '1 day' WHERE user_id='rt-owner'")
+        .await;
+    e.sql("UPDATE ledger_transactions SET created_at=created_at-interval '1 day' WHERE id IN (SELECT transaction_id FROM ledger_entries WHERE account='usd:earnings:rt-owner')")
         .await;
     assert_eq!(
         event(e, invoice("in_rt_2", "rt-owner", None, 999)).await,
         StatusCode::OK
     );
-    // 75% of 13,986 tenths earned, less the 524 already taken early; instant costs 1%.
+    // 75% of what was earned, less the 524 already taken early (524 either side of a payday); instant costs 1%.
     let (status, paid) = call(
         e,
         "POST",

@@ -431,6 +431,11 @@ pub async fn exercise(e: &Env) {
         count(e, "SELECT count(*) FROM outbox WHERE channel_id='bd-owner'").await,
         presses
     );
+    // The same presses are live events on the public board topic.
+    assert_eq!(
+        count(e, "SELECT count(*) FROM events WHERE topic='channel:bdowner:board' AND data->>'type'='press'").await,
+        presses
+    );
     sver::boards::deliver_due(&e.app).await.unwrap();
     assert_eq!(
         count(

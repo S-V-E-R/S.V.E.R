@@ -127,9 +127,16 @@ pub async fn start(
     Json(input): Json<Start>,
 ) -> Result<(CookieJar, Json<Value>)> {
     let p = provider(&app, &name)?;
-    if !["login", "signup", "link", "reauth"].contains(&input.intent.as_str()) {
+    if !["login", "signup", "link", "reauth", "chat"].contains(&input.intent.as_str()) {
         return Err(Error::bad("Invalid OAuth action."));
     }
+    // Linked chat asks for chat permissions instead of sign-in ones (docs/LINKED_CHAT.md).
+    let scopes = if input.intent == "chat" {
+        crate::linked_chat::scopes(&name)
+            .ok_or_else(|| Error::bad("Linked chat isn't available for that platform yet."))?
+    } else {
+        p.scopes.as_str()
+    };
     let ip = sec::client_ip(&app, peer, &headers);
     sec::reserve(&app, vec![format!("oauth:start:{ip}")], 20, 900).await?;
     let state = sec::token();
@@ -149,6 +156,10 @@ pub async fn start(
     } else if input.intent == "reauth" {
         let (tx, _, session) = auth::session(&app, &jar, true).await?;
         (tx, Some(session.id))
+    } else if input.intent == "chat" {
+        let (tx, user, session) = auth::session(&app, &jar, false).await?;
+        auth::authorize_streaming(&user, &session)?;
+        (tx, Some(session.id))
     } else {
         (app.db.begin().await?, None)
     };
@@ -160,7 +171,7 @@ pub async fn start(
         .append_pair("client_id", &p.client_id)
         .append_pair("redirect_uri", &callback_uri(&app, p))
         .append_pair("response_type", "code")
-        .append_pair("scope", &p.scopes)
+        .append_pair("scope", scopes)
         .append_pair("state", &state);
     if p.pkce {
         url.query_pairs_mut()
@@ -170,7 +181,7 @@ pub async fn start(
                 &URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
             );
     }
-    if input.intent == "reauth" || input.intent == "link" {
+    if input.intent == "reauth" || input.intent == "link" || input.intent == "chat" {
         if p.name == "twitch" {
             url.query_pairs_mut().append_pair("force_verify", "true");
         } else {
@@ -211,6 +222,8 @@ struct Identity {
     email: Option<String>,
     verified: bool,
     username: Option<String>,
+    /// The provider's token response (kept only for Linked chat).
+    tokens: Value,
 }
 async fn exchange(app: &App, p: &Provider, code: &str, verifier: &str) -> Result<Identity> {
     let mut form = vec![
@@ -294,6 +307,7 @@ async fn exchange(app: &App, p: &Provider, code: &str, verifier: &str) -> Result
         }]
         .as_str()
         .map(str::to_owned),
+        tokens: token.clone(),
     })
 }
 pub async fn callback(
@@ -359,6 +373,33 @@ async fn complete(
         .username
         .as_deref()
         .and_then(|u| crate::text::provider_handle(name, u));
+    if state.intent == "chat" {
+        let (mut tx, user, session) = auth::session(app, &jar, false).await?;
+        if state.session_id.as_deref() != Some(&session.id) {
+            return Err(Error::auth());
+        }
+        auth::authorize_streaming(&user, &session)?;
+        let login = identity.username.clone().unwrap_or_default();
+        crate::linked_chat::save(
+            app,
+            &mut tx,
+            &user.id,
+            name,
+            &identity.subject,
+            &login,
+            &identity.tokens,
+        )
+        .await?;
+        tx.commit().await?;
+        eprintln!(
+            "auth_event=oauth_verified provider={} intent=chat next=studio",
+            p.name
+        );
+        return Ok((
+            auth::renew(app, jar),
+            format!("{}/studio/linked-chat", app.config.origin),
+        ));
+    }
     if state.intent == "link" || state.intent == "reauth" {
         let (mut tx, user, session) = auth::session(app, &jar, state.intent == "reauth").await?;
         if state.session_id.as_deref() != Some(&session.id) {

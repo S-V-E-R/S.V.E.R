@@ -62,12 +62,32 @@ async fn pair_allowed(app: &App, db: &mut PgConnection, a: &str, b: &str) -> Res
         && !moderation::banned(app, a, b).await?
         && !moderation::banned(app, b, a).await?)
 }
+/// Live events: each member's `costream` topic gets the current roster (empty for those who left).
+async fn announce(db: &mut PgConnection, id: &str, gone: &[&str]) -> Res<()> {
+    let members: Vec<(String, String)> = sqlx::query_as("SELECT m.user_id,u.username FROM squad_members m JOIN users u ON u.id=m.user_id WHERE m.squad_id=$1 ORDER BY m.joined_at,m.user_id")
+        .bind(id).fetch_all(&mut *db).await?;
+    let names: Vec<&str> = members.iter().map(|m| m.1.as_str()).collect();
+    for (member, _) in &members {
+        crate::events::emit(&mut *db, member, "costream", json!({"members": names})).await?;
+    }
+    for member in gone {
+        crate::events::emit(&mut *db, member, "costream", json!({"members": []})).await?;
+    }
+    Ok(())
+}
 async fn end(db: &mut PgConnection, id: &str) -> Res<()> {
-    sqlx::query("UPDATE squads SET ended_at=coalesce(ended_at,now()) WHERE id=$1")
+    let members: Vec<String> =
+        sqlx::query_scalar("SELECT user_id FROM squad_members WHERE squad_id=$1")
+            .bind(id)
+            .fetch_all(&mut *db)
+            .await?;
+    sqlx::query("DELETE FROM squad_members WHERE squad_id=$1")
         .bind(id)
         .execute(&mut *db)
         .await?;
-    sqlx::query("DELETE FROM squad_members WHERE squad_id=$1")
+    let gone: Vec<&str> = members.iter().map(String::as_str).collect();
+    announce(db, id, &gone).await?;
+    sqlx::query("UPDATE squads SET ended_at=coalesce(ended_at,now()) WHERE id=$1")
         .bind(id)
         .execute(&mut *db)
         .await?;
@@ -300,6 +320,7 @@ async fn answer(
             .bind(broadcast)
             .execute(&mut *tx)
             .await?;
+        announce(&mut tx, &id, &[]).await?;
     }
     sqlx::query("DELETE FROM squad_invites WHERE squad_id=$1 AND user_id=$2")
         .bind(&id)
@@ -322,6 +343,7 @@ async fn leave(State(app): State<App>, jar: CookieJar, Path(id): Path<String>) -
             .bind(&user.id)
             .execute(&mut *tx)
             .await?;
+        announce(&mut tx, &id, &[&user.id]).await?;
     }
     tx.commit().await?;
     Ok(Json(json!({"left":true})))

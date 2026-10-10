@@ -130,6 +130,7 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 **Monthly charts:**
 - money from subscriptions, gift subs and tributes, split into the creators' share and S.V.E.R's share
 - payouts sent
+- Wall sales ([WALL.md](WALL.md)), as their own line
 
 **Privacy rules:** no per-person or per-channel numbers. A weekly figure below 10 is shown as "fewer than 10". If fewer than 10 creators were paid in a month, that month's money is combined with the next.
 
@@ -140,6 +141,8 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 - Charts use the theme tokens.
 
 **Done when:** the page shows the charts from real data, the thresholds hold, and the CSVs match the charts.
+
+**Built October 9, 2026 (migration 0062).** The jobs loop recomputes the last 12 weeks and 12 months once a day into `public_stats`; `GET /api/open-data` and `/api/open-data/{weekly,monthly}.csv` apply the thresholds (so the page and CSVs show the same numbers), and `/open-data` draws simple SVG bars in the theme colors. Fairness is measured by recording every broadcast the rotation pointer puts in first place (`rotation_firsts`) against streams live 10 minutes or more. Money counts card payments at their price and Valor at 1 cent, with the creators' share from earnings accounts; refunds aren't netted out yet. The page is rendered per request rather than cached; the figures are a small table read.
 
 ## Credits
 
@@ -156,5 +159,5 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 
 - **Pronouns** on profiles (Joe, October 6).
 - **Holding new channels off the homepage** until they have 10 hours of streaming and have been live for 15 minutes. Glimesh did this; S.V.E.R gives new creators a head start instead.
-- **A paid platform supporter subscription** with cosmetic perks. Support (Module 6) is already the funding model.
+- **A paid platform supporter subscription** with cosmetic perks. Support (Module 6) is already the funding model. The Wall ([WALL.md](WALL.md), October 9) is different: a seat is bought once and gives no perks.
 - **Country-based edge selection.** The CDN already routes viewers to the nearest location.

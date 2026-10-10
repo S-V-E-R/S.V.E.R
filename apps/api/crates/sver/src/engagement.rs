@@ -86,7 +86,8 @@ pub async fn award_watch(app: &App) -> Res<()> {
         WHERE engagement.last_watch_at IS NULL OR engagement.last_watch_at<=now()-make_interval(secs=>$2)")
         .bind(t.watch_points).bind((t.watch_seconds - 5).max(0) as f64)
         .execute(&app.db).await?;
-    Ok(())
+    // Account XP from the same real playback (docs/PROGRESSION.md).
+    crate::progression::award_watch(app).await
 }
 /// Chat points (inside the message's transaction; chat already requires a verified, unbanned
 /// sender).
@@ -96,7 +97,11 @@ pub(crate) async fn chatted(
     channel: &str,
     user: &str,
 ) -> Res<()> {
-    if channel == user || t.chat_points <= 0 {
+    if channel == user {
+        return Ok(());
+    }
+    crate::progression::chatted(&mut *tx, user).await?;
+    if t.chat_points <= 0 {
         return Ok(());
     }
     sqlx::query("INSERT INTO engagement(channel_id,user_id,balance,earned,last_chat_at) VALUES($1,$2,$3,$3,now())

@@ -111,15 +111,21 @@ The page only reads. Every action happens on its own page.
 - **Refunds** go through Stripe from this page and post reversing ledger entries.
 - **Valor adjustments** are double-entry ledger rows with a reason. Any adjustment above a cap (in the private tuning config) needs a second staff member's approval once there's more than one person who can approve. Legacy allowed one admin to grant any amount. They are never edits to a balance.
 
+*Money as built (October 10, 2026; `money.rs`):* `/admin/money` shows the latest 50 payments, subscription invoices, tributes, payouts and Early Pay, refunds and chargebacks; active subscription counts; negative Valor and earnings balances by username; payout accounts with tax-information and guardian status. "Refund" sends a full refund to Stripe for a payment S.V.E.R took (the `charge.refunded` webhook posts the reversal). "Adjust Valor" posts a balanced `valor_adjustment` against `valor:adjustments` (up to 100,000 either way, never on the staff member's own account). Every action has a note and an audit row. The second approval above a private cap waits until someone besides Joe can approve.
+
 **Operations**
 
 - **Emergency switches** (`/admin/switches`): instant on and off for the risky features, to use during an incident.
   - The switches: sign-ups, going live, restreaming, Linked chat (per platform), clipping, Beacon uploads, DMs, purchases and payouts.
   - Turning one off shows a short message where the feature would be. It doesn't break pages.
   - Every flip is audited, and it can't reach any setting other than on and off.
+  - *As built (October 10, 2026; `switches.rs`, migration 0077):* `/admin/switches` holds the switches and the banner. Sign-ups (every new account, email or OAuth), going live (the publish hook; running broadcasts continue), restreaming (relays stop within a pass), Linked chat per platform (outside messages dropped, replies refused), clipping (viewer clips), Beacon uploads, DMs (sending), purchases (Valor packs, subscriptions, upgrades, gifts) and payouts (Early Pay refused; payday waits until they're back on). A refusal reads "Paused right now: {feature}. Please try again soon." `GET /api/site` lists paused features and the banner for every page.
 - **Site banner** (`/admin/banner`): one dismissible message across the top of every page for maintenance or incidents, with an optional end time.
 - **Jobs** (`/admin/jobs`): failed and stuck jobs from the Postgres queue (media, notifications, payouts, checkpoints), with their error and a retry button. A job retried by hand still runs exactly once.
+  - *Jobs as built (October 10, 2026; `staff_console.rs`):* video, Beacon, push, email, staff push, board webhook and event webhook queues show waiting, stuck (tried, failed and overdue by 10 minutes) and gave-up counts, with up to 50 stuck jobs each and "Retry now" (a note; the job becomes due and its worker runs it once). Faction checkpoints and failed payouts are counted but retried elsewhere (`/admin/factions`) or not by hand.
 - **Audit log** (`/admin/audit`): `moderation_actions`, searchable by staff member, action, target and date. It is read-only, and nobody can edit or delete rows, admins included.
+
+*Home and audit log as built (October 10, 2026):* `/admin` shows Take It Down open requests, any past the 48-hour deadline (as an alert) and the next deadline, open reports, appeals, copyright and integrity cases, emotes awaiting review, stuck jobs, live broadcasts and switched-off features. `/admin/audit` searches by staff member, action, target and date, newest first, read-only.
 
 ## Not carried over from legacy
 

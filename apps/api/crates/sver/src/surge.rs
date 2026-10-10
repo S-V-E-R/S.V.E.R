@@ -237,6 +237,7 @@ pub(crate) async fn current(db: &mut PgConnection, channel: &str) -> Res<Value> 
 }
 async fn announce(app: &App, channel: &str, id: &str, celebrate: Option<i16>) -> Res<()> {
     let surge = surge_json(&mut *app.db.acquire().await?, id).await?;
+    crate::events::emit_after(app, channel, "surge", surge.clone()).await?;
     app.chat
         .publish(channel, None, 0, json!({"type": "surge", "surge": surge}));
     if let Some(level) = celebrate {
