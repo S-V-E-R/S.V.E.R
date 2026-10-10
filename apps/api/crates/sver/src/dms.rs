@@ -236,6 +236,14 @@ async fn send(
     let row: Row = sqlx::query_as("INSERT INTO dm_messages(id,conversation_id,sender_id,body_sealed) VALUES($1,$2,$3,$4) RETURNING id,seq,$5,body_sealed,created_at")
         .bind(profiles::new_id()).bind(&id).bind(&me.id).bind(sec::seal(&app, PURPOSE, body)?).bind(&me.username)
         .fetch_one(&mut *tx).await?;
+    // The recipient hears about the first unread message of a streak (never the text, which is
+    // sealed), unless they muted the conversation; their notification settings decide site/push.
+    let (unread, muted): (i64, bool) = sqlx::query_as("SELECT (SELECT count(*) FROM dm_messages m WHERE m.conversation_id=$1 AND m.sender_id<>$2 AND m.seq>s.read_seq),s.muted FROM dm_state s WHERE s.conversation_id=$1 AND s.user_id=$2")
+        .bind(&id).bind(&other.id).fetch_one(&mut *tx).await?;
+    if unread == 1 && !muted {
+        crate::alerts::community(&mut tx, &other.id, &me.id, "dm", &format!("{id}:{}", row.1), None,
+            &json!({"title": "New message", "body": format!("{} sent you a message.", me.username), "url": "/messages"})).await?;
+    }
     // Sending reads everything before it.
     sqlx::query("UPDATE dm_state SET read_seq=$3 WHERE conversation_id=$1 AND user_id=$2")
         .bind(&id)
