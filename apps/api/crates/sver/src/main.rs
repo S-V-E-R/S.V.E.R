@@ -115,6 +115,16 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     });
+    // Third-party emote lists and images come from outside services; never hold up other work.
+    let outside = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if sver::outside_emotes::sync(&outside).await.is_err() {
+                eprintln!("outside_emotes_event=sync outcome=retry");
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
+    });
     // Event webhooks too: a slow developer endpoint never delays a game's board webhook.
     let hooks = app.clone();
     tokio::spawn(async move {

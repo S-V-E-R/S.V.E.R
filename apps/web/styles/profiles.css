@@ -188,6 +188,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .step-up .panel{width:min(440px,100%)}
 
 .chat-emote { display: inline-block; width: 28px; height: 28px; vertical-align: middle; object-fit: contain; }
+.chat-emote.chat-emote-wide { width: auto; max-width: 112px; }
 
 /* Notifications list (go-live alerts). */
 .notifications li { gap: 12px; align-items: center; justify-content: flex-start; }

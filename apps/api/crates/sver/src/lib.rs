@@ -40,6 +40,7 @@ pub mod media;
 pub mod moderation;
 pub mod oauth;
 pub mod open_data;
+pub mod outside_emotes;
 pub mod parts;
 pub mod payouts;
 pub mod playback;
@@ -436,6 +437,7 @@ pub fn router(app: App) -> Router {
         .merge(squads::routes())
         .merge(chat::routes())
         .merge(emotes::routes())
+        .merge(outside_emotes::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(discovery::routes())
