@@ -374,7 +374,7 @@ pub fn chip(app: &App, user: &ChannelUser) -> Value {
 pub fn chip_sql(alias: &'static str) -> String {
     // jsonb chip built in SQL for list queries; the web maps avatar keys through `media_base`.
     format!(
-        "jsonb_build_object('username',CASE WHEN {a}.deleted_at IS NULL THEN {a}.username END,'display_name',CASE WHEN {a}.deleted_at IS NOT NULL THEN 'Deleted user' WHEN {a}.eligible THEN {a}.display_name ELSE {a}.username END,'avatar_key',CASE WHEN {a}.eligible THEN {a}.avatar_key END,'linked',{a}.eligible,'deleted',{a}.deleted_at IS NOT NULL,'live',{a}.eligible AND {live},'faction',CASE WHEN {a}.eligible AND {a}.deleted_at IS NULL THEN {faction} END)",
+        "jsonb_build_object('username',CASE WHEN {a}.deleted_at IS NULL THEN {a}.username END,'display_name',CASE WHEN {a}.deleted_at IS NOT NULL THEN 'Deleted user' WHEN {a}.eligible THEN {a}.display_name ELSE {a}.username END,'avatar_key',CASE WHEN {a}.eligible THEN {a}.avatar_key END,'linked',{a}.eligible,'deleted',{a}.deleted_at IS NOT NULL,'live',{a}.eligible AND {live},'faction',CASE WHEN {a}.eligible AND {a}.deleted_at IS NULL THEN {faction} END,'name_style',CASE WHEN {a}.eligible THEN (SELECT uc.name_style FROM user_cosmetics uc WHERE uc.user_id={a}.id) END)",
         a = alias,
         faction = crate::factions::membership_sql(&format!("{alias}.id")),
         live = crate::playback::live_sql(&format!("{alias}.id"))

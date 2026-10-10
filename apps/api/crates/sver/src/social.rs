@@ -644,6 +644,7 @@ pub async fn card(
         "live": crate::playback::is_live(&mut db, &me.id).await?,
         "level": level,
         "title": crate::progression::title(level, faction.as_deref()),
-        "frame": crate::progression::frame(level),
+        "frame": crate::achievements::frame(&mut db, &me.id, level).await?,
+        "showcase": crate::achievements::showcase(&mut db, &me.id).await?,
     })))
 }
