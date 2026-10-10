@@ -34,7 +34,7 @@ export default function TermsPage() {
     </> },
     { title: "Usernames", content: <>
       <p>Usernames are unique without regard to capitalization and use 3–25 letters, numbers or underscores. Reserved names, impersonation and abusive names are prohibited. Display names do not replace your unique username.</p>
-      <p>You can rename once every 60 days. Case-only changes are allowed at any time. An old name is held for 30 days and redirects to your channel during that period. Username trading and paid claims are not offered.</p>
+      <p>You can rename once every 60 days. Case-only changes are allowed at any time. An old name is held for 30 days and redirects to your channel during that period. Username trading and paid claims are not offered. You can ask for a name held by an account unused for 12 months; its holder is emailed and keeps it by signing in within 30 days, otherwise staff may release it and the holder gets a generated name.</p>
     </> },
     { title: "Your content and our intellectual property", content: <>
       <p>You retain ownership of the content you create. By sharing it on S.V.E.R, you grant us a worldwide, non-exclusive, royalty-free license to host, display and distribute it on the Platform, enable interaction with it, and promote it on the Platform and in marketing materials. You must have the rights needed to grant this license.</p>

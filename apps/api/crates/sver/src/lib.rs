@@ -80,6 +80,7 @@ pub mod switches;
 pub mod take_down;
 pub mod text;
 pub mod tiers;
+pub mod username_claims;
 pub mod videos;
 pub mod wall;
 
@@ -465,6 +466,7 @@ pub fn router(app: App) -> Router {
         .merge(ravens_eye::routes())
         .merge(achievements::routes())
         .merge(lights::routes())
+        .merge(username_claims::routes())
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(discovery::routes())

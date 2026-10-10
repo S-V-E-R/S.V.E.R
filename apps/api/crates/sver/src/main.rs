@@ -142,6 +142,9 @@ async fn main() -> Result<(), String> {
             if sver::ravens_eye::tick(&analytics).await.is_err() {
                 eprintln!("ravens_eye_event=rollup outcome=retry");
             }
+            if sver::username_claims::tick(&analytics).await.is_err() {
+                eprintln!("username_claims_event=tick outcome=retry");
+            }
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
         }
     });
