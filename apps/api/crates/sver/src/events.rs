@@ -76,6 +76,17 @@ pub async fn emit(
             .bind(kind)
             .fetch_optional(&mut *db)
             .await?;
+    // A channel's private events never show someone its owner has blocked.
+    if matches!(kind, "follows:detail" | "subs" | "tributes" | "skills")
+        && let Some(name) = data["user"].as_str()
+        && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM user_blocks k JOIN users u ON u.id=k.blocked_id WHERE k.blocker_id=$1 AND lower(u.username)=lower($2))")
+            .bind(channel)
+            .bind(name)
+            .fetch_one(&mut *db)
+            .await?
+    {
+        return Ok(());
+    }
     match topic {
         Some(topic) => emit_topic(db, &topic, data).await,
         None => Ok(()),

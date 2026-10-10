@@ -217,10 +217,26 @@ pub async fn exercise(e: &Env) {
             ]
         );
     }
+    // The owner's private events never show someone they blocked.
+    e.sql("INSERT INTO user_blocks(blocker_id,blocked_id) VALUES('stream-owner','ev-fan2')")
+        .await;
+    let mut db = e.app.db.acquire().await.unwrap();
+    sver::events::emit(
+        &mut db,
+        "stream-owner",
+        "follows:detail",
+        json!({"user":"EvFanTwo"}),
+    )
+    .await
+    .unwrap();
+    let shown: i64 = sqlx::query_scalar("SELECT count(*) FROM events WHERE topic='channel:streamer:follows:detail' AND data->>'user'='EvFanTwo'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(shown, 1, "only the follow from before the block");
+    e.sql("DELETE FROM user_blocks WHERE blocker_id='stream-owner'")
+        .await;
     // Revoking the app removes its hook before anything more is sent.
     e.sql("UPDATE oauth_grants SET revoked_at=now() WHERE id='ev-grant'")
         .await;
-    let mut db = e.app.db.acquire().await.unwrap();
     sver::events::emit(
         &mut db,
         "stream-owner",
