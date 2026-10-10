@@ -100,6 +100,25 @@ pub async fn exercise(e: &Env) {
         .unwrap();
     assert_eq!(next_json(&mut late).await["result"], "pong");
 
+    // Stream details are a public update event.
+    let settings = e.mine().await["settings"].clone();
+    e.call(
+        "PATCH",
+        "/api/me/stream",
+        json!({"title":"Events title","category_id":e.call("GET", "/api/categories", Value::Null).await["categories"][0]["id"],"revision":settings["revision"]}),
+    )
+    .await;
+    let updated: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events WHERE topic='channel:streamer:update' AND data->>'title'='Events title')")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert!(updated);
+    sqlx::query("UPDATE stream_settings SET title=$1,category_id=$2,revision=$3 WHERE owner_id='stream-owner'")
+        .bind(settings["title"].as_str())
+        .bind(settings["category_id"].as_str())
+        .bind(settings["revision"].as_i64())
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+
     // ---- Webhooks for the same events ----
     let url = format!("{}/hook", e.app.config.stripe.api_url);
     let (status, _) = e

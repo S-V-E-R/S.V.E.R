@@ -33,16 +33,25 @@ use std::{
 };
 
 /// Public channel topics (client ID only) and private ones (owner or moderator, `events:private`).
-const PUBLIC: [&str; 7] = [
+const PUBLIC: [&str; 9] = [
     "live",
+    "update",
     "follows",
     "raids",
+    "costream",
     "board",
     "poll",
     "prediction",
     "surge",
 ];
-const PRIVATE: [&str; 4] = ["follows:detail", "subs", "tributes", "skills"];
+const PRIVATE: [&str; 6] = [
+    "follows:detail",
+    "subs",
+    "tributes",
+    "skills",
+    "moderation",
+    "raid:incoming",
+];
 const MAX_TOPICS: usize = 200;
 const MAX_CONNECTIONS: usize = 10;
 /// The hub channel the drain publishes on.
@@ -61,11 +70,27 @@ pub async fn emit(
     kind: &str,
     data: Value,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("WITH e AS (INSERT INTO events(topic,data) SELECT 'channel:'||lower(username)||':'||$2,$3 FROM users WHERE id=$1 RETURNING id,topic,data,at)
+    let topic: Option<String> =
+        sqlx::query_scalar("SELECT 'channel:'||lower(username)||':'||$2 FROM users WHERE id=$1")
+            .bind(channel)
+            .bind(kind)
+            .fetch_optional(&mut *db)
+            .await?;
+    match topic {
+        Some(topic) => emit_topic(db, &topic, data).await,
+        None => Ok(()),
+    }
+}
+/// Writes an event on any topic (`faction:{slug}:war`) and queues its webhooks.
+pub async fn emit_topic(
+    db: &mut PgConnection,
+    topic: &str,
+    data: Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("WITH e AS (INSERT INTO events(topic,data) VALUES($1,$2) RETURNING id,topic,data,at)
         INSERT INTO hook_deliveries(hook_id,payload) SELECT h.id,jsonb_build_object('type','event','id',e.id,'topic',e.topic,'data',e.data,'at',e.at)
         FROM e JOIN event_hooks h ON h.topics @> ARRAY[e.topic] AND h.disabled_at IS NULL")
-        .bind(channel)
-        .bind(kind)
+        .bind(topic)
         .bind(data)
         .execute(db)
         .await?;
@@ -111,6 +136,12 @@ pub async fn prune(app: &App) -> Res<()> {
 
 /// Whether a topic exists and this connection may subscribe to it.
 async fn allowed(app: &App, topic: &str, user: Option<&Person>) -> Res<bool> {
+    if let Some(faction) = topic
+        .strip_prefix("faction:")
+        .and_then(|t| t.strip_suffix(":war"))
+    {
+        return Ok(crate::factions::FACTIONS.contains(&faction));
+    }
     let Some((name, kind)) = topic
         .strip_prefix("channel:")
         .and_then(|rest| rest.split_once(':'))

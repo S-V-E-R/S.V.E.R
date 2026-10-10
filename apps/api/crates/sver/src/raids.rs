@@ -93,6 +93,13 @@ async fn start(
     sqlx::query("INSERT INTO raids(id,raider_id,broadcast_id,target_id,target_broadcast_id,execute_at) VALUES($1,$2,$3,$4,$5,now()+make_interval(secs=>$6))")
         .bind(&id).bind(&user.id).bind(&broadcast).bind(&target_id).bind(&target_broadcast).bind(COUNTDOWN_SECONDS)
         .execute(&mut *tx).await?;
+    crate::events::emit(
+        &mut tx,
+        &target_id,
+        "raid:incoming",
+        json!({"from": user.username, "seconds": COUNTDOWN_SECONDS}),
+    )
+    .await?;
     tx.commit().await?;
     let raid = raid_json(&app, &id).await?;
     app.chat

@@ -515,6 +515,9 @@ async fn apply(
         .await
         .map_err(|_| Error::internal())?;
     }
+    let info: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',s.title,'category',k.name,'language',s.language,'mature',s.mature) FROM stream_settings s LEFT JOIN stream_categories k ON k.id=s.category_id WHERE s.owner_id=$1")
+        .bind(owner).fetch_one(&mut *tx).await?;
+    crate::events::emit(&mut *tx, owner, "update", info).await?;
     Ok(json!({"saved":true,"revision":revision,"category_id":category_id}))
 }
 

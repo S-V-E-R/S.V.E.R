@@ -683,6 +683,9 @@ pub async fn update_profile(
         .bind(status)
         .execute(&mut *tx)
         .await?;
+    let shown: Value = sqlx::query_scalar("SELECT jsonb_build_object('display_name',display_name,'bio',bio,'status_text',status_text,'mood_emoji',mood_emoji) FROM profiles WHERE user_id=$1")
+        .bind(&user.id).fetch_one(&mut *tx).await?;
+    crate::events::emit(&mut tx, &user.id, "update", shown).await?;
     tx.commit().await?;
     Ok(Json(json!({"saved": true, "revision": revision})))
 }
