@@ -7,7 +7,7 @@ import type { Chip } from "../../../lib/types";
 
 type View = {
   role: string;
-  settings: { slow_mode_seconds: number; block_links: boolean; banned_words: string[]; overlay_fade_seconds?: number; allow_signatures?: boolean; min_loyalty?: number };
+  settings: { slow_mode_seconds: number; block_links: boolean; banned_words: string[]; overlay_fade_seconds?: number; allow_signatures?: boolean; min_loyalty?: number; gifs?: string };
   moderators: Chip[];
   restrictions: { user: Chip; kind: "timeout" | "ban"; until: string | null }[];
   log: { action: string; actor_role: string; actor: string | null; target: string | null; reason: string; created_at: string }[];
@@ -43,6 +43,7 @@ export default function ChatStudio() {
       overlay_fade_seconds: Number(form.get("fade")) || 30,
       allow_signatures: form.get("signatures") === "on",
       min_loyalty: Number(form.get("loyalty")),
+      gifs: form.get("gifs"),
     });
     setState(result.ok ? { saved: "Chat rules saved." } : result);
     if (result.ok) load();
@@ -77,6 +78,9 @@ export default function ChatStudio() {
         <label className="row"><input name="signatures" type="checkbox" defaultChecked={s.allow_signatures ?? true} /> Show other channels&apos; signature emotes in my chat</label>
         <label className="field narrow"><span>Who can chat (you and your moderators always can)</span><select name="loyalty" defaultValue={s.min_loyalty ?? 0}>
           <option value={0}>Everyone</option><option value={1}>Regular and above (200 Engagement Valor earned here)</option><option value={2}>Devoted and above (1,000)</option><option value={3}>Veteran and above (5,000)</option><option value={4}>Legend only (20,000)</option>
+        </select></label>
+        <label className="field narrow"><span>Who can send GIFs (slow mode and timeouts apply)</span><select name="gifs" defaultValue={s.gifs ?? "everyone"}>
+          <option value="everyone">Everyone</option><option value="followers">Followers</option><option value="subscribers">Subscribers</option><option value="off">Nobody (GIFs off)</option>
         </select></label>
         <label className="field"><span>Banned words or phrases (one per line, up to 200)</span><textarea value={words} onChange={e => setWords(e.target.value)} rows={5} /></label>
         <label className="field narrow"><span>OBS chat overlay: seconds each message stays (10–120)</span><input name="fade" type="number" min={10} max={120} defaultValue={s.overlay_fade_seconds ?? 30} /></label>

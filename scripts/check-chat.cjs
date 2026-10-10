@@ -43,6 +43,7 @@ global.fetch = async (url, options = {}) => {
   calls.push({ url, method: options.method, body });
   let data;
   if (url.endsWith("/moderation")) data = { role: "owner" };
+  else if (url.endsWith("/outside-emotes")) data = { emotes: [] };
   else if (url.endsWith("/pin")) data = { pinned: body.message_id ? message(body.message_id, "new pin") : null };
   else if (options.method === "POST") data = { message: message(body.id, body.body) };
   else data = snapshot;
@@ -54,8 +55,11 @@ const { Chat } = compile("apps/web/components/Chat.tsx", {
   "next/link": ({ children, ...props }) => React.createElement("a", props, children),
   "./Report": { ReportButton: () => null, TakeDownLink: () => null },
   "./Emote": compile("apps/web/components/Emote.tsx"),
+  "./GifPicker": compile("apps/web/components/GifPicker.tsx"),
   "./FactionIdentity": { Crest: () => null },
   "./Guilds": { GuildChatBadge: () => null },
+  // The dock (emote picker, rewards) has its own page check; this keeps its insert hook.
+  "./ChatDock": { ChatDock: ({ emotes, onEmote }) => emotes.map(e => React.createElement("button", { key: e.id, type: "button", "aria-label": `Insert ${e.code}`, onClick: () => onEmote(e.code) })) },
   "./Rewards": { Rewards: () => null },
   "../styles/teams.css": {},
   "../lib/types": { CREATOR_TIERS: ["Scout", "Trailblazer", "Pioneer", "Pathfinder"] },
@@ -130,7 +134,20 @@ async function draft(value) {
     assert.match(document.querySelector(".chat-body").textContent, /^Wave wave/);
     await act(async () => live.emit({ type: "snapshot", messages: snapshot.messages, pinned: null, emotes: [] }));
     assert.equal(document.querySelectorAll("img").length, 0, "A different channel catalog cannot reuse old emotes");
-    console.log("Chat UI passed: mentions/replies/pins/badges, emote exact tokens/case/escaping, insertion, catalog removal, reconnect and HTTP fallback.");
+    // GIFs: a still frame until tapped (never autoplay), the GIF button only when the snapshot allows it.
+    assert.equal(document.querySelector('[aria-expanded]'), null, "No GIF button without access");
+    const gif = { slug: "s", still: "https://static.klipy.com/still.jpg", play: "https://static.klipy.com/play.webp", width: 220, height: 124 };
+    window.matchMedia = () => ({ matches: true });
+    await act(async () => live.emit({ type: "snapshot", messages: [message("5", "GIF: Victory", { gif })], pinned: null, emotes: [], gifs: { key: "k", who: "everyone" } }));
+    const still = document.querySelector(".chat-gif img");
+    assert.equal(still.getAttribute("src"), gif.still);
+    await act(async () => document.querySelector(".chat-gif").dispatchEvent(new window.MouseEvent("mouseover", { bubbles: true })));
+    assert.equal(still.getAttribute("src"), gif.still, "Reduced motion: hovering doesn't play");
+    await click(document.querySelector(".chat-gif"));
+    assert.equal(document.querySelector(".chat-gif img").getAttribute("src"), gif.play, "A tap plays it");
+    assert.equal(document.querySelector(".chat-gif").getAttribute("aria-label"), "Victory, playing");
+    assert.ok([...document.querySelectorAll("button")].some(b => b.textContent === "GIF"), "GIF button with access");
+    console.log("Chat UI passed: mentions/replies/pins/badges, emote exact tokens/case/escaping, insertion, catalog removal, reconnect, HTTP fallback and GIF stills.");
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

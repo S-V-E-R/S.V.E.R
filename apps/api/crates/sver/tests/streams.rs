@@ -46,6 +46,8 @@ mod engagement;
 mod events;
 #[path = "streams/gateway.rs"]
 mod gateway;
+#[path = "streams/gifs.rs"]
+mod gifs;
 #[path = "streams/integrity.rs"]
 mod integrity;
 #[path = "streams/linked_chat.rs"]
@@ -507,6 +509,7 @@ async fn exercise(e: &Env) {
     devapps::exercise(e).await;
     events::exercise(e).await;
     moderation::exercise(e).await;
+    gifs::exercise(e).await;
     chat_social::exercise(e).await;
     reports::exercise(e).await;
     bans::exercise(e).await;
