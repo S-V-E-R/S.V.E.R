@@ -54,7 +54,7 @@ export default function Developer() {
         <li>Send people to <code>https://sver.tv/oauth/authorize?client_id=…&amp;redirect_uri=…&amp;response_type=code&amp;scope=user:read&amp;state=…&amp;code_challenge=…&amp;code_challenge_method=S256</code>.</li>
         <li>Exchange the returned <code>code</code> at <code>POST /api/oauth/token</code> (form-encoded) with <code>grant_type=authorization_code</code>, your <code>client_id</code>, the <code>code_verifier</code> and the same <code>redirect_uri</code>.</li>
         <li>Call the API with <code>Authorization: Bearer …</code> and <code>SVER-Client-Id</code>. Access tokens last an hour; refresh tokens 60 days and work once each.</li>
-        <li>Scopes: user:read, channel:read, chat:read, chat:write, channel:moderate, channel:edit, events:private, board:control, whispers:read.</li>
+        <li>Scopes: user:read, channel:read, chat:read, chat:write, channel:moderate, channel:edit, events:private, board:control, whispers:read, channel:run.</li>
       </ol></details>
     </>}
     <Webhooks />

@@ -1013,10 +1013,9 @@ pub(crate) async fn send_as_app(
     if input.tribute.is_some() || input.skill.is_some() || input.highlight {
         return Err(Fail::denied("Apps can't spend Valor."));
     }
-    let person: Option<crate::auth::User> = sqlx::query_as("SELECT * FROM users u WHERE id=$1 AND deleted_at IS NULL AND NOT legacy_deletion_hold
-        AND NOT EXISTS(SELECT 1 FROM account_bans b WHERE b.user_id=u.id AND b.status='ACTIVE' AND (b.until IS NULL OR b.until>now()))")
-        .bind(user).fetch_optional(&app.db).await?;
-    let person = person.ok_or_else(|| Fail::denied("Your account can't chat right now."))?;
+    let person = crate::devapps::person(app, user)
+        .await?
+        .ok_or_else(|| Fail::denied("Your account can't chat right now."))?;
     if crate::streams::mature_blocked(&mut *app.db.acquire().await?, channel, Some(user)).await? {
         return Err(Fail::denied(
             "This channel is labeled mature, so its chat isn't available on your account.",

@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-pub const SCOPES: [(&str, &str); 9] = [
+pub const SCOPES: [(&str, &str); 10] = [
     ("user:read", "See your username, display name and faction"),
     ("channel:read", "See your channel's stream settings"),
     ("chat:read", "Read chat as you"),
@@ -36,6 +36,10 @@ pub const SCOPES: [(&str, &str); 9] = [
         "Control your CrowdSync board like a connected game",
     ),
     ("whispers:read", "Read your direct messages as they arrive"),
+    (
+        "channel:run",
+        "Run raids, polls, predictions, highlight markers and the board's pause on your channel",
+    ),
 ];
 const MAX_APPS: i64 = 10;
 const ACCESS_SECONDS: i64 = 3600;
@@ -692,6 +696,30 @@ pub async fn caller(
     let who = user.as_deref().unwrap_or("-");
     profiles::rate(app, format!("api:{client}:{who}"), 600, 60).await?;
     Ok((client, user))
+}
+/// A person who can act through an app: not deleted, held or banned.
+pub async fn person(app: &App, id: &str) -> Res<Option<auth::User>> {
+    Ok(sqlx::query_as("SELECT * FROM users u WHERE id=$1 AND deleted_at IS NULL AND NOT legacy_deletion_hold
+        AND NOT EXISTS(SELECT 1 FROM account_bans b WHERE b.user_id=u.id AND b.status='ACTIVE' AND (b.until IS NULL OR b.until>now()))")
+        .bind(id).fetch_optional(&app.db).await?)
+}
+/// The person acting on a page or app-callable endpoint: an app with their bearer token,
+/// `SVER-Client-Id` and `scope`, or else the signed-in person. A request with a bearer token never
+/// falls back to the cookie (lib.rs skips the origin check for app-callable paths only then).
+pub async fn actor(
+    app: &App,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    scope: &str,
+) -> Res<auth::User> {
+    if !headers.contains_key("authorization") {
+        return profiles::signed_in(app, jar).await;
+    }
+    let (_, user) = caller(app, headers, Some(scope)).await?;
+    let id = user.ok_or_else(Fail::missing)?;
+    person(app, &id)
+        .await?
+        .ok_or_else(|| Fail::denied("This account can't do that right now."))
 }
 /// GET /api/v1/me (user:read)
 async fn v1_me(State(app): State<App>, headers: HeaderMap) -> Res<Json<Value>> {
