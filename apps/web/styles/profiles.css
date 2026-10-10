@@ -264,3 +264,4 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 /* Staff site banner (docs/ADMIN.md): one line above the page content, dismissible. */
 .site-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:8px 12px;border:1px solid var(--accent);background:var(--panel);color:var(--ink)}
 .site-banner p{margin:0}
+.player-cc{position:absolute;top:8px;right:8px;z-index:2;min-width:44px}.player-cc[aria-pressed="true"]{outline:2px solid var(--accent, currentColor);outline-offset:1px}
