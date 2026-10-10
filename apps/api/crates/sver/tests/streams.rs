@@ -54,6 +54,8 @@ mod gateway;
 mod gifs;
 #[path = "streams/integrity.rs"]
 mod integrity;
+#[path = "streams/lights.rs"]
+mod lights;
 #[path = "streams/linked_chat.rs"]
 mod linked_chat;
 #[path = "streams/magnet.rs"]
@@ -561,6 +563,7 @@ async fn exercise(e: &Env) {
     magnet::exercise(e).await;
     ravens_eye::exercise(e).await;
     achievements::exercise(e).await;
+    lights::exercise(e).await;
     // Live events: each flow above wrote its topic (docs/DEVELOPER_PLATFORM.md section 2).
     for kind in ["moderation", "raid:incoming"] {
         let written: bool = sqlx::query_scalar(

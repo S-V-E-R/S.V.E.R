@@ -429,3 +429,6 @@ a.takedown-link:hover { color: var(--ink); }
 .achievement-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .achievement-list .showcased strong { text-decoration: underline; text-underline-offset: 3px; }
 .card-showcase { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+/* Shine Moments and Lights on channel pages. */
+.moment-list, .light-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+.moment-list li { padding: 6px 10px; border-left: 3px solid var(--accent, currentColor); }

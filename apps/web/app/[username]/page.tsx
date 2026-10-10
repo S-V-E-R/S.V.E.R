@@ -6,6 +6,7 @@ import { Avatar } from "../../components/Avatar";
 import { WallPost } from "../../components/Wall";
 import { ActivityFeed } from "../../components/ActivityFeed";
 import { Achievements } from "../../components/Achievements";
+import { Shine } from "../../components/Shine";
 import { apiGet } from "../../lib/server-api";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../lib/channel";
 import type { ActivityItem, Chip } from "../../lib/types";
@@ -46,6 +47,7 @@ export default async function ChannelHome({ params }: { params: ChannelParams })
       {posts.length ? posts.map(p => <WallPost key={p.id} post={p} viewer={data.wall_preview.viewer} />) : <p className="muted">No posts yet.</p>}
     </section>
     <Achievements username={c.username} />
+    <Shine username={c.username} isOwner={viewer.is_owner} signedIn={!!viewer.signed_in} />
     {(schedule.length > 0 || viewer.is_owner) && <section className="panel section">
       <div className="row between"><h2>Up next</h2>{data.tabs.schedule && <Link href={`/${c.username}/schedule`}>Full schedule</Link>}</div>
       {schedule.length ? <Occurrences items={schedule} zone={data.schedule_next.timezone} /> : <p className="muted">Add your weekly schedule. <Link href="/studio/channel/schedule">Set schedule</Link></p>}

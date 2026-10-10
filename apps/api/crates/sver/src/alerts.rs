@@ -16,12 +16,13 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-pub const COMMUNITY_TYPES: [&str; 5] = [
+pub const COMMUNITY_TYPES: [&str; 6] = [
     "guild_application",
     "guild_decision",
     "guild_invite",
     "squad_invite",
     "dm",
+    "light",
 ];
 /// A durable community event. Its stable key also deduplicates push work on retries.
 #[allow(clippy::too_many_arguments)]
