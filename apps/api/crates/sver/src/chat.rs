@@ -285,7 +285,7 @@ pub(crate) async fn hidden(app: &App, viewer: Option<&str>) -> Res<HashSet<Strin
         .bind(viewer).fetch_all(&app.db).await?;
     Ok(ids.into_iter().collect())
 }
-async fn history(
+pub(crate) async fn history(
     app: &App,
     channel: &str,
     hidden: &HashSet<String>,
@@ -343,7 +343,8 @@ async fn send(
     input: Send,
     squad: Option<&str>,
 ) -> Res<Value> {
-    send_from(app, jar, Some(channel), input, None, squad).await
+    let user = profiles::signed_in(app, jar).await?;
+    send_from(app, user, Some(channel), input, None, squad).await
 }
 
 /// Persists one message and fans it out. Acknowledged only after the insert commits. `origin` is
@@ -351,14 +352,14 @@ async fn send(
 /// its rules; without one, a message in the lane's own room (docs/MAGNET.md "Hype chat").
 pub(crate) async fn send_from(
     app: &App,
-    jar: &CookieJar,
+    user: crate::auth::User,
     channel: Option<&str>,
     input: Send,
     origin: Option<&str>,
     squad: Option<&str>,
 ) -> Res<Value> {
-    // Rechecked on every send, so a revoked session or new restriction takes effect at once.
-    let user = profiles::signed_in(app, jar).await?;
+    // Callers resolve the person on every send, so a revoked session or new restriction takes
+    // effect at once.
     let members = if let Some(id) = squad {
         let members = crate::squads::chat_context(app, id, Some(&user.id)).await?;
         if members.first().map(String::as_str) != channel {
@@ -939,17 +940,9 @@ async fn session(
                         let Ok(pin) = pinned(&app, &channel, &hidden).await else { return; };
                         payload["pinned"] = pin;
                     } else if payload["type"] == "message" {
-                        // Re-read after queueing: deletion or a new block must not leak a stale quote.
-                        // ponytail: one indexed read per recipient/event; batch fanout if measured chat load requires it.
-                        let row = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND {VISIBLE}", select())))
-                            .bind(payload["message"]["id"].as_str().unwrap_or(""))
-                            .fetch_optional(&app.db).await;
-                        let Ok(Some(row)) = row else {
-                            if row.is_err() { return; }
-                            continue;
-                        };
-                        let Ok(message) = row.hydrated(&app).await else { return; };
-                        payload["message"] = visible_message(message, &hidden);
+                        let Ok(message) = fresh(&app, &payload, &hidden).await else { return; };
+                        let Some(message) = message else { continue; };
+                        payload["message"] = message;
                     }
                     if ws.send(Message::Text(payload.to_string().into())).await.is_err() {
                         return;
@@ -984,6 +977,52 @@ async fn session(
             },
         }
     }
+}
+
+/// A queued chat message re-read as the recipient sees it: deletion or a new block must not leak
+/// a stale quote. None when it's gone.
+pub(crate) async fn fresh(
+    app: &App,
+    payload: &Value,
+    hidden: &HashSet<String>,
+) -> Res<Option<Value>> {
+    // ponytail: one indexed read per recipient/event; batch fanout if measured chat load requires it.
+    let row = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(format!(
+        "{} WHERE m.id=$1 AND {VISIBLE}",
+        select()
+    )))
+    .bind(payload["message"]["id"].as_str().unwrap_or(""))
+    .fetch_optional(&app.db)
+    .await?;
+    Ok(match row {
+        Some(row) => Some(visible_message(row.hydrated(app).await?, hidden)),
+        None => None,
+    })
+}
+/// A message sent by an app as the person (events socket, `chat:write`): chat only. Money is never
+/// reachable through an app, so tributes, Skills and highlights are refused, and a banned account
+/// can't post.
+pub(crate) async fn send_as_app(
+    app: &App,
+    user: &str,
+    channel: &str,
+    params: &Value,
+) -> Res<Value> {
+    let input: Send = serde_json::from_value(params.clone())
+        .map_err(|_| Fail::bad("Send {\"channel\",\"id\",\"body\"}."))?;
+    if input.tribute.is_some() || input.skill.is_some() || input.highlight {
+        return Err(Fail::denied("Apps can't spend Valor."));
+    }
+    let person: Option<crate::auth::User> = sqlx::query_as("SELECT * FROM users u WHERE id=$1 AND deleted_at IS NULL AND NOT legacy_deletion_hold
+        AND NOT EXISTS(SELECT 1 FROM account_bans b WHERE b.user_id=u.id AND b.status='ACTIVE' AND (b.until IS NULL OR b.until>now()))")
+        .bind(user).fetch_optional(&app.db).await?;
+    let person = person.ok_or_else(|| Fail::denied("Your account can't chat right now."))?;
+    if crate::streams::mature_blocked(&mut *app.db.acquire().await?, channel, Some(user)).await? {
+        return Err(Fail::denied(
+            "This channel is labeled mature, so its chat isn't available on your account.",
+        ));
+    }
+    send_from(app, person, Some(channel), input, None, None).await
 }
 
 /// What a Hype lane's chat is merged with right now: the featured channel's chat, or a merged
@@ -1137,7 +1176,7 @@ async fn hype_post(
             }
             send_from(
                 &app,
-                &jar,
+                user,
                 Some(&m.channel),
                 input,
                 Some(&lane),
@@ -1145,7 +1184,7 @@ async fn hype_post(
             )
             .await?
         }
-        None => send_from(&app, &jar, None, input, Some(&lane), None).await?,
+        None => send_from(&app, user, None, input, Some(&lane), None).await?,
     };
     Ok(Json(json!({"message": message})))
 }

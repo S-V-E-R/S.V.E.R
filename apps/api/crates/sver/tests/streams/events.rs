@@ -18,7 +18,7 @@ pub async fn exercise(e: &Env) {
         .unwrap()
         .to_string();
     // An owner's token with events:private (as the OAuth flow would issue).
-    e.sql("INSERT INTO oauth_grants(id,app_id,user_id,scopes) SELECT 'ev-grant',id,'stream-owner',ARRAY['events:private'] FROM dev_apps WHERE name='Alerts Overlay'").await;
+    e.sql("INSERT INTO oauth_grants(id,app_id,user_id,scopes) SELECT 'ev-grant',id,'stream-owner',ARRAY['events:private','chat:write','user:read','whispers:read'] FROM dev_apps WHERE name='Alerts Overlay'").await;
     sqlx::query("INSERT INTO oauth_tokens(token_hash,grant_id,kind,expires_at) VALUES($1,'ev-grant','access',now()+interval '1 hour')")
         .bind(sver::security::digest("ev-owner-token")).execute(&e.app.db).await.unwrap();
     sver::events::drain(&e.app).await.unwrap();
@@ -99,6 +99,104 @@ pub async fn exercise(e: &Env) {
         .await
         .unwrap();
     assert_eq!(next_json(&mut late).await["result"], "pong");
+
+    // Chat over the socket: an app with chat:write posts as the person; readers need only the
+    // client ID. Apps can't spend Valor.
+    late.send(send(
+        json!({"type":"method","id":4,"method":"subscribe","params":{"topics":["chat:Streamer"]}}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        next_json(&mut late).await["result"]["subscribed"],
+        json!(["chat:streamer"])
+    );
+    let say = |id: i64, extra: Value| {
+        let mut params = json!({"channel":"streamer","id":uuid::Uuid::new_v4().to_string(),"body":"Hello from an app"});
+        params
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        send(json!({"type":"method","id":id,"method":"send","params":params}))
+    };
+    owner.send(say(5, json!({"tribute": 10}))).await.unwrap();
+    assert_eq!(
+        next_json(&mut owner).await["error"],
+        "Apps can't spend Valor."
+    );
+    owner.send(say(6, json!({}))).await.unwrap();
+    assert_eq!(
+        next_json(&mut owner).await["result"]["message"]["body"],
+        "Hello from an app"
+    );
+    let heard = next_json(&mut late).await;
+    assert_eq!(
+        (
+            heard["topic"].as_str(),
+            heard["data"]["message"]["body"].as_str()
+        ),
+        (Some("chat:streamer"), Some("Hello from an app"))
+    );
+    late.send(say(7, json!({}))).await.unwrap();
+    assert_eq!(
+        next_json(&mut late).await["error"],
+        "Sending chat needs an access token."
+    );
+    late.send(send(
+        json!({"type":"method","id":8,"method":"history","params":{"topic":"chat:streamer"}}),
+    ))
+    .await
+    .unwrap();
+    let history = next_json(&mut late).await;
+    assert_eq!(
+        history["result"]["messages"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["body"],
+        "Hello from an app"
+    );
+
+    // The person's own topics, only with their own token.
+    late.send(send(json!({"type":"method","id":9,"method":"subscribe","params":{"topics":["user:streamer:notifications"]}}))).await.unwrap();
+    assert_eq!(
+        next_json(&mut late).await["result"]["refused"],
+        json!(["user:streamer:notifications"])
+    );
+    owner.send(send(json!({"type":"method","id":10,"method":"subscribe","params":{"topics":["user:streamer:notifications","user:streamer:whispers"]}}))).await.unwrap();
+    assert_eq!(
+        next_json(&mut owner).await["result"]["subscribed"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    e.app.chat.publish(
+        "dm:stream-owner",
+        None,
+        1,
+        json!({"type":"dm","with":"EvFan","message":{"body":"psst"}}),
+    );
+    let whisper = next_json(&mut owner).await;
+    assert_eq!(
+        (
+            whisper["topic"].as_str(),
+            whisper["data"]["message"]["body"].as_str()
+        ),
+        (Some("user:streamer:whispers"), Some("psst"))
+    );
+    e.sql("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload) VALUES('ev-note','stream-owner','sub_ending','stream-owner','ev-note',jsonb_build_object('title','Hi','body','There','url','/'))").await;
+    // Notifications are polled every 5 seconds; next_json waits 5 more.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let notice = next_json(&mut owner).await;
+    assert_eq!(
+        (
+            notice["topic"].as_str(),
+            notice["data"]["payload"]["title"].as_str()
+        ),
+        (Some("user:streamer:notifications"), Some("Hi"))
+    );
+    e.sql("DELETE FROM notifications WHERE id='ev-note'").await;
 
     // Stream details are a public update event.
     let settings = e.mine().await["settings"].clone();
