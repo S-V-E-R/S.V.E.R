@@ -334,4 +334,36 @@ not a command
     assert_eq!(report["skipped"].as_array().unwrap().len(), 2);
     e.sql("DELETE FROM chat_commands WHERE channel_id='stream-owner'")
         .await;
+    // Follower milestones are celebrated once per channel, even if the count dips and returns.
+    e.sql("DELETE FROM bot_events").await;
+    let followers: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM follows WHERE following_id='stream-owner'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    if followers <= 10 {
+        for i in followers..10 {
+            e.sql(sqlx::AssertSqlSafe(format!("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES('ms-{i}','ms-{i}@example.test','Milestone{i}',true,'1990-01-01')"))).await;
+            e.sql(sqlx::AssertSqlSafe(format!(
+                "INSERT INTO follows(follower_id,following_id) VALUES('ms-{i}','stream-owner')"
+            )))
+            .await;
+        }
+        for _ in 0..2 {
+            let mut db = e.app.db.acquire().await.unwrap();
+            sver::bot::follower_milestone(&mut db, "stream-owner")
+                .await
+                .unwrap();
+        }
+        let lines: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM bot_events WHERE kind='milestone' AND count=10",
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+        assert_eq!(lines, 1, "once per channel");
+        e.sql("DELETE FROM bot_events").await;
+        e.sql("DELETE FROM follows WHERE follower_id LIKE 'ms-%'")
+            .await;
+    }
 }

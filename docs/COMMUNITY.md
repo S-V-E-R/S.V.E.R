@@ -59,7 +59,8 @@ Carried over from legacy: each faction has its own bot persona, and a neutral on
   - **AutoMod:** off by default; the streamer turns on caps (10+ letters, over 70% capitals), repeats (10 of the same character, or the same message within 30 seconds) and spam (over 15 symbols or emojis). Channel roles are exempt. Strikes in the last hour pick the ladder step (default warning, 60 s, 10 min; 1–5 steps, each a warning or 10 s–14 days). A warning holds the message; a timeout is a normal channel timeout (liftable from the moderation log and Chat tools), logged as `automod_timeout` and announced by the bot. Banned words and the link rule still apply as before.
   - **Giveaways:** `!giveaway start KEYWORD`, `!giveaway end`, `!giveaway cancel` (owner and moderators); viewers with a Counted session on the live broadcast enter by typing the keyword; the end picks a random entrant who isn't banned, and the bot announces them.
   - **Command import:** Studio pastes a Nightbot or Fossabot list (`!name reply` per line, up to 200); `$(user)`, `$(touser)`, `$(channel)`, `$(uptime)`, `$(game)` (and `${…}` forms) are translated and anything else is flagged; reserved names and bad lines are skipped with the reason.
-  - **Not yet:** Surge-level and milestone lines, optional cross-faction greetings and random quips (off by default anyway).
+  - **Surge and milestone lines (October 10, 2026, migration 0087):** each bot greets a Surge's new level and the channel's follower milestones (10, 25, 50, 100, 250, 500, 1,000, 2,500, 5,000, 10,000; each once per channel, so an unfollow and refollow can't repeat it), in its own voice for each personality, while live.
+  - **Not yet:** optional cross-faction greetings and random quips (off by default anyway).
 
 ## GIFs in chat
 

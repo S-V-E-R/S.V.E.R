@@ -315,6 +315,7 @@ pub async fn tick(app: &App) -> Res<()> {
                         .bind((LEVEL_SECONDS * i64::from(reached - level)) as f64)
                         .execute(&app.db).await?;
                     announce(app, &channel, &id, Some(reached)).await?;
+                    crate::bot::surge_level(app, &channel, reached).await?;
                 }
             }
             None => {
