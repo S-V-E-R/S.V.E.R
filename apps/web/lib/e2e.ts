@@ -51,6 +51,24 @@ export async function commitment(frank: Uint8Array, body: string): Promise<strin
   return Array.from(digest, b => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * A safety number for a conversation: 12 groups of 5 digits from both people's device keys. Both
+ * people see the same number (the sides are ordered by content, not by who's looking), and it
+ * changes when either adds or removes a device. Matching numbers, compared outside S.V.E.R, mean
+ * the server handed out the real keys.
+ */
+export async function safetyNumber(mine: Device[], theirs: Device[]): Promise<string> {
+  const side = (devices: Device[]) => devices.map(d => d.public_key).sort().join("\n");
+  const sides = [side(mine), side(theirs)].sort();
+  const digest = new Uint8Array(await subtle().digest("SHA-512", new TextEncoder().encode(`sver-safety-v1\n${sides[0]}\n\n${sides[1]}`)));
+  const groups = [];
+  for (let i = 0; i < 60; i += 5) {
+    const value = digest.slice(i, i + 5).reduce((n, b) => n * 256 + b, 0);
+    groups.push(String(value % 100000).padStart(5, "0"));
+  }
+  return groups.join(" ");
+}
+
 /** Encrypts a message for every listed device (both people's). */
 export async function seal(body: string, devices: Device[]): Promise<{ envelope: Envelope; commitment: string }> {
   const message = await subtle().generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);

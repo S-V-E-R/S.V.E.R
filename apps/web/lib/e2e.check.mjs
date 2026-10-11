@@ -1,6 +1,6 @@
 // Private-mode crypto check (lib/e2e.ts), run with plain node 24: node lib/e2e.check.mjs
 import assert from "node:assert/strict";
-import { b64, commitment, exportPublic, newDeviceKeys, open, seal, unb64 } from "./e2e.ts";
+import { b64, commitment, exportPublic, newDeviceKeys, open, safetyNumber, seal, unb64 } from "./e2e.ts";
 
 // The commitment matches the server's franking_hex (SHA-256 of the secret bytes, then the text).
 assert.equal(await commitment(new Uint8Array(32).fill(7), "secret plan"), "1835443b354e6fb2f02314feb751e1655cb0b60ecb64503520c719c922c1cea0");
@@ -34,4 +34,10 @@ assert.deepEqual(Object.keys(skipped.envelope.keys), ["b1"]);
 // The evidence a report sends matches the stored commitment.
 const opened = await open(envelope, committed, "b1", bob.privateKey);
 assert.equal(await commitment(unb64(opened.frank), opened.body), committed);
+// Both people see the same safety number; a new device changes it.
+const aliceSide = devices.slice(0, 2), bobSide = devices.slice(2);
+const number = await safetyNumber(aliceSide, bobSide);
+assert.match(number, /^(\d{5} ){11}\d{5}$/);
+assert.equal(await safetyNumber(bobSide, [...aliceSide].reverse()), number, "same for both people, any order");
+assert.notEqual(await safetyNumber(aliceSide, [...bobSide, { id: "e1", public_key: await exportPublic(eve.publicKey) }]), number);
 console.log("e2e: ok");

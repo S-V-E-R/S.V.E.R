@@ -100,7 +100,8 @@ Carried over from legacy: each faction has its own bot persona, and a neutral on
   - Limits: a device added later can't read earlier private messages (its key didn't exist yet); clearing site data loses this browser's key. Blocks, under-18 rules, mutes, notifications (never with text) and expiry work as before.
   - Tests: `tests/streams/dms.rs` (`private_mode`: keys, refusals, envelope checks, franking reports) and `apps/web/lib/e2e.check.mjs` (encryption across devices, tampering, the commitment matching the server's).
   - **Deviation from the plan:** the plan names an established protocol (MLS). This uses standard primitives (WebCrypto ECDH, HKDF, AES-GCM) in a small scheme reviewed in-house, not MLS; Joe decides whether that ships or waits for an MLS library.
-  - **Not yet:** a cross-check by a cryptographer; key verification between people (safety numbers) or sender signatures, so the server is trusted to hand out the right device keys; forward secrecy for device keys.
+  - **Safety numbers (October 11, 2026):** a Private conversation shows a safety number, 12 groups of 5 digits from SHA-512 of both people's device keys (`safetyNumber` in `lib/e2e.ts`). Both people see the same number, and it changes when either adds or removes a device. Comparing it outside S.V.E.R checks that the server handed out the real keys.
+  - **Not yet:** a cross-check by a cryptographer; sender signatures; forward secrecy for device keys.
 
 ## Discord bot
 
