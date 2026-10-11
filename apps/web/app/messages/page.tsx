@@ -4,11 +4,17 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "../../components/Avatar";
 import { ReportButton } from "../../components/Report";
 import { send, useLoad } from "../../lib/client-api";
+import { open as openEnvelope, seal, type Device, type Envelope, type Opened } from "../../lib/e2e";
+import { ensureDevice, type ThisDevice } from "../../lib/e2e-device";
 import type { Chip } from "../../lib/types";
 
-type Message = { id: string; seq: number; sender: string; body: string; created_at: string };
+type Message = { id: string; seq: number; sender: string; body: string | null; created_at: string; private?: boolean; envelope?: Envelope; commitment?: string };
 type Conversation = { with: Chip; last: string; last_at: string; unread: number; muted: boolean };
-type Thread = { with: Chip; messages: Message[]; can_send: boolean; reason: string | null; muted: boolean };
+type Thread = {
+  with: Chip; messages: Message[]; can_send: boolean; reason: string | null; muted: boolean; private: boolean;
+  private_changed: { at: string; by: string | null } | null; their_device_at: string | null;
+};
+type MyDevice = { id: string; created_at: string };
 
 const LINK = /https?:\/\/|www\./i;
 const time = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -23,11 +29,20 @@ export default function Messages() {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const bottom = useRef<HTMLLIElement>(null);
+  // Private mode: this browser's device key, and what it could decrypt (null: not readable here).
+  const [device, setDevice] = useState<ThisDevice | null>(null);
+  const [deviceNote, setDeviceNote] = useState("");
+  const [plain, setPlain] = useState<Record<string, Opened | null>>({});
+  const [devices, setDevices] = useState<MyDevice[]>([]);
   const opened = useRef<string | null>(null);
 
   const loadList = useCallback(async () => {
     const r = await send<{ conversations: Conversation[] }>("GET", "/api/dms");
     if (r.ok) setList(r.data.conversations); else setError(r.error);
+  }, []);
+  const loadDevices = useCallback(async () => {
+    const r = await send<{ devices: MyDevice[] }>("GET", "/api/me/dm-devices");
+    if (r.ok) setDevices(r.data.devices);
   }, []);
   const loadThread = useCallback(async (name: string) => {
     const r = await send<Thread>("GET", `/api/dms/${encodeURIComponent(name)}`);
@@ -37,13 +52,19 @@ export default function Messages() {
     await loadList();
   }, [loadList]);
   const loadAll = useCallback(async () => {
-    const [account, settings] = await Promise.all([send<{ username: string }>("GET", "/api/auth/me"), send<{ policy: string }>("GET", "/api/me/dm-settings")]);
-    if (account.ok) setMe(account.data.username);
+    const [account, settings] = await Promise.all([send<{ id: string; username: string }>("GET", "/api/auth/me"), send<{ policy: string }>("GET", "/api/me/dm-settings")]);
+    if (account.ok) {
+      setMe(account.data.username);
+      const mine = await ensureDevice(account.data.id);
+      if (mine && typeof mine !== "string") setDevice(mine);
+      else setDeviceNote(typeof mine === "string" ? mine : "This browser can't keep the keys Private mode needs.");
+      await loadDevices();
+    }
     if (settings.ok) setPolicy(settings.data.policy);
     await loadList();
     const name = new URLSearchParams(window.location.search).get("with");
     if (name) { setOpen(name); opened.current = name; await loadThread(name); }
-  }, [loadList, loadThread]);
+  }, [loadList, loadThread, loadDevices]);
   useLoad(loadAll);
 
   // New messages arrive over a socket; while it's down, the page reloads every 15 seconds.
@@ -55,6 +76,7 @@ export default function Messages() {
       socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/dms/socket`);
       socket.onmessage = event => {
         const data = JSON.parse(event.data) as { type: string; with?: string; message?: Message };
+        if (data.type === "private" && data.with?.toLowerCase() === opened.current?.toLowerCase() && opened.current) void loadThread(opened.current);
         if (data.type === "dm" && data.message && data.with?.toLowerCase() === opened.current?.toLowerCase()) {
           const message = data.message;
           setThread(t => t && !t.messages.some(m => m.id === message.id) ? { ...t, messages: [...t.messages, message] } : t);
@@ -68,6 +90,16 @@ export default function Messages() {
     return () => { closed = true; clearInterval(poll); socket?.close(); };
   }, [loadList, loadThread]);
   useEffect(() => { bottom.current?.scrollIntoView({ block: "nearest" }); }, [thread?.messages.length]);
+  // Decrypt private messages on this device as they arrive.
+  useEffect(() => {
+    if (!device || !thread) return;
+    const todo = thread.messages.filter(m => m.private && m.envelope && m.commitment && !(m.id in plain));
+    if (!todo.length) return;
+    let live = true;
+    void Promise.all(todo.map(async m => [m.id, await openEnvelope(m.envelope!, m.commitment!, device.id, device.privateKey)] as const))
+      .then(done => { if (live) setPlain(p => ({ ...p, ...Object.fromEntries(done) })); });
+    return () => { live = false; };
+  }, [device, thread, plain]);
 
   async function choose(name: string) {
     setOpen(name); opened.current = name; setError(""); setDraft("");
@@ -77,11 +109,36 @@ export default function Messages() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!open || !draft.trim()) return;
-    const r = await send<{ message: Message }>("POST", `/api/dms/${encodeURIComponent(open)}`, { body: draft });
+    let payload: object = { body: draft };
+    // After Private mode was turned off, the first plain message is a deliberate choice.
+    const last = thread?.messages.at(-1);
+    if (thread && !thread.private && last?.private && !confirm("Private mode is off. This message won't be end-to-end encrypted. Send it anyway?")) return;
+    if (thread?.private) {
+      // Encrypted here for both people's devices; the server never sees the text.
+      if (!device) { setError(deviceNote || "This browser can't send private messages."); return; }
+      const keys = await send<{ mine: Device[]; theirs: Device[] }>("GET", `/api/dms/${encodeURIComponent(open)}/keys`);
+      if (!keys.ok) { setError(keys.error); return; }
+      payload = await seal(draft.trim(), [...keys.data.mine, ...keys.data.theirs]);
+    }
+    const r = await send<{ message: Message }>("POST", `/api/dms/${encodeURIComponent(open)}`, payload);
     if (!r.ok) { setError(r.error); return; }
     setDraft(""); setError("");
     setThread(t => t && !t.messages.some(m => m.id === r.data.message.id) ? { ...t, messages: [...t.messages, r.data.message] } : t);
     await loadList();
+  }
+  async function togglePrivate() {
+    if (!open || !thread) return;
+    const r = await send("PUT", `/api/dms/${encodeURIComponent(open)}/private`, { on: !thread.private });
+    if (!r.ok) { setError(r.error); return; }
+    setError("");
+    await loadThread(open);
+  }
+  async function removeDevice(id: string) {
+    if (!confirm(id === device?.id ? "Remove this browser? It won't be able to read private messages any more." : "Remove this device? It won't be able to read new private messages.")) return;
+    const r = await send("DELETE", `/api/me/dm-devices/${encodeURIComponent(id)}`);
+    if (!r.ok) { setError(r.error); return; }
+    if (id === device?.id) setDevice(null);
+    await loadDevices();
   }
   async function action(kind: "mute" | "clear" | "block") {
     if (!open || !thread) return;
@@ -105,7 +162,10 @@ export default function Messages() {
         <button type="submit" className="small">Open</button>
       </form>
     </div>
-    <p className="muted small">Messages are text only and are kept for 12 months. They aren&apos;t end-to-end encrypted: S.V.E.R stores them encrypted and staff can read a conversation only when it&apos;s reported.</p>
+    <p className="muted small">Messages are text only and are kept for 12 months. Normally S.V.E.R stores them encrypted and staff can read a conversation only when it&apos;s reported. Turn on <strong>Private</strong> in a conversation to encrypt it end to end on your devices: nobody else, including S.V.E.R, can read it; a report sends only the message you report. Private messages can&apos;t be read on a device added later. Private mode is for two adults.</p>
+    {devices.length > 0 && <details className="small"><summary>Your Private-mode devices ({devices.length})</summary>
+      <ul>{devices.map(d => <li key={d.id} className="row">Added {time(d.created_at)}{d.id === device?.id && <strong> (this browser)</strong>} <button type="button" className="small quiet danger-text" onClick={() => void removeDevice(d.id)}>Remove</button></li>)}</ul>
+    </details>}
     {error && <p role="alert" className="form-message error">{error}</p>}
     <div className="messages-layout">
       <nav className="panel messages-list" aria-label="Conversations">
@@ -121,14 +181,17 @@ export default function Messages() {
           <header className="row between wrap">
             <Link href={`/${thread.with.username}`}><strong>{thread.with.display_name}</strong> <span className="muted">@{thread.with.username}</span></Link>
             <span className="row wrap">
+              <button type="button" className="small quiet" aria-pressed={thread.private} disabled={!device && !thread.private} title={device ? "Private mode: end-to-end encrypted on your devices" : deviceNote} onClick={() => void togglePrivate()}>{thread.private ? "🔒 Private: on" : "Private: off"}</button>
               <button type="button" className="small quiet" onClick={() => action("mute")}>{thread.muted ? "Unmute" : "Mute"}</button>
               <button type="button" className="small quiet" onClick={() => action("clear")}>Delete for me</button>
               <button type="button" className="small quiet danger-text" onClick={() => action("block")}>Block</button>
             </span>
           </header>
+          {thread.private_changed && <p className="muted small" role="status">{thread.private_changed.by ? `@${thread.private_changed.by}` : "Someone"} turned Private mode {thread.private ? "on" : "off"} {time(thread.private_changed.at)}.{!thread.private && " New messages aren't end-to-end encrypted."}</p>}
+          {thread.private && thread.their_device_at && thread.private_changed && Date.parse(thread.their_device_at) > Date.parse(thread.private_changed.at) && <p className="muted small" role="status">@{thread.with.username} added a device {time(thread.their_device_at)}. New private messages can be read there too.</p>}
           <ol className="messages-body">{thread.messages.map(m => <li key={m.id} className={m.sender.toLowerCase() === me.toLowerCase() ? "mine" : "theirs"}>
-            <span className="messages-text">{m.body}</span>
-            <span className="muted small">{time(m.created_at)}{m.sender.toLowerCase() !== me.toLowerCase() && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id }} /></>}</span>
+            <span className="messages-text">{m.private ? <><span aria-label="Private">🔒 </span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
+            <span className="muted small">{time(m.created_at)}{m.sender.toLowerCase() !== me.toLowerCase() && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>
           </li>)}<li ref={bottom} aria-hidden="true" /></ol>
           {thread.can_send ? <form onSubmit={submit} className="stack">
             <label htmlFor="dm-input" className="sr-only">Message</label>

@@ -259,4 +259,206 @@ pub async fn exercise(e: &Env) {
     ] {
         e.sql(statement).await;
     }
+    private_mode(e).await;
+}
+
+/// Private mode: device keys, envelopes the server can't read, and franking-verified reports.
+async fn private_mode(e: &Env) {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+    let a = person(e, "dm-pa", "DmPrivA", true).await;
+    let b = person(e, "dm-pb", "DmPrivB", true).await;
+    e.sql(
+        "INSERT INTO follows(follower_id,following_id) VALUES('dm-pa','dm-pb'),('dm-pb','dm-pa')",
+    )
+    .await;
+    let key = |n: u8| B64.encode([&[4u8][..], &[n; 64][..]].concat());
+    let private = |token: &str, on: bool| {
+        let token = token.to_string();
+        async move {
+            call(
+                e,
+                "PUT",
+                "/api/dms/DmPrivB/private",
+                Some(&token),
+                json!({"on": on}),
+            )
+            .await
+            .0
+        }
+    };
+    assert_eq!(
+        private(&a, true).await,
+        StatusCode::CONFLICT,
+        "both need a device key"
+    );
+    let add = |token: &str, n: u8| {
+        let token = token.to_string();
+        async move {
+            call(
+                e,
+                "POST",
+                "/api/me/dm-devices",
+                Some(&token),
+                json!({"public_key": key(n)}),
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/dm-devices",
+            Some(&a),
+            json!({"public_key": "bad"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let a_dev = add(&a, 1).await.1["id"].as_str().unwrap().to_string();
+    let b_dev = add(&b, 2).await.1["id"].as_str().unwrap().to_string();
+    e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='dm-pb'")
+        .await;
+    assert_eq!(
+        private(&a, true).await,
+        StatusCode::FORBIDDEN,
+        "two adults only"
+    );
+    e.sql("UPDATE users SET date_of_birth='1990-01-01' WHERE id='dm-pb'")
+        .await;
+    assert_eq!(private(&a, true).await, StatusCode::OK);
+    let say = |body: Value| {
+        let token = a.clone();
+        async move {
+            e.sql("DELETE FROM rate_limits WHERE key LIKE 'dm:%'").await;
+            call(e, "POST", "/api/dms/DmPrivB", Some(&token), body).await
+        }
+    };
+    assert_eq!(
+        say(json!({"body": "in the clear"})).await.0,
+        StatusCode::CONFLICT,
+        "a private conversation takes only envelopes"
+    );
+    let frank = [7u8; 32];
+    let commitment = sver::dms::franking_hex(&frank, "secret plan");
+    let envelope = |to: &str| {
+        json!({"v": 1, "epk": key(3), "iv": B64.encode([1u8; 12]), "ct": B64.encode([9u8; 40]),
+            "keys": {to: {"iv": B64.encode([2u8; 12]), "k": B64.encode([5u8; 48])}}})
+    };
+    assert_eq!(
+        say(json!({"envelope": envelope("not-a-device"), "commitment": commitment}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        say(json!({"envelope": envelope(&a_dev), "commitment": commitment}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST,
+        "the recipient must be able to read it"
+    );
+    let (status, sent) = say(json!({"envelope": envelope(&b_dev), "commitment": commitment})).await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    assert_eq!(
+        (&sent["message"]["private"], &sent["message"]["body"]),
+        (&json!(true), &Value::Null)
+    );
+    let stored: String = sqlx::query_scalar("SELECT body_sealed FROM dm_messages WHERE id=$1")
+        .bind(sent["message"]["id"].as_str().unwrap())
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(stored, "", "the server keeps no readable body");
+    let (_, list) = call(e, "GET", "/api/dms", Some(&b), Value::Null).await;
+    assert_eq!(list["conversations"][0]["last"], "Private message");
+    let (_, thread) = call(e, "GET", "/api/dms/DmPrivA", Some(&b), Value::Null).await;
+    assert_eq!(
+        (&thread["private"], &thread["messages"][0]["envelope"]["v"]),
+        (&json!(true), &json!(1))
+    );
+
+    // A message that can't be read or verified can still be reported, without any text.
+    let (_, second) = say(json!({"envelope": envelope(&b_dev), "commitment": commitment})).await;
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/reports",
+        Some(&b),
+        json!({"target_type": "dm_message",
+        "target_id": second["message"]["id"], "reason": "harassment"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "metadata-only report");
+    // A report carries the recipient's plaintext and is accepted only if it matches the commitment.
+    let id = sent["message"]["id"].as_str().unwrap().to_string();
+    let report = |body: &str| {
+        let (token, id, body) = (b.clone(), id.clone(), body.to_string());
+        async move {
+            call(
+                e,
+                "POST",
+                "/api/reports",
+                Some(&token),
+                json!({"target_type": "dm_message", "target_id": id, "reason": "harassment",
+                "evidence": {"body": body, "frank": B64.encode(frank)}}),
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        report("something else").await.0,
+        StatusCode::BAD_REQUEST,
+        "evidence must match"
+    );
+    let (status, filed) = report("secret plan").await;
+    assert_eq!(status, StatusCode::OK, "{filed}");
+    let staff = person(e, "dm-pstaff", "DmPrivStaff", true).await;
+    for statement in [
+        "UPDATE users SET mfa_enabled=true,mfa_secret='synthetic' WHERE id='dm-pstaff'",
+        "UPDATE sessions SET mfa_verified=true WHERE user_id='dm-pstaff'",
+        "INSERT INTO staff_roles(user_id,role) VALUES('dm-pstaff','admin')",
+    ] {
+        e.sql(statement).await;
+    }
+    let report_id: String = sqlx::query_scalar(
+        "SELECT id FROM reports WHERE target_type='dm_message' AND target_id=$1",
+    )
+    .bind(&id)
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    let (_, excerpt) = call(
+        e,
+        "GET",
+        &format!("/api/admin/dm-reports/{report_id}"),
+        Some(&staff),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        (
+            &excerpt["messages"][0]["body"],
+            &excerpt["messages"][0]["verified"],
+            excerpt["messages"].as_array().unwrap().len()
+        ),
+        (&json!("secret plan"), &json!(true), 1),
+        "only the verified message"
+    );
+    assert_eq!(private(&a, false).await, StatusCode::OK);
+    assert_eq!(
+        say(json!({"body": "back to normal", "commitment": "ab"}))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    for statement in [
+        "DELETE FROM reports WHERE target_type='dm_message'",
+        "DELETE FROM moderation_actions WHERE action='dm_read'",
+        "DELETE FROM staff_roles WHERE user_id='dm-pstaff'",
+        "DELETE FROM dm_conversations",
+    ] {
+        e.sql(statement).await;
+    }
 }

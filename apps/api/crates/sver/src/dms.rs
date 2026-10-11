@@ -2,6 +2,11 @@
 //! other (or whom the recipient follows, if they allow it), with stricter rules for under-18
 //! accounts. Bodies are sealed with a DM-only purpose binding; staff can read only a reported
 //! conversation's excerpt, through the report, and every read is audited.
+//!
+//! Private mode (opt-in per conversation): browsers encrypt to each other's device keys, and the
+//! server stores only the ciphertext envelope and a commitment. Staff can never read one; a report
+//! of a private message carries the reporter's plaintext, accepted only if it matches the
+//! commitment.
 use crate::{
     App,
     profiles::{self, Fail, Res},
@@ -15,9 +20,10 @@ use axum::{
     },
     http::HeaderMap,
     response::Response,
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
 };
 use axum_extra::extract::cookie::CookieJar;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -27,6 +33,9 @@ const PURPOSE: &str = "dm";
 const MAX_CHARS: usize = 1000;
 const PAGE: i64 = 50;
 const POLICIES: [&str; 3] = ["mutuals", "following", "nobody"];
+/// Private mode: device keys per person, and the most a private envelope may hold.
+const MAX_DEVICES: i64 = 5;
+const MAX_ENVELOPE: usize = 12 * 1024;
 
 type Facts = (bool, bool, bool, Option<String>, bool, bool, bool, bool);
 /// Why `from` can't message `to`, or None when they can.
@@ -84,9 +93,26 @@ async fn conversation(db: &mut PgConnection, a: &str, b: &str) -> Res<Option<Str
 fn open(app: &App, sealed: &str) -> String {
     sec::unseal(app, PURPOSE, sealed).unwrap_or_default()
 }
-type Row = (String, i64, String, String, DateTime<Utc>);
-fn message(app: &App, (id, seq, sender, sealed, at): &Row) -> Value {
-    json!({"id": id, "seq": seq, "sender": sender, "body": open(app, sealed), "created_at": at})
+type Row = (
+    String,
+    i64,
+    String,
+    String,
+    DateTime<Utc>,
+    Option<Value>,
+    Option<String>,
+);
+/// The message columns every query selects (after the sender's username).
+const COLUMNS: &str = "m.body_sealed,m.created_at,m.envelope,m.commitment";
+fn message(app: &App, (id, seq, sender, sealed, at, envelope, commitment): &Row) -> Value {
+    match envelope {
+        Some(envelope) => {
+            json!({"id": id, "seq": seq, "sender": sender, "body": null, "private": true, "envelope": envelope, "commitment": commitment, "created_at": at})
+        }
+        None => {
+            json!({"id": id, "seq": seq, "sender": sender, "body": open(app, sealed), "private": false, "created_at": at})
+        }
+    }
 }
 const BLOCKED: &str = "EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=$2) OR (b.blocker_id=$2 AND b.blocked_id=$1))";
 
@@ -115,12 +141,12 @@ async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         .filter(|r| r.1.is_some())
         .map(|(mut with, last, at, unread, muted)| {
             profiles::hydrate(&app, &mut with);
-            let preview: String = last
-                .map(|s| open(&app, &s))
-                .unwrap_or_default()
-                .chars()
-                .take(80)
-                .collect();
+            // A private message's preview is just that: the server can't read it.
+            let preview: String = match last.as_deref() {
+                Some("") => "Private message".into(),
+                Some(s) => open(&app, s).chars().take(80).collect(),
+                None => String::new(),
+            };
             json!({"with": with, "last": preview, "last_at": at, "unread": unread, "muted": muted})
         })
         .collect();
@@ -165,6 +191,19 @@ async fn read(
         .fetch_one(&mut *db)
         .await?;
     let id = conversation(&mut db, &me.id, &other.id).await?;
+    let (private, changed): (bool, Value) = match &id {
+        Some(id) => sqlx::query_as("SELECT c.private,CASE WHEN c.private_changed_at IS NULL THEN 'null'::jsonb ELSE jsonb_build_object('at',c.private_changed_at,'by',u.username) END FROM dm_conversations c LEFT JOIN users u ON u.id=c.private_changed_by WHERE c.id=$1")
+            .bind(id)
+            .fetch_one(&mut *db)
+            .await?,
+        None => (false, Value::Null),
+    };
+    // A new device on the other side is worth knowing about in a private conversation.
+    let their_device_at: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT max(created_at) FROM dm_devices WHERE user_id=$1")
+            .bind(&other.id)
+            .fetch_one(&mut *db)
+            .await?;
     let (messages, muted) = match id.filter(|_| !blocked) {
         None => (Vec::new(), false),
         Some(id) => {
@@ -176,21 +215,104 @@ async fn read(
             .fetch_optional(&mut *db)
             .await?
             .unwrap_or(false);
-            let mut rows: Vec<Row> = sqlx::query_as("SELECT m.id,m.seq,u.username,m.body_sealed,m.created_at FROM dm_messages m JOIN users u ON u.id=m.sender_id
+            let mut rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT m.id,m.seq,u.username,{COLUMNS} FROM dm_messages m JOIN users u ON u.id=m.sender_id
                 WHERE m.conversation_id=$1 AND m.deleted_at IS NULL AND m.seq>coalesce((SELECT cleared_seq FROM dm_state WHERE conversation_id=$1 AND user_id=$2),0)
-                  AND ($3::bigint IS NULL OR m.seq<$3) ORDER BY m.seq DESC LIMIT $4")
+                  AND ($3::bigint IS NULL OR m.seq<$3) ORDER BY m.seq DESC LIMIT $4")))
                 .bind(&id).bind(&me.id).bind(page.before).bind(PAGE).fetch_all(&mut *db).await?;
             rows.reverse();
             (rows.iter().map(|r| message(&app, r)).collect(), muted)
         }
     };
     Ok(Json(
-        json!({"with": with, "messages": messages, "can_send": why.is_none(), "reason": why, "muted": muted}),
+        json!({"with": with, "messages": messages, "can_send": why.is_none(), "reason": why, "muted": muted, "private": private, "private_changed": changed, "their_device_at": their_device_at}),
     ))
 }
 #[derive(Deserialize)]
 pub struct Send {
+    #[serde(default)]
     body: String,
+    /// Private mode: the ciphertext envelope and its commitment, instead of a body.
+    #[serde(default)]
+    envelope: Option<Value>,
+    #[serde(default)]
+    commitment: Option<String>,
+}
+/// The franking commitment: SHA-256 of the 32 secret bytes then the text, as lowercase hex.
+pub fn franking_hex(frank: &[u8], body: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest([frank, body.as_bytes()].concat())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+fn b64(value: &Value) -> Option<Vec<u8>> {
+    value.as_str().and_then(|s| URL_SAFE_NO_PAD.decode(s).ok())
+}
+/// A device's public key: an uncompressed P-256 point (65 bytes starting 0x04), base64url.
+fn valid_key(key: &str) -> bool {
+    URL_SAFE_NO_PAD
+        .decode(key)
+        .is_ok_and(|k| k.len() == 65 && k[0] == 4)
+}
+/// Checks a private message's envelope: its shape and sizes, and that every wrapped key is for a
+/// device of one of the two people, with at least one of the recipient's.
+async fn check_envelope(
+    db: &mut PgConnection,
+    envelope: &Value,
+    me: &str,
+    other: &str,
+) -> Res<Value> {
+    let bad = || {
+        Fail::field(
+            "envelope",
+            "That private message couldn't be sent. Reload and try again.",
+        )
+    };
+    if envelope["v"] != 1 || envelope.to_string().len() > MAX_ENVELOPE {
+        return Err(bad());
+    }
+    let epk = b64(&envelope["epk"]).ok_or_else(bad)?;
+    let iv = b64(&envelope["iv"]).ok_or_else(bad)?;
+    let ct = b64(&envelope["ct"]).ok_or_else(bad)?;
+    // The plaintext is {"body": ≤1,000 characters, "frank": 43 characters} as JSON.
+    if epk.len() != 65 || epk[0] != 4 || iv.len() != 12 || !(17..=6000).contains(&ct.len()) {
+        return Err(bad());
+    }
+    let keys = envelope["keys"].as_object().ok_or_else(bad)?;
+    if keys.is_empty() || keys.len() > 2 * MAX_DEVICES as usize {
+        return Err(bad());
+    }
+    let devices: Vec<(String, String)> =
+        sqlx::query_as("SELECT id,user_id FROM dm_devices WHERE user_id IN ($1,$2)")
+            .bind(me)
+            .bind(other)
+            .fetch_all(db)
+            .await?;
+    let mut theirs = false;
+    let mut kept = serde_json::Map::new();
+    for (device, wrapped) in keys {
+        let owner = devices
+            .iter()
+            .find(|(id, _)| id == device)
+            .map(|(_, u)| u)
+            .ok_or_else(bad)?;
+        let (iv, key) = (b64(&wrapped["iv"]), b64(&wrapped["k"]));
+        if iv.is_none_or(|v| v.len() != 12) || key.is_none_or(|k| k.len() != 48) {
+            return Err(bad());
+        }
+        theirs |= owner == other;
+        kept.insert(
+            device.clone(),
+            json!({"iv": wrapped["iv"], "k": wrapped["k"]}),
+        );
+    }
+    if !theirs {
+        return Err(bad());
+    }
+    // Only the checked fields are stored and served back.
+    Ok(
+        json!({"v": 1, "epk": envelope["epk"], "iv": envelope["iv"], "ct": envelope["ct"], "keys": kept}),
+    )
 }
 /// POST /api/dms/{username}: sends a message.
 async fn send(
@@ -202,7 +324,20 @@ async fn send(
     let me = profiles::signed_in(&app, &jar).await?;
     crate::switches::guard(&mut *app.db.acquire().await?, "dms").await?;
     let body = input.body.trim();
-    if body.is_empty()
+    let private = input.envelope.is_some();
+    if private {
+        let ok = input.commitment.as_deref().is_some_and(|c| {
+            c.len() == 64
+                && c.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        });
+        if !ok || !body.is_empty() {
+            return Err(Fail::field(
+                "envelope",
+                "That private message couldn't be sent. Reload and try again.",
+            ));
+        }
+    } else if body.is_empty()
         || body.chars().count() > MAX_CHARS
         || body.chars().any(|c| c.is_control() && c != '\n')
     {
@@ -233,8 +368,31 @@ async fn send(
     .bind(&other.id)
     .execute(&mut *tx)
     .await?;
-    let row: Row = sqlx::query_as("INSERT INTO dm_messages(id,conversation_id,sender_id,body_sealed) VALUES($1,$2,$3,$4) RETURNING id,seq,$5,body_sealed,created_at")
-        .bind(profiles::new_id()).bind(&id).bind(&me.id).bind(sec::seal(&app, PURPOSE, body)?).bind(&me.username)
+    // In Private mode only envelopes go through, and envelopes only in Private mode.
+    let is_private: bool = sqlx::query_scalar("SELECT private FROM dm_conversations WHERE id=$1")
+        .bind(&id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if is_private != private {
+        return Err(Fail::conflict(if is_private {
+            "This conversation is private now. Reload to send an encrypted message."
+        } else {
+            "This conversation isn't private."
+        }));
+    }
+    let envelope = match &input.envelope {
+        Some(envelope) => Some(check_envelope(&mut tx, envelope, &me.id, &other.id).await?),
+        None => None,
+    };
+    // L4: a commitment goes only with an envelope.
+    let commitment = input.commitment.as_ref().filter(|_| private);
+    let sealed = if private {
+        String::new()
+    } else {
+        sec::seal(&app, PURPOSE, body)?
+    };
+    let row: Row = sqlx::query_as("INSERT INTO dm_messages(id,conversation_id,sender_id,body_sealed,envelope,commitment) VALUES($1,$2,$3,$4,$6,$7) RETURNING id,seq,$5,body_sealed,created_at,envelope,commitment")
+        .bind(profiles::new_id()).bind(&id).bind(&me.id).bind(sealed).bind(&me.username).bind(&envelope).bind(commitment)
         .fetch_one(&mut *tx).await?;
     // The recipient hears about the first unread message of a streak (never the text, which is
     // sealed), unless they muted the conversation; their notification settings decide site/push.
@@ -386,6 +544,160 @@ async fn session(app: App, me: String, mut ws: WebSocket) {
     }
 }
 
+// ---- Private mode ----
+
+/// GET /api/me/dm-devices: this account's device keys.
+async fn devices(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let me = profiles::signed_in(&app, &jar).await?;
+    device_list(&app, &me.id).await
+}
+async fn device_list(app: &App, user: &str) -> Res<Json<Value>> {
+    let rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'public_key',public_key,'created_at',created_at) FROM dm_devices WHERE user_id=$1 ORDER BY created_at")
+        .bind(user).fetch_all(&app.db).await?;
+    Ok(Json(json!({"devices": rows, "max": MAX_DEVICES})))
+}
+#[derive(Deserialize)]
+pub struct NewDevice {
+    public_key: String,
+}
+/// POST /api/me/dm-devices: registers this browser's public key (up to 5 devices).
+async fn add_device(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<NewDevice>,
+) -> Res<Json<Value>> {
+    let me = profiles::signed_in(&app, &jar).await?;
+    if !valid_key(&input.public_key) {
+        return Err(Fail::field("public_key", "That device key isn't valid."));
+    }
+    profiles::rate(&app, format!("dm-device:{}", me.id), 10, 3600).await?;
+    let mut tx = app.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,94))")
+        .bind(&me.id)
+        .execute(&mut *tx)
+        .await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM dm_devices WHERE user_id=$1")
+        .bind(&me.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if count >= MAX_DEVICES {
+        return Err(Fail::conflict(
+            "You have 5 devices with private messages. Remove one first.",
+        ));
+    }
+    let id = profiles::new_id();
+    sqlx::query("INSERT INTO dm_devices(id,user_id,public_key) VALUES($1,$2,$3)")
+        .bind(&id)
+        .bind(&me.id)
+        .bind(&input.public_key)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let mut list = device_list(&app, &me.id).await?.0;
+    list["id"] = json!(id);
+    Ok(Json(list))
+}
+/// DELETE /api/me/dm-devices/{id}: that device can no longer read new private messages.
+async fn remove_device(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Res<Json<Value>> {
+    let me = profiles::signed_in(&app, &jar).await?;
+    sqlx::query("DELETE FROM dm_devices WHERE id=$1 AND user_id=$2")
+        .bind(&id)
+        .bind(&me.id)
+        .execute(&app.db)
+        .await?;
+    device_list(&app, &me.id).await
+}
+/// GET /api/dms/{username}/keys: both people's device keys, for encrypting to them.
+async fn keys(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+) -> Res<Json<Value>> {
+    let me = profiles::signed_in(&app, &jar).await?;
+    let mut db = app.db.acquire().await?;
+    let other = person(&mut db, &name).await?;
+    let blocked: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {BLOCKED}")))
+        .bind(&me.id)
+        .bind(&other.id)
+        .fetch_one(&mut *db)
+        .await?;
+    let talking = conversation(&mut db, &me.id, &other.id).await?.is_some();
+    if blocked || (!talking && refusal(&mut db, &me.id, &other.id).await?.is_some()) {
+        return Err(Fail::missing());
+    }
+    let mut lists = Vec::new();
+    for user in [&me.id, &other.id] {
+        let rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'public_key',public_key) FROM dm_devices WHERE user_id=$1 ORDER BY created_at")
+            .bind(user).fetch_all(&mut *db).await?;
+        lists.push(rows);
+    }
+    Ok(Json(json!({"mine": lists[0], "theirs": lists[1]})))
+}
+#[derive(Deserialize)]
+pub struct Private {
+    on: bool,
+}
+/// PUT /api/dms/{username}/private: either person turns Private mode on (both need a device key)
+/// or off. Both see the state in the conversation.
+async fn set_private(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Json(input): Json<Private>,
+) -> Res<Json<Value>> {
+    let me = profiles::signed_in(&app, &jar).await?;
+    let mut tx = app.db.begin().await?;
+    let other = person(&mut tx, &name).await?;
+    if let Some(why) = refusal(&mut tx, &me.id, &other.id).await? {
+        return Err(Fail::denied(why));
+    }
+    if input.on {
+        let adults: bool = sqlx::query_scalar("SELECT count(*)=2 FROM users WHERE id IN ($1,$2) AND date_of_birth<=current_date-interval '18 years'")
+            .bind(&me.id).bind(&other.id).fetch_one(&mut *tx).await?;
+        if !adults {
+            return Err(Fail::denied(
+                "Private mode is for conversations between two adults.",
+            ));
+        }
+        let ready: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dm_devices WHERE user_id=$1) AND EXISTS(SELECT 1 FROM dm_devices WHERE user_id=$2)")
+            .bind(&me.id).bind(&other.id).fetch_one(&mut *tx).await?;
+        if !ready {
+            return Err(Fail::conflict(
+                "Both of you need to open Messages on a device that supports Private mode first.",
+            ));
+        }
+    }
+    let (a, b) = if me.id < other.id {
+        (&me.id, &other.id)
+    } else {
+        (&other.id, &me.id)
+    };
+    let id: String = sqlx::query_scalar("INSERT INTO dm_conversations(id,user_a,user_b,private,private_changed_at,private_changed_by) VALUES($1,$2,$3,$4,now(),$5) ON CONFLICT(user_a,user_b) DO UPDATE SET private=EXCLUDED.private,private_changed_at=now(),private_changed_by=EXCLUDED.private_changed_by RETURNING id")
+        .bind(profiles::new_id()).bind(a).bind(b).bind(input.on).bind(&me.id).fetch_one(&mut *tx).await?;
+    sqlx::query(
+        "INSERT INTO dm_state(conversation_id,user_id) VALUES($1,$2),($1,$3) ON CONFLICT DO NOTHING",
+    )
+    .bind(&id)
+    .bind(&me.id)
+    .bind(&other.id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    for (to, with) in [(&other.id, &me.username), (&me.id, &other.username)] {
+        app.chat.publish(
+            &format!("dm:{to}"),
+            None,
+            0,
+            json!({"type": "private", "with": with, "private": input.on}),
+        );
+    }
+    Ok(Json(json!({"private": input.on})))
+}
+
 // ---- Reports and expiry ----
 
 /// A DM report's target: the reporter must be the other person in the conversation. The snapshot
@@ -395,15 +707,69 @@ pub async fn report_target(
     db: &mut PgConnection,
     id: &str,
     reporter: &str,
+    evidence: Option<&Value>,
 ) -> Res<(String, String, Value)> {
     let found: Option<(String, String, String)> = sqlx::query_as("SELECT m.conversation_id,m.sender_id,u.username FROM dm_messages m JOIN dm_conversations c ON c.id=m.conversation_id JOIN users u ON u.id=m.sender_id
         WHERE m.id=$1 AND m.deleted_at IS NULL AND (c.user_a=$2 OR c.user_b=$2) AND m.sender_id<>$2")
         .bind(id).bind(reporter).fetch_optional(&mut *db).await?;
     let (conversation, sender, sender_name) = found.ok_or_else(Fail::missing)?;
-    let rows: Vec<Row> = sqlx::query_as("SELECT m.id,m.seq,u.username,m.body_sealed,m.created_at FROM dm_messages m JOIN users u ON u.id=m.sender_id
-        WHERE m.conversation_id=$1 AND m.seq<=(SELECT seq FROM dm_messages WHERE id=$2) ORDER BY m.seq DESC LIMIT 21")
-        .bind(&conversation).bind(id).fetch_all(&mut *db).await?;
-    let excerpt: Vec<Value> = rows.iter().rev().map(|r| message(app, r)).collect();
+    let commitment: Option<String> =
+        sqlx::query_scalar("SELECT commitment FROM dm_messages WHERE id=$1")
+            .bind(id)
+            .fetch_one(&mut *db)
+            .await?;
+    let excerpt: Vec<Value> = match commitment {
+        // A private message: the reporter's plaintext, accepted only if it matches what the sender
+        // committed to. Nothing else in a private conversation can be read by anyone but the two.
+        Some(_) if evidence.is_none() => {
+            let at: DateTime<Utc> =
+                sqlx::query_scalar("SELECT created_at FROM dm_messages WHERE id=$1")
+                    .bind(id)
+                    .fetch_one(&mut *db)
+                    .await?;
+            vec![
+                json!({"id": id, "sender": sender_name, "body": null, "private": true, "unverifiable": true, "created_at": at}),
+            ]
+        }
+        Some(commitment) => {
+            let body = evidence
+                .and_then(|e| e["body"].as_str())
+                .unwrap_or_default();
+            let frank = evidence.and_then(|e| b64(&e["frank"])).unwrap_or_default();
+            if frank.len() != 32 || franking_hex(&frank, body) != commitment {
+                return Err(Fail::field(
+                    "evidence",
+                    "This private message couldn't be verified for a report.",
+                ));
+            }
+            let at: DateTime<Utc> =
+                sqlx::query_scalar("SELECT created_at FROM dm_messages WHERE id=$1")
+                    .bind(id)
+                    .fetch_one(&mut *db)
+                    .await?;
+            vec![
+                json!({"id": id, "sender": sender_name, "body": body, "private": true, "verified": true, "created_at": at}),
+            ]
+        }
+        None => {
+            let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT m.id,m.seq,u.username,{COLUMNS} FROM dm_messages m JOIN users u ON u.id=m.sender_id
+                WHERE m.conversation_id=$1 AND m.seq<=(SELECT seq FROM dm_messages WHERE id=$2) ORDER BY m.seq DESC LIMIT 21")))
+                .bind(&conversation).bind(id).fetch_all(&mut *db).await?;
+            // Earlier private messages stay private: only their place in the excerpt shows.
+            rows.iter()
+                .rev()
+                .map(|r| {
+                    let mut m = message(app, r);
+                    if let Some(o) = m.as_object_mut() {
+                        o.remove("envelope");
+                        o.remove("commitment");
+                    }
+                    m
+                })
+                .collect()
+        }
+    };
+
     let sealed = sec::seal(
         app,
         "dm-report",
@@ -483,5 +849,9 @@ pub fn routes() -> Router<App> {
         .route("/api/dms/{username}/read", post(mark_read))
         .route("/api/dms/{username}/mute", put(mute))
         .route("/api/me/dm-settings", get(settings).put(set_settings))
+        .route("/api/me/dm-devices", get(devices).post(add_device))
+        .route("/api/me/dm-devices/{id}", delete(remove_device))
+        .route("/api/dms/{username}/keys", get(keys))
+        .route("/api/dms/{username}/private", put(set_private))
         .route("/api/admin/dm-reports/{report}", get(staff_read))
 }
