@@ -76,6 +76,16 @@ pub async fn emit(
             .bind(kind)
             .fetch_optional(&mut *db)
             .await?;
+    // A new or renewed subscription syncs the channel's Discord roles on the bot's next tick
+    // (seconds) instead of waiting for the 15-minute sweep (docs/COMMUNITY.md "Discord bot").
+    if kind == "subs" {
+        sqlx::query(
+            "UPDATE discord_servers SET synced_at=NULL WHERE channel_id=$1 AND problem IS NULL",
+        )
+        .bind(channel)
+        .execute(&mut *db)
+        .await?;
+    }
     // A channel's private events never show someone its owner has blocked.
     if matches!(kind, "follows:detail" | "subs" | "tributes" | "skills")
         && let Some(name) = data["user"].as_str()
