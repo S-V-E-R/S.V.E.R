@@ -341,8 +341,15 @@ async fn upload_sound(
     multipart: Multipart,
 ) -> Res<Json<Value>> {
     let (me, kind) = uploader(&app, &jar, &kind).await?;
+    let key = store_sound(&app, &me, multipart).await?;
+    set_media(&app, &me, kind, "audio", Some(&key)).await?;
+    mine(State(app), jar).await
+}
+/// Reads an uploaded sound, re-encodes it (10 seconds, mono WAV) and stores it; returns its key.
+/// Alerts and custom Skills share it.
+pub(crate) async fn store_sound(app: &App, owner: &str, multipart: Multipart) -> Res<String> {
     let (bytes, _, _) = media::read_upload(multipart, Kind::AlertSound).await?;
-    profiles::rate(&app, format!("sound-upload:{me}"), 20, 3600).await?;
+    profiles::rate(app, format!("sound-upload:{owner}"), 20, 3600).await?;
     let wav = transcode(bytes).await.ok_or_else(|| {
         Fail::field(
             "file",
@@ -369,9 +376,8 @@ async fn upload_sound(
         )
         .await?;
     sqlx::query("INSERT INTO media_objects(key,owner_id,kind,bytes,fingerprinted) VALUES($1,$2,'alert_sound',$3,true) ON CONFLICT (key) DO UPDATE SET delete_after=NULL,owner_id=EXCLUDED.owner_id")
-        .bind(&key).bind(&me).bind(size).execute(&app.db).await?;
-    set_media(&app, &me, kind, "audio", Some(&key)).await?;
-    mine(State(app), jar).await
+        .bind(&key).bind(owner).bind(size).execute(&app.db).await?;
+    Ok(key)
 }
 /// DELETE /api/me/overlays/{kind}/image
 async fn remove_image(

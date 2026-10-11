@@ -8,7 +8,7 @@ import { SkillArt } from "./SkillArt";
 import type { Reward } from "./Rewards";
 
 type Tab = "emotes" | "signature" | "rewards" | "skills";
-type Skill = { id: string; name: string; category: string; valor: number; effect: string; enabled: boolean };
+type Skill = { id: string; name: string; category: string; valor: number; effect: string; enabled: boolean; custom?: boolean; image?: string | null };
 
 /**
  * Everything a viewer can add to chat, in one row under the message box (Mixer's chat bar):
@@ -131,7 +131,8 @@ function SkillsTab({ username, account }: { username: string; account: string | 
     {canPlay && <label className="field"><span>Message (optional)</span><input value={text} maxLength={200} onChange={e => setText(e.target.value)} /></label>}
     <ul className="dock-tiles">{data.skills.filter(s => s.enabled).map(s => <li key={s.id}>
       <button type="button" className="dock-tile" disabled={!canPlay || busy || data.paused || (data.valor ?? 0) < s.valor} onClick={() => play(s)}>
-        <SkillArt id={s.id} size={40} /><span className="dock-tile-name">{s.name}</span><span className="dock-cost">{s.valor.toLocaleString()}</span></button></li>)}</ul>
+        {/* eslint-disable-next-line @next/next/no-img-element -- the streamer's uploaded Skill image, already resized */}
+        {s.image ? <img src={s.image} alt="" width={40} height={40} className="skill-art" /> : <SkillArt id={s.custom ? "custom" : s.id} size={40} />}<span className="dock-tile-name">{s.name}</span><span className="dock-cost">{s.valor.toLocaleString()}</span></button></li>)}</ul>
     {note && <p role="status" className="form-message">{note}</p>}
   </>;
 }

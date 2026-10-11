@@ -8,7 +8,7 @@ export type BoardEvent = {
   goal?: { progress: number; target: number; reached: boolean } | null;
   stream_ms?: number | null; at?: number; overlay?: boolean; test?: boolean; x?: number; y?: number;
   /** Skills, emote combos and Surge levels carry their own caption; combos carry the emote image. */
-  caption?: string; image?: string; skill?: string; surge?: number;
+  caption?: string; image?: string | null; audio?: string | null; skill?: string; surge?: number;
 };
 type Shown = BoardEvent & { key: number };
 
@@ -54,10 +54,13 @@ export function EffectStage({ events, calm }: { events: Shown[]; calm: boolean }
       const particle = animate ? PARTICLES[e.effect!] : undefined;
       const sticker = animate ? STICKERS[e.effect!] : undefined;
       const shower = animate && e.effect === "emote-shower" && e.image;
+      const custom = animate && e.effect === "custom" && e.image;
       return <div key={e.key} className={animate ? `board-effect effect-${e.effect}` : "board-effect"}>
         {particle && <div className="board-particles" aria-hidden="true">{Array.from({ length: 18 }, (_, i) => <span key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i % 6) * 0.12}s` }}>{particle}</span>)}</div>}
         {shower && <div className="board-particles" aria-hidden="true">{Array.from({ length: 18 }, (_, i) => <span key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i % 6) * 0.12}s`, backgroundImage: `url(${JSON.stringify(e.image)})` }} className="emote-particle" />)}</div>}
         {sticker && <div className="board-sticker" aria-hidden="true">{sticker}</div>}
+        {/* eslint-disable-next-line @next/next/no-img-element -- a custom Skill's uploaded image, already resized */}
+        {custom && <img className="board-sticker board-sticker-image" src={e.image!} alt="" aria-hidden="true" />}
         <p className="board-caption">{e.caption ?? <><strong>{e.user?.username}</strong> {e.goal ? (e.goal.reached ? `completed ${e.label}!` : `added to ${e.label} (${e.goal.progress}/${e.goal.target})`) : `used ${e.label}`}</>}{e.text && <>: <q>{e.text}</q></>}</p>
       </div>;
     })}
@@ -70,6 +73,12 @@ export function useShown() {
   const next = useRef(0);
   const add = useCallback((e: BoardEvent) => {
     if (e.effect?.startsWith("sound-") && !reduced()) playSound(e.effect);
+    // A custom Skill's uploaded sound (re-encoded WAV from S.V.E.R's media host).
+    if (e.effect === "custom" && e.audio && !reduced()) {
+      const clip = new Audio(e.audio);
+      clip.volume = 0.6;
+      void clip.play().catch(() => { /* autoplay blocked until the viewer interacts */ });
+    }
     const key = ++next.current;
     setShown(list => [...list.slice(-4), { ...e, key }]);
     setTimeout(() => setShown(list => list.filter(x => x.key !== key)), 4000);

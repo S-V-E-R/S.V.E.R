@@ -197,6 +197,75 @@ pub async fn exercise(e: &Env) {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "no Valor");
 
+    // Custom Skills: the streamer's own sound or image, priced only at the built-in price points,
+    // on sale once it has media; chat shows its name and the effect carries the file.
+    let custom = |body: Value| call(e, "POST", "/api/me/skills/custom", Some(&owner), body);
+    assert_eq!(
+        custom(json!({"name": "Airhorn", "valor": 400})).await.0,
+        StatusCode::BAD_REQUEST,
+        "fixed price points only"
+    );
+    let (status, made) = custom(json!({"name": "Airhorn", "valor": 50})).await;
+    assert_eq!(status, StatusCode::OK, "{made}");
+    let skill = made["custom"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        say(
+            e,
+            &viewers[0],
+            json!({"id": id(), "body": "honk", "skill": skill})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST,
+        "not on sale without a sound or image"
+    );
+    let (status, _) = super::overlays::upload(
+        e,
+        &owner,
+        &format!("/api/me/skills/custom/{skill}/sound"),
+        super::overlays::tone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, sent) = say(
+        e,
+        &viewers[0],
+        json!({"id": id(), "body": "honk", "skill": skill}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    assert_eq!(
+        (&sent["message"]["skill"], &sent["message"]["tribute"]),
+        (&json!("Airhorn"), &json!(50))
+    );
+    assert_eq!(valor(e, "valor:mo-v1").await, 700);
+    let played = next(&mut ws, "board_effect", |e| e["effect"] == "custom").await;
+    assert!(
+        played["audio"].as_str().unwrap().ends_with(".wav")
+            && played["caption"] == "MoV1 played Airhorn",
+        "{played}"
+    );
+    let (_, catalog) = call(e, "GET", "/api/channels/MoOwner/skills", None, Value::Null).await;
+    assert!(
+        catalog["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "Airhorn")
+    );
+    let (status, left) = call(
+        e,
+        "DELETE",
+        &format!("/api/me/skills/custom/{skill}"),
+        Some(&owner),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        (status, left["custom"].as_array().unwrap().len()),
+        (StatusCode::OK, 0)
+    );
+
     // ---- Faction Rally ----
     let rally = format!("{CHANNEL}/rally");
     assert_eq!(

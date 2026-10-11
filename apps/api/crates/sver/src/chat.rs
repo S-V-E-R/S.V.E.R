@@ -583,7 +583,7 @@ pub(crate) async fn send_from(
         }
         (None, _) => None,
     };
-    let tribute = input.tribute.or(skill.map(|s| s.valor));
+    let tribute = input.tribute.or(skill.as_ref().map(|s| s.valor));
     if let Some(valor) = tribute {
         if channel.is_none() || origin.is_some() {
             return Err(Fail::field("tribute", "Tributes go to a channel's chat."));
@@ -647,7 +647,7 @@ pub(crate) async fn send_from(
     .fetch_all(&mut *tx)
     .await?;
     let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted,skill,gif) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO NOTHING")
-        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.map(|s| s.id)).bind(gif.as_ref().map(|(g, _)| g.clone())).execute(&mut *tx).await?.rows_affected();
+        .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.as_ref().map(|s| s.shown.as_str())).bind(gif.as_ref().map(|(g, _)| g.clone())).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Err(Fail::conflict("That message ID is already in use."));
     }
@@ -680,7 +680,7 @@ pub(crate) async fn send_from(
             &mut tx,
             "tribute",
             &format!("tribute:{}", input.id),
-            json!({"message": input.id, "channel": channel, "earners": earners, "from": user.id, "valor": valor, "skill": skill.map(|s| s.id)}),
+            json!({"message": input.id, "channel": channel, "earners": earners, "from": user.id, "valor": valor, "skill": skill.as_ref().map(|s| s.id.as_str())}),
             &entries,
         )
         .await?;
@@ -691,12 +691,12 @@ pub(crate) async fn send_from(
             json!({"user": user.username, "valor": valor, "message": body}),
         )
         .await?;
-        if let Some(skill) = skill {
+        if let Some(skill) = &skill {
             crate::events::emit(
                 &mut tx,
                 channel,
                 "skills",
-                json!({"user": user.username, "skill": skill.id, "valor": valor}),
+                json!({"user": user.username, "skill": skill.shown, "valor": valor}),
             )
             .await?;
         }
@@ -739,7 +739,7 @@ pub(crate) async fn send_from(
         if rallied {
             crate::surge::publish_rally(app, channel).await?;
         }
-        if let Some(skill) = skill {
+        if let Some(skill) = &skill {
             crate::skills::played(app, channel, &user, skill).await?;
         }
         if origin.is_none() {

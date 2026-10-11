@@ -1,7 +1,7 @@
 "use client";
 import { ArrowIcon, StatusMark } from "../../../components/shell/Icons";
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { FormEvent, useCallback, useState } from "react";
 import type { BoardDef, Control } from "../../../components/Board";
 import { EffectStage, useShown, type BoardEvent } from "../../../components/BoardEffects";
 import { CopyButton } from "../../../components/CopyButton";
@@ -158,6 +158,7 @@ export default function StudioBoard() {
       {secret && <p className="form-message">Signing secret, shown once: <code>{secret}</code> <CopyButton value={secret} label="signing secret" /></p>}
     </Section>
     <SkillSettings />
+    <CustomSkills />
     <Connections />
   </>;
 }
@@ -204,6 +205,52 @@ function Connections() {
   </Section>;
 }
 
+type CustomSkill = { id: string; name: string; valor: number; image: string | null; audio: string | null };
+type SkillsView = { custom: CustomSkill[]; prices: number[]; max_custom: number };
+/** Custom Skills: the streamer's own image and/or sound, at the built-in price points only. */
+function CustomSkills() {
+  const [data, setData] = useState<SkillsView | null>(null);
+  const [state, setState] = useState<SaveState>({});
+  const load = useCallback(async () => {
+    const r = await send<SkillsView>("GET", "/api/me/skills");
+    if (r.ok) setData(r.data);
+  }, []);
+  useLoad(load);
+  if (!data) return null;
+  const apply = (r: Awaited<ReturnType<typeof send<SkillsView>>>, done: string) => { if (r.ok) { setData(r.data); setState({ saved: done }); } else setState(r); };
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    apply(await send<SkillsView>("POST", "/api/me/skills/custom", { name: form.get("name"), valor: Number(form.get("valor")) }), "Added. Upload an image or sound to put it on sale.");
+  }
+  async function upload(skill: CustomSkill, slot: "image" | "sound", file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    setState({ saved: "Uploading…" });
+    apply(await send<SkillsView>("POST", `/api/me/skills/custom/${encodeURIComponent(skill.id)}/${slot}`, form), slot === "image" ? "Image saved." : "Sound saved.");
+  }
+  async function remove(skill: CustomSkill) {
+    if (!window.confirm(`Delete ${skill.name}? Past chat messages keep its name.`)) return;
+    apply(await send<SkillsView>("DELETE", `/api/me/skills/custom/${encodeURIComponent(skill.id)}`), "Deleted.");
+  }
+  const pick = (skill: CustomSkill, slot: "image" | "sound") => (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void upload(skill, slot, f); };
+  return <Section title="Your own Skills" intro={`Up to ${data.max_custom}, each with your own image (a sticker on stream) and/or sound (up to 10 seconds). Prices are the same points as S.V.E.R's Skills, and you earn 0.8¢ per Valor. A Skill goes on sale once it has an image or sound.`}>
+    {data.custom.length > 0 && <ul className="list">{data.custom.map(s => <li key={s.id} className="stack">
+      <p><strong>{s.name}</strong> · {s.valor} Valor · {s.image || s.audio ? "on sale" : "needs an image or sound"}</p>
+      <div className="row wrap">
+        <label className="field narrow"><span>Image{s.image ? " · set" : ""} (PNG, JPEG or WebP, up to 2 MB)</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={pick(s, "image")} /></label>
+        <label className="field narrow"><span>Sound{s.audio ? " · set" : ""} (MP3, OGG or WAV, up to 1 MB)</span><input type="file" accept="audio/mpeg,audio/ogg,audio/wav,audio/x-wav" onChange={pick(s, "sound")} /></label>
+        <button type="button" className="small quiet danger-text" onClick={() => void remove(s)}>Delete</button>
+      </div>
+    </li>)}</ul>}
+    {data.custom.length < data.max_custom && <form onSubmit={create} className="row wrap">
+      <label className="field narrow"><span>Name</span><input name="name" maxLength={30} required /></label>
+      <label className="field narrow"><span>Price (Valor)</span><select name="valor" defaultValue={data.prices[1]}>{data.prices.map(p => <option key={p} value={p}>{p}</option>)}</select></label>
+      <button type="submit" className="small">Add a Skill</button>
+    </form>}
+    <Status state={state} />
+  </Section>;
+}
 const CATEGORY_NAMES: Record<string, string> = { sticker: "Stickers", fullscreen: "Full-screen moments", sound: "Sounds" };
 /** Skill categories viewers can play on this channel (docs/CROWDSYNC.md "Skills"). */
 function SkillSettings() {
