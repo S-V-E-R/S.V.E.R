@@ -100,10 +100,78 @@ pub(crate) async fn developer(app: &App, jar: &CookieJar) -> Res<auth::User> {
     })?;
     Ok(user)
 }
+/// An app icon's sizes (the avatar sizes), or null.
+fn icon_json(app: &App, key: Option<&str>) -> Value {
+    key.map_or(Value::Null, |k| profiles::avatar_json(app, Some(k)))
+}
+/// Turns each row's stored `icon` key into its sizes.
+fn icons(app: &App, rows: &mut [Value]) {
+    for row in rows {
+        row["icon"] = icon_json(app, row["icon"].as_str());
+    }
+}
+/// POST /api/me/apps/{id}/icon: a square icon through the image pipeline (fingerprinted and
+/// covered by Take It Down, like avatars).
+async fn upload_icon(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    multipart: axum::extract::Multipart,
+) -> Res<Json<Value>> {
+    let user = developer(&app, &jar).await?;
+    if !app.config.media.storage.available() {
+        return Err(Fail::unavailable("Uploads aren't available yet."));
+    }
+    let (bytes, crop, _) = crate::media::read_upload(multipart, crate::media::Kind::Avatar).await?;
+    profiles::rate(&app, format!("image-upload:{}", user.id), 20, 3600).await?;
+    let processed = crate::media::process_async(bytes, crate::media::Kind::Avatar, crop).await?;
+    crate::media::store(&app, &processed).await?;
+    let mut tx = app.db.begin().await?;
+    let old: Option<Option<String>> =
+        sqlx::query_scalar("SELECT icon_key FROM dev_apps WHERE id=$1 AND owner_id=$2 FOR UPDATE")
+            .bind(&id)
+            .bind(&user.id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let old = old.ok_or_else(Fail::missing)?;
+    crate::media::record(&mut tx, &user.id, crate::media::Kind::Avatar, &processed).await?;
+    sqlx::query("UPDATE dev_apps SET icon_key=$2 WHERE id=$1")
+        .bind(&id)
+        .bind(&processed.stored)
+        .execute(&mut *tx)
+        .await?;
+    crate::media::queue_delete(&mut tx, old.as_deref(), Some(&processed.stored)).await?;
+    tx.commit().await?;
+    my_apps(&app, &user.id).await
+}
+/// DELETE /api/me/apps/{id}/icon
+async fn remove_icon(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Res<Json<Value>> {
+    let user = developer(&app, &jar).await?;
+    let mut tx = app.db.begin().await?;
+    let old: Option<Option<String>> =
+        sqlx::query_scalar("SELECT icon_key FROM dev_apps WHERE id=$1 AND owner_id=$2 FOR UPDATE")
+            .bind(&id)
+            .bind(&user.id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let old = old.ok_or_else(Fail::missing)?;
+    sqlx::query("UPDATE dev_apps SET icon_key=NULL WHERE id=$1")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    crate::media::queue_delete(&mut tx, old.as_deref(), None).await?;
+    tx.commit().await?;
+    my_apps(&app, &user.id).await
+}
 async fn my_apps(app: &App, owner: &str) -> Res<Json<Value>> {
-    let apps: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('client_id',id,'name',name,'redirect_uris',redirect_uris,'confidential',secret_hash IS NOT NULL,'suspended',suspended_at IS NOT NULL,'created_at',created_at,
+    let mut apps: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('client_id',id,'name',name,'icon',icon_key,'redirect_uris',redirect_uris,'confidential',secret_hash IS NOT NULL,'suspended',suspended_at IS NOT NULL,'created_at',created_at,
             'users',(SELECT count(*) FROM oauth_grants g WHERE g.app_id=a.id AND g.revoked_at IS NULL)) FROM dev_apps a WHERE owner_id=$1 ORDER BY created_at")
         .bind(owner).fetch_all(&app.db).await?;
+    icons(app, &mut apps);
     Ok(Json(json!({"apps": apps, "max": MAX_APPS})))
 }
 /// GET /api/me/apps
@@ -275,6 +343,10 @@ async fn consent(
 ) -> Res<Json<Value>> {
     profiles::signed_in(&app, &jar).await?;
     let (name, owner, scopes, _) = request(&app, &q).await?;
+    let icon: Option<String> = sqlx::query_scalar("SELECT icon_key FROM dev_apps WHERE id=$1")
+        .bind(&q.client_id)
+        .fetch_one(&app.db)
+        .await?;
     let described: Vec<Value> = scopes
         .iter()
         .map(|s| {
@@ -283,7 +355,7 @@ async fn consent(
         })
         .collect();
     Ok(Json(
-        json!({"app": {"name": name, "owner": owner}, "scopes": described}),
+        json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described}),
     ))
 }
 /// POST /api/oauth/authorize: the person approves or refuses; returns where to send the browser.
@@ -583,9 +655,9 @@ async fn device(
     let page = format!("{}/go", app.config.origin);
     Json(json!({"device_code": device, "user_code": shown, "verification_uri": page, "verification_uri_complete": format!("{page}?code={shown}"), "expires_in": 600, "interval": 5})).into_response()
 }
-type Pending = (String, String, Vec<String>, Option<String>);
+type Pending = (String, String, Vec<String>, Option<String>, Option<String>);
 async fn pending(app: &App, code: &str) -> Res<Pending> {
-    let found: Option<Pending> = sqlx::query_as("SELECT a.name,u.username,d.scopes,d.network FROM oauth_devices d JOIN dev_apps a ON a.id=d.app_id AND a.suspended_at IS NULL JOIN users u ON u.id=a.owner_id
+    let found: Option<Pending> = sqlx::query_as("SELECT a.name,u.username,d.scopes,d.network,a.icon_key FROM oauth_devices d JOIN dev_apps a ON a.id=d.app_id AND a.suspended_at IS NULL JOIN users u ON u.id=a.owner_id
         WHERE d.user_code=$1 AND d.expires_at>now() AND d.decision IS NULL")
         .bind(normalize(code)).fetch_optional(&app.db).await?;
     found.ok_or_else(|| {
@@ -600,13 +672,13 @@ async fn device_lookup(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::rate(&app, format!("oauth-go:{}", user.id), 20, 600).await?;
-    let (name, owner, scopes, network) = pending(&app, &code).await?;
+    let (name, owner, scopes, network, icon) = pending(&app, &code).await?;
     let described: Vec<Value> = scopes
         .iter()
         .map(|s| json!({"scope": s, "text": SCOPES.iter().find(|(k, _)| k == s).map_or("", |x| x.1)}))
         .collect();
     Ok(Json(
-        json!({"app": {"name": name, "owner": owner}, "scopes": described, "network": network}),
+        json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described, "network": network}),
     ))
 }
 #[derive(Deserialize)]
@@ -791,9 +863,10 @@ async fn v1_channel(
 /// GET /api/me/connections
 async fn connections(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
-    let rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',g.id,'app',a.name,'owner',u.username,'scopes',g.scopes,'created_at',g.created_at,'last_used_at',g.last_used_at)
+    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',g.id,'app',a.name,'icon',a.icon_key,'owner',u.username,'scopes',g.scopes,'created_at',g.created_at,'last_used_at',g.last_used_at)
         FROM oauth_grants g JOIN dev_apps a ON a.id=g.app_id JOIN users u ON u.id=a.owner_id WHERE g.user_id=$1 AND g.revoked_at IS NULL ORDER BY g.created_at DESC")
         .bind(&user.id).fetch_all(&app.db).await?;
+    icons(&app, &mut rows);
     Ok(Json(json!({"connections": rows})))
 }
 /// DELETE /api/me/connections/{id}: revokes an app's access; its tokens stop working at once.
@@ -815,10 +888,11 @@ async fn disconnect(
 /// GET /api/admin/apps: every app, for staff.
 async fn staff_apps(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     crate::safety::staff(&app, &jar).await?;
-    let rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('client_id',a.id,'name',a.name,'owner',u.username,'redirect_uris',a.redirect_uris,'suspended',a.suspended_at IS NOT NULL,'created_at',a.created_at,
+    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('client_id',a.id,'name',a.name,'icon',a.icon_key,'owner',u.username,'redirect_uris',a.redirect_uris,'suspended',a.suspended_at IS NOT NULL,'created_at',a.created_at,
             'users',(SELECT count(*) FROM oauth_grants g WHERE g.app_id=a.id AND g.revoked_at IS NULL))
         FROM dev_apps a JOIN users u ON u.id=a.owner_id ORDER BY a.created_at DESC LIMIT 500")
         .fetch_all(&app.db).await?;
+    icons(&app, &mut rows);
     Ok(Json(json!({"apps": rows})))
 }
 #[derive(Deserialize)]
@@ -865,6 +939,14 @@ pub fn routes() -> Router<App> {
             axum::routing::patch(change_app).delete(delete_app),
         )
         .route("/api/me/apps/{id}/secret", post(rotate_secret))
+        .route(
+            "/api/me/apps/{id}/icon",
+            post(upload_icon)
+                .delete(remove_icon)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::media::UPLOAD_LIMIT,
+                )),
+        )
         .route("/api/oauth/authorize", get(consent).post(decide))
         .route("/api/oauth/token", post(token))
         .route("/api/oauth/revoke", post(revoke))

@@ -2,8 +2,10 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
+import { Avatar } from "../../../components/Avatar";
+import type { Sizes } from "../../../lib/types";
 
-type Consent = { app: { name: string; owner: string }; scopes: { scope: string; text: string }[] };
+type Consent = { app: { name: string; owner: string; icon: Sizes }; scopes: { scope: string; text: string }[] };
 
 /** The consent screen for an app asking to use the person's account (docs/DEVELOPER_PLATFORM.md §1). */
 export default function Authorize() {
@@ -29,6 +31,7 @@ export default function Authorize() {
       : error ? <><h1>This app can&apos;t connect</h1><p role="alert" className="form-message error">{error}</p></>
       : !consent ? <p className="loading">Loading…</p>
       : <>
+        <Avatar sizes={consent.app.icon} name={consent.app.name} size={64} />
         <h1>{consent.app.name} wants to use your account</h1>
         <p className="muted">Made by @{consent.app.owner}. It isn&apos;t made by S.V.E.R.</p>
         <p>It will be able to:</p>

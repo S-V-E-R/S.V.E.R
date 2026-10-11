@@ -1,8 +1,10 @@
 "use client";
 import { useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
+import { Avatar } from "../../../components/Avatar";
+import type { Sizes } from "../../../lib/types";
 
-type Connection = { id: string; app: string; owner: string; scopes: string[]; created_at: string; last_used_at: string | null };
+type Connection = { id: string; app: string; icon: Sizes; owner: string; scopes: string[]; created_at: string; last_used_at: string | null };
 
 /** Settings → Connected apps (docs/DEVELOPER_PLATFORM.md §1). */
 export default function ConnectedApps() {
@@ -22,6 +24,7 @@ export default function ConnectedApps() {
     {message && <p role="status" className="form-message">{message}</p>}
     {rows === null ? <p className="loading">Loading…</p> : rows.length === 0 ? <p className="muted">No apps are connected.</p>
       : <ul className="list">{rows.map(c => <li key={c.id} className="row between wrap">
+        <Avatar sizes={c.icon} name={c.app} size={32} />
         <span><strong>{c.app}</strong> <span className="muted small">by @{c.owner} · {c.scopes.join(", ")} · connected {new Date(c.created_at).toLocaleDateString()}{c.last_used_at ? ` · last used ${new Date(c.last_used_at).toLocaleDateString()}` : ""}</span></span>
         <button type="button" className="small quiet danger-text" onClick={() => revoke(c)}>Remove</button>
       </li>)}</ul>}
