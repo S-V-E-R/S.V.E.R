@@ -394,19 +394,57 @@ a.takedown-link:hover { color: var(--ink); }
 .order-list button { justify-self: start; }
 
 /* Direct messages (docs/COMMUNITY.md). */
-.messages-layout { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 16px; align-items: start; }
-@media (max-width: 760px) { .messages-layout { grid-template-columns: minmax(0, 1fr); } }
-.messages-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.messages-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 1px solid transparent; padding: 8px; color: inherit; cursor: pointer; }
-.messages-item.active, .messages-item:hover { border-color: var(--line); background: var(--tint); }
-.messages-item-text { display: grid; min-width: 0; flex: 1; }
-.messages-item-text .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.messages-thread { display: grid; gap: 12px; min-width: 0; }
-.messages-body { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 60vh; overflow-y: auto; }
-.messages-body li { display: grid; gap: 2px; max-width: 80%; }
-.messages-body li.mine { justify-self: end; text-align: right; }
-.messages-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; border: 1px solid var(--line); background: var(--surface); }
-.messages-body li.mine .messages-text { border-color: var(--accent); }
+/* Direct messages: a two-pane messenger that fills the screen; one pane at a time on phones. */
+.messages-page { padding: 16px 24px; }
+.messages-shell { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); height: calc(100dvh - 140px); min-height: 420px; padding: 0; overflow: hidden; }
+.messages-sidebar { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.messages-sidebar-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.messages-sidebar-head h1 { margin: 0; flex: 1; font-size: 20px; }
+.messages-new, .messages-settings { display: grid; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--tint); }
+.messages-new { grid-template-columns: minmax(0, 1fr) auto; }
+.messages-new p { grid-column: 1 / -1; margin: 0; }
+.messages-settings p { margin: 0; }
+.messages-devices { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+.messages-pad { padding: 12px 14px; }
+.messages-list { list-style: none; margin: 0; padding: 4px; overflow-y: auto; flex: 1; display: grid; align-content: start; gap: 2px; }
+.messages-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 0; text-align: left; background: none; border: 0; border-left: 3px solid transparent; padding: 10px; color: inherit; cursor: pointer; box-shadow: none; font: inherit; letter-spacing: normal; text-transform: none; }
+.messages-item:hover:not(:disabled) { background: var(--tint); filter: none; }
+.messages-item.active { background: var(--tint); border-left-color: var(--accent); }
+.messages-item.unread strong { color: var(--ink); }
+.messages-item-text { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.messages-item-top { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+.messages-item-top strong, .messages-item-text > .small-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; margin: 0; }
+.messages-unread { min-width: 20px; height: 20px; padding: 0 6px; display: inline-grid; place-items: center; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; border-radius: 10px; }
+.messages-thread { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.messages-thread-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.messages-back { display: none; }
+.messages-more { position: relative; }
+.messages-more summary { list-style: none; cursor: pointer; }
+.messages-more summary::-webkit-details-marker { display: none; }
+.messages-more .menu-list { top: calc(100% + 6px); }
+.messages-notices { display: grid; gap: 4px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--tint); }
+.messages-notices p { margin: 0; }
+.messages-body { list-style: none; margin: 0; padding: 16px; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.messages-body li { display: flex; flex-direction: column; align-items: flex-start; max-width: min(75%, 560px); }
+.messages-body li.mine { align-self: flex-end; align-items: flex-end; }
+.messages-body li.run-end { margin-bottom: 10px; }
+.messages-start { align-self: center; max-width: none; margin: auto 0 12px; }
+.messages-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 14px; background: var(--panel-hi, var(--surface)); border: 1px solid var(--line); }
+.messages-body li.mine .messages-text { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.messages-body li.mine .messages-text .muted { color: var(--on-accent); opacity: .75; }
+.messages-meta { margin-top: 3px; padding: 0 4px; font-size: 11px; }
+.messages-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin: 0; padding: 10px 14px; border-top: 1px solid var(--line); }
+.messages-composer textarea { resize: none; min-height: 42px; max-height: 160px; field-sizing: content; width: 100%; }
+.messages-link-note { grid-column: 1 / -1; margin: 0; }
+.messages-empty { margin: auto; display: grid; gap: 12px; justify-items: center; text-align: center; padding: 24px; }
+@media (max-width: 760px) {
+  .messages-page { padding: 0; }
+  .messages-shell { grid-template-columns: minmax(0, 1fr); height: calc(100dvh - 120px); border-left: 0; border-right: 0; }
+  .messages-sidebar { border-right: 0; }
+  .messages-shell.has-thread .messages-sidebar, .messages-shell:not(.has-thread) .messages-thread { display: none; }
+  .messages-back { display: inline-flex; }
+  .messages-body li { max-width: 85%; }
+}
 /* Level badge frames: a new frame every 10 levels (docs/PROGRESSION.md, level-up cosmetic). Borders only, no glow. */
 .player-level[data-frame]:not([data-frame="0"]) { padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; }
 .player-level[data-frame="2"], .player-level[data-frame="3"] { border-color: #a8703c; }

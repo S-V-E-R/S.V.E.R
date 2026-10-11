@@ -422,6 +422,7 @@ All profile text is NFC-normalized and trimmed. Control characters, bidi overrid
 - **Contents:** avatar, display name, @username, the first 160 characters of the bio, follower count, "Joined {Month YYYY}", Follow button, "View channel", and a menu with Block and Report.
 - **Stubs:** faction badge (Module 4), live indicator (Module 3), moderator actions (Module 3). These are reserved slots with nothing rendered.
 - **Ineligible targets:** internal, deleted, held and restricted accounts show no card; their chips are plain text.
+- **Player card (October 11, 2026, Joe's feedback):** the card also opens from names in chat (it used to go straight to the channel) and from the conversation header in Messages (`PlayerCardButton` in `components/UserChip.tsx`). On desktop it's fixed to the screen next to the name, flipping above it near the bottom, so a scrolling list never clips it; scrolling elsewhere closes it. It shows the faction crest and rank title, the level, and a **Message** button when `viewer.can_message` is true (the same check as sending: `dms::refusal`). The channel page shows the same Message button.
 
 ## Safety: blocking, reports, strikes, appeals and the admin review queue
 

@@ -613,13 +613,16 @@ pub async fn card(
         .await?
         .ok_or_else(Fail::missing)?;
     let (followers, _) = follower_counts(&mut db, &user.id).await?;
-    let (following, blocked, is_self) = match &viewer {
+    let (following, blocked, is_self, can_message) = match &viewer {
         Some(v) if v.id != user.id => {
             let (f, b): (bool, bool) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2),EXISTS(SELECT 1 FROM user_blocks WHERE blocker_id=$1 AND blocked_id=$2)").bind(&v.id).bind(&user.id).fetch_one(&mut *db).await?;
-            (f, b, false)
+            let can_message = crate::dms::refusal(&mut db, &v.id, &user.id)
+                .await?
+                .is_none();
+            (f, b, false, can_message)
         }
-        Some(_) => (false, false, true),
-        None => (false, false, false),
+        Some(_) => (false, false, true, false),
+        None => (false, false, false, false),
     };
     let me = channel_user_by_id(&mut db, &user.id)
         .await?
@@ -640,7 +643,7 @@ pub async fn card(
         "bio": me.bio.chars().take(160).collect::<String>(),
         "follower_count": followers,
         "joined_at": me.created_at,
-        "viewer": {"signed_in": viewer.is_some(), "is_self": is_self, "following": following, "blocked": blocked},
+        "viewer": {"signed_in": viewer.is_some(), "is_self": is_self, "following": following, "blocked": blocked, "can_message": can_message},
         "faction": faction,
         "live": crate::playback::is_live(&mut db, &me.id).await?,
         "level": level,

@@ -31,6 +31,7 @@ export function ChannelActions({ username, displayName, viewer, path }: { userna
   return <div className="channel-actions">
     {!blocked && !viewer.interaction_blocked && <button type="button" className={following ? "small quiet" : "small"} aria-pressed={following} onClick={follow}>{following ? "Following" : "Follow"}</button>}
     {following && !blocked && <AlertBell username={username} initial={viewer.following ? viewer.alerts !== false : true} />}
+    {!blocked && viewer.can_message && <Link className="button small quiet" href={`/messages?with=${encodeURIComponent(username)}`}>Message</Link>}
     {!blocked && !viewer.interaction_blocked && <Subscribe username={username} />}
     <ShareButton username={username} displayName={displayName} />
     <div className="menu">
