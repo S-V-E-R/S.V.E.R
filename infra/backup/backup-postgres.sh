@@ -33,6 +33,11 @@ cid="${ids[0]}"
 
 install -d -m 0750 -o root -g "$READER_GROUP" "$DB_BACKUP_DIR"
 
+# One backup at a time: names come from the second, so two runs started together (the nightly
+# timer and a deploy, or two deploys) would share the .partial file and move each other's dump.
+exec 9>"$DB_BACKUP_DIR/.backup.lock"
+flock 9
+
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 NAME="postgres-${TS}.dump"
 FINAL="$DB_BACKUP_DIR/$NAME"
