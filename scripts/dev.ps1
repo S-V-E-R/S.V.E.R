@@ -22,6 +22,7 @@ switch($Part) {
     test {
         Set-Location apps\api
         cargo test --test reserved_routes
+        if($LASTEXITCODE -eq 0){ cargo test --test websocket_routes }
         if($LASTEXITCODE -eq 0){ cargo test --test login -- --nocapture }
         if($LASTEXITCODE -eq 0){ cargo test --test profiles -- --nocapture }
         if($LASTEXITCODE -eq 0){ cargo test --test streams -- --nocapture }
