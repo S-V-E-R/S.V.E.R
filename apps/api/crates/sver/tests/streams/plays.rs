@@ -86,8 +86,17 @@ pub async fn exercise(e: &Env) {
         .0,
         StatusCode::CONFLICT
     );
-    // Fresh round, then concurrent button requests: exactly one counts.
-    let state = call(e, "GET", path, Some(&viewer), Value::Null).await.1;
+    // Fresh round, then concurrent button requests: exactly one counts. Rounds last 5 seconds, so
+    // start early in one; otherwise a rollover splits the button and chat votes below across two.
+    let state = loop {
+        let state = call(e, "GET", path, Some(&viewer), Value::Null).await.1;
+        let at =
+            |k: &str| chrono::DateTime::parse_from_rfc3339(state[k].as_str().unwrap()).unwrap();
+        if at("closes_at") - at("server_time") >= chrono::Duration::seconds(4) {
+            break state;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    };
     let vote = json!({"command":"up","round":state["round"]});
     let (a, b) = tokio::join!(
         call(e, "POST", path, Some(&viewer), vote.clone()),
