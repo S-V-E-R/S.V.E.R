@@ -16,8 +16,8 @@ export class SverError extends Error {}
  * `save(tokens)` stores new ones (Stream Deck global settings), and `fetch` is injectable for tests.
  */
 export class Sver {
-  constructor({ tokens = null, save = () => {}, fetch = globalThis.fetch, origin = ORIGIN, clientId = CLIENT_ID, now = Date.now } = {}) {
-    Object.assign(this, { tokens, save, fetch, origin, clientId, now });
+  constructor({ tokens = null, save = () => {}, fetch = globalThis.fetch, origin = ORIGIN, clientId = CLIENT_ID, scopes = SCOPES, now = Date.now } = {}) {
+    Object.assign(this, { tokens, save, fetch, origin, clientId, scopes, now });
     this.username = null;
   }
 
@@ -29,7 +29,7 @@ export class Sver {
   /** Starts device sign-in. Returns { code, url } to show, and a promise that resolves when approved. */
   async signIn({ wait = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
     if (!this.clientId) throw new SverError("This build has no S.V.E.R client ID.");
-    const start = await this.form("/api/oauth/device", { client_id: this.clientId, scope: SCOPES });
+    const start = await this.form("/api/oauth/device", { client_id: this.clientId, scope: this.scopes });
     if (start.status !== 200) throw new SverError(start.body.error || "Sign-in isn't available right now.");
     const { device_code, user_code, verification_uri_complete, interval = 5, expires_in = 600 } = start.body;
     const done = (async () => {
@@ -57,6 +57,13 @@ export class Sver {
     this.tokens = null;
     this.username = null;
     this.save(null);
+  }
+
+  /** A fresh access token, for clients that pass it themselves (the events socket's query string). */
+  async access() {
+    if (!this.tokens) throw new SverError("Sign in to S.V.E.R first.");
+    if (this.now() >= this.tokens.expires) await this.refresh();
+    return this.tokens.access;
   }
 
   async refresh() {

@@ -1,2 +1,5 @@
 # A filled-in bridge config holds a private token and the OBS password.
 bridge/bridge.json
+# The automation bridge's filled-in config and its sign-in tokens.
+automation/automation.json
+automation/*.tokens.json
