@@ -81,7 +81,7 @@ Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page; the
 - **Theme:** the site uses the signed-in user's faction colors; channel pages use the owner's ([DESIGN.md](DESIGN.md)).
 - **MAGNet:** home-turf weight in homepage rotation for genres the viewer's faction holds ([MAGNET.md](MAGNET.md)). Hype channels stay faction-neutral.
 - **Chat:** faction crests next to names; bots greet cross-faction raiders ([COMMUNITY.md](COMMUNITY.md)).
-- **Raids** into ally or enemy channels earn influence under the normal rules and caps (weights in tuning).
+- **Raids** into ally or enemy channels earn influence under the normal rules and caps (weights in tuning). Built October 10, 2026 (migration 0094): when a raid's arrivals are counted, the raiding streamer earns `raid_points` in the target's genre if the target is a faction member, live with Trusted playback, and at least one viewer actually arrived. One award per raid; the raider's daily raid cap (`raid_daily_cap`) binds. The council-target bonus applies; the enemy-turf bonus is for time-based influence only.
 
 ## Skirmish Hour
 
@@ -91,9 +91,17 @@ The first faction event (Phase 4), built October 10, 2026 by Joe's decision (`fa
 - The war map and every faction hub announce the next one and show when one is running.
 - During the hour every influence source counts **double**. The doubling happens before the per-person daily and hourly caps, so the caps still bind: bots and grinders gain nothing beyond the usual limits, and anti-farming rules are unchanged.
 
+## Raid Night
+
+The second faction event (Phase 4), Joe's choice on October 10, 2026; the details below are **Proposed** defaults (migration 0094, sharing Skirmish Hour's schedule).
+
+- Staff schedule a Raid Night in `/admin/factions` the same way as a Skirmish Hour (on the hour, UTC, at least an hour and at most 60 days ahead, step-up and audited, cancellable before it starts). It lasts **three hours**. No two faction events overlap.
+- During it, **raid influence counts double**, before the raider's daily raid cap, so the cap still binds: a Raid Night reaches the cap in fewer raids but never past it. Other influence is unchanged.
+- The war map and every faction hub announce the next event and show the running one by name.
+
 ## Not in this module
 
-Other faction events (Territory Spotlight, Raid Night and similar; Skirmish Hour is built above), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (dropped), faction chat rooms (the faction board covers it).
+Other faction events (Territory Spotlight and similar; Skirmish Hour and Raid Night are built above), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (dropped), faction chat rooms (the faction board covers it).
 
 ## Legacy notes
 

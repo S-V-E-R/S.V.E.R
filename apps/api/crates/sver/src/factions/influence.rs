@@ -13,6 +13,7 @@ enum Source {
     Watch,
     Chat,
     Support,
+    Raid,
 }
 impl Source {
     fn index(self) -> usize {
@@ -21,10 +22,17 @@ impl Source {
             Self::Watch => 1,
             Self::Chat => 2,
             Self::Support => 3,
+            Self::Raid => 4,
         }
     }
     fn name(self) -> &'static str {
-        ["stream", "watch", "chat", "support"][self.index()]
+        ["stream", "watch", "chat", "support", "raid"][self.index()]
+    }
+    fn daily_cap(self, tuning: &Tuning) -> i64 {
+        match self {
+            Self::Raid => tuning.raid_daily_cap,
+            _ => tuning.daily_caps[self.index()],
+        }
     }
 }
 
@@ -78,6 +86,7 @@ async fn award(
     let mut points = match input.source {
         Source::Chat => tuning.chat_points,
         Source::Support => tuning.supporter_points,
+        Source::Raid => tuning.raid_points,
         Source::Stream | Source::Watch => {
             let last: Option<DateTime<Utc>> = sqlx::query_scalar(
                 "SELECT last_at FROM faction_time_credit WHERE user_id=$1 AND source=$2",
@@ -107,15 +116,20 @@ async fn award(
     if target {
         points = points * 11 / 10;
     }
-    // Skirmish Hour doubles influence before the caps, so the caps still bind.
-    if super::skirmish::active(db, at).await? {
-        points *= super::skirmish::MULTIPLIER;
+    // Skirmish Hour doubles influence (Raid Night, raid influence) before the caps, so the caps
+    // still bind.
+    match super::skirmish::active(db, at).await?.as_deref() {
+        Some("skirmish") => points *= super::skirmish::MULTIPLIER,
+        Some("raid_night") if matches!(input.source, Source::Raid) => {
+            points *= super::skirmish::MULTIPLIER;
+        }
+        _ => {}
     }
     let day = at.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
     let hour = DateTime::from_timestamp(at.timestamp().div_euclid(3600) * 3600, 0).unwrap();
     let (daily,hourly):(i64,i64)=sqlx::query_as("SELECT coalesce(sum(points),0)::bigint,coalesce(sum(points) FILTER(WHERE happened_at >= $4),0)::bigint FROM faction_influence WHERE user_id=$1 AND source=$2 AND happened_at >= $3 AND happened_at<$3+interval '1 day'")
         .bind(input.user).bind(input.source.name()).bind(day).bind(hour).fetch_one(&mut *db).await?;
-    points = points.min((tuning.daily_caps[input.source.index()] - daily).max(0));
+    points = points.min((input.source.daily_cap(tuning) - daily).max(0));
     if matches!(input.source, Source::Chat) {
         points = points.min((tuning.chat_hourly_cap - hourly).max(0));
     }
@@ -158,6 +172,41 @@ pub(crate) async fn watch(
         at,
     )
     .await
+}
+/// A raid whose arrivals were counted, into a live faction member's channel (ally or enemy): the
+/// raiding streamer earns influence in the target's genre. At least one viewer must have actually
+/// arrived and the target must have Trusted playback, so an empty or bot raid earns nothing.
+pub(crate) async fn raid(app: &App, raid: &str) -> Res<i64> {
+    let mut tx = app.db.begin().await?;
+    let row: Option<(String, String)> = sqlx::query_as("SELECT r.raider_id,r.target_broadcast_id FROM raids r WHERE r.id=$1 AND r.status='moved' AND r.arrivals>0 AND EXISTS(SELECT 1 FROM faction_members m WHERE m.user_id=r.target_id)")
+        .bind(raid).fetch_optional(&mut *tx).await?;
+    let Some((raider, target)) = row else {
+        return Ok(0);
+    };
+    let Some((_, genre)) = crate::streams::influence_context(&mut tx, &target).await? else {
+        return Ok(0);
+    };
+    if !crate::integrity::trusted(&mut tx, &target, None).await? {
+        return Ok(0);
+    }
+    let at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *tx)
+        .await?;
+    let points = award(
+        &mut tx,
+        &app.config.factions,
+        Award {
+            user: &raider,
+            genre: &genre,
+            source: Source::Raid,
+            event: raid,
+            elapsed_ms: 0,
+        },
+        at,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(points)
 }
 /// SRS polling supplies actual advancing media time, never a browser claim.
 pub(crate) async fn stream(

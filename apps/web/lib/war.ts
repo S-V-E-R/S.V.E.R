@@ -3,8 +3,8 @@ export type Genre = { id: string; name: string; home: Faction | null; holder: Fa
 export type War = {
   season: { number: number; starts_at: string; ends_at: string; next_starts_at: string; finished: boolean; winners: Faction[] } | null;
   week: { id: number; ends_at: string; completed: boolean } | null;
-  /** Skirmish Hour (docs/FACTIONS.md): influence counts double, under the usual caps. */
-  skirmish?: { multiplier: number; active: { starts_at: string; ends_at: string } | null; next: { starts_at: string; ends_at: string } | null };
+  /** Faction events (docs/FACTIONS.md): a Skirmish Hour doubles influence, a Raid Night doubles raid influence, under the usual caps. */
+  skirmish?: { multiplier: number; active: FactionEvent | null; next: FactionEvent | null };
   genres: Genre[];
   scoreboard: { faction: Faction; territories: number; genre_weeks: number }[];
   previous_winners: Faction[];
@@ -18,3 +18,4 @@ export function contest(genre: Genre) {
   const lead = top && second && top.score > 0 ? (top.score - second.score) / top.score * 100 : 0;
   return { top, lead, contested: !!top?.score && (top.faction !== genre.holder || (second.score > 0 && lead < 10)) };
 }
+export type FactionEvent = { kind: "skirmish" | "raid_night"; starts_at: string; ends_at: string };

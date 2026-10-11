@@ -39,8 +39,9 @@ export default function Page() {
   </>;
 }
 
-type Skirmish = { id: string; starts_at: string; cancelled_at: string | null; by: string | null };
-/** Skirmish Hour (docs/FACTIONS.md): schedule on the hour, an hour or more ahead; cancel before it starts. */
+type Skirmish = { id: string; kind: "skirmish" | "raid_night"; starts_at: string; ends_at: string; cancelled_at: string | null; by: string | null };
+const kindName = (s: Skirmish) => s.kind === "raid_night" ? "Raid Night" : "Skirmish Hour";
+/** Faction events (docs/FACTIONS.md): Skirmish Hour or Raid Night, on the hour, an hour or more ahead; cancel before it starts. */
 function Skirmishes() {
   const [items, setItemsOnly] = useState<Skirmish[] | null>(null);
   const [loadedAt, setLoadedAt] = useState(0);
@@ -53,24 +54,26 @@ function Skirmishes() {
   useLoad(load);
   async function schedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const [date, hour] = [String(new FormData(event.currentTarget).get("date")), String(new FormData(event.currentTarget).get("hour"))];
-    const r = await send<{ items: Skirmish[] }>("POST", "/api/admin/skirmishes", { starts_at: `${date}T${hour.padStart(2, "0")}:00:00Z` });
+    const form = new FormData(event.currentTarget);
+    const [date, hour, kind] = [String(form.get("date")), String(form.get("hour")), String(form.get("kind"))];
+    const r = await send<{ items: Skirmish[] }>("POST", "/api/admin/skirmishes", { starts_at: `${date}T${hour.padStart(2, "0")}:00:00Z`, kind });
     if (r.ok) { setItems(r.data.items); setMessage("Scheduled. It shows on the war map and hubs now."); } else setMessage(r.error);
   }
   async function cancel(s: Skirmish) {
-    if (!window.confirm(`Cancel the Skirmish Hour at ${new Date(s.starts_at).toUTCString()}?`)) return;
+    if (!window.confirm(`Cancel the ${kindName(s)} at ${new Date(s.starts_at).toUTCString()}?`)) return;
     const r = await send<{ items: Skirmish[] }>("DELETE", `/api/admin/skirmishes/${encodeURIComponent(s.id)}`);
     if (r.ok) { setItems(r.data.items); setMessage("Cancelled."); } else setMessage(r.error);
   }
   const upcoming = (s: Skirmish) => !s.cancelled_at && new Date(s.starts_at).getTime() > loadedAt;
-  return <section className="panel"><h2>Skirmish Hours</h2>
-    <p>For one hour, influence counts double; the per-person caps still apply. Times are UTC. Scheduling and cancelling are audited.</p>
+  return <section className="panel"><h2>Faction events</h2>
+    <p>Skirmish Hour: for one hour, all influence counts double. Raid Night: for three hours, influence from raids into faction channels counts double. The per-person caps still apply, and events never overlap. Times are UTC. Scheduling and cancelling are audited.</p>
     <form onSubmit={schedule} className="row wrap">
+      <label className="field narrow"><span>Event</span><select name="kind" defaultValue="skirmish"><option value="skirmish">Skirmish Hour</option><option value="raid_night">Raid Night</option></select></label>
       <label className="field narrow"><span>Date (UTC)</span><input type="date" name="date" required /></label>
       <label className="field narrow"><span>Hour (UTC, 0–23)</span><input type="number" name="hour" min={0} max={23} required /></label>
       <button className="small">Schedule</button>
     </form>
     {message && <p role="status" className="form-message">{message}</p>}
-    <ul>{items?.map(s => <li key={s.id}>{new Date(s.starts_at).toUTCString()} · {s.cancelled_at ? "cancelled" : upcoming(s) ? "scheduled" : "done"}{s.by && ` · by @${s.by}`} {upcoming(s) && <button type="button" className="small quiet" onClick={() => void cancel(s)}>Cancel</button>}</li>)}</ul>
+    <ul>{items?.map(s => <li key={s.id}>{kindName(s)} · {new Date(s.starts_at).toUTCString()} · {s.cancelled_at ? "cancelled" : upcoming(s) ? "scheduled" : "done"}{s.by && ` · by @${s.by}`} {upcoming(s) && <button type="button" className="small quiet" onClick={() => void cancel(s)}>Cancel</button>}</li>)}</ul>
   </section>;
 }

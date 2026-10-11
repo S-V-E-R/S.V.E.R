@@ -1,5 +1,5 @@
-//! Skirmish Hour scheduling (docs/FACTIONS.md "Skirmish Hour"): staff only, on the hour, an hour
-//! or more ahead, no overlaps, cancellable before it starts, audited, and shown on the war map.
+//! Faction event scheduling (docs/FACTIONS.md "Skirmish Hour", "Raid Night"): staff only, on the
+//! hour, an hour or more ahead, no overlaps, cancellable before it starts, audited, on the war map.
 use super::Env;
 use super::chat::{call, person};
 use axum::http::StatusCode;
@@ -19,19 +19,20 @@ pub async fn exercise(e: &Env) {
         let now = chrono::Utc::now().timestamp();
         chrono::DateTime::from_timestamp((now / 3600 + h) * 3600, 0).unwrap()
     };
-    let schedule = |token: &str, at: Value| {
-        let token = token.to_string();
+    let event = |token: &str, at: Value, kind: &str| {
+        let (token, kind) = (token.to_string(), kind.to_string());
         async move {
             call(
                 e,
                 "POST",
                 "/api/admin/skirmishes",
                 Some(&token),
-                json!({"starts_at": at}),
+                json!({"starts_at": at, "kind": kind}),
             )
             .await
         }
     };
+    let schedule = |token: &str, at: Value| event(token, at, "skirmish");
     assert_eq!(
         schedule(&viewer, json!(hour(3))).await.0,
         StatusCode::NOT_FOUND,
@@ -56,10 +57,25 @@ pub async fn exercise(e: &Env) {
         StatusCode::CONFLICT,
         "no overlaps"
     );
+    assert_eq!(
+        event(&staff, json!(hour(2)), "raid_night").await.0,
+        StatusCode::CONFLICT,
+        "a three-hour Raid Night can't cover a Skirmish Hour"
+    );
+    assert_eq!(
+        event(&staff, json!(hour(6)), "parade").await.0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, night) = event(&staff, json!(hour(4)), "raid_night").await;
+    assert_eq!(status, StatusCode::OK, "{night}");
+    assert_eq!(night["items"][0]["kind"], "raid_night");
+    let ends = night["items"][0]["ends_at"].as_str().unwrap();
+    assert_eq!(chrono::DateTime::parse_from_rfc3339(ends).unwrap(), hour(7));
     let (_, war) = call(e, "GET", "/api/factions/war", None, Value::Null).await;
     if !war["season"].is_null() {
         assert_eq!(war["skirmish"]["multiplier"], 2);
         assert!(war["skirmish"]["next"]["starts_at"].is_string(), "{war}");
+        assert_eq!(war["skirmish"]["next"]["kind"], "skirmish");
     }
     let id = made["items"][0]["id"].as_str().unwrap().to_string();
     let (status, cancelled) = call(
@@ -71,12 +87,12 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(cancelled["items"][0]["cancelled_at"].is_string());
+    assert!(cancelled["items"][1]["cancelled_at"].is_string());
     let audited: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM moderation_actions WHERE action IN ('skirmish_schedule','skirmish_cancel')",
     )
     .fetch_one(&e.app.db)
     .await
     .unwrap();
-    assert_eq!(audited, 2);
+    assert_eq!(audited, 3);
 }
