@@ -94,7 +94,7 @@ Phase 1, Boards (October 6, 2026; migration 0034, `boards.rs`, `tests/streams/bo
 - **OBS overlay:** a private browser-source URL (`/overlay/<token>`, only the token's digest is stored, and a new URL replaces the old). While it is connected (checked in within 30 seconds), effects appear only in the video, never also over the player. Test-mode effects reach it too.
 - **Webhooks:** the streamer's HTTPS endpoint receives `board.press` events signed like Stripe's (`SVER-Signature: t=…,v1=HMAC-SHA256("t.body")`; the secret is shown once). Delivery goes through the Postgres outbox on its own worker loop. It checks every resolved address and refuses private, loopback, link-local, CGNAT, benchmark, documentation, multicast and NAT64 ranges, then connects to the address it checked (no re-resolution and no redirects). It retries with doubling backoff up to 8 attempts.
 - **Running the board:** the owner, staff and (when allowed) channel moderators can pause all effects (panic) and block viewers from the board; each action is in the channel moderation log.
-- **Not yet:** effect sounds and streamer-uploaded effects come with Skills (they need the emote-style review); the OBS scene bridge and the Game SDK are later phases. Effects sync to an estimated player delay; exact sync to the HLS program date-time is a later refinement if measurements call for it.
+- **Not yet:** effect sounds and streamer-uploaded effects for board controls (custom Skills are built; see "Custom Skills"); the OBS scene bridge and the Game SDK are later phases. Effects sync to an estimated player delay; exact sync to the HLS program date-time is a later refinement if measurements call for it.
 
 Phase 2, polls, predictions and counters (October 6, 2026; migration 0035, `crowd.rs`, `tests/streams/crowd.rs`):
 
@@ -132,6 +132,15 @@ Hold-then-capture charging for controls a game or the bridge must confirm, viewe
 ## Legacy notes
 
 Reviewed October 3, 2026. Kept: the board, screen and control model, templates, safe test mode, publish checklist, preview tokens, panic disable, overlay tokens, faction rally, emote combos and the command shape. Fixed: games and the bridge connected to the server's Redis directly; Favor charge and press weren't one transaction; guest tokens could press and count toward discovery; joystick input had no limit; effects ignored video delay and could appear twice; two separate poll systems; live boards were edited in place. Changed: Surge is now participation-driven. Dropped: Valor-wagered predictions, paid poll weighting, the money-driven Surge, spending leaderboards, and CrowdSync signals in MAGNet.
+
+## Custom Skills
+
+Built October 10, 2026 (Joe's decision: fixed price tiers; `skills.rs`, migration 0091).
+
+- A streamer adds up to 10 Skills of their own in Studio → Board, each with an uploaded image (shown as a sticker on stream; the same image pipeline as every upload, fingerprinted and covered by Take It Down) and/or a sound (re-encoded to at most 10 seconds of mono WAV, as for alert sounds).
+- Prices are only the built-in Skills' price points (30, 50, 75, 100, 150, 200 or 300 Valor); the streamer earns the same 0.8¢ per Valor, paid exactly like a tribute. A Skill without an image or sound isn't on sale.
+- It counts as a sticker when it has an image, otherwise as a sound, so the category switches and the board pause apply. Names (1–30 characters) pass the platform word filter; chat shows the name on the Skill badge.
+- Deleting a Skill takes it off sale at once; past messages keep its name.
 
 ## Done when
 

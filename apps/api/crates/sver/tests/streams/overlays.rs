@@ -149,7 +149,13 @@ pub async fn exercise(e: &Env) {
     image::DynamicImage::ImageRgb8(image)
         .write_to(&mut png, image::ImageFormat::Png)
         .unwrap();
-    let (status, saved) = upload(e, "/api/me/overlays/follow/image", png.into_inner()).await;
+    let (status, saved) = upload(
+        e,
+        &e.cookie,
+        "/api/me/overlays/follow/image",
+        png.into_inner(),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{saved}");
     assert!(
         saved["settings"]["follow"]["image"]
@@ -158,7 +164,68 @@ pub async fn exercise(e: &Env) {
             .starts_with("alerts/"),
         "{saved}"
     );
-    // One second of a 440 Hz tone as 8 kHz mono WAV.
+    let tone = tone();
+    let (status, saved) = upload(e, &e.cookie, "/api/me/overlays/follow/sound", tone).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let audio = saved["settings"]["follow"]["audio"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(audio.starts_with("alerts/sounds/") && audio.ends_with(".wav"));
+    assert_eq!(
+        upload(
+            e,
+            &e.cookie,
+            "/api/me/overlays/follow/sound",
+            b"not a sound".to_vec()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        upload(e, &e.cookie, "/api/me/overlays/nope/sound", b"x".to_vec())
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let kept = e.call("PUT", "/api/me/overlays", settings.clone()).await;
+    assert_eq!(kept["settings"]["follow"]["audio"], audio.as_str());
+    let removed = e
+        .call("DELETE", "/api/me/overlays/follow/image", Value::Null)
+        .await;
+    assert!(removed["settings"]["follow"]["image"].is_null());
+    e.call("DELETE", "/api/me/overlays/follow/sound", Value::Null)
+        .await;
+}
+
+/// A multipart upload of one `file` as the person with `token`.
+pub(super) async fn upload(e: &Env, token: &str, path: &str, file: Vec<u8>) -> (StatusCode, Value) {
+    use axum::{body::Body, extract::ConnectInfo, http::Request};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let mut body = b"--alert\r\nContent-Disposition: form-data; name=\"file\"; filename=\"alert.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n".to_vec();
+    body.extend(file);
+    body.extend(b"\r\n--alert--\r\n");
+    let request = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "multipart/form-data; boundary=alert")
+        .header("cookie", format!("sver_dev={token}"))
+        .header("origin", &e.app.config.origin)
+        .extension(ConnectInfo(
+            "127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap(),
+        ))
+        .body(Body::from(body))
+        .unwrap();
+    let response = sver::router(e.app.clone()).oneshot(request).await.unwrap();
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+/// One second of a 440 Hz tone as 8 kHz mono WAV.
+pub(super) fn tone() -> Vec<u8> {
     let samples: Vec<u8> = (0..8000)
         .flat_map(|i| {
             (((i as f64 * 440.0 * std::f64::consts::TAU / 8000.0).sin() * 8000.0) as i16)
@@ -174,55 +241,5 @@ pub async fn exercise(e: &Env) {
     tone.extend(b"data");
     tone.extend((samples.len() as u32).to_le_bytes());
     tone.extend(samples);
-    let (status, saved) = upload(e, "/api/me/overlays/follow/sound", tone).await;
-    assert_eq!(status, StatusCode::OK, "{saved}");
-    let audio = saved["settings"]["follow"]["audio"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(audio.starts_with("alerts/sounds/") && audio.ends_with(".wav"));
-    assert_eq!(
-        upload(e, "/api/me/overlays/follow/sound", b"not a sound".to_vec())
-            .await
-            .0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        upload(e, "/api/me/overlays/nope/sound", b"x".to_vec())
-            .await
-            .0,
-        StatusCode::NOT_FOUND
-    );
-    let kept = e.call("PUT", "/api/me/overlays", settings.clone()).await;
-    assert_eq!(kept["settings"]["follow"]["audio"], audio.as_str());
-    let removed = e
-        .call("DELETE", "/api/me/overlays/follow/image", Value::Null)
-        .await;
-    assert!(removed["settings"]["follow"]["image"].is_null());
-    e.call("DELETE", "/api/me/overlays/follow/sound", Value::Null)
-        .await;
-}
-
-async fn upload(e: &Env, path: &str, file: Vec<u8>) -> (StatusCode, Value) {
-    use axum::{body::Body, extract::ConnectInfo, http::Request};
-    use http_body_util::BodyExt;
-    use tower::ServiceExt;
-    let mut body = b"--alert\r\nContent-Disposition: form-data; name=\"file\"; filename=\"alert.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n".to_vec();
-    body.extend(file);
-    body.extend(b"\r\n--alert--\r\n");
-    let request = Request::builder()
-        .method("POST")
-        .uri(path)
-        .header("content-type", "multipart/form-data; boundary=alert")
-        .header("cookie", format!("sver_dev={}", e.cookie))
-        .header("origin", &e.app.config.origin)
-        .extension(ConnectInfo(
-            "127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap(),
-        ))
-        .body(Body::from(body))
-        .unwrap();
-    let response = sver::router(e.app.clone()).oneshot(request).await.unwrap();
-    let status = response.status();
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    tone
 }

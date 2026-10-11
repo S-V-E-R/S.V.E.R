@@ -47,6 +47,7 @@
 
 /* Phase 3: Skills, rallies and Surge. */
 .board-sticker{position:absolute;right:6%;top:10%;font-size:96px;animation:board-pop .4s ease-out}
+.board-sticker-image{width:160px;max-height:160px;height:auto;object-fit:contain}
 .rally-meter{display:grid;gap:4px}
 .rally-row{display:grid;grid-template-columns:80px 1fr 42px;align-items:center;gap:8px}
 .rally-row progress{width:100%;accent-color:var(--accent)}
