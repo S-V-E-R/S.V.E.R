@@ -15,8 +15,8 @@ use axum::{
         ConnectInfo, DefaultBodyLimit, Multipart, Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::HeaderMap,
-    response::Response,
+    http::{HeaderMap, header},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -569,6 +569,63 @@ async fn session(app: App, channel: String, username: String, digest: String, mu
     }
 }
 
+/// Visible people only: not internal or deleted, and not blocked by the channel (`$1`).
+const SHOWN: &str = "NOT cu.internal AND cu.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE k.blocker_id=$1 AND k.blocked_id=cu.id)";
+/// GET /api/overlays/latest?token=: the newest follower, subscriber and tribute (each only while
+/// its alert is on, a tribute at or over the alert minimum) and the active subscriber count, for
+/// the streamer's own overlay loaded from a local file. Those can't open the socket (it checks
+/// Origin), so any origin may read this; the private link is the only credential and no cookies
+/// are used. Read from the lasting records rather than `events` (kept 10 minutes), so the names
+/// stay up between streams.
+async fn latest(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(query): Query<Connect>,
+) -> Res<impl IntoResponse> {
+    let ip = sec::client_ip(&app, peer, &headers);
+    sec::reserve(&app, vec![format!("alerts-latest:{ip}")], 30, 60).await?;
+    let channel: String =
+        sqlx::query_scalar("SELECT channel_id FROM overlay_settings WHERE token_hash=$1")
+            .bind(sec::digest(&query.token))
+            .fetch_optional(&app.db)
+            .await?
+            .ok_or_else(Fail::missing)?;
+    let settings = settings(&app, &channel).await?;
+    let on = |kind: &str| settings[kind]["on"] == true;
+    let mut follow: Option<String> = None;
+    if on("follow") {
+        follow = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT cu.username FROM follows f JOIN channel_users cu ON cu.id=f.follower_id WHERE f.following_id=$1 AND {SHOWN} ORDER BY f.created_at DESC LIMIT 1")))
+            .bind(&channel).fetch_optional(&app.db).await?;
+    }
+    let mut sub: Option<(String, i16, i32)> = None;
+    if on("sub") {
+        sub = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT cu.username,s.tier,s.months FROM channel_subs s JOIN channel_users cu ON cu.id=s.user_id WHERE s.channel_id=$1 AND s.paid_through>now() AND {SHOWN} ORDER BY s.created_at DESC LIMIT 1")))
+            .bind(&channel).fetch_optional(&app.db).await?;
+    }
+    // ponytail: walks the channel's chat history (kept 7 days) back to the newest tribute; add a
+    // partial index on tribute IS NOT NULL if busy channels make this slow.
+    let mut tribute: Option<(String, i32)> = None;
+    if on("tribute") {
+        let min = settings["tribute"]["min"].as_i64().unwrap_or(10) as i32;
+        tribute = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT cu.username,m.tribute FROM chat_messages m JOIN channel_users cu ON cu.id=m.author_id WHERE m.channel_id=$1 AND m.deleted_at IS NULL AND m.tribute>=$2 AND {SHOWN} ORDER BY m.seq DESC LIMIT 1")))
+            .bind(&channel).bind(min).fetch_optional(&app.db).await?;
+    }
+    let subscribers = goal_count(&app, &channel, Some("subs")).await?;
+    Ok((
+        [
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Json(json!({
+            "subscriber_count": subscribers,
+            "follow": follow.map(|name| json!({"name": name})),
+            "sub": sub.map(|(name, tier, months)| json!({"name": name, "tier": tier, "months": months})),
+            "tribute": tribute.map(|(name, valor)| json!({"name": name, "valor": valor})),
+        })),
+    ))
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/me/overlays", get(mine).put(save))
@@ -587,6 +644,7 @@ pub fn routes() -> Router<App> {
                 .layer(DefaultBodyLimit::max(1024 * 1024 + 16 * 1024)),
         )
         .route("/api/overlays/ws", get(socket))
+        .route("/api/overlays/latest", get(latest))
 }
 
 #[cfg(test)]

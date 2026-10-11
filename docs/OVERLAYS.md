@@ -50,3 +50,10 @@ Phase 3, after the developer platform ([DEVELOPER_PLATFORM.md](DEVELOPER_PLATFOR
 ## As built (October 10, 2026; `overlays.rs`, migration 0082)
 
 See the module comment in `apps/api/crates/sver/src/overlays.rs`. Covered by `tests/streams/overlays.rs`.
+
+## Overlays loaded from local files (October 10, 2026)
+
+- A streamer's own overlay loaded from a local HTML file can't open the alerts socket, which only accepts sver.tv's origin. `GET /api/overlays/latest?token=` serves it instead: the newest follower, subscriber and tribute, plus the active subscriber count. Any origin may read it, it uses no cookies, and the private link is its only credential, like the socket.
+- Each name appears only while its alert type is on, and a tribute only at or over the alert minimum. People the streamer blocked, and internal or deleted accounts, never show. Names come from the lasting records (follows, subscriptions, tribute chat messages, which are kept 7 days), not the 10-minute `events` outbox, so they stay up between streams.
+- The subscriber count stays private: it is served only here, behind the link, never on the public `/api/channels/{name}/overlay`.
+- Rate limit: 30 requests a minute per address (a 15-second poll uses 4).
