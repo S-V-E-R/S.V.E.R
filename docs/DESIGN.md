@@ -116,6 +116,8 @@ Every page uses the same shell (top bar, sidebar, main column) unless noted. Uti
 
 **Watch page.** Player first and largest (16:9), chat to its right at 340 px (below the player on narrow screens). Under the player: streamer bar (crest, name, title, category chip, faction tag, Follow), then "Up next" from MAGNet. Chat messages show the sender's crest (14 px) and name in their faction color; moderator actions in a small hover menu. When the stream ends, a framed overlay offers the next stream with a 10-second countdown and Cancel.
 
+**Chat bar (Emotes, Signature, Rewards, Skills).** One row under the message box, its buttons splitting the chat column evenly. Each opens a panel over the bottom of the chat with a fixed 4-wide grid of tiles, 12 to a page with ‹ › page buttons; the panel never scrolls, in either direction (Joe, October 11, 2026). Reporting an emote is one "Report an emote" mode for the tab, not a link under every tile.
+
 **Browse.** Genre tabs across the top (grouped by holding faction, each with its crest), then category tiles at 3:4 with the holder's crest in the corner and the live count. A category page lists its live streams in fair rotation, with faction and language filters. Mature-labeled streams carry a MATURE tag (dark background, `--ink` text) and open behind a framed warning ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)).
 
 **Following.** Live channels first as stream cards, then offline channels as a compact list (crest, name, last live).
