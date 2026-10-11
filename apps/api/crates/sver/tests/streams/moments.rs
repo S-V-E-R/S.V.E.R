@@ -246,7 +246,7 @@ pub async fn exercise(e: &Env) {
         "{played}"
     );
     // A board control can play the streamer's own custom Skill; someone else's or a missing one is refused.
-    let board = |effect: String| json!({"screens": [{"name": "Main", "controls": [{"id": "honk", "kind": "button", "label": "Honk", "effect": effect}]}]});
+    let board = |effect: String| json!({"board": {"screens": [{"name": "Main", "controls": [{"id": "honk", "kind": "button", "label": "Honk", "effect": effect}]}]}});
     let draft = |body: Value| call(e, "PUT", "/api/me/board/draft", Some(&owner), body);
     assert_eq!(
         draft(board(format!("custom:{skill}"))).await.0,
