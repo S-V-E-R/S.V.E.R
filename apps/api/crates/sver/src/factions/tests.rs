@@ -741,6 +741,36 @@ async fn exercise(app: App) {
         "Payment replay"
     );
     tx.commit().await.unwrap();
+    // Raids into a member's channel: nothing for an empty raid; a cross-faction raid in a Raid
+    // Night counts double (5, +10% council target, x2) and the raider's daily raid cap binds.
+    sql(
+        &app.db,
+        "UPDATE broadcasts SET observed_at=now() WHERE id='faction-live'",
+    )
+    .await;
+    sql(&app.db, "INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,ended_at) VALUES('raider-live','faction-user-2','raider-live',1,'ENDED','s','v','c',now(),now(),now(),now())").await;
+    for (id, arrivals) in [("raid-empty", 0), ("raid-one", 3), ("raid-two", 2)] {
+        sqlx::query("INSERT INTO raids(id,raider_id,broadcast_id,target_id,target_broadcast_id,execute_at,status,arrivals,counted_at) VALUES($1,'faction-user-2','raider-live','faction-user-0','faction-live',now(),'moved',$2,now())")
+            .bind(id).bind(arrivals).execute(&app.db).await.unwrap();
+    }
+    sql(&app.db, "INSERT INTO faction_skirmishes(id,kind,starts_at) VALUES('raid-night-two','raid_night',now()-interval '1 minute')").await;
+    assert_eq!(super::raid(&app, "raid-empty").await.unwrap(), 0);
+    assert_eq!(super::raid(&app, "raid-one").await.unwrap(), 10);
+    assert_eq!(
+        super::raid(&app, "raid-one").await.unwrap(),
+        0,
+        "Raid replay"
+    );
+    assert_eq!(
+        super::raid(&app, "raid-two").await.unwrap(),
+        0,
+        "Daily raid cap"
+    );
+    sql(
+        &app.db,
+        "UPDATE faction_skirmishes SET cancelled_at=now() WHERE id='raid-night-two'",
+    )
+    .await;
     assert!(
         sqlx::query("UPDATE faction_influence SET points=points+1")
             .execute(&app.db)

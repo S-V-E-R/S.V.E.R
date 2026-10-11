@@ -81,7 +81,7 @@ Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page; the
 - **Theme:** the site uses the signed-in user's faction colors; channel pages use the owner's ([DESIGN.md](DESIGN.md)).
 - **MAGNet:** home-turf weight in homepage rotation for genres the viewer's faction holds ([MAGNET.md](MAGNET.md)). Hype channels stay faction-neutral.
 - **Chat:** faction crests next to names; bots greet cross-faction raiders ([COMMUNITY.md](COMMUNITY.md)).
-- **Raids** into ally or enemy channels earn influence under the normal rules and caps (weights in tuning).
+- **Raids** into ally or enemy channels earn influence under the normal rules and caps (weights in tuning). Built October 10, 2026 (migration 0096): when a raid's arrivals are counted, the raiding streamer earns `raid_points` in the target's genre if the target is a faction member, live with Trusted playback, and at least one viewer actually arrived. One award per raid; the raider's daily raid cap (`raid_daily_cap`) binds. The council-target bonus and faction events apply; the enemy-turf bonus is for time-based influence only.
 
 ## Skirmish Hour
 
@@ -96,7 +96,7 @@ The first faction event (Phase 4), built October 10, 2026 by Joe's decision (`fa
 Built October 10, 2026 by Joe's decision (more faction events, each 2x under the usual caps; migration 0094).
 
 - **Territory Spotlight:** every UTC day one genre is spotlighted, and influence earned there counts double until midnight UTC. It is the current week's closest race between the top two factions among this season's territories, picked on the day's first use and kept for the day; before anyone has influence that week, a genre picked by the date. No staff action needed.
-- **Raid Night:** staff schedule it beside Skirmish Hours (3 hours, same rules: on the hour, an hour to 60 days ahead, no overlap with another Raid Night, audited). During it, a viewer whose playback came from a raid by a streamer of another faction earns double watch influence.
+- **Raid Night:** staff schedule it beside Skirmish Hours (3 hours, same rules: on the hour, an hour to 60 days ahead, no overlap with another Raid Night, audited). During it, a viewer whose playback came from a raid by a streamer of another faction earns double watch influence, and the streamer who made that cross-faction raid earns double raid influence (Joe chose to combine both, October 10, 2026).
 - **Events never stack:** any number of them at once still means 2x, and the per-person caps always apply after.
 - The war map and hubs show today's spotlight and the next or running Raid Night.
 

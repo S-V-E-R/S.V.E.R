@@ -11,6 +11,10 @@ pub struct Tuning {
     pub supporter_points: i64,
     pub daily_caps: [i64; 4],
     pub chat_hourly_cap: i64,
+    /// A raid's influence and the raiding streamer's daily raid cap. Missing from an older private
+    /// file, they take the demo values below.
+    pub raid_points: i64,
+    pub raid_daily_cap: i64,
     pub minimum_divisor: i64,
     pub flip_margin_bps: i64,
     pub neutral_minimum: i64,
@@ -25,6 +29,8 @@ impl Default for Tuning {
             supporter_points: 2,
             daily_caps: [1000, 1000, 10, 10],
             chat_hourly_cap: 3,
+            raid_points: 5,
+            raid_daily_cap: 10,
             minimum_divisor: 2,
             flip_margin_bps: 100,
             neutral_minimum: 10,
@@ -50,6 +56,8 @@ impl Tuning {
             || !(1..=1_000_000).contains(&value.chat_points)
             || !(1..=1_000_000).contains(&value.supporter_points)
             || !(1..=1_000_000_000).contains(&value.chat_hourly_cap)
+            || !(1..=1_000_000).contains(&value.raid_points)
+            || !(1..=1_000_000_000).contains(&value.raid_daily_cap)
             || !(1..=1_000_000).contains(&value.minimum_divisor)
             || !(0..=10_000).contains(&value.flip_margin_bps)
             || !(1..=1_000_000_000).contains(&value.neutral_minimum)
