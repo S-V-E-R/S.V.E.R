@@ -1,8 +1,8 @@
 "use client";
-import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "../../components/Avatar";
 import { ReportButton } from "../../components/Report";
+import { PlayerCardButton } from "../../components/UserChip";
 import { send, useLoad } from "../../lib/client-api";
 import { open as openEnvelope, safetyNumber, seal, type Device, type Envelope, type Opened } from "../../lib/e2e";
 import { ensureDevice, type ThisDevice } from "../../lib/e2e-device";
@@ -17,6 +17,15 @@ type Thread = {
 type MyDevice = { id: string; created_at: string };
 
 const LINK = /https?:\/\/|www\./i;
+/** "now", "5m", "3h", "2d", then a date: for the conversation list. */
+function ago(iso: string) {
+  const minutes = Math.floor((Date.now() - Date.parse(iso)) / 60000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h`;
+  if (minutes < 10080) return `${Math.floor(minutes / 1440)}d`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 const time = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 /** Direct messages (docs/COMMUNITY.md "Direct messages"). `?with=username` opens a conversation. */
@@ -35,6 +44,7 @@ export default function Messages() {
   const [plain, setPlain] = useState<Record<string, Opened | null>>({});
   const [devices, setDevices] = useState<MyDevice[]>([]);
   const [safety, setSafety] = useState("");
+  const [panel, setPanel] = useState<"new" | "settings" | null>(null);
   const opened = useRef<string | null>(null);
 
   const loadList = useCallback(async () => {
@@ -154,60 +164,92 @@ export default function Messages() {
     await loadThread(open);
   }
 
-  return <div className="messages-page"><h1>Messages</h1>
-    <div className="row wrap">
-      <label className="field narrow"><span>Who can message you</span><select value={policy} onChange={async e => { const r = await send<{ policy: string }>("PUT", "/api/me/dm-settings", { policy: e.target.value }); if (r.ok) setPolicy(r.data.policy); else setError(r.error); }}>
-        <option value="mutuals">People who follow you and you follow back</option>
-        <option value="following">Anyone you follow</option>
-        <option value="nobody">Nobody</option>
-      </select></label>
-      <form className="row" onSubmit={e => { e.preventDefault(); const name = String(new FormData(e.currentTarget).get("to") ?? "").trim().replace(/^@/, ""); if (name) void choose(name); }}>
-        <label className="field narrow"><span>New message to</span><input name="to" placeholder="username" autoComplete="off" maxLength={26} /></label>
-        <button type="submit" className="small">Open</button>
-      </form>
-    </div>
-    <p className="muted small">Messages are text only and are kept for 12 months. Normally S.V.E.R stores them encrypted and staff can read a conversation only when it&apos;s reported. Turn on <strong>Private</strong> in a conversation to encrypt it end to end on your devices: nobody else, including S.V.E.R, can read it; a report sends only the message you report. Private messages can&apos;t be read on a device added later. Private mode is for two adults.</p>
-    {devices.length > 0 && <details className="small"><summary>Your Private-mode devices ({devices.length})</summary>
-      <ul>{devices.map(d => <li key={d.id} className="row">Added {time(d.created_at)}{d.id === device?.id && <strong> (this browser)</strong>} <button type="button" className="small quiet danger-text" onClick={() => void removeDevice(d.id)}>Remove</button></li>)}</ul>
-    </details>}
-    {error && <p role="alert" className="form-message error">{error}</p>}
-    <div className="messages-layout">
-      <nav className="panel messages-list" aria-label="Conversations">
-        {list === null ? <p className="loading">Loading…</p> : list.length === 0 ? <p className="muted">No conversations yet.</p>
-          : <ul>{list.map(c => <li key={c.with.username}><button type="button" className={`messages-item${c.with.username?.toLowerCase() === open?.toLowerCase() ? " active" : ""}`} onClick={() => c.with.username && choose(c.with.username)}>
-            <Avatar sizes={c.with.avatar} name={c.with.display_name} size={32} />
-            <span className="messages-item-text"><strong>{c.with.display_name}</strong><span className="muted small">{c.last}</span></span>
-            {c.unread > 0 && !c.muted && <span className="badge verified">{c.unread}<span className="sr-only"> unread</span></span>}
-          </button></li>)}</ul>}
-      </nav>
-      <section className="panel messages-thread" aria-label="Conversation">
-        {!thread ? <p className="muted">Choose a conversation.</p> : <>
-          <header className="row between wrap">
-            <Link href={`/${thread.with.username}`}><strong>{thread.with.display_name}</strong> <span className="muted">@{thread.with.username}</span></Link>
-            <span className="row wrap">
-              <button type="button" className="small quiet" aria-pressed={thread.private} disabled={!device && !thread.private} title={device ? "Private mode: end-to-end encrypted on your devices" : deviceNote} onClick={() => void togglePrivate()}>{thread.private ? "🔒 Private: on" : "Private: off"}</button>
-              <button type="button" className="small quiet" onClick={() => action("mute")}>{thread.muted ? "Unmute" : "Mute"}</button>
-              <button type="button" className="small quiet" onClick={() => action("clear")}>Delete for me</button>
-              <button type="button" className="small quiet danger-text" onClick={() => action("block")}>Block</button>
+  function back() {
+    setOpen(null); opened.current = null; setThread(null); setError("");
+    history.replaceState(null, "", "/messages");
+  }
+  const mine = (m: Message) => m.sender.toLowerCase() === me.toLowerCase();
+
+  return <div className="messages-page">
+    <div className={`messages-shell panel${thread ? " has-thread" : ""}`}>
+      <aside className="messages-sidebar" aria-label="Conversations">
+        <header className="messages-sidebar-head">
+          <h1>Messages</h1>
+          <button type="button" className="small quiet" aria-expanded={panel === "settings"} onClick={() => setPanel(panel === "settings" ? null : "settings")}>Settings</button>
+          <button type="button" className="small" aria-expanded={panel === "new"} onClick={() => setPanel(panel === "new" ? null : "new")}>New</button>
+        </header>
+        {panel === "new" && <form className="messages-new" onSubmit={e => { e.preventDefault(); const name = String(new FormData(e.currentTarget).get("to") ?? "").trim().replace(/^@/, ""); if (name) { setPanel(null); void choose(name); } }}>
+          <label htmlFor="dm-to" className="sr-only">Username</label>
+          <input id="dm-to" name="to" placeholder="Message @username" autoComplete="off" maxLength={26} autoFocus />
+          <button type="submit" className="small">Open</button>
+          <p className="small-text">The Message button on a channel or player card opens a conversation too.</p>
+        </form>}
+        {panel === "settings" && <div className="messages-settings">
+          <label className="field"><span>Who can message you</span><select value={policy} onChange={async e => { const r = await send<{ policy: string }>("PUT", "/api/me/dm-settings", { policy: e.target.value }); if (r.ok) setPolicy(r.data.policy); else setError(r.error); }}>
+            <option value="mutuals">People who follow you and you follow back</option>
+            <option value="following">Anyone you follow</option>
+            <option value="nobody">Nobody</option>
+          </select></label>
+          <p className="small-text">Messages are text only and are kept for 12 months. S.V.E.R stores them encrypted, and staff can read a conversation only when it&apos;s reported. Turn on <strong>Private</strong> in a conversation to encrypt it end to end on your devices: nobody else, including S.V.E.R, can read it, and a report sends only the message you report. Private messages can&apos;t be read on a device added later. Private mode is for two adults.</p>
+          {devices.length > 0 && <div><strong className="small-text">Your Private-mode devices</strong>
+            <ul className="messages-devices">{devices.map(d => <li key={d.id}>Added {time(d.created_at)}{d.id === device?.id && <strong> (this browser)</strong>} <button type="button" className="small quiet danger-text" onClick={() => void removeDevice(d.id)}>Remove</button></li>)}</ul>
+          </div>}
+        </div>}
+        {list === null ? <p className="loading messages-pad">Loading…</p> : list.length === 0 ? <p className="muted messages-pad">No conversations yet. Press <strong>New</strong>, or use Message on someone&apos;s channel or player card.</p>
+          : <ul className="messages-list">{list.map(c => <li key={c.with.username}><button type="button" className={`messages-item${c.with.username?.toLowerCase() === open?.toLowerCase() ? " active" : ""}${c.unread > 0 && !c.muted ? " unread" : ""}`} onClick={() => c.with.username && choose(c.with.username)}>
+            <Avatar sizes={c.with.avatar} name={c.with.display_name} size={40} />
+            <span className="messages-item-text">
+              <span className="messages-item-top"><strong>{c.with.display_name}</strong><span className="small-text">{ago(c.last_at)}</span></span>
+              <span className="small-text">{c.muted && "🔕 "}{c.last}</span>
             </span>
+            {c.unread > 0 && !c.muted && <span className="messages-unread">{c.unread}<span className="sr-only"> unread</span></span>}
+          </button></li>)}</ul>}
+      </aside>
+      <section className="messages-thread" aria-label="Conversation">
+        {!thread ? <div className="messages-empty"><p>Choose a conversation, or start a new one.</p><button type="button" onClick={() => setPanel("new")}>New message</button>{error && <p role="alert" className="form-message error">{error}</p>}</div> : <>
+          <header className="messages-thread-head">
+            <button type="button" className="small quiet messages-back" onClick={back} aria-label="Back to conversations">←</button>
+            <Avatar sizes={thread.with.avatar} name={thread.with.display_name} size={36} />
+            {thread.with.username ? <PlayerCardButton username={thread.with.username}><span><strong>{thread.with.display_name}</strong> <span className="handle">@{thread.with.username}</span></span></PlayerCardButton> : <strong>{thread.with.display_name}</strong>}
+            <span className="grow" />
+            <button type="button" className={`small${thread.private ? "" : " quiet"}`} aria-pressed={thread.private} disabled={!device && !thread.private} title={device ? "Private mode: end-to-end encrypted on your devices" : deviceNote} onClick={() => void togglePrivate()}>{thread.private ? "🔒 Private" : "Private: off"}</button>
+            <details className="menu messages-more"><summary className="button small quiet" aria-label="More actions">⋯</summary>
+              <div className="menu-list panel" role="menu">
+                <button type="button" role="menuitem" className="link-button" onClick={() => action("mute")}>{thread.muted ? "Unmute" : "Mute"}</button>
+                <button type="button" role="menuitem" className="link-button" onClick={() => action("clear")}>Delete for me</button>
+                <button type="button" role="menuitem" className="link-button danger-text" onClick={() => action("block")}>Block</button>
+              </div>
+            </details>
           </header>
-          {thread.private_changed && <p className="muted small" role="status">{thread.private_changed.by ? `@${thread.private_changed.by}` : "Someone"} turned Private mode {thread.private ? "on" : "off"} {time(thread.private_changed.at)}.{!thread.private && " New messages aren't end-to-end encrypted."}</p>}
-          {thread.private && thread.their_device_at && thread.private_changed && Date.parse(thread.their_device_at) > Date.parse(thread.private_changed.at) && <p className="muted small" role="status">@{thread.with.username} added a device {time(thread.their_device_at)}. New private messages can be read there too.</p>}
-          {thread.private && <details className="small">
-            <summary>Safety number</summary>
-            <p><code>{safety || "Couldn't load the keys."}</code></p>
-            <p className="muted">Compare this with @{thread.with.username} in person or over another app. If both of you see the same number, your messages are going only to each other&apos;s devices. It changes when either of you adds or removes a device.</p>
-          </details>}
-          <ol className="messages-body">{thread.messages.map(m => <li key={m.id} className={m.sender.toLowerCase() === me.toLowerCase() ? "mine" : "theirs"}>
-            <span className="messages-text">{m.private ? <><span aria-label="Private">🔒 </span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
-            <span className="muted small">{time(m.created_at)}{m.sender.toLowerCase() !== me.toLowerCase() && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>
-          </li>)}<li ref={bottom} aria-hidden="true" /></ol>
-          {thread.can_send ? <form onSubmit={submit} className="stack">
+          {(thread.private_changed || thread.private) && <div className="messages-notices">
+            {thread.private_changed && <p className="small-text" role="status">{thread.private_changed.by ? `@${thread.private_changed.by}` : "Someone"} turned Private mode {thread.private ? "on" : "off"} {time(thread.private_changed.at)}.{!thread.private && " New messages aren't end-to-end encrypted."}</p>}
+            {thread.private && thread.their_device_at && thread.private_changed && Date.parse(thread.their_device_at) > Date.parse(thread.private_changed.at) && <p className="small-text" role="status">@{thread.with.username} added a device {time(thread.their_device_at)}. New private messages can be read there too.</p>}
+            {thread.private && <details className="small-text">
+              <summary>Safety number</summary>
+              <p><code>{safety || "Couldn't load the keys."}</code></p>
+              <p className="muted">Compare this with @{thread.with.username} in person or over another app. If both of you see the same number, your messages are going only to each other&apos;s devices. It changes when either of you adds or removes a device.</p>
+            </details>}
+          </div>}
+          <ol className="messages-body">
+            {thread.messages.length === 0 && <li className="messages-start small-text">This is the start of your conversation with @{thread.with.username}.</li>}
+            {thread.messages.map((m, i) => {
+              const next = thread.messages[i + 1];
+              // The time goes under the last of a run from one person within 5 minutes.
+              const last = !next || next.sender !== m.sender || Date.parse(next.created_at) - Date.parse(m.created_at) > 300000;
+              return <li key={m.id} className={`${mine(m) ? "mine" : "theirs"}${last ? " run-end" : ""}`}>
+                <span className="messages-text">{m.private ? <><span aria-label="Private">🔒 </span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
+                {last && <span className="messages-meta small-text">{time(m.created_at)}{!mine(m) && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>}
+              </li>;
+            })}
+            <li ref={bottom} aria-hidden="true" />
+          </ol>
+          {error && <p role="alert" className="form-message error messages-pad">{error}</p>}
+          {thread.can_send ? <form onSubmit={submit} className="messages-composer">
+            {LINK.test(draft) && <p className="small-text messages-link-note" role="status">Links can lead anywhere. Only send ones you trust, and be careful opening links you receive.</p>}
             <label htmlFor="dm-input" className="sr-only">Message</label>
-            <textarea id="dm-input" value={draft} onChange={e => setDraft(e.target.value)} maxLength={1000} rows={2} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
-            {LINK.test(draft) && <p className="muted small" role="status">Links can lead anywhere. Only send ones you trust, and be careful opening links you receive.</p>}
+            <textarea id="dm-input" value={draft} placeholder={thread.private ? "Private message" : `Message @${thread.with.username}`} onChange={e => setDraft(e.target.value)} maxLength={1000} rows={1} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
             <button type="submit" disabled={!draft.trim()}>Send</button>
-          </form> : <p className="muted" role="status">{thread.reason}</p>}
+          </form> : <p className="muted messages-composer" role="status">{thread.reason}</p>}
         </>}
       </section>
     </div>

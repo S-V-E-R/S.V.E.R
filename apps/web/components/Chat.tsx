@@ -3,6 +3,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { ReportButton, TakeDownLink } from "./Report";
+import { PlayerCardButton } from "./UserChip";
 import { Crest } from "./FactionIdentity";
 import { GuildChatBadge } from "./Guilds";
 import { CREATOR_TIERS, type Chip } from "../lib/types";
@@ -345,7 +346,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
-        {m.author.username ? <Link className="faction-name" data-faction={m.author.faction} data-style={m.author.name_style ?? undefined} href={`/${m.author.username}`} title={`${LOYALTY[m.loyalty ?? 0]} in this channel`}><strong>{m.author.display_name}</strong></Link> : <strong>{m.author.display_name}</strong>}
+        {m.author.username ? <PlayerCardButton username={m.author.username} className="chip-button faction-name chat-name" data={{ faction: m.author.faction ?? undefined, style: m.author.name_style ?? undefined }} title={`${LOYALTY[m.loyalty ?? 0]} in this channel`}><strong>{m.author.display_name}</strong></PlayerCardButton> : <strong>{m.author.display_name}</strong>}
         {m.creator_tier ? <span className="badge tier-badge" title="Creator tier">{CREATOR_TIERS[m.creator_tier]}</span> : null}
         {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber`}>{subBadge(m.sub.months)}</span>}
         {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet">MAGNet</span>}

@@ -455,7 +455,8 @@ pub async fn channel(
                 .bind(&user.id)
                 .fetch_one(&mut *db)
                 .await?;
-            json!({"signed_in": true, "is_owner": false, "following": following, "alerts": alerts, "blocked": blocked, "interaction_blocked": blocked || blocked_by})
+            let can_message = crate::dms::refusal(&mut db, v, &user.id).await?.is_none();
+            json!({"signed_in": true, "is_owner": false, "following": following, "alerts": alerts, "blocked": blocked, "interaction_blocked": blocked || blocked_by, "can_message": can_message})
         }
         Some(_) => {
             json!({"signed_in": true, "is_owner": true, "following": false, "blocked": false, "interaction_blocked": false})

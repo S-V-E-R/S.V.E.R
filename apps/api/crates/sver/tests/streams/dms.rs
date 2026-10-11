@@ -24,8 +24,23 @@ pub async fn exercise(e: &Env) {
     // Default: people who follow each other.
     let (status, refused) = send(&a, "DmBravo", "hi").await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    // The player card and channel page offer Message only when sending would work.
+    let can_message = || async {
+        let card = call(e, "GET", "/api/users/DmBravo/card", Some(&a), Value::Null)
+            .await
+            .1;
+        let channel = call(e, "GET", "/api/channels/DmBravo", Some(&a), Value::Null)
+            .await
+            .1;
+        (
+            card["viewer"]["can_message"].clone(),
+            channel["viewer"]["can_message"].clone(),
+        )
+    };
+    assert_eq!(can_message().await, (json!(false), json!(false)));
     e.sql("INSERT INTO follows(follower_id,following_id) VALUES('dm-a','dm-b'),('dm-b','dm-a')")
         .await;
+    assert_eq!(can_message().await, (json!(true), json!(true)));
     let (status, sent) = send(&a, "DmBravo", "hello there, secret words").await;
     assert_eq!(status, StatusCode::OK, "{sent}");
     let stored: String = sqlx::query_scalar("SELECT body_sealed FROM dm_messages LIMIT 1")
