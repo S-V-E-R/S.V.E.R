@@ -73,3 +73,7 @@
   .beacon-studio-list > li { grid-template-columns: 56px minmax(0, 1fr); }
   .beacon-studio-list .beacon-poster { width: 56px; }
 }
+/* Faction tabs above the feed (docs/BEACONS.md "Faction tab"). */
+.beacon-tabs { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin: 0 0 8px; }
+.beacon-tabs a { padding: 4px 10px; border-radius: 999px; color: var(--muted); text-decoration: none; }
+.beacon-tabs a[aria-current="page"] { color: var(--text); background: var(--surface-2, rgba(255,255,255,.08)); }

@@ -89,7 +89,7 @@ Beacons are short vertical videos that lead people to creators and their live st
 
 ## Not in this module
 
-- Comments, remixing, faction-only feed tabs, Beacons counting toward faction influence, and personalized ranking. These are deferred, as in the plan.
+- Comments, remixing, Beacons counting toward faction influence, and personalized ranking. These are deferred, as in the plan (faction tabs were built October 10, 2026; see "Faction tab").
 - Push or email alerts for new Beacons, because followers already get go-live alerts.
 - Music libraries or editing tools beyond cropping and trimming a clip.
 
@@ -107,6 +107,14 @@ Beacons are short vertical videos that lead people to creators and their live st
 | Media worker authenticated with the stream webhook secret | Each worker has its own credential. |
 | "Beacon" also named the Shine boost and the viewer heartbeat | "Beacon" means only these videos. The heartbeat is called the viewer lease. |
 | Kept: approved clips only, the Live now rail, Watch live on every video, counting only visible playback (complete at 90%), the direct-to-storage upload flow, the fairness lane, the watermark with a clean master (now moving corner to corner) | Carried over as above. |
+
+## Faction tab
+
+Built October 10, 2026 by Joe's decision (faction-tagged clips; migration 0095).
+
+- Every Beacon and clip keeps the faction its channel belonged to when it was made (a database trigger sets it on insert; existing ones took their channel's faction at migration). A later faction switch doesn't move old work.
+- The feed has tabs: **For you** (the usual mix) and one per faction. A faction tab is that faction's Beacons in the same fair rotation, with no followed or faction sources and no Live now row; ordering still never reads views, likes or money.
+- Each faction hub shows that faction's latest public clips and links to its Beacons tab.
 
 ## Done when
 

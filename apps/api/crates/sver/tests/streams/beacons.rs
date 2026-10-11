@@ -585,6 +585,30 @@ async fn beacons_publish_watermark_count_and_remove() {
     .1;
     // The viewer's faction source leads with the faction creator before the rotation.
     assert_eq!(mine["items"][0]["channel"]["username"], "OtherCreator");
+    // Faction tabs: only Beacons tagged to that faction when they were made, in the rotation.
+    let tab = |faction: &'static str| {
+        let e = &e;
+        async move {
+            call(e, "GET", &format!("/api/beacons/feed?seed=abc&faction={faction}"), None, Value::Null).await
+        }
+    };
+    let glint = tab("glint").await.1;
+    let tagged: Vec<&str> = glint["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["channel"]["username"].as_str().unwrap())
+        .collect();
+    assert_eq!(tagged, ["OtherCreator"; 3], "{glint}");
+    assert!(tab("myria").await.1["items"].as_array().unwrap().is_empty());
+    assert_eq!(tab("nope").await.0, StatusCode::NOT_FOUND);
+    e.sql("UPDATE faction_members SET faction='myria' WHERE user_id='bc-other'").await;
+    assert_eq!(
+        tab("glint").await.1["items"].as_array().unwrap().len(),
+        3,
+        "a later switch doesn't move old Beacons"
+    );
+    e.sql("UPDATE faction_members SET faction='glint' WHERE user_id='bc-other'").await;
     call(
         &e,
         "PUT",
