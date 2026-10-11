@@ -212,6 +212,27 @@ pub async fn exercise(e: &Env) {
         .await;
     sweep(e).await;
     assert_eq!(taken(&calls), ["DELETE 700 20"]);
+    // A new subscription doesn't wait for the 15-minute sweep: its event marks the server due.
+    e.sql("UPDATE channel_subs SET paid_through=now()+interval '1 month' WHERE user_id='dc-fan'")
+        .await;
+    sver::discord::tick(&e.app).await.unwrap();
+    assert!(taken(&calls).is_empty(), "not due yet");
+    let mut tx = e.app.db.begin().await.unwrap();
+    sver::events::emit(
+        &mut tx,
+        "stream-owner",
+        "subs",
+        serde_json::json!({"user": "dc-fan", "tier": 1}),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    sver::discord::tick(&e.app).await.unwrap();
+    assert_eq!(taken(&calls), ["PUT 700 20"]);
+    e.sql("UPDATE channel_subs SET paid_through=now()-interval '1 minute' WHERE user_id='dc-fan'")
+        .await;
+    sweep(e).await;
+    assert_eq!(taken(&calls), ["DELETE 700 20"]);
 
     // Go-live: one post per broadcast with the title and link, under the go-live alert throttle.
     e.sql("UPDATE stream_settings SET title='Speedrun night' WHERE owner_id='stream-owner'")
