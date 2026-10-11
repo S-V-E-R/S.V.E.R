@@ -31,7 +31,7 @@ function session(key: string, make: () => string) {
  * Swipe, scroll or use the arrow keys to move. Videos play muted until tapped, then stay unmuted
  * for the rest of the session. The order comes from the server and never reads counts or money.
  */
-export function BeaconFeed({ initial, start = null, signedIn, gateId = null }: { initial: BeaconFeedPage | null; start?: BeaconItem | null; signedIn: boolean; gateId?: string | null }) {
+export function BeaconFeed({ initial, start = null, signedIn, gateId = null, faction = null }: { initial: BeaconFeedPage | null; start?: BeaconItem | null; signedIn: boolean; gateId?: string | null; faction?: string | null }) {
   const [items, setItems] = useState<BeaconItem[]>(() => {
     const rest = (initial?.items ?? []).filter(i => i.beacon.id !== start?.beacon.id);
     return start ? [start, ...rest] : rest;
@@ -57,7 +57,7 @@ export function BeaconFeed({ initial, start = null, signedIn, gateId = null }: {
     fetching.current = true;
     setLoading(true);
     const offset = reset ? 0 : next;
-    const result = await send<BeaconFeedPage>("GET", `/api/beacons/feed?seed=${seed.current || "0"}&offset=${offset}&age_ack=${ageAck}`);
+    const result = await send<BeaconFeedPage>("GET", `/api/beacons/feed?seed=${seed.current || "0"}&offset=${offset}&age_ack=${ageAck}${faction ? `&faction=${faction}` : ""}`);
     fetching.current = false;
     setLoading(false);
     if (!result.ok) { setError(result.error); return; }
@@ -70,7 +70,7 @@ export function BeaconFeed({ initial, start = null, signedIn, gateId = null }: {
       const seen = new Set(kept.map(i => i.beacon.id));
       return [...kept, ...result.data.items.filter(i => !seen.has(i.beacon.id))];
     });
-  }, [next, ageAck, start]);
+  }, [next, ageAck, start, faction]);
 
   // A feed opened on one Beacon continues into the viewer's rotation.
   const started = useRef(false);

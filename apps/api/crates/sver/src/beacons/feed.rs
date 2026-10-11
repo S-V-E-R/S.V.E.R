@@ -69,6 +69,9 @@ struct FeedQuery {
     offset: usize,
     #[serde(default)]
     age_ack: bool,
+    /// A faction tab: only that faction's Beacons, in the fair rotation.
+    #[serde(default)]
+    faction: Option<String>,
 }
 /// GET /api/beacons/feed
 async fn feed(
@@ -85,8 +88,15 @@ async fn feed(
     let viewer = user.as_ref().map(|u| u.id.clone()).unwrap_or_default();
     let mut db = app.db.acquire().await?;
     let mut sources: Vec<Vec<Beacon>> = Vec::new();
+    // A faction tab is that faction's Beacons in the fair rotation; the slug is checked against
+    // the three factions before it reaches the query.
+    let tab = match query.faction.as_deref() {
+        Some(f) if crate::factions::valid(f) => Some(f),
+        Some(_) => return Err(Fail::missing()),
+        None => None,
+    };
     // Signed-out visitors see the fair rotation only.
-    if user.is_some() {
+    if user.is_some() && tab.is_none() {
         let followed = format!(
             "SELECT b.* FROM beacons b WHERE {} AND EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=$1 AND f.following_id=b.owner_id) ORDER BY b.published_at DESC,b.id DESC LIMIT 100",
             visible("b")
@@ -113,7 +123,10 @@ async fn feed(
                 .await?,
         );
     }
-    sources.push(rotation(&mut db, &viewer, gate, &seed, "", 300).await?);
+    let only = tab
+        .map(|f| format!("AND b.faction='{f}'"))
+        .unwrap_or_default();
+    sources.push(rotation(&mut db, &viewer, gate, &seed, &only, 300).await?);
     let mut order = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut cursors = vec![0; sources.len()];
@@ -136,7 +149,7 @@ async fn feed(
     let has_more = order.len() > query.offset + PAGE;
     let page: Vec<Beacon> = order.into_iter().skip(query.offset).take(PAGE).collect();
     let items = present(&app, &mut db, page, user.as_ref(), gate).await?;
-    let live = if query.offset == 0 {
+    let live = if query.offset == 0 && tab.is_none() {
         live_now(&app, &mut db, &viewer, gate, &seed).await?
     } else {
         vec![]

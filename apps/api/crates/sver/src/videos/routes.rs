@@ -190,8 +190,15 @@ async fn channel(
     }
     Ok(Json(json!({"videos":videos,"has_more":has_more})))
 }
-async fn latest(State(app): State<App>) -> Res<Json<Value>> {
-    let rows:Vec<Video>=sqlx::query_as("SELECT v.* FROM videos v WHERE kind='CLIP' AND status='READY' AND approval='APPROVED' AND visibility='PUBLIC' AND NOT mature ORDER BY created_at DESC LIMIT 24").fetch_all(&app.db).await?;
+#[derive(Deserialize)]
+struct Latest {
+    /// Only clips tagged to this faction (a faction hub's clips).
+    #[serde(default)]
+    faction: Option<String>,
+}
+/// GET /api/clips/latest[?faction=]
+async fn latest(State(app): State<App>, Query(query): Query<Latest>) -> Res<Json<Value>> {
+    let rows:Vec<Video>=sqlx::query_as("SELECT v.* FROM videos v WHERE kind='CLIP' AND status='READY' AND approval='APPROVED' AND visibility='PUBLIC' AND NOT mature AND ($1::text IS NULL OR v.faction=$1) ORDER BY created_at DESC LIMIT 24").bind(query.faction.as_deref()).fetch_all(&app.db).await?;
     let mut clips = Vec::new();
     for video in rows {
         if accessible(&app, &video, None, false).await.is_ok() {
