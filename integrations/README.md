@@ -10,6 +10,7 @@ Connect your stream's board ([docs/CROWDSYNC.md](../docs/CROWDSYNC.md)) to OBS a
 | [`sdk-unity/`](sdk-unity) | Unity package (`tv.sver.board`) | Written against Unity 2021.3+ APIs; not yet compiled in CI |
 | [`sdk-unreal/`](sdk-unreal) | Unreal Engine 5 plugin (`SverBoard`) | Written against UE 5.x APIs; not yet compiled in CI |
 | [`streamdeck/`](streamdeck) | Stream Deck plugin: title, raid, polls and predictions, highlight markers, board pause | Tested against fakes (`node streamdeck/test.mjs`); not yet run on a real Stream Deck |
+| [`automation/`](automation) | Automation bridge: S.V.E.R events into Streamer.bot (DoAction) and SAMMI (webhook triggers) | Tested against fakes (`node automation/test.mjs`); not yet run against real Streamer.bot or SAMMI |
 
 ## Get a token
 

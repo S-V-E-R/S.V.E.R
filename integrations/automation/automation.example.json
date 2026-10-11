@@ -1,0 +1,5 @@
+{
+  "client_id": "the official S.V.E.R app's client ID (public)",
+  "streamerbot": { "url": "http://127.0.0.1:7474", "prefix": "S.V.E.R" },
+  "sammi": { "url": "http://127.0.0.1:9450", "password": "" }
+}
