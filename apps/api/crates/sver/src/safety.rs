@@ -205,7 +205,7 @@ async fn target(
     let row: Option<(String, String, Value)> = match kind {
         "vod"|"highlight"|"clip"=>crate::videos::review::target(db,kind,id).await?,
         "beacon" => crate::beacons::review::target(db, id).await?,
-        "beacon_comment" => crate::beacons::comment_target(db, id).await?,
+        "beacon_comment" => crate::beacons::comment_target(db, id, reporter).await?,
         "guild" | "guild_emblem" => crate::guilds::target(db,id,reporter,kind=="guild_emblem").await?,
         "faction_post" => crate::factions::target(db,id,reporter).await?,
         "emote" => crate::emotes::target(db, id).await?,

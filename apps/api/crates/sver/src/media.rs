@@ -1080,8 +1080,24 @@ pub async fn serve_local(State(app): State<App>, Path(key): Path<String>) -> Res
     }
 }
 
+/// Whether anyone still uses a stored object. Keys are content-addressed, so two people (or one
+/// person's avatar and app icon) can share one; removing it from one place must not delete it
+/// for the other. A stored value is a whole key or the prefix of its sizes (`avatars/h`,
+/// `banners/h@1500`).
+/// ponytail: scans the referencing tables per queued key; index the columns if they grow large.
+pub async fn in_use(db: &mut PgConnection, key: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM (
+            SELECT avatar_key v FROM profiles UNION ALL SELECT banner_key FROM profiles UNION ALL SELECT song_thumb_key FROM profiles
+            UNION ALL SELECT logo_key FROM sponsors UNION ALL SELECT image_key FROM fan_art UNION ALL SELECT image_key FROM setup_photos
+            UNION ALL SELECT image_key FROM channel_skills UNION ALL SELECT audio_key FROM channel_skills UNION ALL SELECT icon_key FROM dev_apps
+        ) r WHERE r.v IS NOT NULL AND ($1=r.v OR $1 LIKE split_part(r.v,'@',1)||'/%'))
+        OR EXISTS(SELECT 1 FROM overlay_settings o WHERE position('\"'||$1||'\"' IN o.settings::text)>0)")
+        .bind(key)
+        .fetch_one(db)
+        .await?)
+}
 /// Deletes queued objects from storage, except media retained by open report snapshots or
-/// strikes. Runs from the maintenance job.
+/// strikes, or still used by someone else. Runs from the maintenance job.
 pub async fn cleanup(app: &App) -> Res<usize> {
     let keys: Vec<String> = sqlx::query_scalar("SELECT m.key FROM media_objects m WHERE m.delete_after<=now() AND NOT EXISTS(SELECT 1 FROM media_removal_holds h WHERE m.key=h.root OR m.key LIKE h.root||'/%') AND NOT EXISTS(SELECT 1 FROM reports r WHERE r.status='OPEN' AND position(split_part(split_part(m.key,'/',1)||'/'||split_part(m.key,'/',2),'@',1) IN r.snapshot::text)>0) AND NOT EXISTS(SELECT 1 FROM strikes s WHERE position(split_part(split_part(m.key,'/',1)||'/'||split_part(m.key,'/',2),'@',1) IN s.content_snapshot::text)>0) ORDER BY m.delete_after LIMIT 100")
         .fetch_all(&app.db)
@@ -1097,6 +1113,7 @@ pub async fn cleanup(app: &App) -> Res<usize> {
         }
         if (key.starts_with("emotes/") && crate::emotes::referenced(&mut tx, &key).await?)
             || crate::guilds::referenced(&mut tx, &key).await?
+            || in_use(&mut tx, &key).await?
         {
             continue;
         }

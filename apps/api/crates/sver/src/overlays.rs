@@ -405,7 +405,14 @@ async fn transcode(input: Vec<u8>) -> Option<Vec<u8>> {
     use tokio::io::AsyncWriteExt;
     let (seconds, rate) = (SOUND_SECONDS.to_string(), SOUND_RATE.to_string());
     let mut child = tokio::process::Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error", "-i", "pipe:0"])
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-protocol_whitelist",
+            "pipe",
+        ])
+        .args(["-format_whitelist", "mp3,ogg,wav", "-i", "pipe:0"])
         .args(["-vn", "-map_metadata", "-1", "-t", &seconds, "-ac", "1"])
         .args(["-ar", &rate, "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1"])
         .stdin(std::process::Stdio::piped())

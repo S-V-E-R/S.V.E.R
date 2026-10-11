@@ -182,13 +182,8 @@ pub async fn exercise(e: &Env) {
     image::DynamicImage::ImageRgb8(image)
         .write_to(&mut png, image::ImageFormat::Png)
         .unwrap();
-    let (status, saved) = upload(
-        e,
-        &e.cookie,
-        "/api/me/overlays/follow/image",
-        png.into_inner(),
-    )
-    .await;
+    let png = png.into_inner();
+    let (status, saved) = upload(e, &e.cookie, "/api/me/overlays/follow/image", png.clone()).await;
     assert_eq!(status, StatusCode::OK, "{saved}");
     assert!(
         saved["settings"]["follow"]["image"]
@@ -224,10 +219,26 @@ pub async fn exercise(e: &Env) {
     );
     let kept = e.call("PUT", "/api/me/overlays", settings.clone()).await;
     assert_eq!(kept["settings"]["follow"]["audio"], audio.as_str());
+    // The same picture on two alerts is one stored object: removing it from one keeps it for the other.
+    let (status, _) = upload(e, &e.cookie, "/api/me/overlays/sub/image", png).await;
+    assert_eq!(status, StatusCode::OK);
+    let shared = saved["settings"]["follow"]["image"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let removed = e
         .call("DELETE", "/api/me/overlays/follow/image", Value::Null)
         .await;
     assert!(removed["settings"]["follow"]["image"].is_null());
+    sver::media::cleanup(&e.app).await.unwrap();
+    let kept: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM media_objects WHERE key=$1)")
+        .bind(&shared)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert!(kept, "still used by the sub alert");
+    e.call("DELETE", "/api/me/overlays/sub/image", Value::Null)
+        .await;
     e.call("DELETE", "/api/me/overlays/follow/sound", Value::Null)
         .await;
 }
