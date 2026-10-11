@@ -5,6 +5,8 @@
   "supporter_points": 2,
   "daily_caps": [1000, 1000, 10, 10],
   "chat_hourly_cap": 3,
+  "raid_points": 5,
+  "raid_daily_cap": 10,
   "minimum_divisor": 2,
   "flip_margin_bps": 100,
   "neutral_minimum": 10,

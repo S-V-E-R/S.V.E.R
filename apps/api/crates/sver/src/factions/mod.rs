@@ -23,7 +23,7 @@ pub(crate) use community::{owner, remove, restore, snapshot, target};
 pub(crate) use engine::lock;
 pub use engine::tick;
 pub use influence::support;
-pub(crate) use influence::{chat, stream, watch};
+pub(crate) use influence::{chat, raid, stream, watch};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
