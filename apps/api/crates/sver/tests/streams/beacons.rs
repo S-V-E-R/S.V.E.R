@@ -638,13 +638,13 @@ async fn beacons_publish_watermark_count_and_remove() {
         "no links"
     );
     assert_eq!(comment(&viewer, "").await.0, StatusCode::BAD_REQUEST);
-    let id = posted["comments"][0]["id"].as_str().unwrap().to_string();
+    let comment_id = posted["comments"][0]["id"].as_str().unwrap().to_string();
     let (status, _) = call(
         &e,
         "POST",
         "/api/reports",
         Some(&other),
-        json!({"target_type": "beacon_comment", "target_id": id, "reason": "spam"}),
+        json!({"target_type": "beacon_comment", "target_id": comment_id, "reason": "spam"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "comments can be reported");
@@ -660,7 +660,7 @@ async fn beacons_publish_watermark_count_and_remove() {
     let (status, left) = call(
         &e,
         "DELETE",
-        &format!("{path}/{id}"),
+        &format!("{path}/{comment_id}"),
         Some(&other),
         Value::Null,
     )
@@ -752,12 +752,8 @@ async fn beacons_publish_watermark_count_and_remove() {
     let browser = uuid::Uuid::new_v4().to_string();
     let beat =
         |at: f64, visible: bool| json!({"browser_id":browser,"media_time":at,"visible":visible});
-    assert_eq!(
-        call(&e, "POST", &beat_path, Some(&viewer), beat(0.0, true))
-            .await
-            .1["counted"],
-        false
-    );
+    let first = call(&e, "POST", &beat_path, Some(&viewer), beat(0.0, true)).await;
+    assert_eq!(first.1["counted"], false, "{first:?}");
     // Hidden-tab playback earns nothing.
     e.sql("UPDATE beacon_playback SET updated_at=now()-interval '4 seconds'")
         .await;
