@@ -241,6 +241,10 @@ pub struct ReportInput {
     field: Option<String>,
     reason: String,
     note: Option<String>,
+    /// A private direct message's plaintext from the reporter (`body`, `frank`), checked against
+    /// the message's commitment.
+    #[serde(default)]
+    evidence: Option<Value>,
 }
 /// POST /api/reports
 pub async fn report(
@@ -271,8 +275,14 @@ pub async fn report(
     }
     // A direct message's evidence is sealed (docs/COMMUNITY.md "Direct messages").
     let target = if input.target_type == "dm_message" {
-        let (owner_id, owner_name, value) =
-            crate::dms::report_target(&app, &mut tx, &input.target_id, &user.id).await?;
+        let (owner_id, owner_name, value) = crate::dms::report_target(
+            &app,
+            &mut tx,
+            &input.target_id,
+            &user.id,
+            input.evidence.as_ref(),
+        )
+        .await?;
         Target {
             owner_id,
             owner_name,
