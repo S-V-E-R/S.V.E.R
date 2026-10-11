@@ -206,15 +206,16 @@ async fn view(app: &App, owner: &str) -> Res<Json<Value>> {
         .bind(owner).fetch_all(&app.db).await?;
     let timers: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'body',body,'every_minutes',every_minutes,'enabled',enabled,'last_sent_at',last_sent_at) FROM chat_timers WHERE channel_id=$1 ORDER BY created_at")
         .bind(owner).fetch_all(&app.db).await?;
-    let chosen: Option<(Option<String>, String)> =
-        sqlx::query_as("SELECT bot,bot_personality FROM chat_settings WHERE channel_id=$1")
-            .bind(owner)
-            .fetch_optional(&app.db)
-            .await?;
-    let (chosen, personality) = chosen.unwrap_or((None, "chill".into()));
+    let chosen: Option<(Option<String>, String, bool)> = sqlx::query_as(
+        "SELECT bot,bot_personality,bot_rivalry FROM chat_settings WHERE channel_id=$1",
+    )
+    .bind(owner)
+    .fetch_optional(&app.db)
+    .await?;
+    let (chosen, personality, rivalry) = chosen.unwrap_or((None, "chill".into(), false));
     let (key, name) = bot(app, owner).await?;
     Ok(Json(
-        json!({"commands": commands, "timers": timers, "bot": {"key": key, "name": name, "chosen": chosen, "personality": personality}, "max_timers": MAX_TIMERS, "automod": crate::bot::settings(app, owner).await?}),
+        json!({"commands": commands, "timers": timers, "bot": {"key": key, "name": name, "chosen": chosen, "personality": personality, "rivalry": rivalry}, "max_timers": MAX_TIMERS, "automod": crate::bot::settings(app, owner).await?}),
     ))
 }
 /// GET /api/me/commands
@@ -227,6 +228,9 @@ pub struct BotSettings {
     /// None: the faction's bot.
     bot: Option<String>,
     personality: String,
+    /// Cross-faction raid greetings (off by default).
+    #[serde(default)]
+    rivalry: bool,
 }
 /// PUT /api/me/commands/bot: which bot speaks, and its personality.
 async fn set_bot(
@@ -243,8 +247,8 @@ async fn set_bot(
     {
         return Err(Fail::bad("Choose a bot and a personality."));
     }
-    sqlx::query("INSERT INTO chat_settings(channel_id,bot,bot_personality) VALUES($1,$2,$3) ON CONFLICT(channel_id) DO UPDATE SET bot=EXCLUDED.bot,bot_personality=EXCLUDED.bot_personality")
-        .bind(&user.id).bind(&input.bot).bind(&input.personality).execute(&app.db).await?;
+    sqlx::query("INSERT INTO chat_settings(channel_id,bot,bot_personality,bot_rivalry) VALUES($1,$2,$3,$4) ON CONFLICT(channel_id) DO UPDATE SET bot=EXCLUDED.bot,bot_personality=EXCLUDED.bot_personality,bot_rivalry=EXCLUDED.bot_rivalry")
+        .bind(&user.id).bind(&input.bot).bind(&input.personality).bind(input.rivalry).execute(&app.db).await?;
     view(&app, &user.id).await
 }
 #[derive(Deserialize)]

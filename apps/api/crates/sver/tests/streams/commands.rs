@@ -166,14 +166,41 @@ pub async fn exercise(e: &Env) {
         lines[0]
     );
     // A counted raid on a live channel gets the bot's line (VOLK, Chill, for a faction-less channel).
-    sver::bot::record_raid(&e.app, "cm-owner", "Raider", 7)
+    sver::bot::record_raid(&e.app, "cm-owner", "Raider", Some("glint"), 7)
         .await
         .unwrap();
     sver::bot::drain(&e.app).await.unwrap();
     assert_eq!(
         bot_lines(e, "cm-owner").await.last().unwrap(),
-        "Welcome, Raider and company (7)."
+        "Welcome, Raider and company (7).",
+        "VOLK speaks for no faction, so no jab"
     );
+    // Cross-faction greetings (off by default): PYRE adds Myria's line about a rival's raid.
+    let raid = |faction: &'static str| async move {
+        sver::bot::record_raid(&e.app, "cm-owner", "Rival", Some(faction), 3)
+            .await
+            .unwrap();
+        sver::bot::drain(&e.app).await.unwrap();
+        bot_lines(e, "cm-owner").await.last().unwrap().clone()
+    };
+    e.sql("INSERT INTO chat_settings(channel_id,bot) VALUES('cm-owner','pyre') ON CONFLICT(channel_id) DO UPDATE SET bot='pyre'").await;
+    assert_eq!(
+        raid("aetheron").await,
+        "Rival is raiding with 3. Welcome, everyone."
+    );
+    e.sql("UPDATE chat_settings SET bot_rivalry=true WHERE channel_id='cm-owner'")
+        .await;
+    assert_eq!(
+        raid("aetheron").await,
+        "Rival is raiding with 3. Welcome, everyone. They study the fire. We walk through it."
+    );
+    assert_eq!(
+        raid("myria").await,
+        "Rival is raiding with 3. Welcome, everyone.",
+        "no jab for its own side"
+    );
+    e.sql("UPDATE chat_settings SET bot=NULL,bot_rivalry=false WHERE channel_id='cm-owner'")
+        .await;
     part_two(e).await;
     e.sql("DELETE FROM outside_chat_messages WHERE platform='bot'")
         .await;

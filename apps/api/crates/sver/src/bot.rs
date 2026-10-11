@@ -152,9 +152,49 @@ async fn personality(app: &App, channel: &str) -> Res<String> {
     .fetch_one(&app.db)
     .await?)
 }
-async fn announce(app: &App, channel: &str, event: Event, user: &str, count: i64) -> Res<()> {
+/// The bots' factions: PYRE speaks for Myria, ECHO for Aetheron, FAVOR for Glint; VOLK for none.
+fn bot_faction(bot: &str) -> Option<&'static str> {
+    match bot {
+        "pyre" => Some("myria"),
+        "echo" => Some("aetheron"),
+        "favor" => Some("glint"),
+        _ => None,
+    }
+}
+/// What one faction says of another (docs/LORE.md "Rivalries"): jabs, never contempt.
+pub fn rivalry(speaker: &str, about: &str) -> Option<&'static str> {
+    Some(match (speaker, about) {
+        ("myria", "aetheron") => "They study the fire. We walk through it.",
+        ("myria", "glint") => "They crown the loudest.",
+        ("aetheron", "myria") => "Brave, and wasteful.",
+        ("aetheron", "glint") => "A crowd is not an argument.",
+        ("glint", "myria") => "They'd rather win alone.",
+        ("glint", "aetheron") => "Clever, and lonely.",
+        _ => return None,
+    })
+}
+async fn announce(
+    app: &App,
+    channel: &str,
+    event: Event,
+    user: &str,
+    count: i64,
+    raider_faction: Option<&str>,
+) -> Res<()> {
     let (key, _) = bot(app, channel).await?;
-    let text = line(key, &personality(app, channel).await?, event, user, count);
+    let mut text = line(key, &personality(app, channel).await?, event, user, count);
+    // Cross-faction greetings, when the streamer turned them on: a rival's raid gets a jab.
+    if let (Some(speaker), Some(about)) = (bot_faction(key), raider_faction)
+        && let Some(jab) = rivalry(speaker, about)
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT coalesce((SELECT bot_rivalry FROM chat_settings WHERE channel_id=$1),false)",
+        )
+        .bind(channel)
+        .fetch_one(&app.db)
+        .await?
+    {
+        text = format!("{text} {jab}");
+    }
     say(app, channel, &text).await
 }
 
@@ -174,14 +214,23 @@ pub async fn record(
         .execute(db).await?;
     Ok(())
 }
-/// A counted raid (the raider's name and how many arrived).
-pub async fn record_raid(app: &App, channel: &str, raider: &str, arrivals: i64) -> Res<()> {
-    sqlx::query("INSERT INTO bot_events(channel_id,kind,name,count) VALUES($1,'raid',$2,$3)")
-        .bind(channel)
-        .bind(raider)
-        .bind(arrivals as i32)
-        .execute(&app.db)
-        .await?;
+/// A counted raid (the raider's name, faction and how many arrived).
+pub async fn record_raid(
+    app: &App,
+    channel: &str,
+    raider: &str,
+    faction: Option<&str>,
+    arrivals: i64,
+) -> Res<()> {
+    sqlx::query(
+        "INSERT INTO bot_events(channel_id,kind,name,count,faction) VALUES($1,'raid',$2,$3,$4)",
+    )
+    .bind(channel)
+    .bind(raider)
+    .bind(arrivals as i32)
+    .bind(faction)
+    .execute(&app.db)
+    .await?;
     Ok(())
 }
 /// Follower counts the bot celebrates, each once per channel.
@@ -225,11 +274,11 @@ pub async fn surge_level(app: &App, channel: &str, level: i16) -> Res<()> {
 }
 /// Every few seconds: greets recent events on live channels; anything else is dropped.
 pub async fn drain(app: &App) -> Res<()> {
-    let events: Vec<(String, String, String, i32, bool)> = sqlx::query_as("DELETE FROM bot_events e RETURNING e.channel_id,e.kind,e.name,e.count,
+    let events: Vec<(String, String, String, i32, Option<String>, bool)> = sqlx::query_as("DELETE FROM bot_events e RETURNING e.channel_id,e.kind,e.name,e.count,e.faction,
         e.created_at>now()-interval '2 minutes' AND EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=e.channel_id AND b.state='LIVE')")
         .fetch_all(&app.db)
         .await?;
-    for (channel, kind, name, count, live) in events {
+    for (channel, kind, name, count, faction, live) in events {
         if !live {
             continue;
         }
@@ -240,7 +289,15 @@ pub async fn drain(app: &App) -> Res<()> {
             "milestone" => Event::Milestone,
             _ => Event::Raid,
         };
-        announce(app, &channel, event, &name, count.into()).await?;
+        announce(
+            app,
+            &channel,
+            event,
+            &name,
+            count.into(),
+            faction.as_deref(),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -354,6 +411,7 @@ pub async fn automod(app: &App, channel: &str, user: &auth::User, body: &str) ->
         Event::Timeout,
         name.as_deref().unwrap_or(&user.username),
         0,
+        None,
     )
     .await?;
     let length = if seconds >= 120 {
