@@ -27,11 +27,14 @@ async function run<T>(mode: IDBTransactionMode, work: (s: IDBObjectStore) => IDB
  * can't keep keys (no IndexedDB or WebCrypto); a string is the server's reason (e.g. 5 devices).
  */
 export async function ensureDevice(account: string): Promise<ThisDevice | string | null> {
+  // `account` is the account ID, so a username change keeps the same device.
   if (typeof indexedDB === "undefined" || !globalThis.crypto?.subtle) return null;
   try {
     const stored = await run<ThisDevice | undefined>("readonly", s => s.get(account));
     const listed = await send<{ devices: { id: string }[] }>("GET", "/api/me/dm-devices");
-    if (stored && listed.ok && listed.data.devices.some(d => d.id === stored.id)) return stored;
+    // Register only when the server's list loaded and this browser's device isn't on it.
+    if (!listed.ok) return stored ?? null;
+    if (stored && listed.data.devices.some(d => d.id === stored.id)) return stored;
     const keys = await newDeviceKeys();
     const added = await send<{ id: string }>("POST", "/api/me/dm-devices", { public_key: await exportPublic(keys.publicKey) });
     if (!added.ok) return added.error;

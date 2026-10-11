@@ -191,15 +191,19 @@ async fn read(
         .fetch_one(&mut *db)
         .await?;
     let id = conversation(&mut db, &me.id, &other.id).await?;
-    let private: bool = match &id {
-        Some(id) => {
-            sqlx::query_scalar("SELECT private FROM dm_conversations WHERE id=$1")
-                .bind(id)
-                .fetch_one(&mut *db)
-                .await?
-        }
-        None => false,
+    let (private, changed): (bool, Value) = match &id {
+        Some(id) => sqlx::query_as("SELECT c.private,CASE WHEN c.private_changed_at IS NULL THEN 'null'::jsonb ELSE jsonb_build_object('at',c.private_changed_at,'by',u.username) END FROM dm_conversations c LEFT JOIN users u ON u.id=c.private_changed_by WHERE c.id=$1")
+            .bind(id)
+            .fetch_one(&mut *db)
+            .await?,
+        None => (false, Value::Null),
     };
+    // A new device on the other side is worth knowing about in a private conversation.
+    let their_device_at: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT max(created_at) FROM dm_devices WHERE user_id=$1")
+            .bind(&other.id)
+            .fetch_one(&mut *db)
+            .await?;
     let (messages, muted) = match id.filter(|_| !blocked) {
         None => (Vec::new(), false),
         Some(id) => {
@@ -220,7 +224,7 @@ async fn read(
         }
     };
     Ok(Json(
-        json!({"with": with, "messages": messages, "can_send": why.is_none(), "reason": why, "muted": muted, "private": private}),
+        json!({"with": with, "messages": messages, "can_send": why.is_none(), "reason": why, "muted": muted, "private": private, "private_changed": changed, "their_device_at": their_device_at}),
     ))
 }
 #[derive(Deserialize)]
@@ -252,7 +256,12 @@ fn valid_key(key: &str) -> bool {
 }
 /// Checks a private message's envelope: its shape and sizes, and that every wrapped key is for a
 /// device of one of the two people, with at least one of the recipient's.
-async fn check_envelope(db: &mut PgConnection, envelope: &Value, me: &str, other: &str) -> Res<()> {
+async fn check_envelope(
+    db: &mut PgConnection,
+    envelope: &Value,
+    me: &str,
+    other: &str,
+) -> Res<Value> {
     let bad = || {
         Fail::field(
             "envelope",
@@ -265,7 +274,8 @@ async fn check_envelope(db: &mut PgConnection, envelope: &Value, me: &str, other
     let epk = b64(&envelope["epk"]).ok_or_else(bad)?;
     let iv = b64(&envelope["iv"]).ok_or_else(bad)?;
     let ct = b64(&envelope["ct"]).ok_or_else(bad)?;
-    if epk.len() != 65 || epk[0] != 4 || iv.len() != 12 || !(17..=8192).contains(&ct.len()) {
+    // The plaintext is {"body": ≤1,000 characters, "frank": 43 characters} as JSON.
+    if epk.len() != 65 || epk[0] != 4 || iv.len() != 12 || !(17..=6000).contains(&ct.len()) {
         return Err(bad());
     }
     let keys = envelope["keys"].as_object().ok_or_else(bad)?;
@@ -279,6 +289,7 @@ async fn check_envelope(db: &mut PgConnection, envelope: &Value, me: &str, other
             .fetch_all(db)
             .await?;
     let mut theirs = false;
+    let mut kept = serde_json::Map::new();
     for (device, wrapped) in keys {
         let owner = devices
             .iter()
@@ -290,11 +301,18 @@ async fn check_envelope(db: &mut PgConnection, envelope: &Value, me: &str, other
             return Err(bad());
         }
         theirs |= owner == other;
+        kept.insert(
+            device.clone(),
+            json!({"iv": wrapped["iv"], "k": wrapped["k"]}),
+        );
     }
     if !theirs {
         return Err(bad());
     }
-    Ok(())
+    // Only the checked fields are stored and served back.
+    Ok(
+        json!({"v": 1, "epk": envelope["epk"], "iv": envelope["iv"], "ct": envelope["ct"], "keys": kept}),
+    )
 }
 /// POST /api/dms/{username}: sends a message.
 async fn send(
@@ -362,16 +380,19 @@ async fn send(
             "This conversation isn't private."
         }));
     }
-    if let Some(envelope) = &input.envelope {
-        check_envelope(&mut tx, envelope, &me.id, &other.id).await?;
-    }
+    let envelope = match &input.envelope {
+        Some(envelope) => Some(check_envelope(&mut tx, envelope, &me.id, &other.id).await?),
+        None => None,
+    };
+    // L4: a commitment goes only with an envelope.
+    let commitment = input.commitment.as_ref().filter(|_| private);
     let sealed = if private {
         String::new()
     } else {
         sec::seal(&app, PURPOSE, body)?
     };
     let row: Row = sqlx::query_as("INSERT INTO dm_messages(id,conversation_id,sender_id,body_sealed,envelope,commitment) VALUES($1,$2,$3,$4,$6,$7) RETURNING id,seq,$5,body_sealed,created_at,envelope,commitment")
-        .bind(profiles::new_id()).bind(&id).bind(&me.id).bind(sealed).bind(&me.username).bind(&input.envelope).bind(&input.commitment)
+        .bind(profiles::new_id()).bind(&id).bind(&me.id).bind(sealed).bind(&me.username).bind(&envelope).bind(commitment)
         .fetch_one(&mut *tx).await?;
     // The recipient hears about the first unread message of a streak (never the text, which is
     // sealed), unless they muted the conversation; their notification settings decide site/push.
@@ -604,7 +625,8 @@ async fn keys(
         .bind(&other.id)
         .fetch_one(&mut *db)
         .await?;
-    if blocked {
+    let talking = conversation(&mut db, &me.id, &other.id).await?.is_some();
+    if blocked || (!talking && refusal(&mut db, &me.id, &other.id).await?.is_some()) {
         return Err(Fail::missing());
     }
     let mut lists = Vec::new();
@@ -634,6 +656,13 @@ async fn set_private(
         return Err(Fail::denied(why));
     }
     if input.on {
+        let adults: bool = sqlx::query_scalar("SELECT count(*)=2 FROM users WHERE id IN ($1,$2) AND date_of_birth<=current_date-interval '18 years'")
+            .bind(&me.id).bind(&other.id).fetch_one(&mut *tx).await?;
+        if !adults {
+            return Err(Fail::denied(
+                "Private mode is for conversations between two adults.",
+            ));
+        }
         let ready: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dm_devices WHERE user_id=$1) AND EXISTS(SELECT 1 FROM dm_devices WHERE user_id=$2)")
             .bind(&me.id).bind(&other.id).fetch_one(&mut *tx).await?;
         if !ready {
@@ -647,8 +676,8 @@ async fn set_private(
     } else {
         (&other.id, &me.id)
     };
-    let id: String = sqlx::query_scalar("INSERT INTO dm_conversations(id,user_a,user_b,private) VALUES($1,$2,$3,$4) ON CONFLICT(user_a,user_b) DO UPDATE SET private=EXCLUDED.private RETURNING id")
-        .bind(profiles::new_id()).bind(a).bind(b).bind(input.on).fetch_one(&mut *tx).await?;
+    let id: String = sqlx::query_scalar("INSERT INTO dm_conversations(id,user_a,user_b,private,private_changed_at,private_changed_by) VALUES($1,$2,$3,$4,now(),$5) ON CONFLICT(user_a,user_b) DO UPDATE SET private=EXCLUDED.private,private_changed_at=now(),private_changed_by=EXCLUDED.private_changed_by RETURNING id")
+        .bind(profiles::new_id()).bind(a).bind(b).bind(input.on).bind(&me.id).fetch_one(&mut *tx).await?;
     sqlx::query(
         "INSERT INTO dm_state(conversation_id,user_id) VALUES($1,$2),($1,$3) ON CONFLICT DO NOTHING",
     )
@@ -692,6 +721,16 @@ pub async fn report_target(
     let excerpt: Vec<Value> = match commitment {
         // A private message: the reporter's plaintext, accepted only if it matches what the sender
         // committed to. Nothing else in a private conversation can be read by anyone but the two.
+        Some(_) if evidence.is_none() => {
+            let at: DateTime<Utc> =
+                sqlx::query_scalar("SELECT created_at FROM dm_messages WHERE id=$1")
+                    .bind(id)
+                    .fetch_one(&mut *db)
+                    .await?;
+            vec![
+                json!({"id": id, "sender": sender_name, "body": null, "private": true, "unverifiable": true, "created_at": at}),
+            ]
+        }
         Some(commitment) => {
             let body = evidence
                 .and_then(|e| e["body"].as_str())

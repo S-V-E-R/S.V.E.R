@@ -10,6 +10,8 @@ CREATE TABLE dm_devices (
 );
 CREATE INDEX dm_devices_user ON dm_devices (user_id);
 ALTER TABLE dm_conversations ADD COLUMN private boolean NOT NULL DEFAULT false;
+ALTER TABLE dm_conversations ADD COLUMN private_changed_at timestamptz;
+ALTER TABLE dm_conversations ADD COLUMN private_changed_by text REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE dm_messages ADD COLUMN envelope jsonb;
 ALTER TABLE dm_messages ADD COLUMN commitment text;
 ALTER TABLE dm_messages ADD CONSTRAINT dm_messages_private CHECK ((envelope IS NULL) = (commitment IS NULL));

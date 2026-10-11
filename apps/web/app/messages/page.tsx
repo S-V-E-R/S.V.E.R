@@ -10,7 +10,11 @@ import type { Chip } from "../../lib/types";
 
 type Message = { id: string; seq: number; sender: string; body: string | null; created_at: string; private?: boolean; envelope?: Envelope; commitment?: string };
 type Conversation = { with: Chip; last: string; last_at: string; unread: number; muted: boolean };
-type Thread = { with: Chip; messages: Message[]; can_send: boolean; reason: string | null; muted: boolean; private: boolean };
+type Thread = {
+  with: Chip; messages: Message[]; can_send: boolean; reason: string | null; muted: boolean; private: boolean;
+  private_changed: { at: string; by: string | null } | null; their_device_at: string | null;
+};
+type MyDevice = { id: string; created_at: string };
 
 const LINK = /https?:\/\/|www\./i;
 const time = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -29,11 +33,16 @@ export default function Messages() {
   const [device, setDevice] = useState<ThisDevice | null>(null);
   const [deviceNote, setDeviceNote] = useState("");
   const [plain, setPlain] = useState<Record<string, Opened | null>>({});
+  const [devices, setDevices] = useState<MyDevice[]>([]);
   const opened = useRef<string | null>(null);
 
   const loadList = useCallback(async () => {
     const r = await send<{ conversations: Conversation[] }>("GET", "/api/dms");
     if (r.ok) setList(r.data.conversations); else setError(r.error);
+  }, []);
+  const loadDevices = useCallback(async () => {
+    const r = await send<{ devices: MyDevice[] }>("GET", "/api/me/dm-devices");
+    if (r.ok) setDevices(r.data.devices);
   }, []);
   const loadThread = useCallback(async (name: string) => {
     const r = await send<Thread>("GET", `/api/dms/${encodeURIComponent(name)}`);
@@ -43,18 +52,19 @@ export default function Messages() {
     await loadList();
   }, [loadList]);
   const loadAll = useCallback(async () => {
-    const [account, settings] = await Promise.all([send<{ username: string }>("GET", "/api/auth/me"), send<{ policy: string }>("GET", "/api/me/dm-settings")]);
+    const [account, settings] = await Promise.all([send<{ id: string; username: string }>("GET", "/api/auth/me"), send<{ policy: string }>("GET", "/api/me/dm-settings")]);
     if (account.ok) {
       setMe(account.data.username);
-      const mine = await ensureDevice(account.data.username);
+      const mine = await ensureDevice(account.data.id);
       if (mine && typeof mine !== "string") setDevice(mine);
       else setDeviceNote(typeof mine === "string" ? mine : "This browser can't keep the keys Private mode needs.");
+      await loadDevices();
     }
     if (settings.ok) setPolicy(settings.data.policy);
     await loadList();
     const name = new URLSearchParams(window.location.search).get("with");
     if (name) { setOpen(name); opened.current = name; await loadThread(name); }
-  }, [loadList, loadThread]);
+  }, [loadList, loadThread, loadDevices]);
   useLoad(loadAll);
 
   // New messages arrive over a socket; while it's down, the page reloads every 15 seconds.
@@ -100,6 +110,9 @@ export default function Messages() {
     event.preventDefault();
     if (!open || !draft.trim()) return;
     let payload: object = { body: draft };
+    // After Private mode was turned off, the first plain message is a deliberate choice.
+    const last = thread?.messages.at(-1);
+    if (thread && !thread.private && last?.private && !confirm("Private mode is off. This message won't be end-to-end encrypted. Send it anyway?")) return;
     if (thread?.private) {
       // Encrypted here for both people's devices; the server never sees the text.
       if (!device) { setError(deviceNote || "This browser can't send private messages."); return; }
@@ -119,6 +132,13 @@ export default function Messages() {
     if (!r.ok) { setError(r.error); return; }
     setError("");
     await loadThread(open);
+  }
+  async function removeDevice(id: string) {
+    if (!confirm(id === device?.id ? "Remove this browser? It won't be able to read private messages any more." : "Remove this device? It won't be able to read new private messages.")) return;
+    const r = await send("DELETE", `/api/me/dm-devices/${encodeURIComponent(id)}`);
+    if (!r.ok) { setError(r.error); return; }
+    if (id === device?.id) setDevice(null);
+    await loadDevices();
   }
   async function action(kind: "mute" | "clear" | "block") {
     if (!open || !thread) return;
@@ -142,7 +162,10 @@ export default function Messages() {
         <button type="submit" className="small">Open</button>
       </form>
     </div>
-    <p className="muted small">Messages are text only and are kept for 12 months. Normally S.V.E.R stores them encrypted and staff can read a conversation only when it&apos;s reported. Turn on <strong>Private</strong> in a conversation to encrypt it end to end on your devices: nobody else, including S.V.E.R, can read it; a report sends only the message you report. Private messages can&apos;t be read on a device added later.</p>
+    <p className="muted small">Messages are text only and are kept for 12 months. Normally S.V.E.R stores them encrypted and staff can read a conversation only when it&apos;s reported. Turn on <strong>Private</strong> in a conversation to encrypt it end to end on your devices: nobody else, including S.V.E.R, can read it; a report sends only the message you report. Private messages can&apos;t be read on a device added later. Private mode is for two adults.</p>
+    {devices.length > 0 && <details className="small"><summary>Your Private-mode devices ({devices.length})</summary>
+      <ul>{devices.map(d => <li key={d.id} className="row">Added {time(d.created_at)}{d.id === device?.id && <strong> (this browser)</strong>} <button type="button" className="small quiet danger-text" onClick={() => void removeDevice(d.id)}>Remove</button></li>)}</ul>
+    </details>}
     {error && <p role="alert" className="form-message error">{error}</p>}
     <div className="messages-layout">
       <nav className="panel messages-list" aria-label="Conversations">
@@ -164,9 +187,11 @@ export default function Messages() {
               <button type="button" className="small quiet danger-text" onClick={() => action("block")}>Block</button>
             </span>
           </header>
+          {thread.private_changed && <p className="muted small" role="status">{thread.private_changed.by ? `@${thread.private_changed.by}` : "Someone"} turned Private mode {thread.private ? "on" : "off"} {time(thread.private_changed.at)}.{!thread.private && " New messages aren't end-to-end encrypted."}</p>}
+          {thread.private && thread.their_device_at && thread.private_changed && Date.parse(thread.their_device_at) > Date.parse(thread.private_changed.at) && <p className="muted small" role="status">@{thread.with.username} added a device {time(thread.their_device_at)}. New private messages can be read there too.</p>}
           <ol className="messages-body">{thread.messages.map(m => <li key={m.id} className={m.sender.toLowerCase() === me.toLowerCase() ? "mine" : "theirs"}>
-            <span className="messages-text">{m.private ? <><span aria-label="Private">🔒 </span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}{plain[m.id] && !plain[m.id]!.verified && <em className="muted small"> (couldn&apos;t be verified)</em>}</> : m.body}</span>
-            <span className="muted small">{time(m.created_at)}{m.sender.toLowerCase() !== me.toLowerCase() && (!m.private || plain[m.id]) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>
+            <span className="messages-text">{m.private ? <><span aria-label="Private">🔒 </span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
+            <span className="muted small">{time(m.created_at)}{m.sender.toLowerCase() !== me.toLowerCase() && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>
           </li>)}<li ref={bottom} aria-hidden="true" /></ol>
           {thread.can_send ? <form onSubmit={submit} className="stack">
             <label htmlFor="dm-input" className="sr-only">Message</label>

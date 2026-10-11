@@ -24,10 +24,13 @@ for (const [id, keys] of [["a1", alice1], ["a2", alice2], ["b1", bob]]) {
 }
 assert.equal(await open(envelope, committed, "e1", eve.privateKey), null, "not sent to this device");
 assert.equal(await open(envelope, committed, "b1", eve.privateKey), null, "the wrong private key can't unwrap it");
-// A changed ciphertext fails to open; a wrong commitment opens but isn't verified.
+// A changed ciphertext or a commitment that doesn't match never opens.
 const tampered = { ...envelope, ct: b64(unb64(envelope.ct).map((b, i) => i === 0 ? b ^ 1 : b)) };
 assert.equal(await open(tampered, committed, "b1", bob.privateKey), null);
-assert.equal((await open(envelope, "0".repeat(64), "b1", bob.privateKey))?.verified, false);
+assert.equal(await open(envelope, "0".repeat(64), "b1", bob.privateKey), null, "a mismatched commitment is never shown");
+// A bad device key is skipped, not fatal.
+const skipped = await seal("hi", [{ id: "bad", public_key: b64(new Uint8Array(65).fill(4)) }, devices[2]]);
+assert.deepEqual(Object.keys(skipped.envelope.keys), ["b1"]);
 // The evidence a report sends matches the stored commitment.
 const opened = await open(envelope, committed, "b1", bob.privateKey);
 assert.equal(await commitment(unb64(opened.frank), opened.body), committed);

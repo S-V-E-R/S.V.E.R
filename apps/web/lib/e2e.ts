@@ -58,17 +58,24 @@ export async function seal(body: string, devices: Device[]): Promise<{ envelope:
   const iv = random(12);
   const ct = await subtle().encrypt({ name: "AES-GCM", iv }, message, new TextEncoder().encode(JSON.stringify({ body, frank: b64(frank) })));
   const raw = await subtle().exportKey("raw", message);
-  const once = await subtle().generateKey(ECDH, true, ["deriveBits"]) as CryptoKeyPair;
+  // The one-time private key can't be exported either (its public half always can be).
+  const once = await subtle().generateKey(ECDH, false, ["deriveBits"]) as CryptoKeyPair;
   const keys: Envelope["keys"] = {};
   for (const device of devices) {
-    const wrap = await wrappingKey(once.privateKey, await importPublic(device.public_key));
+    // A device whose key isn't a valid point is skipped rather than breaking every send.
+    const publicKey = await importPublic(device.public_key).catch(() => null);
+    if (!publicKey) continue;
+    const wrap = await wrappingKey(once.privateKey, publicKey);
     const keyIv = random(12);
     keys[device.id] = { iv: b64(keyIv), k: b64(await subtle().encrypt({ name: "AES-GCM", iv: keyIv }, wrap, raw)) };
   }
   return { envelope: { v: 1, epk: await exportPublic(once.publicKey), iv: b64(iv), ct: b64(ct), keys }, commitment: await commitment(frank, body) };
 }
 
-/** Decrypts a message on this device, or null when it wasn't sent to this device or was altered. */
+/**
+ * Decrypts a message on this device, or null when it wasn't sent to this device, was altered, or
+ * doesn't match its commitment (a sender can't show one text and commit to another for reports).
+ */
 export async function open(envelope: Envelope, expected: string, deviceId: string, privateKey: CryptoKey): Promise<Opened | null> {
   const entry = envelope.keys?.[deviceId];
   if (!entry) return null;
@@ -78,7 +85,8 @@ export async function open(envelope: Envelope, expected: string, deviceId: strin
     const message = await subtle().importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
     const plain = await subtle().decrypt({ name: "AES-GCM", iv: unb64(envelope.iv) }, message, unb64(envelope.ct));
     const { body, frank } = JSON.parse(new TextDecoder().decode(plain)) as { body: string; frank: string };
-    return { body, frank, verified: await commitment(unb64(frank), body) === expected };
+    if (await commitment(unb64(frank), body) !== expected) return null;
+    return { body, frank, verified: true };
   } catch {
     return null;
   }

@@ -318,6 +318,15 @@ async fn private_mode(e: &Env) {
     );
     let a_dev = add(&a, 1).await.1["id"].as_str().unwrap().to_string();
     let b_dev = add(&b, 2).await.1["id"].as_str().unwrap().to_string();
+    e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='dm-pb'")
+        .await;
+    assert_eq!(
+        private(&a, true).await,
+        StatusCode::FORBIDDEN,
+        "two adults only"
+    );
+    e.sql("UPDATE users SET date_of_birth='1990-01-01' WHERE id='dm-pb'")
+        .await;
     assert_eq!(private(&a, true).await, StatusCode::OK);
     let say = |body: Value| {
         let token = a.clone();
@@ -370,6 +379,18 @@ async fn private_mode(e: &Env) {
         (&json!(true), &json!(1))
     );
 
+    // A message that can't be read or verified can still be reported, without any text.
+    let (_, second) = say(json!({"envelope": envelope(&b_dev), "commitment": commitment})).await;
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/reports",
+        Some(&b),
+        json!({"target_type": "dm_message",
+        "target_id": second["message"]["id"], "reason": "harassment"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "metadata-only report");
     // A report carries the recipient's plaintext and is accepted only if it matches the commitment.
     let id = sent["message"]["id"].as_str().unwrap().to_string();
     let report = |body: &str| {
@@ -427,7 +448,9 @@ async fn private_mode(e: &Env) {
     );
     assert_eq!(private(&a, false).await, StatusCode::OK);
     assert_eq!(
-        say(json!({"body": "back to normal"})).await.0,
+        say(json!({"body": "back to normal", "commitment": "ab"}))
+            .await
+            .0,
         StatusCode::OK
     );
     for statement in [
