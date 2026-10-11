@@ -29,7 +29,7 @@ It has two parts, built together right after Live streams closes: **restreaming*
 - Capacity: `RESTREAM_MAX` relays at once (default 100; at about 8 Mbps each that is under a tenth of the guaranteed 10 Gbps). Over it, destinations wait with a notice and the S.V.E.R stream is unaffected.
 - An API restart (a deploy) drops relays for a few seconds; the platforms keep the stream session through short reconnects.
 - Tests: `tests/streams/restream.rs` (validation, the 3-destination limit, keys never returned and sealed at rest, and the supervisor going Connecting → Reconnecting → Key rejected against a closed port); unit test `restream::tests`.
-- Not yet: the post-stream comparison with linked platforms' chat (it needs Linked chat).
+- **Studio insight (October 11, 2026):** Creator Studio → Linked chat shows each stream from the last 7 days (chat is kept that long): S.V.E.R chat messages and chatters and peak viewers, beside each linked platform's chat messages and chatters. The streamer's own messages and the bot's lines don't count.
 
 ## Linked chat
 
