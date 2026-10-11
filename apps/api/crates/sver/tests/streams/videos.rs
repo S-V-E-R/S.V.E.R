@@ -1162,6 +1162,19 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
     .await
     .unwrap();
     assert_eq!(suggestion.1, "PENDING");
+    // A second lane featuring the same moment doesn't suggest it again.
+    let mut tx = e.app.db.begin().await.unwrap();
+    sver::videos::spotlight(&mut tx, "stream-owner", "second-lane-spotlight")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let second: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM videos WHERE request_key='magnet:second-lane-spotlight'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(second, 0);
     while sver::videos::worker::run_one(&e.app, false).await.unwrap() {}
     // Count the approved cap before enqueueing any new media work.
     sqlx::query("UPDATE videos SET duration_ms=36000000 WHERE id=$1")
