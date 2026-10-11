@@ -1267,8 +1267,34 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
     .await
     .unwrap();
     assert_eq!(spotlights, 0);
+    // Staff see it on the Jobs page while the broadcast is live.
+    let broadcast: (String, String) = sqlx::query_as(
+        "SELECT b.id,b.state FROM broadcasts b JOIN videos v ON v.broadcast_id=b.id WHERE v.id=$1",
+    )
+    .bind(video)
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE broadcasts SET state='LIVE' WHERE id=$1")
+        .bind(&broadcast.0)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    let stalled = || async {
+        sver::videos::stalled_count(&mut e.app.db.acquire().await.unwrap())
+            .await
+            .unwrap()
+    };
+    assert_eq!(stalled().await, 1);
     sqlx::query("UPDATE video_segments SET wall_start=now() WHERE video_id=$1")
         .bind(video)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(stalled().await, 0);
+    sqlx::query("UPDATE broadcasts SET state=$2 WHERE id=$1")
+        .bind(&broadcast.0)
+        .bind(&broadcast.1)
         .execute(&e.app.db)
         .await
         .unwrap();

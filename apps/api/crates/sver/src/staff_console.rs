@@ -72,6 +72,8 @@ async fn queue_stats(app: &App) -> Res<Vec<Value>> {
         .fetch_one(&app.db)
         .await?;
     out.push(json!({"name": "payouts", "label": "Failed payouts", "waiting": payouts, "stuck": payouts, "gave_up": 0, "retry": false}));
+    let recordings = crate::videos::stalled_count(&mut *app.db.acquire().await?).await?;
+    out.push(json!({"name": "recordings", "label": "Stalled recordings", "waiting": recordings, "stuck": recordings, "gave_up": 0, "retry": false}));
     Ok(out)
 }
 

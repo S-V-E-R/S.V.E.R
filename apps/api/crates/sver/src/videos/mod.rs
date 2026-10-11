@@ -125,6 +125,14 @@ pub async fn stalled(db: &mut PgConnection, video: &Video) -> Res<bool> {
         .fetch_one(db)
         .await?)
 }
+/// Live broadcasts whose recording (or clipping window) got no new segment for two minutes: the
+/// staff Jobs page shows the count so a stalled copy pipeline is noticed while it matters.
+pub async fn stalled_count(db: &mut PgConnection) -> Res<i64> {
+    Ok(sqlx::query_scalar("SELECT count(*) FROM videos v JOIN broadcasts b ON b.id=v.broadcast_id AND b.state='LIVE' WHERE v.kind='VOD' AND v.status='RECORDING' AND v.ended_at IS NULL
+        AND coalesce((SELECT max(s.wall_start+make_interval(secs=>s.duration_ms/1000.0)) FROM video_segments s JOIN video_objects o ON o.key=s.object_key WHERE s.video_id=v.id AND o.ready),v.started_at)<now()-interval '2 minutes'")
+        .fetch_one(db)
+        .await?)
+}
 pub async fn accessible(
     app: &App,
     video: &Video,
