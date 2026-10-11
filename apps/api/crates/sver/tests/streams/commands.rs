@@ -201,6 +201,24 @@ pub async fn exercise(e: &Env) {
     );
     e.sql("UPDATE chat_settings SET bot=NULL,bot_rivalry=false WHERE channel_id='cm-owner'")
         .await;
+    // Quips (off by default): while live, at most every 30 minutes, only after chat since the last.
+    e.sql("UPDATE chat_settings SET bot_quips=true,bot_quip_at=now()-interval '31 minutes' WHERE channel_id='cm-owner'").await;
+    e.sql("INSERT INTO chat_messages(id,channel_id,author_id,body) VALUES('cm-q','cm-owner','cm-owner','still here')").await;
+    sver::commands::tick(&e.app).await.unwrap();
+    let last = bot_lines(e, "cm-owner").await.last().unwrap().clone();
+    assert!(
+        sver::bot::QUIPS[3][0].contains(&last.as_str()),
+        "a VOLK Chill quip: {last}"
+    );
+    let count = bot_lines(e, "cm-owner").await.len();
+    sver::commands::tick(&e.app).await.unwrap();
+    assert_eq!(
+        bot_lines(e, "cm-owner").await.len(),
+        count,
+        "not again within 30 minutes"
+    );
+    e.sql("UPDATE chat_settings SET bot_quips=false WHERE channel_id='cm-owner'")
+        .await;
     part_two(e).await;
     e.sql("DELETE FROM outside_chat_messages WHERE platform='bot'")
         .await;

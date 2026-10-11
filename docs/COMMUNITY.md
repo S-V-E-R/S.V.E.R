@@ -61,7 +61,7 @@ Carried over from legacy: each faction has its own bot persona, and a neutral on
   - **Command import:** Studio pastes a Nightbot or Fossabot list (`!name reply` per line, up to 200); `$(user)`, `$(touser)`, `$(channel)`, `$(uptime)`, `$(game)` (and `${…}` forms) are translated and anything else is flagged; reserved names and bad lines are skipped with the reason.
   - **Surge and milestone lines (October 10, 2026, migration 0087):** each bot greets a Surge's new level and the channel's follower milestones (10, 25, 50, 100, 250, 500, 1,000, 2,500, 5,000, 10,000; each once per channel, so an unfollow and refollow can't repeat it), in its own voice for each personality, while live.
   - **Cross-faction greetings (October 10, 2026, migration 0093):** off by default; when the streamer turns them on in Studio → Commands & bot, a counted raid from a rival faction's streamer gets the bot's faction line about that faction from LORE.md "Rivalries" (jabs, never contempt). VOLK speaks for no faction, so it never adds one.
-  - **Not yet:** random quips (they need approved copy in LORE.md first).
+  - **Quips (October 11, 2026, migration 0100):** off by default; when the streamer turns them on in Studio → Commands & bot, the bot says a short line in its personality while the channel is live, at most every 30 minutes and only when chat has been active since the last one. The lines are in LORE.md "Quips", a draft for Joe's approval. Quips follow the channel's banned words like every bot line.
 
 ## GIFs in chat
 

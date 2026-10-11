@@ -131,6 +131,112 @@ const LINES: [[[&str; 6]; 3]; 4] = [
         ],
     ],
 ];
+/// Occasional quips per bot (PYRE, ECHO, FAVOR, VOLK) and personality (chill, battle, event),
+/// docs/LORE.md "Quips" (a draft for Joe's approval; the feature is off by default).
+pub const QUIPS: [[[&str; 4]; 3]; 4] = [
+    [
+        [
+            "Stay warm, everyone. Glad you're here.",
+            "Hydrate. Even the forge needs water.",
+            "Good company makes a good fire.",
+            "Take a breath and stretch. We'll keep the fire lit.",
+        ],
+        [
+            "The forge is hot. Keep swinging.",
+            "Ashes behind us, ground ahead.",
+            "Every ember counts. Stay loud.",
+            "From ashes, we rise.",
+        ],
+        [
+            "THE FIRE IS ROARING TONIGHT!",
+            "FORGE IT, FIGHT IT, FINISH IT!",
+            "EVERY EMBER, ALL IN!",
+            "FROM ASHES, WE RISE!",
+        ],
+    ],
+    [
+        [
+            "Noting a good mood in here. Carry on.",
+            "Reminder: water, posture, kindness.",
+            "The archive appreciates you being here.",
+            "Questions are welcome. Patterns start with one.",
+        ],
+        [
+            "Knowledge ascends. Power follows.",
+            "Data suggests we're winning. Keep going.",
+            "Every message is a signal. Send yours.",
+            "The pattern persists.",
+        ],
+        [
+            "SIGNAL STRENGTH: MAXIMUM!",
+            "THE ARCHIVE WILL REMEMBER TONIGHT!",
+            "PATTERN LOCKED. HYPE CONFIRMED!",
+            "KNOWLEDGE ASCENDS!",
+        ],
+    ],
+    [
+        [
+            "There's always another seat at this table.",
+            "Stretch break? The bell will still be here.",
+            "Fortune check: you're in a good chat.",
+            "New here? Say hi. We don't bite. Mostly.",
+        ],
+        [
+            "Fortune favors the bold. And the generous.",
+            "Roll the dice, friends. The table's hot.",
+            "Every voice is a coin in the pot.",
+            "Ring the bell, raise a cheer.",
+        ],
+        [
+            "THE BELL IS RINGING!",
+            "JACKPOT ENERGY IN HERE!",
+            "EVERYONE GETS A SEAT TONIGHT!",
+            "FORTUNE FAVORS THE BOLD!",
+        ],
+    ],
+    [
+        [
+            "All quiet under the Accord. Enjoy the stream.",
+            "A short reminder: be kind, stay hydrated.",
+            "The watch continues. Welcome, everyone.",
+            "Good stream. Carry on.",
+        ],
+        [
+            "The grey wolf watches.",
+            "The Accord holds. Play fair, play hard.",
+            "Every light gets its turn.",
+            "Ground may be taken. A voice may never be silenced.",
+        ],
+        [
+            "THE WATCH IS AWAKE!",
+            "UNDER THE ACCORD, WE CELEBRATE!",
+            "EVERY LIGHT GETS ITS TURN!",
+            "THE GREY WOLF HOWLS!",
+        ],
+    ],
+];
+/// A quip for this bot and personality; `turn` picks which one (the caller passes the time).
+pub fn quip_line(bot: &str, personality: &str, turn: i64) -> &'static str {
+    let b = ["pyre", "echo", "favor", "volk"]
+        .iter()
+        .position(|k| *k == bot)
+        .unwrap_or(3);
+    let p = ["chill", "battle", "event"]
+        .iter()
+        .position(|k| *k == personality)
+        .unwrap_or(0);
+    QUIPS[b][p][turn.rem_euclid(4) as usize]
+}
+/// Says a quip in the channel's bot voice (commands::tick decides when).
+pub async fn quip(app: &App, channel: &str) -> Res<()> {
+    let (key, _) = bot(app, channel).await?;
+    let text = quip_line(
+        key,
+        &personality(app, channel).await?,
+        chrono::Utc::now().timestamp() / 60,
+    );
+    say(app, channel, text).await
+}
 pub fn line(bot: &str, personality: &str, event: Event, user: &str, count: i64) -> String {
     let b = ["pyre", "echo", "favor", "volk"]
         .iter()
