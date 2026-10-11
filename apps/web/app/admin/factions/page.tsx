@@ -39,7 +39,7 @@ export default function Page() {
   </>;
 }
 
-type Skirmish = { id: string; starts_at: string; cancelled_at: string | null; by: string | null };
+type Skirmish = { id: string; kind: "skirmish" | "raid_night"; starts_at: string; cancelled_at: string | null; by: string | null };
 /** Skirmish Hour (docs/FACTIONS.md): schedule on the hour, an hour or more ahead; cancel before it starts. */
 function Skirmishes() {
   const [items, setItemsOnly] = useState<Skirmish[] | null>(null);
@@ -53,8 +53,9 @@ function Skirmishes() {
   useLoad(load);
   async function schedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const [date, hour] = [String(new FormData(event.currentTarget).get("date")), String(new FormData(event.currentTarget).get("hour"))];
-    const r = await send<{ items: Skirmish[] }>("POST", "/api/admin/skirmishes", { starts_at: `${date}T${hour.padStart(2, "0")}:00:00Z` });
+    const form = new FormData(event.currentTarget);
+    const [date, hour] = [String(form.get("date")), String(form.get("hour"))];
+    const r = await send<{ items: Skirmish[] }>("POST", "/api/admin/skirmishes", { starts_at: `${date}T${hour.padStart(2, "0")}:00:00Z`, kind: form.get("kind") });
     if (r.ok) { setItems(r.data.items); setMessage("Scheduled. It shows on the war map and hubs now."); } else setMessage(r.error);
   }
   async function cancel(s: Skirmish) {
@@ -63,14 +64,15 @@ function Skirmishes() {
     if (r.ok) { setItems(r.data.items); setMessage("Cancelled."); } else setMessage(r.error);
   }
   const upcoming = (s: Skirmish) => !s.cancelled_at && new Date(s.starts_at).getTime() > loadedAt;
-  return <section className="panel"><h2>Skirmish Hours</h2>
-    <p>For one hour, influence counts double; the per-person caps still apply. Times are UTC. Scheduling and cancelling are audited.</p>
+  return <section className="panel"><h2>Faction events</h2>
+    <p>Skirmish Hour: one hour of double influence. Raid Night: three hours in which viewers who arrive by a cross-faction raid earn double watch influence. Territory Spotlight runs by itself every day. Events never stack, and the per-person caps always apply. Times are UTC; scheduling and cancelling are audited.</p>
     <form onSubmit={schedule} className="row wrap">
+      <label className="field narrow"><span>Event</span><select name="kind" defaultValue="skirmish"><option value="skirmish">Skirmish Hour (1 hour, all influence 2×)</option><option value="raid_night">Raid Night (3 hours, cross-faction raiders 2×)</option></select></label>
       <label className="field narrow"><span>Date (UTC)</span><input type="date" name="date" required /></label>
       <label className="field narrow"><span>Hour (UTC, 0–23)</span><input type="number" name="hour" min={0} max={23} required /></label>
       <button className="small">Schedule</button>
     </form>
     {message && <p role="status" className="form-message">{message}</p>}
-    <ul>{items?.map(s => <li key={s.id}>{new Date(s.starts_at).toUTCString()} · {s.cancelled_at ? "cancelled" : upcoming(s) ? "scheduled" : "done"}{s.by && ` · by @${s.by}`} {upcoming(s) && <button type="button" className="small quiet" onClick={() => void cancel(s)}>Cancel</button>}</li>)}</ul>
+    <ul>{items?.map(s => <li key={s.id}>{s.kind === "raid_night" ? "Raid Night" : "Skirmish Hour"} · {new Date(s.starts_at).toUTCString()} · {s.cancelled_at ? "cancelled" : upcoming(s) ? "scheduled" : "done"}{s.by && ` · by @${s.by}`} {upcoming(s) && <button type="button" className="small quiet" onClick={() => void cancel(s)}>Cancel</button>}</li>)}</ul>
   </section>;
 }

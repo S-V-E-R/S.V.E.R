@@ -61,6 +61,9 @@ async fn fixture(app: &App, n: usize, faction: Option<&str>) -> String {
 }
 async fn exercise(app: App) {
     let start = app.config.factions.starts_at.unwrap();
+    // Territory Spotlight picks a genre per day; pin today's to one no award uses, so the
+    // influence numbers below don't depend on the date.
+    sql(&app.db, "INSERT INTO faction_spotlights(day,genre) VALUES((now() AT TIME ZONE 'UTC')::date,'unused') ON CONFLICT(day) DO UPDATE SET genre='unused'").await;
     advance(&app, Utc::now()).await;
     let mut tokens = Vec::new();
     for n in 0..10 {
@@ -636,6 +639,57 @@ async fn exercise(app: App) {
         "UPDATE faction_skirmishes SET cancelled_at=now() WHERE id='skirmish-test'",
     )
     .await;
+    // Territory Spotlight and Raid Night apply 2x to their own awards only, and never stack.
+    {
+        let mut db = app.db.acquire().await.unwrap();
+        let now = Utc::now();
+        sql(
+            &app.db,
+            "UPDATE faction_spotlights SET genre='art' WHERE day=(now() AT TIME ZONE 'UTC')::date",
+        )
+        .await;
+        assert_eq!(
+            skirmish::multiplier(&mut db, now, "art", false)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            skirmish::multiplier(&mut db, now, "music", true)
+                .await
+                .unwrap(),
+            1,
+            "no Raid Night yet"
+        );
+        sql(&app.db, "INSERT INTO faction_skirmishes(id,kind,starts_at) VALUES('raid-night-test','raid_night',now()-interval '2 hours')").await;
+        assert_eq!(
+            skirmish::multiplier(&mut db, now, "music", true)
+                .await
+                .unwrap(),
+            2,
+            "raided viewers in Raid Night"
+        );
+        assert_eq!(
+            skirmish::multiplier(&mut db, now, "music", false)
+                .await
+                .unwrap(),
+            1,
+            "only raided viewers"
+        );
+        assert_eq!(
+            skirmish::multiplier(&mut db, now, "art", true)
+                .await
+                .unwrap(),
+            2,
+            "events never stack"
+        );
+        sql(
+            &app.db,
+            "UPDATE faction_skirmishes SET cancelled_at=now() WHERE id='raid-night-test'",
+        )
+        .await;
+        sql(&app.db, "UPDATE faction_spotlights SET genre='unused' WHERE day=(now() AT TIME ZONE 'UTC')::date").await;
+    }
     assert_eq!(
         chat(
             &app,

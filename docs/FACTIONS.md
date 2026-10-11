@@ -91,9 +91,18 @@ The first faction event (Phase 4), built October 10, 2026 by Joe's decision (`fa
 - The war map and every faction hub announce the next one and show when one is running.
 - During the hour every influence source counts **double**. The doubling happens before the per-person daily and hourly caps, so the caps still bind: bots and grinders gain nothing beyond the usual limits, and anti-farming rules are unchanged.
 
+## Territory Spotlight and Raid Night
+
+Built October 10, 2026 by Joe's decision (more faction events, each 2x under the usual caps; migration 0094).
+
+- **Territory Spotlight:** every UTC day one genre is spotlighted, and influence earned there counts double until midnight UTC. It is the current week's closest race between the top two factions among this season's territories, picked on the day's first use and kept for the day; before anyone has influence that week, a genre picked by the date. No staff action needed.
+- **Raid Night:** staff schedule it beside Skirmish Hours (3 hours, same rules: on the hour, an hour to 60 days ahead, no overlap with another Raid Night, audited). During it, a viewer whose playback came from a raid by a streamer of another faction earns double watch influence.
+- **Events never stack:** any number of them at once still means 2x, and the per-person caps always apply after.
+- The war map and hubs show today's spotlight and the next or running Raid Night.
+
 ## Not in this module
 
-Other faction events (Territory Spotlight, Raid Night and similar; Skirmish Hour is built above), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (dropped), faction chat rooms (the faction board covers it).
+Other faction events (King of the Hill and similar; Skirmish Hour, Territory Spotlight and Raid Night are built above), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (dropped), faction chat rooms (the faction board covers it).
 
 ## Legacy notes
 
