@@ -13,7 +13,7 @@ type Mine = {
   disabled: boolean; moderators_run: boolean; overlay: { set: boolean; connected: boolean }; webhook_url: string | null;
   input_cap: number | null; typical_balance: number | null;
   checklist: { label: string; ok: boolean; required: boolean }[]; templates: { name: string; board: BoardDef }[];
-  effects: string[]; kinds: Control["kind"][]; audiences: Control["audience"][]; webhook_secret?: string | null;
+  effects: string[]; custom_effects: { value: string; name: string }[]; kinds: Control["kind"][]; audiences: Control["audience"][]; webhook_secret?: string | null;
 };
 const KIND_NAMES: Record<Control["kind"], string> = { button: "Button", label: "Label", text: "Text input", goal: "Goal", joystick: "Joystick", rally: "Faction rally" };
 const AUDIENCE_NAMES: Record<Control["audience"], string> = { everyone: "Everyone signed in", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
@@ -36,7 +36,7 @@ function ControlEditor({ control, mine, onChange, onMove, onRemove, onTest, save
         {mine.typical_balance !== null && <small className={c.cost > mine.typical_balance ? "form-message" : "muted"}>{c.cost > mine.typical_balance ? "Above" : "Within"} the typical viewer balance here ({mine.typical_balance.toLocaleString()}).</small>}</label>
       <label className="field narrow"><span>Cooldown per viewer (seconds)</span><input type="number" min={0} max={3600} value={c.cooldown_seconds} onChange={e => onChange({ ...c, cooldown_seconds: num(e.target.value) })} /></label>
       <label className="field narrow"><span>Limit per stream</span><input type="number" min={1} max={1000} placeholder="No limit" value={c.per_stream_limit ?? ""} onChange={e => onChange({ ...c, per_stream_limit: e.target.value ? Number(e.target.value) : null })} /></label>
-      <label className="field narrow"><span>Effect</span><select disabled={c.confirm} value={c.effect} onChange={e => onChange({ ...c, effect: e.target.value })}>{mine.effects.map(fx => <option key={fx} value={fx}>{fx === "none" ? "None" : fx[0].toUpperCase() + fx.slice(1)}</option>)}</select></label>
+      <label className="field narrow"><span>Effect</span><select disabled={c.confirm} value={c.effect} onChange={e => onChange({ ...c, effect: e.target.value })}>{mine.effects.map(fx => <option key={fx} value={fx}>{fx === "none" ? "None" : fx[0].toUpperCase() + fx.slice(1)}</option>)}{mine.custom_effects.length > 0 && <optgroup label="Your Skills">{mine.custom_effects.map(fx => <option key={fx.value} value={fx.value}>{fx.name}</option>)}</optgroup>}</select></label>
     </>}
     {(c.kind === "button" || c.kind === "text") && <label className="checkbox"><input type="checkbox" checked={!!c.confirm} onChange={e => onChange({ ...c, confirm: e.target.checked, effect: e.target.checked ? "none" : c.effect })} /> Game confirms: hold the viewer&apos;s Engagement Valor until your game or the OBS bridge confirms the press (refunded otherwise, after 60 seconds at most)</label>}
     {c.kind !== "label" && <label className="field narrow"><span>Who can use it</span><select value={c.audience} onChange={e => onChange({ ...c, audience: e.target.value as Control["audience"] })}>{mine.audiences.map(a => <option key={a} value={a}>{AUDIENCE_NAMES[a]}</option>)}</select></label>}

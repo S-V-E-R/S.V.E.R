@@ -31,7 +31,8 @@ use std::{
     time::Duration,
 };
 
-/// Preset on-stream effects (the S.V.E.R library). Streamer uploads and sounds come with Skills.
+/// Preset on-stream effects (the S.V.E.R library). A control can instead play one of the
+/// channel's own custom Skills (`custom:<skill id>`, its uploaded image and/or sound).
 pub const EFFECTS: &[&str] = &[
     "none",
     "confetti",
@@ -94,6 +95,37 @@ pub struct Control {
 }
 fn everyone() -> String {
     "everyone".into()
+}
+/// `custom:<id>`: one of the channel's custom Skills as the effect (ownership is checked on save).
+fn is_custom(effect: &str) -> bool {
+    effect
+        .strip_prefix("custom:")
+        .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+}
+/// Every `custom:` effect on the board is one of the owner's own custom Skills with media.
+async fn own_effects(app: &App, owner: &str, board: &Board) -> Res<()> {
+    for screen in &board.screens {
+        for c in &screen.controls {
+            if is_custom(&c.effect) && media(app, owner, &c.effect).await?.0 == "none" {
+                return Err(bad(
+                    c,
+                    "choose one of your own Skills that has an image or sound.",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+/// What an effect plays: (effect, image URL, sound URL). A `custom:` effect becomes "custom" with
+/// its Skill's files, or "none" once the Skill is deleted.
+pub(crate) async fn media(app: &App, owner: &str, effect: &str) -> Res<(String, Value, Value)> {
+    let Some(id) = effect.strip_prefix("custom:") else {
+        return Ok((effect.to_string(), Value::Null, Value::Null));
+    };
+    Ok(match crate::skills::custom_media(app, owner, id).await? {
+        Some((image, audio)) => ("custom".into(), json!(image), json!(audio)),
+        None => ("none".into(), Value::Null, Value::Null),
+    })
 }
 fn no_effect() -> String {
     "none".into()
@@ -162,7 +194,7 @@ pub fn validate(board: &Board) -> Res<()> {
             if !AUDIENCES.contains(&c.audience.as_str()) {
                 return Err(bad(c, "choose who can use it."));
             }
-            if !EFFECTS.contains(&c.effect.as_str()) {
+            if !EFFECTS.contains(&c.effect.as_str()) && !is_custom(&c.effect) {
                 return Err(bad(c, "choose an effect from the library."));
             }
             if !(0..=100_000).contains(&c.cost) {
@@ -409,7 +441,7 @@ async fn studio(app: &App, user: &auth::User) -> Res<Value> {
         "webhook_url": row.webhook_url, "input_cap": row.input_cap,
         "typical_balance": typical_balance(app, &user.id).await?,
         "checklist": checklist(&row),
-        "templates": templates, "effects": EFFECTS, "kinds": KINDS, "audiences": AUDIENCES,
+        "templates": templates, "effects": EFFECTS, "custom_effects": crate::skills::board_options(app, &user.id).await?, "kinds": KINDS, "audiences": AUDIENCES,
     }))
 }
 
@@ -426,6 +458,7 @@ async fn save(
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::ensure_unrestricted(&mut *app.db.acquire().await?, &user.id).await?;
     validate(&input.board)?;
+    own_effects(&app, &user.id, &input.board).await?;
     sqlx::query("INSERT INTO boards(channel_id,draft) VALUES($1,$2) ON CONFLICT(channel_id) DO UPDATE SET draft=EXCLUDED.draft, updated_at=now()")
         .bind(&user.id)
         .bind(sqlx::types::Json(&input.board))
@@ -442,6 +475,7 @@ async fn publish(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         .await?
         .ok_or_else(|| Fail::bad("Build a board first."))?;
     validate(&row.draft.0)?;
+    own_effects(&app, &user.id, &row.draft.0).await?;
     if let Some(missing) = checklist(&row)
         .iter()
         .find(|c| c["required"] == true && c["ok"] == false)
@@ -489,8 +523,9 @@ async fn test(State(app): State<App>, jar: CookieJar, Json(input): Json<Test>) -
         .0
         .control(&input.control)
         .ok_or_else(Fail::missing)?;
+    let (played, image, audio) = media(&app, &user.id, &control.effect).await?;
     let effect = json!({"type": "board_effect", "test": true, "control": control.id, "label": control.label,
-        "effect": control.effect, "user": {"username": user.username}, "stream_ms": null,
+        "effect": played, "image": image, "audio": audio, "user": {"username": user.username}, "stream_ms": null,
         "at": Utc::now().timestamp_millis(), "overlay": row.overlay});
     app.chat
         .publish(&format!("overlay:{}", user.id), None, 0, effect.clone());
@@ -979,8 +1014,9 @@ async fn press(
     tx.commit().await?;
     crate::surge::participated(&mut *app.db.acquire().await?, &channel, &user.id).await?;
     // The effect plays once: in the video when the overlay is connected, otherwise over the player.
+    let (played, image, audio) = media(&app, &channel, &control.effect).await?;
     app.chat.publish(&channel, Some(&user.id), 0, json!({"type": "board_effect", "id": input.id, "confirm": control.confirm, "control": control.id,
-        "label": control.label, "effect": control.effect, "user": author, "text": text, "goal": goal,
+        "label": control.label, "effect": played, "image": image, "audio": audio, "user": author, "text": text, "goal": goal,
         "stream_ms": stream_ms, "at": at, "overlay": row.overlay}));
     // Live events never name under-18 accounts.
     let minor = crate::support::age(&mut *app.db.acquire().await?, &user.id)
