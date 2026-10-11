@@ -100,9 +100,18 @@ Built October 10, 2026 by Joe's decision (more faction events, each 2x under the
 - **Events never stack:** any number of them at once still means 2x, and the per-person caps always apply after.
 - The war map and hubs show today's spotlight and the next or running Raid Night.
 
+## King of the Hill
+
+Built October 11, 2026 by Joe's decision (migration 0099); the numbers are **Proposed**.
+
+- Each season has one **Hill**: a genre picked when the season starts (neutral genres first, then by the season number, so it's never chosen by hand).
+- All season, influence earned in the Hill counts double. Like every faction event it never stacks (2x at most) and the per-person caps still apply.
+- **Winner-take-all:** whoever holds the Hill when the season ends gets it counted as 2 extra territories in the season tally, so a close season can turn on it.
+- The war map and hubs name the Hill and who holds it now.
+
 ## Not in this module
 
-Other faction events (King of the Hill and similar; Skirmish Hour, Territory Spotlight and Raid Night are built above), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (dropped), faction chat rooms (the faction board covers it).
+Other faction events (Skirmish Hour, Territory Spotlight, Raid Night and King of the Hill are built above), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (dropped), faction chat rooms (the faction board covers it).
 
 ## Legacy notes
 

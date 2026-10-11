@@ -65,6 +65,8 @@ async fn exercise(app: App) {
     // influence numbers below don't depend on the date.
     sql(&app.db, "INSERT INTO faction_spotlights(day,genre) VALUES((now() AT TIME ZONE 'UTC')::date,'unused') ON CONFLICT(day) DO UPDATE SET genre='unused'").await;
     advance(&app, Utc::now()).await;
+    // King of the Hill likewise: no award below falls in the Hill.
+    sql(&app.db, "UPDATE faction_seasons SET hill='unused'").await;
     let mut tokens = Vec::new();
     for n in 0..10 {
         tokens.push(
@@ -688,6 +690,32 @@ async fn exercise(app: App) {
             "UPDATE faction_skirmishes SET cancelled_at=now() WHERE id='raid-night-test'",
         )
         .await;
+        // King of the Hill: the season's Hill genre counts double too, and still never stacks.
+        sql(
+            &app.db,
+            "UPDATE faction_seasons SET hill='music' WHERE finished_at IS NULL",
+        )
+        .await;
+        assert_eq!(
+            skirmish::multiplier(&mut db, now, "music", false)
+                .await
+                .unwrap(),
+            2,
+            "the Hill"
+        );
+        sql(
+            &app.db,
+            "UPDATE faction_seasons SET hill='art' WHERE finished_at IS NULL",
+        )
+        .await;
+        assert_eq!(
+            skirmish::multiplier(&mut db, now, "art", false)
+                .await
+                .unwrap(),
+            2,
+            "never stacks with the spotlight"
+        );
+        sql(&app.db, "UPDATE faction_seasons SET hill='unused'").await;
         sql(&app.db, "UPDATE faction_spotlights SET genre='unused' WHERE day=(now() AT TIME ZONE 'UTC')::date").await;
     }
     assert_eq!(

@@ -25,6 +25,17 @@ use sqlx::PgConnection;
 
 /// How much influence counts during an event.
 pub const MULTIPLIER: i64 = 2;
+/// King of the Hill: extra territories for whoever holds the Hill when the season ends.
+pub const HILL_BONUS: i64 = 2;
+
+/// This season's Hill genre (King of the Hill), while the season runs.
+pub async fn hill(db: &mut PgConnection, at: DateTime<Utc>) -> Res<Option<String>> {
+    Ok(sqlx::query_scalar("SELECT hill FROM faction_seasons WHERE starts_at<=$1 AND ends_at>$1 AND finished_at IS NULL ORDER BY number DESC LIMIT 1")
+        .bind(at)
+        .fetch_optional(db)
+        .await?
+        .flatten())
+}
 /// Scheduled event kinds and their length in hours.
 const KINDS: [(&str, i64); 2] = [("skirmish", 1), ("raid_night", 3)];
 /// SQL for a scheduled event's end, by kind.
@@ -88,7 +99,8 @@ pub async fn multiplier(
 ) -> Res<i64> {
     let applies = active(db, at, "skirmish").await?
         || (raided && active(db, at, "raid_night").await?)
-        || spotlight(db, at).await?.as_deref() == Some(genre);
+        || spotlight(db, at).await?.as_deref() == Some(genre)
+        || hill(db, at).await?.as_deref() == Some(genre);
     Ok(if applies { MULTIPLIER } else { 1 })
 }
 
@@ -119,6 +131,15 @@ pub async fn summary(db: &mut PgConnection, at: DateTime<Utc>) -> Res<Value> {
         None => None,
     };
     out["spotlight"] = json!(spot.map(|g| json!({"genre": g, "name": name})));
+    out["hill"] = match hill(db, at).await? {
+        Some(genre) => {
+            let row: Option<(String, Option<String>)> = sqlx::query_as("SELECT g.name,t.holder FROM faction_genres g LEFT JOIN faction_territories t ON t.genre=g.id AND t.season_id=(SELECT id FROM faction_seasons WHERE hill=$1 AND finished_at IS NULL ORDER BY number DESC LIMIT 1) WHERE g.id=$1")
+                .bind(&genre).fetch_optional(&mut *db).await?;
+            let (name, holder) = row.unwrap_or((genre.clone(), None));
+            json!({"genre": genre, "name": name, "holder": holder, "bonus": HILL_BONUS})
+        }
+        None => Value::Null,
+    };
     Ok(out)
 }
 
