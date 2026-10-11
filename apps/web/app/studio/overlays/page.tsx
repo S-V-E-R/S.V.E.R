@@ -71,6 +71,7 @@ export default function OverlaysStudio() {
         <li><strong>Alert box:</strong> <code>{url}</code></li>
         <li><strong>Goal bar:</strong> <code>{`${url}?widget=goal`}</code></li>
         <li><strong>Recent events:</strong> <code>{`${url}?widget=events`}</code></li>
+        <li><strong>StreamElements or Streamlabs:</strong> add a Custom widget (StreamElements) or Custom Widget (Streamlabs) and paste this as its HTML, with empty CSS and JS: <code>{`<iframe src="${url}" style="border:0;width:100%;height:100%" allow="autoplay"></iframe>`}</code></li>
       </ul> : <p className="muted">{view.linked ? `A link exists${view.connected ? " and an overlay is open now" : ""}. Make a new one to see it again.` : "No link yet."}</p>}
       <div className="row wrap">
         <button type="button" className="small" onClick={makeLink}>{view.linked ? "Make a new link" : "Make a link"}</button>

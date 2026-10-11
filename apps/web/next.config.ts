@@ -6,6 +6,6 @@ const config: NextConfig = {
     { key: "Referrer-Policy", value: "no-referrer" },
     { key: "X-Content-Type-Options", value: "nosniff" },
     { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" }
-  ] }, { source: "/((?!embed/).*)", headers: [{ key: "X-Frame-Options", value: "DENY" }] }, { source: "/embed/:id", headers: [{ key: "Cache-Control", value: "no-store" }, { key: "Content-Security-Policy", value: "frame-ancestors *" }] }]; }
+  ] }, { source: "/((?!embed/|overlay/).*)", headers: [{ key: "X-Frame-Options", value: "DENY" }] }, { source: "/overlay/:path*", headers: [{ key: "Content-Security-Policy", value: "frame-ancestors *" }] }, { source: "/embed/:id", headers: [{ key: "Cache-Control", value: "no-store" }, { key: "Content-Security-Policy", value: "frame-ancestors *" }] }]; }
 };
 export default config;
