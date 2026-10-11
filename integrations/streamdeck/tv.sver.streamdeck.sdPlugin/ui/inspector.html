@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>S.V.E.R</title>
+<style>
+  body { font: 13px system-ui, sans-serif; color: #ddd; background: #2d2d2d; margin: 8px; }
+  label { display: block; margin: 8px 0 2px; }
+  input, select { width: 100%; box-sizing: border-box; background: #3d3d3d; color: #eee; border: 1px solid #555; padding: 4px; }
+  button { margin-top: 8px; }
+  .muted { color: #999; }
+  .error { color: #f88; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<!-- One inspector for every action: it shows the fields that action uses and saves them as the
+     key's settings. Sign-in is shared by all keys. -->
+<section>
+  <p id="who" class="muted">Checking sign-in…</p>
+  <p id="code" hidden>Enter <strong id="code-text"></strong> at sver.tv/go (opened in your browser).</p>
+  <button id="sign-in" type="button" hidden>Sign in to S.V.E.R</button>
+  <button id="sign-out" type="button" hidden>Sign out</button>
+</section>
+<form id="settings">
+  <div data-for="title"><label for="title">Stream title</label><input id="title" name="title" maxlength="140"></div>
+  <div data-for="raid"><label for="username">Raid this channel</label><input id="username" name="username" maxlength="25" placeholder="username"></div>
+  <div data-for="poll">
+    <label for="kind">Type</label><select id="kind" name="kind"><option value="poll">Poll</option><option value="prediction">Prediction</option></select>
+    <label for="question">Question</label><input id="question" name="question" maxlength="120">
+    <label for="options">Options, separated by commas</label><input id="options" name="options">
+    <label for="seconds">Open for (seconds, 15–1800)</label><input id="seconds" name="seconds" type="number" min="15" max="1800" value="120">
+  </div>
+  <div data-for="marker"><label for="label">Highlight marker label (optional)</label><input id="label" name="label" maxlength="60"></div>
+  <p data-for="board" class="muted">Pauses the board (panic switch) or resumes it. The key shows which.</p>
+</form>
+<p id="error" class="error" hidden></p>
+<script>
+  let socket, context, action;
+  const $ = id => document.getElementById(id);
+  const toPlugin = payload => socket.send(JSON.stringify({ event: "sendToPlugin", action, context, payload }));
+  function show(signedIn) {
+    $("who").textContent = signedIn ? `Signed in as @${signedIn}` : "Not signed in.";
+    $("sign-in").hidden = !!signedIn;
+    $("sign-out").hidden = !signedIn;
+    if (signedIn) $("code").hidden = true;
+  }
+  // Stream Deck calls this when the inspector opens.
+  window.connectElgatoStreamDeckSocket = (inPort, inUUID, inRegisterEvent, inInfo, inActionInfo) => {
+    const info = JSON.parse(inActionInfo);
+    context = inUUID;
+    action = info.action;
+    const kind = action.split(".").pop();
+    document.querySelectorAll("[data-for]").forEach(el => { el.hidden = el.dataset.for !== kind; });
+    for (const [key, value] of Object.entries(info.payload.settings ?? {})) if ($(key)) $(key).value = value;
+    socket = new WebSocket(`ws://127.0.0.1:${inPort}`);
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ event: inRegisterEvent, uuid: inUUID }));
+      toPlugin({ status: true });
+    };
+    socket.onmessage = ({ data }) => {
+      const { event, payload = {} } = JSON.parse(data);
+      if (event !== "sendToPropertyInspector") return;
+      if ("signedIn" in payload) show(payload.signedIn);
+      if (payload.code) { $("code-text").textContent = payload.code; $("code").hidden = false; }
+      $("error").hidden = !payload.error;
+      $("error").textContent = payload.error ?? "";
+    };
+  };
+  $("settings").addEventListener("input", () => {
+    socket.send(JSON.stringify({ event: "setSettings", context, payload: Object.fromEntries(new FormData($("settings"))) }));
+  });
+  $("sign-in").addEventListener("click", () => toPlugin({ signIn: true }));
+  $("sign-out").addEventListener("click", () => toPlugin({ signOut: true }));
+</script>
+</body>
+</html>

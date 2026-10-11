@@ -9,6 +9,7 @@ Connect your stream's board ([docs/CROWDSYNC.md](../docs/CROWDSYNC.md)) to OBS a
 | [`example-game/`](example-game) | Crowd Runner, a small browser game built on the JS SDK | Runs in any browser |
 | [`sdk-unity/`](sdk-unity) | Unity package (`tv.sver.board`) | Written against Unity 2021.3+ APIs; not yet compiled in CI |
 | [`sdk-unreal/`](sdk-unreal) | Unreal Engine 5 plugin (`SverBoard`) | Written against UE 5.x APIs; not yet compiled in CI |
+| [`streamdeck/`](streamdeck) | Stream Deck plugin: title, raid, polls and predictions, highlight markers, board pause | Tested against fakes (`node streamdeck/test.mjs`); not yet run on a real Stream Deck |
 
 ## Get a token
 
