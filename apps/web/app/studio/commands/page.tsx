@@ -5,7 +5,7 @@ import { send, useLoad, type Result } from "../../../lib/client-api";
 
 type Command = { name: string; reply: string; access: string; cooldown_seconds: number; uses: number };
 type Timer = { id: string; body: string; every_minutes: number; enabled: boolean; last_sent_at: string | null };
-type Data = { commands: Command[]; timers: Timer[]; bot: { key: string; name: string; chosen: string | null; personality: string; rivalry: boolean }; max_timers: number; automod: AutoMod };
+type Data = { commands: Command[]; timers: Timer[]; bot: { key: string; name: string; chosen: string | null; personality: string; rivalry: boolean; quips: boolean }; max_timers: number; automod: AutoMod };
 type AutoMod = { caps: boolean; repeats: boolean; spam: boolean; ladder: number[] };
 type ImportReport = { imported: string[]; skipped: { line: string; why: string }[]; flagged: { name: string; variables: string[] }[] };
 const step = (s: number) => s === 0 ? "Warn" : s < 120 ? `${s}s` : s < 7200 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`;
@@ -61,15 +61,16 @@ export default function CommandsPage() {
     {message && <p role="status" className="form-message">{message}</p>}
     <Section title="Your channel's bot" intro="Command replies and timed messages come from your bot, shown in chat with a Bot badge. By default it's your faction's bot; VOLK is the neutral one.">
       <div className="row wrap">
-        <label className="field narrow"><span>Bot</span><select value={data.bot.chosen ?? ""} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: e.target.value || null, personality: data.bot.personality, rivalry: data.bot.rivalry }), "Bot saved.")}>
+        <label className="field narrow"><span>Bot</span><select value={data.bot.chosen ?? ""} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: e.target.value || null, personality: data.bot.personality, rivalry: data.bot.rivalry, quips: data.bot.quips }), "Bot saved.")}>
           <option value="">My faction&apos;s bot{data.bot.chosen ? "" : ` (${data.bot.name})`}</option>
           {Object.entries(BOTS).map(([k, n]) => <option key={k} value={k}>{n}</option>)}
         </select></label>
-        <label className="field narrow"><span>Personality</span><select value={data.bot.personality} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: data.bot.chosen, personality: e.target.value, rivalry: data.bot.rivalry }), "Personality saved.")}>
+        <label className="field narrow"><span>Personality</span><select value={data.bot.personality} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: data.bot.chosen, personality: e.target.value, rivalry: data.bot.rivalry, quips: data.bot.quips }), "Personality saved.")}>
           <option value="chill">Chill (warm, little faction flavor)</option><option value="battle">Battle (full faction personality)</option><option value="event">Event (maximum hype)</option>
         </select></label>
       </div>
-      <label className="row"><input type="checkbox" checked={data.bot.rivalry} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: data.bot.chosen, personality: data.bot.personality, rivalry: e.target.checked }), "Saved.")} /> Cross-faction greetings: when a rival faction&apos;s streamer raids, your faction&apos;s bot adds a friendly jab (VOLK stays neutral)</label>
+      <label className="row"><input type="checkbox" checked={data.bot.rivalry} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: data.bot.chosen, personality: data.bot.personality, rivalry: e.target.checked, quips: data.bot.quips }), "Saved.")} /> Cross-faction greetings: when a rival faction&apos;s streamer raids, your faction&apos;s bot adds a friendly jab (VOLK stays neutral)</label>
+      <label className="row"><input type="checkbox" checked={data.bot.quips} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: data.bot.chosen, personality: data.bot.personality, rivalry: data.bot.rivalry, quips: e.target.checked }), "Saved.")} /> Quips: while you&apos;re live, your bot says a short line in its personality now and then (at most every 30 minutes, and only when chat has been active)</label>
     </Section>
     <Section title="Custom commands" intro="Viewers type !name and your bot replies. Variables: {user}, {channel}, {uptime}, {game}, {followers}. Replies follow your chat's banned words and link rule. Viewers can type /help to see them.">
       {data.commands.length > 0 && <ul className="list">{data.commands.map(c => <li key={c.name} className="row between wrap">

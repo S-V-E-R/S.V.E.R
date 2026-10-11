@@ -185,6 +185,17 @@ pub async fn tick(app: &App) -> Res<()> {
         let text = fill(app, &channel, None, &body).await?;
         say(app, &channel, &text).await?;
     }
+    // Quips (off by default): at most every 30 minutes while live, only after chat since the last.
+    let quips: Vec<String> = sqlx::query_scalar("UPDATE chat_settings s SET bot_quip_at=now() FROM broadcasts b
+        WHERE b.owner_id=s.channel_id AND b.state='LIVE' AND s.bot_quips
+          AND coalesce(s.bot_quip_at, b.started_at) <= now()-interval '30 minutes'
+          AND EXISTS(SELECT 1 FROM chat_messages m WHERE m.channel_id=s.channel_id AND m.squad_id IS NULL AND m.created_at>coalesce(s.bot_quip_at, b.started_at))
+        RETURNING s.channel_id")
+        .fetch_all(&app.db)
+        .await?;
+    for channel in quips {
+        crate::bot::quip(app, &channel).await?;
+    }
     Ok(())
 }
 
@@ -206,16 +217,17 @@ async fn view(app: &App, owner: &str) -> Res<Json<Value>> {
         .bind(owner).fetch_all(&app.db).await?;
     let timers: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'body',body,'every_minutes',every_minutes,'enabled',enabled,'last_sent_at',last_sent_at) FROM chat_timers WHERE channel_id=$1 ORDER BY created_at")
         .bind(owner).fetch_all(&app.db).await?;
-    let chosen: Option<(Option<String>, String, bool)> = sqlx::query_as(
-        "SELECT bot,bot_personality,bot_rivalry FROM chat_settings WHERE channel_id=$1",
+    let chosen: Option<(Option<String>, String, bool, bool)> = sqlx::query_as(
+        "SELECT bot,bot_personality,bot_rivalry,bot_quips FROM chat_settings WHERE channel_id=$1",
     )
     .bind(owner)
     .fetch_optional(&app.db)
     .await?;
-    let (chosen, personality, rivalry) = chosen.unwrap_or((None, "chill".into(), false));
+    let (chosen, personality, rivalry, quips) =
+        chosen.unwrap_or((None, "chill".into(), false, false));
     let (key, name) = bot(app, owner).await?;
     Ok(Json(
-        json!({"commands": commands, "timers": timers, "bot": {"key": key, "name": name, "chosen": chosen, "personality": personality, "rivalry": rivalry}, "max_timers": MAX_TIMERS, "automod": crate::bot::settings(app, owner).await?}),
+        json!({"commands": commands, "timers": timers, "bot": {"key": key, "name": name, "chosen": chosen, "personality": personality, "rivalry": rivalry, "quips": quips}, "max_timers": MAX_TIMERS, "automod": crate::bot::settings(app, owner).await?}),
     ))
 }
 /// GET /api/me/commands
@@ -231,6 +243,9 @@ pub struct BotSettings {
     /// Cross-faction raid greetings (off by default).
     #[serde(default)]
     rivalry: bool,
+    /// Occasional quips while live (off by default).
+    #[serde(default)]
+    quips: bool,
 }
 /// PUT /api/me/commands/bot: which bot speaks, and its personality.
 async fn set_bot(
@@ -247,8 +262,8 @@ async fn set_bot(
     {
         return Err(Fail::bad("Choose a bot and a personality."));
     }
-    sqlx::query("INSERT INTO chat_settings(channel_id,bot,bot_personality,bot_rivalry) VALUES($1,$2,$3,$4) ON CONFLICT(channel_id) DO UPDATE SET bot=EXCLUDED.bot,bot_personality=EXCLUDED.bot_personality,bot_rivalry=EXCLUDED.bot_rivalry")
-        .bind(&user.id).bind(&input.bot).bind(&input.personality).bind(input.rivalry).execute(&app.db).await?;
+    sqlx::query("INSERT INTO chat_settings(channel_id,bot,bot_personality,bot_rivalry,bot_quips) VALUES($1,$2,$3,$4,$5) ON CONFLICT(channel_id) DO UPDATE SET bot=EXCLUDED.bot,bot_personality=EXCLUDED.bot_personality,bot_rivalry=EXCLUDED.bot_rivalry,bot_quips=EXCLUDED.bot_quips")
+        .bind(&user.id).bind(&input.bot).bind(&input.personality).bind(input.rivalry).bind(input.quips).execute(&app.db).await?;
     view(&app, &user.id).await
 }
 #[derive(Deserialize)]

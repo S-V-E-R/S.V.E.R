@@ -151,6 +151,15 @@ Sample lines in the Event personality (maximum hype for tournaments, charity str
 | Incoming raid | WARBAND OF {count} AT THE GATE, LED BY {user}! | {count} ARRIVALS FROM {user}! THE PATTERN GROWS! | {user} BRINGS {count} TO THE PARTY! | {user} CROSSES WITH {count}! THE ACCORD HOLDS! |
 | Timeout (AutoMod) | {user}, cool off. The fire waits. | {user}, pattern flagged. Back soon. | Easy, {user}! Catch your breath. | {user}, the Accord pauses you. |
 
+Quips: short lines a bot says now and then while the channel is live, when the streamer turns them on. *Draft for Joe's approval, October 11, 2026.* Original lines; the Battle ones reuse approved phrases (battle cries, the Accord).
+
+| Bot | Chill | Battle | Event |
+| --- | --- | --- | --- |
+| PYRE | Stay warm, everyone. Glad you're here. · Hydrate. Even the forge needs water. · Good company makes a good fire. · Take a breath and stretch. We'll keep the fire lit. | The forge is hot. Keep swinging. · Ashes behind us, ground ahead. · Every ember counts. Stay loud. · From ashes, we rise. | THE FIRE IS ROARING TONIGHT! · FORGE IT, FIGHT IT, FINISH IT! · EVERY EMBER, ALL IN! · FROM ASHES, WE RISE! |
+| ECHO | Noting a good mood in here. Carry on. · Reminder: water, posture, kindness. · The archive appreciates you being here. · Questions are welcome. Patterns start with one. | Knowledge ascends. Power follows. · Data suggests we're winning. Keep going. · Every message is a signal. Send yours. · The pattern persists. | SIGNAL STRENGTH: MAXIMUM! · THE ARCHIVE WILL REMEMBER TONIGHT! · PATTERN LOCKED. HYPE CONFIRMED! · KNOWLEDGE ASCENDS! |
+| FAVOR | There's always another seat at this table. · Stretch break? The bell will still be here. · Fortune check: you're in a good chat. · New here? Say hi. We don't bite. Mostly. | Fortune favors the bold. And the generous. · Roll the dice, friends. The table's hot. · Every voice is a coin in the pot. · Ring the bell, raise a cheer. | THE BELL IS RINGING! · JACKPOT ENERGY IN HERE! · EVERYONE GETS A SEAT TONIGHT! · FORTUNE FAVORS THE BOLD! |
+| VOLK | All quiet under the Accord. Enjoy the stream. · A short reminder: be kind, stay hydrated. · The watch continues. Welcome, everyone. · Good stream. Carry on. | The grey wolf watches. · The Accord holds. Play fair, play hard. · Every light gets its turn. · Ground may be taken. A voice may never be silenced. | THE WATCH IS AWAKE! · UNDER THE ACCORD, WE CELEBRATE! · EVERY LIGHT GETS ITS TURN! · THE GREY WOLF HOWLS! |
+
 ## Where the lore appears
 
 - **Factions page:**
