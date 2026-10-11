@@ -623,6 +623,22 @@ async fn library_pages(e: &Env, highlight: &str) {
     let first = e.call("GET", "/api/me/videos?kind=CLIP", Value::Null).await;
     assert_eq!(first["videos"].as_array().unwrap().len(), 100);
     assert_eq!(first["has_more"], true);
+    // The review count covers every page, not just the 100 shown.
+    sqlx::query("UPDATE videos SET approval='PENDING' WHERE id=ANY($1)")
+        .bind(&fixtures)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM videos WHERE owner_id='stream-owner' AND kind='CLIP' AND approval='PENDING' AND status='READY'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert!(pending >= 101);
+    let review = e.call("GET", "/api/me/videos", Value::Null).await;
+    assert_eq!(review["pending"], pending);
+    sqlx::query("UPDATE videos SET approval='APPROVED' WHERE id=ANY($1)")
+        .bind(&fixtures)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
     let second = e
         .call("GET", "/api/me/videos?kind=CLIP&offset=100", Value::Null)
         .await;

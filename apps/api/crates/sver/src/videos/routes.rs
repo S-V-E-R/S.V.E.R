@@ -60,6 +60,8 @@ async fn mine(
         .iter()
         .map(|u| profiles::chip(&app, u))
         .collect::<Vec<_>>();
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM videos WHERE owner_id=$1 AND kind='CLIP' AND approval='PENDING' AND status='READY'")
+        .bind(&user.id).fetch_one(&mut *db).await?;
     let used:i64=sqlx::query_scalar("SELECT coalesce(sum(duration_ms),0)::bigint FROM videos WHERE owner_id=$1 AND kind='HIGHLIGHT' AND status NOT IN ('DELETED','EXPIRED','DELETING','FAILED')").bind(&user.id).fetch_one(&mut *db).await?;
     let assigned:Vec<Video>=sqlx::query_as("SELECT v.* FROM videos v JOIN video_editors e ON e.owner_id=v.owner_id WHERE e.editor_id=$1 AND v.kind<>'CLIP' AND v.status='READY' AND (v.expires_at IS NULL OR v.expires_at>now()) AND NOT EXISTS(SELECT 1 FROM video_holds WHERE video_id=v.id) ORDER BY v.created_at DESC LIMIT 100").bind(&user.id).fetch_all(&mut *db).await?;
     drop(db);
@@ -70,7 +72,7 @@ async fn mine(
         }
     }
     Ok(Json(
-        json!({"settings":settings,"videos":videos,"has_more":has_more,"editors":editors,"editing":editing,"username":user.username,"configured":app.config.videos.storage.available(),"highlight_used_ms":used,"highlight_limit_ms":HIGHLIGHT_HOURS[tier as usize]*3_600_000,"retention_hours":tiers::VOD_HOURS[tier as usize]}),
+        json!({"settings":settings,"videos":videos,"has_more":has_more,"editors":editors,"editing":editing,"pending":pending,"username":user.username,"configured":app.config.videos.storage.available(),"highlight_used_ms":used,"highlight_limit_ms":HIGHLIGHT_HOURS[tier as usize]*3_600_000,"retention_hours":tiers::VOD_HOURS[tier as usize]}),
     ))
 }
 async fn save_settings(
