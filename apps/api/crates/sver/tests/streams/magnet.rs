@@ -871,6 +871,21 @@ async fn genre_lane(e: &Env) {
         !candidates.contains(&"mg-g-r".to_string()),
         "a restricted channel is never a candidate"
     );
+    // Faction lanes: only that faction's members' streams, whatever their genre.
+    e.sql("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES('mg-ga','glint',now(),now()) ON CONFLICT(user_id) DO UPDATE SET faction='glint'").await;
+    let mut db = e.app.db.acquire().await.unwrap();
+    let glint: Vec<String> = sver::magnet::candidates(&mut db, "glint", &e.app.config.magnet)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.1.broadcast)
+        .collect();
+    drop(db);
+    assert!(glint.contains(&"mg-g-a".to_string()), "{glint:?}");
+    assert!(!glint.contains(&"mg-g-b".to_string()), "not a Glint member");
+    let (_, lane) =
+        super::chat::call(e, "GET", "/api/magnet/glint", None, serde_json::Value::Null).await;
+    assert_eq!(lane["name"], "Glint", "{lane}");
     tick(e, "art").await;
     assert_eq!(
         current(e, "art").await.0.as_deref(),

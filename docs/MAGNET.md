@@ -46,7 +46,7 @@ Implementation (October 5; `discovery.rs`, migration `0026_discovery.sql`):
 ### Channels
 
 - **Global MAGNet** at `/magnet`, plus **one MAGNet lane per genre** (`/magnet/{genre}`), using the genres defined by Module 4. Each channel runs its own engine with its own rotation, hold times and cooldowns.
-- Faction MAGNet channels (one per faction) are a later addition.
+- **Faction MAGNet channels** (built October 10, 2026, Joe's decision): one lane per faction (`/magnet/myria`, `/magnet/aetheron`, `/magnet/glint`) featuring only that faction's members' streams, in any genre, with the same engine, fairness rules, chat merging and holding card as every lane. Each faction hub links to its channel.
 
 ### Who can be featured
 
@@ -86,7 +86,7 @@ Room signals only at launch, each compared with that stream's own recent baselin
 
 Not used: viewer count, follower totals, money, faction (MAGNet channels are faction-neutral; the homepage keeps its home-turf weighting).
 
-Later add-ons: game-API detectors and computer-vision moment detection for specific games, CrowdSync activity, and faction MAGNet channels. Vision needs frame decoding, so it must be measured against the transmux-only rule before it is added.
+Later add-ons: game-API detectors and computer-vision moment detection for specific games and CrowdSync activity (faction MAGNet channels are built). Vision needs frame decoding, so it must be measured against the transmux-only rule before it is added.
 
 ### What the viewer sees
 
@@ -183,7 +183,7 @@ Chat messages gain an origin (channel or MAGNet channel) so merged messages can 
 
 ## Not in this module
 
-- Computer vision and game-API detectors, CrowdSync signals, faction MAGNet channels (later).
+- Computer vision and game-API detectors, CrowdSync signals (later).
 - Surge (a collective hype event funded by support) belongs with Support or later, and never feeds MAGNet.
 - Auto-clips of featured moments belong to Module 8 (VODs and clips).
 - Personalization from watch history.

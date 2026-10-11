@@ -321,7 +321,9 @@ pub async fn candidates(
           b.state='LIVE' AND b.started_at<=now()-make_interval(secs=>$2)
             AND NOT coalesce((SELECT opt_out FROM magnet_settings WHERE user_id=b.owner_id),false)
             AND NOT EXISTS(SELECT 1 FROM integrity_cases ic WHERE ic.owner_id=b.owner_id AND ic.status='OPEN')
-            AND ($1='global' OR EXISTS(SELECT 1 FROM stream_settings s JOIN stream_categories c ON c.id=s.category_id WHERE s.owner_id=b.owner_id AND c.active AND c.genre=$1))
+            AND ($1='global'
+              OR ($1 IN ('myria','aetheron','glint') AND EXISTS(SELECT 1 FROM faction_members fm WHERE fm.user_id=b.owner_id AND fm.faction=$1))
+              OR EXISTS(SELECT 1 FROM stream_settings s JOIN stream_categories c ON c.id=s.category_id WHERE s.owner_id=b.owner_id AND c.active AND c.genre=$1))
             AND NOT EXISTS(SELECT 1 FROM stream_settings s JOIN stream_categories c ON c.id=s.category_id WHERE s.owner_id=b.owner_id AND NOT c.active),
           (SELECT coalesce(sum(a.w),0) FROM (SELECT CASE WHEN u.created_at>now()-interval '7 days' THEN $4::float8 ELSE 1.0::float8 END * CASE WHEN bool_and(magnet_low_effort(m.channel_id,m.squad_id,m.author_id,m.body,m.created_at)) THEN $5::float8 ELSE 1.0::float8 END AS w FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.channel_id=b.owner_id AND m.squad_id IS NULL AND m.author_id<>b.owner_id AND m.deleted_at IS NULL AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at>now()-interval '60 seconds' AND magnet_room_viewer(ARRAY[b.id],m.author_id) GROUP BY m.author_id,u.created_at) a)::float8,
           (SELECT count(DISTINCT (m.author_id, date_trunc('minute', m.created_at))) FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.channel_id=b.owner_id AND m.squad_id IS NULL AND m.author_id<>b.owner_id AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at<=now()-interval '60 seconds' AND m.created_at>greatest(b.started_at,now()-interval '31 minutes') AND magnet_room_viewer(ARRAY[b.id],m.author_id))::float8
@@ -455,7 +457,9 @@ pub async fn candidates(
 /// Runs with the 5-second media pass; each lane ticks every `tick_seconds`.
 pub async fn tick(app: &App) -> Res<()> {
     let t = &app.config.magnet;
-    sqlx::query("INSERT INTO magnet_lanes(id) SELECT 'global' UNION ALL SELECT id FROM faction_genres ON CONFLICT DO NOTHING")
+    // Lanes: Global, one per faction (its members' streams; Joe's decision October 10, 2026) and
+    // one per genre.
+    sqlx::query("INSERT INTO magnet_lanes(id) SELECT 'global' UNION ALL SELECT unnest(ARRAY['myria','aetheron','glint']) UNION ALL SELECT id FROM faction_genres ON CONFLICT DO NOTHING")
         .execute(&app.db)
         .await?;
     let lanes: Vec<String> = sqlx::query_scalar(
@@ -714,6 +718,11 @@ async fn lane_name(db: &mut PgConnection, lane: &str) -> Res<Option<String>> {
     if lane == "global" {
         return Ok(Some("Global".into()));
     }
+    if crate::factions::valid(lane) {
+        let mut name = lane.to_string();
+        name[..1].make_ascii_uppercase();
+        return Ok(Some(name));
+    }
     Ok(sqlx::query_scalar(
         "SELECT g.name FROM faction_genres g JOIN magnet_lanes l ON l.id=g.id WHERE g.id=$1",
     )
@@ -724,7 +733,7 @@ async fn lane_name(db: &mut PgConnection, lane: &str) -> Res<Option<String>> {
 
 /// GET /api/magnet: every lane and what it's showing.
 async fn lanes(State(app): State<App>) -> Res<Json<Value>> {
-    let items: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'name',CASE WHEN l.id='global' THEN 'Global' ELSE g.name END,'enabled',l.enabled,'featuring',c.display_name) FROM magnet_lanes l LEFT JOIN faction_genres g ON g.id=l.id LEFT JOIN broadcasts b ON b.id=l.current_broadcast LEFT JOIN channel_users c ON c.id=b.owner_id ORDER BY l.id<>'global', g.position NULLS FIRST, l.id")
+    let items: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'name',CASE WHEN l.id='global' THEN 'Global' WHEN l.id IN ('myria','aetheron','glint') THEN initcap(l.id) ELSE g.name END,'enabled',l.enabled,'featuring',c.display_name) FROM magnet_lanes l LEFT JOIN faction_genres g ON g.id=l.id LEFT JOIN broadcasts b ON b.id=l.current_broadcast LEFT JOIN channel_users c ON c.id=b.owner_id ORDER BY l.id<>'global', g.position NULLS FIRST, l.id")
         .fetch_all(&app.db)
         .await?;
     Ok(Json(json!({"lanes":items})))
@@ -870,7 +879,11 @@ async fn lane(
     let others: Vec<Value> = streams
         .iter()
         .filter(|s| Some(&s.broadcast_id) != current.as_ref())
-        .filter(|s| lane == "global" || s.genre.as_deref() == Some(lane.as_str()))
+        .filter(|s| {
+            lane == "global"
+                || s.genre.as_deref() == Some(lane.as_str())
+                || s.faction.as_deref() == Some(lane.as_str())
+        })
         .take(6)
         .map(|s| discovery::card(&app, s, now))
         .collect();
@@ -885,10 +898,10 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let mut db = app.db.acquire().await?;
     let (opt_out, chat_merge): (bool, bool) = sqlx::query_as("SELECT coalesce(s.opt_out,false),coalesce(s.chat_merge,true) FROM (SELECT 1) one LEFT JOIN magnet_settings s ON s.user_id=$1")
         .bind(&user.id).fetch_one(&mut *db).await?;
-    let now: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('lane',l.id,'name',CASE WHEN l.id='global' THEN 'Global' ELSE g.name END,'reason',l.current_reason,'since',l.current_since) FROM magnet_features f JOIN magnet_lanes l ON l.id=f.lane LEFT JOIN faction_genres g ON g.id=l.id WHERE f.owner_id=$1 AND f.ended_at IS NULL")
+    let now: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('lane',l.id,'name',CASE WHEN l.id='global' THEN 'Global' WHEN l.id IN ('myria','aetheron','glint') THEN initcap(l.id) ELSE g.name END,'reason',l.current_reason,'since',l.current_since) FROM magnet_features f JOIN magnet_lanes l ON l.id=f.lane LEFT JOIN faction_genres g ON g.id=l.id WHERE f.owner_id=$1 AND f.ended_at IS NULL")
         .bind(&user.id).fetch_all(&mut *db).await?;
     // What happened during each feature is shown to the streamer only, never used for scoring.
-    let history: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('lane',f.lane,'name',CASE WHEN f.lane='global' THEN 'Global' ELSE g.name END,'kind',f.kind,'reason',f.reason,'started_at',f.started_at,'ended_at',f.ended_at,
+    let history: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('lane',f.lane,'name',CASE WHEN f.lane='global' THEN 'Global' WHEN f.lane IN ('myria','aetheron','glint') THEN initcap(f.lane) ELSE g.name END,'kind',f.kind,'reason',f.reason,'started_at',f.started_at,'ended_at',f.ended_at,
         'seconds',extract(epoch FROM coalesce(f.ended_at,now())-f.started_at)::int,
         'hype_viewers',(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=f.broadcast_id AND l.magnet_lane=f.lane AND l.created_at BETWEEN f.started_at AND coalesce(f.ended_at,now())),
         'followed',(SELECT count(*) FROM follows w JOIN playback_leases l ON l.broadcast_id=f.broadcast_id AND l.magnet_lane=f.lane AND l.viewer_key='u:'||w.follower_id WHERE w.following_id=f.owner_id AND w.created_at BETWEEN f.started_at AND coalesce(f.ended_at,now())+interval '10 minutes'),
@@ -946,7 +959,7 @@ async fn flag(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
 /// GET /api/admin/magnet: lanes and the decision log (7 days).
 async fn admin(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     safety::staff(&app, &jar).await?;
-    let lanes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'name',CASE WHEN l.id='global' THEN 'Global' ELSE g.name END,'enabled',l.enabled,'featuring',c.username,'reason',l.current_reason,'since',l.current_since,'forced',fc.username,'next',pc.username,'switch_at',l.switch_at,'failing_since',l.failing_since,'stalled',l.enabled AND (l.failing_since IS NOT NULL OR l.ticked_at<now()-make_interval(secs=>$1))) FROM magnet_lanes l LEFT JOIN faction_genres g ON g.id=l.id LEFT JOIN broadcasts b ON b.id=l.current_broadcast LEFT JOIN channel_users c ON c.id=b.owner_id LEFT JOIN broadcasts fb ON fb.id=l.forced_broadcast LEFT JOIN channel_users fc ON fc.id=fb.owner_id LEFT JOIN broadcasts pb ON pb.id=l.pending_broadcast LEFT JOIN channel_users pc ON pc.id=pb.owner_id ORDER BY l.id<>'global', g.position NULLS FIRST, l.id")
+    let lanes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'name',CASE WHEN l.id='global' THEN 'Global' WHEN l.id IN ('myria','aetheron','glint') THEN initcap(l.id) ELSE g.name END,'enabled',l.enabled,'featuring',c.username,'reason',l.current_reason,'since',l.current_since,'forced',fc.username,'next',pc.username,'switch_at',l.switch_at,'failing_since',l.failing_since,'stalled',l.enabled AND (l.failing_since IS NOT NULL OR l.ticked_at<now()-make_interval(secs=>$1))) FROM magnet_lanes l LEFT JOIN faction_genres g ON g.id=l.id LEFT JOIN broadcasts b ON b.id=l.current_broadcast LEFT JOIN channel_users c ON c.id=b.owner_id LEFT JOIN broadcasts fb ON fb.id=l.forced_broadcast LEFT JOIN channel_users fc ON fc.id=fb.owner_id LEFT JOIN broadcasts pb ON pb.id=l.pending_broadcast LEFT JOIN channel_users pc ON pc.id=pb.owner_id ORDER BY l.id<>'global', g.position NULLS FIRST, l.id")
         // A lane that hasn't ticked for six ticks, or whose ticks keep failing, is stalled.
         .bind((app.config.magnet.tick_seconds * 6) as f64)
         .fetch_all(&app.db).await?;
