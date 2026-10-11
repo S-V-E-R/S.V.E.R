@@ -2,6 +2,7 @@
 //! streams. Beacons are the platform's one re-encode: each is framed to 9:16, stripped of metadata
 //! and marked with a watermark that moves from corner to corner. Everything is private storage
 //! behind short-lived tickets, like recordings (docs/VODS_CLIPS.md).
+mod comments;
 mod config;
 pub use config::{Config, Tuning};
 mod counters;
@@ -10,6 +11,7 @@ mod delivery;
 mod feed;
 pub use feed::search;
 pub mod review;
+pub use comments::target as comment_target;
 pub mod watermark;
 pub mod worker;
 use crate::{
@@ -79,6 +81,7 @@ pub struct Beacon {
 
 pub fn routes() -> Router<App> {
     Router::new()
+        .merge(comments::routes())
         .merge(create::routes())
         .merge(delivery::routes())
         .merge(feed::routes())

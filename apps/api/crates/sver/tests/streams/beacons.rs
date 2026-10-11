@@ -618,6 +618,60 @@ async fn beacons_publish_watermark_count_and_remove() {
     );
     e.sql("UPDATE faction_members SET faction='glint' WHERE user_id='bc-other'")
         .await;
+    // Comments: verified accounts, the owner's chat rules, no links, blocks, deletes, reports.
+    let target = glint["items"][0]["beacon"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let path = format!("/api/beacons/{target}/comments");
+    let comment = |token: &str, body: &str| {
+        let (e, token, path, body) = (&e, token.to_string(), path.clone(), body.to_string());
+        async move { call(e, "POST", &path, Some(&token), json!({"body": body})).await }
+    };
+    let (status, posted) = comment(&viewer, "Great clip!").await;
+    assert_eq!(status, StatusCode::OK, "{posted}");
+    assert_eq!(posted["count"], 1);
+    assert_eq!(posted["comments"][0]["body"], "Great clip!");
+    assert_eq!(
+        comment(&viewer, "see example.com").await.0,
+        StatusCode::BAD_REQUEST,
+        "no links"
+    );
+    assert_eq!(comment(&viewer, "").await.0, StatusCode::BAD_REQUEST);
+    let id = posted["comments"][0]["id"].as_str().unwrap().to_string();
+    let (status, _) = call(
+        &e,
+        "POST",
+        "/api/reports",
+        Some(&other),
+        json!({"target_type": "beacon_comment", "target_id": id, "reason": "spam"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "comments can be reported");
+    e.sql("INSERT INTO user_blocks(blocker_id,blocked_id) VALUES('bc-other','bc-viewer')")
+        .await;
+    assert_eq!(
+        comment(&viewer, "hello?").await.0,
+        StatusCode::NOT_FOUND,
+        "not across a block"
+    );
+    e.sql("DELETE FROM user_blocks WHERE blocker_id='bc-other' AND blocked_id='bc-viewer'")
+        .await;
+    let (status, left) = call(
+        &e,
+        "DELETE",
+        &format!("{path}/{id}"),
+        Some(&other),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        (status, &left["count"]),
+        (StatusCode::OK, &json!(0)),
+        "the owner deletes"
+    );
+    e.sql("DELETE FROM reports WHERE target_type='beacon_comment'")
+        .await;
     call(
         &e,
         "PUT",
