@@ -618,6 +618,60 @@ async fn beacons_publish_watermark_count_and_remove() {
     );
     e.sql("UPDATE faction_members SET faction='glint' WHERE user_id='bc-other'")
         .await;
+    // Comments: verified accounts, the owner's chat rules, no links, blocks, deletes, reports.
+    let target = glint["items"][0]["beacon"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let path = format!("/api/beacons/{target}/comments");
+    let comment = |token: &str, body: &str| {
+        let (e, token, path, body) = (&e, token.to_string(), path.clone(), body.to_string());
+        async move { call(e, "POST", &path, Some(&token), json!({"body": body})).await }
+    };
+    let (status, posted) = comment(&viewer, "Great clip!").await;
+    assert_eq!(status, StatusCode::OK, "{posted}");
+    assert_eq!(posted["count"], 1);
+    assert_eq!(posted["comments"][0]["body"], "Great clip!");
+    assert_eq!(
+        comment(&viewer, "see example.com").await.0,
+        StatusCode::BAD_REQUEST,
+        "no links"
+    );
+    assert_eq!(comment(&viewer, "").await.0, StatusCode::BAD_REQUEST);
+    let comment_id = posted["comments"][0]["id"].as_str().unwrap().to_string();
+    let (status, _) = call(
+        &e,
+        "POST",
+        "/api/reports",
+        Some(&other),
+        json!({"target_type": "beacon_comment", "target_id": comment_id, "reason": "spam"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "comments can be reported");
+    e.sql("INSERT INTO user_blocks(blocker_id,blocked_id) VALUES('bc-other','bc-viewer')")
+        .await;
+    assert_eq!(
+        comment(&viewer, "hello?").await.0,
+        StatusCode::NOT_FOUND,
+        "not across a block"
+    );
+    e.sql("DELETE FROM user_blocks WHERE blocker_id='bc-other' AND blocked_id='bc-viewer'")
+        .await;
+    let (status, left) = call(
+        &e,
+        "DELETE",
+        &format!("{path}/{comment_id}"),
+        Some(&other),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        (status, &left["count"]),
+        (StatusCode::OK, &json!(0)),
+        "the owner deletes"
+    );
+    e.sql("DELETE FROM reports WHERE target_type='beacon_comment'")
+        .await;
     call(
         &e,
         "PUT",
@@ -698,12 +752,8 @@ async fn beacons_publish_watermark_count_and_remove() {
     let browser = uuid::Uuid::new_v4().to_string();
     let beat =
         |at: f64, visible: bool| json!({"browser_id":browser,"media_time":at,"visible":visible});
-    assert_eq!(
-        call(&e, "POST", &beat_path, Some(&viewer), beat(0.0, true))
-            .await
-            .1["counted"],
-        false
-    );
+    let first = call(&e, "POST", &beat_path, Some(&viewer), beat(0.0, true)).await;
+    assert_eq!(first.1["counted"], false, "{first:?}");
     // Hidden-tab playback earns nothing.
     e.sql("UPDATE beacon_playback SET updated_at=now()-interval '4 seconds'")
         .await;

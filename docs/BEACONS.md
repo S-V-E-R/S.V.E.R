@@ -89,7 +89,7 @@ Beacons are short vertical videos that lead people to creators and their live st
 
 ## Not in this module
 
-- Comments, remixing, Beacons counting toward faction influence, and personalized ranking. These are deferred, as in the plan (faction tabs were built October 10, 2026; see "Faction tab").
+- Remixing, Beacons counting toward faction influence, and personalized ranking. These are deferred, as in the plan (faction tabs and comments were built October 10, 2026; see "Faction tab" and "Comments").
 - Push or email alerts for new Beacons, because followers already get go-live alerts.
 - Music libraries or editing tools beyond cropping and trimming a clip.
 
@@ -115,6 +115,14 @@ Built October 10, 2026 by Joe's decision (faction-tagged clips; migration 0095).
 - Every Beacon keeps the faction its channel belonged to when it was made (a database trigger sets it on insert; existing ones took their channel's faction at migration), and every clip already carries the faction of the stream it came from. A later faction switch doesn't move old work.
 - The feed has tabs: **For you** (the usual mix) and one per faction. A faction tab is that faction's Beacons in the same fair rotation, with no followed or faction sources and no Live now row; ordering still never reads views, likes or money.
 - Each faction hub shows that faction's latest public clips and links to its Beacons tab.
+
+## Comments
+
+Built October 10, 2026 by Joe's decision (`beacons/comments.rs`, migration 0097).
+
+- Signed-in, verified accounts comment on a published Beacon from its Comments button (up to 300 characters, 10 a minute). Comments follow the Beacon owner's banned words and allow no links; restricted accounts, people banned from the channel, and anyone on either side of a block can't comment, and blocked people's comments are hidden from each other.
+- The author or the Beacon's owner deletes a comment. Anyone signed in can report one (`beacon_comment`); staff removal hides it and an overturned decision restores it, as for wall replies.
+- The newest 50 show, newest first. Comments never affect the feed's order.
 
 ## Done when
 

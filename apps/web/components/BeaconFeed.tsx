@@ -6,6 +6,7 @@ import { send } from "../lib/client-api";
 import { browserId, compact, type BeaconFeedPage, type BeaconItem } from "../lib/beacons";
 import type { Chip } from "../lib/types";
 import { Avatar } from "./Avatar";
+import { BeaconComments } from "./BeaconComments";
 import { Crest } from "./Crest";
 import { ReportForm, TakeDownLink } from "./Report";
 import { Turnstile } from "./Turnstile";
@@ -147,7 +148,7 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
   const [liked, setLiked] = useState(item.liked);
   const [likes, setLikes] = useState(item.beacon.likes);
   const [paused, setPaused] = useState(false);
-  const [panel, setPanel] = useState<"report" | "more" | null>(null);
+  const [panel, setPanel] = useState<"report" | "more" | "comments" | null>(null);
   const [message, setMessage] = useState("");
   const [followed, setFollowed] = useState(false);
   const [sitekey, setSitekey] = useState<string | null>(null);
@@ -241,6 +242,7 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
       {c.live && c.username && <button type="button" className="beacon-action beacon-live" onClick={() => void goLive()}><span className="tag-live">Live</span><span>Live now</span></button>}
       <button type="button" className="beacon-action" onClick={() => void like()} aria-pressed={liked} aria-label={liked ? "Unlike" : "Like"}><span aria-hidden="true">{liked ? "♥" : "♡"}</span><span>{compact(likes)}</span></button>
       <span className="beacon-action beacon-stat" aria-label={`${b.views} views`}><span aria-hidden="true">▶</span><span>{compact(b.views)}</span></span>
+      <button type="button" className="beacon-action" onClick={() => setPanel(panel === "comments" ? null : "comments")} aria-expanded={panel === "comments"} aria-label="Comments"><span aria-hidden="true">💬</span><span>Comments</span></button>
       <button type="button" className="beacon-action" onClick={() => void share()}><span aria-hidden="true">↗</span><span>Share</span></button>
       <button type="button" className="beacon-action" onClick={() => setPanel(panel === "more" ? null : "more")} aria-expanded={panel === "more"} aria-label="More actions"><span aria-hidden="true">⋯</span><span>More</span></button>
     </aside>
@@ -252,6 +254,7 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
       {item.is_owner && <Link href="/studio/beacons">Manage in Creator Studio</Link>}
       <button type="button" className="small quiet" onClick={() => setPanel(null)}>Close</button>
     </div>}
+    {panel === "comments" && <div className="beacon-panel panel" role="dialog" aria-label="Comments"><BeaconComments id={b.id} signedIn={signedIn} /><button type="button" className="small quiet" onClick={() => setPanel(null)}>Close</button></div>}
     {panel === "report" && <div className="beacon-panel panel" role="dialog" aria-label="Report this Beacon"><ReportForm target={{ target_type: "beacon", target_id: b.id }} onDone={() => setPanel(null)} /></div>}
     {message && <p className="beacon-message" role="status">{message}</p>}
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} />}

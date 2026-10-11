@@ -77,3 +77,5 @@
 .beacon-tabs { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin: 0 0 8px; }
 .beacon-tabs a { padding: 4px 10px; border-radius: 999px; color: var(--muted); text-decoration: none; }
 .beacon-tabs a[aria-current="page"] { color: var(--text); background: var(--surface-2, rgba(255,255,255,.08)); }
+.beacon-comments { max-height: 60vh; overflow-y: auto; }
+.beacon-comments input { flex: 1; min-width: 0; }
