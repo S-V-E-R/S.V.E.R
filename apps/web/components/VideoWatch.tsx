@@ -51,7 +51,7 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
   return <div className="video-watch"><section>
     {player}<h1>{v.title}</h1>
     <p><Link href={`/${data.channel.username}`}>{data.channel.display_name}</Link> · {v.category} {v.faction && <>· <Link href={`/factions/${v.faction}`}>{v.faction}</Link></>}</p>
-    <p className="muted">{duration(v.duration_ms)} · {v.views.toLocaleString()} views · {new Date(v.started_at).toLocaleDateString()} {v.expires_at && <>· Available until {new Date(v.expires_at).toLocaleString()}</>}</p>
+    <p className="muted" suppressHydrationWarning>{duration(v.duration_ms)} · {v.views.toLocaleString()} views · {new Date(v.started_at).toLocaleDateString()} {v.expires_at && <>· Available until {new Date(v.expires_at).toLocaleString()}</>}</p>
     {v.approval === "PENDING" && <p className="notice">This clip is waiting for approval.</p>}
     <div className="video-actions">
       {data.live && <Link className="button" href={`/${data.channel.username}/live`}>Watch live</Link>}
