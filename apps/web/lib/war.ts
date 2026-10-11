@@ -1,10 +1,11 @@
 import type { Faction } from "./factions";
 export type Genre = { id: string; name: string; home: Faction | null; holder: Faction | null; neighbors: string[]; position: number; map?: { q: number; r: number } | null; capital?: boolean; scores: { faction: Faction; influence: number; score: number }[] };
+type Window = { starts_at: string; ends_at: string };
 export type War = {
   season: { number: number; starts_at: string; ends_at: string; next_starts_at: string; finished: boolean; winners: Faction[] } | null;
   week: { id: number; ends_at: string; completed: boolean } | null;
   /** Skirmish Hour (docs/FACTIONS.md): influence counts double, under the usual caps. */
-  skirmish?: { multiplier: number; active: { starts_at: string; ends_at: string } | null; next: { starts_at: string; ends_at: string } | null };
+  skirmish?: { multiplier: number; active: Window | null; next: Window | null; raid_night?: { active: Window | null; next: Window | null }; spotlight?: { genre: string; name: string | null } | null };
   genres: Genre[];
   scoreboard: { faction: Faction; territories: number; genre_weeks: number }[];
   previous_winners: Faction[];

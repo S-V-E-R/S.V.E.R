@@ -56,12 +56,68 @@ pub async fn exercise(e: &Env) {
         StatusCode::CONFLICT,
         "no overlaps"
     );
+    // A Raid Night is its own kind: it may share the hour with a Skirmish Hour.
+    let (status, night) = call(
+        e,
+        "POST",
+        "/api/admin/skirmishes",
+        Some(&staff),
+        json!({"starts_at": hour(3), "kind": "raid_night"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{night}");
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/admin/skirmishes",
+            Some(&staff),
+            json!({"starts_at": hour(5), "kind": "raid_night"})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT,
+        "Raid Nights last three hours"
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/admin/skirmishes",
+            Some(&staff),
+            json!({"starts_at": hour(8), "kind": "parade"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
     let (_, war) = call(e, "GET", "/api/factions/war", None, Value::Null).await;
     if !war["season"].is_null() {
         assert_eq!(war["skirmish"]["multiplier"], 2);
         assert!(war["skirmish"]["next"]["starts_at"].is_string(), "{war}");
+        assert!(
+            war["skirmish"]["raid_night"]["next"]["starts_at"].is_string(),
+            "{war}"
+        );
     }
     let id = made["items"][0]["id"].as_str().unwrap().to_string();
+    let night = night["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "raid_night")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    call(
+        e,
+        "DELETE",
+        &format!("/api/admin/skirmishes/{night}"),
+        Some(&staff),
+        Value::Null,
+    )
+    .await;
     let (status, cancelled) = call(
         e,
         "DELETE",
@@ -78,5 +134,5 @@ pub async fn exercise(e: &Env) {
     .fetch_one(&e.app.db)
     .await
     .unwrap();
-    assert_eq!(audited, 2);
+    assert_eq!(audited, 4);
 }
