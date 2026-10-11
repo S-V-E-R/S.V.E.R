@@ -5,7 +5,7 @@ export type War = {
   season: { number: number; starts_at: string; ends_at: string; next_starts_at: string; finished: boolean; winners: Faction[] } | null;
   week: { id: number; ends_at: string; completed: boolean } | null;
   /** Skirmish Hour (docs/FACTIONS.md): influence counts double, under the usual caps. */
-  skirmish?: { multiplier: number; active: Window | null; next: Window | null; raid_night?: { active: Window | null; next: Window | null }; spotlight?: { genre: string; name: string | null } | null };
+  skirmish?: { multiplier: number; active: Window | null; next: Window | null; raid_night?: { active: Window | null; next: Window | null }; spotlight?: { genre: string; name: string | null } | null; hill?: { genre: string; name: string; holder: Faction | null; bonus: number } | null };
   genres: Genre[];
   scoreboard: { faction: Faction; territories: number; genre_weeks: number }[];
   previous_winners: Faction[];

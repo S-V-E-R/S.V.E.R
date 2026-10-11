@@ -76,6 +76,9 @@ async fn create_season(db: &mut PgConnection, number: i32, start: DateTime<Utc>)
         .bind(number).bind(start).bind(end).bind(end+Duration::days(7)).fetch_one(&mut *db).await?;
     sqlx::query("INSERT INTO faction_territories(season_id,genre,holder) SELECT $1,id,home FROM faction_genres")
         .bind(season.id).execute(&mut *db).await?;
+    // King of the Hill: one genre per season, neutral ones first, picked by the season number.
+    sqlx::query("UPDATE faction_seasons s SET hill=(SELECT g.id FROM faction_genres g ORDER BY (g.home IS NOT NULL),md5(s.number::text||g.id),g.id LIMIT 1) WHERE s.id=$1")
+        .bind(season.id).execute(&mut *db).await?;
     create_week(db, &season, start).await?;
     Ok(season)
 }
@@ -276,9 +279,17 @@ async fn finish(db: &mut PgConnection, season: &Season, at: DateTime<Utc>) -> Re
         .bind(season.id).fetch_all(&mut *db).await?;
     let history: Vec<(String,i64)> = sqlx::query_as("SELECT g->>'holder',count(*) FROM faction_weeks w CROSS JOIN LATERAL jsonb_array_elements(w.result->'genres') g WHERE w.season_id=$1 AND g->>'holder' IS NOT NULL GROUP BY 1")
         .bind(season.id).fetch_all(&mut *db).await?;
+    // King of the Hill: whoever holds the Hill when the season ends gets it as extra territories.
+    let hill_holder: Option<String> = sqlx::query_scalar("SELECT t.holder FROM faction_territories t JOIN faction_seasons s ON s.id=t.season_id AND s.hill=t.genre WHERE t.season_id=$1")
+        .bind(season.id).fetch_optional(&mut *db).await?.flatten();
     let score = |f: &str| {
         (
-            counts.iter().find(|(a, _)| a == f).map_or(0, |(_, n)| *n),
+            counts.iter().find(|(a, _)| a == f).map_or(0, |(_, n)| *n)
+                + if hill_holder.as_deref() == Some(f) {
+                    super::skirmish::HILL_BONUS
+                } else {
+                    0
+                },
             history.iter().find(|(a, _)| a == f).map_or(0, |(_, n)| *n),
         )
     };
