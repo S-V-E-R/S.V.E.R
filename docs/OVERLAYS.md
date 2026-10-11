@@ -35,9 +35,10 @@ Phase 3, after the developer platform ([DEVELOPER_PLATFORM.md](DEVELOPER_PLATFOR
 - Only tribute messages are read: they already passed the channel's banned words, link rules and moderation as chat messages. Names come from usernames, so they're safe to read.
 - The browser source speaks with the streaming PC's own installed voices (the Web Speech API). Nothing is sent to a speech service and there is no cost; if the PC has no voices, nothing is read.
 
-## Not in this part
+## StreamElements and Streamlabs (part 2c)
 
-The StreamElements/Streamlabs custom-widget adapter comes next.
+- Streamers who keep their layout in StreamElements or Streamlabs add a custom widget whose HTML is an `<iframe>` of their private overlay link (Studio shows the exact snippet once, with the link). The alert box, goal bar and recent events all work this way.
+- `/overlay/*` pages may be framed by any site (`frame-ancestors *`, no `X-Frame-Options`); every other page stays unframeable. The overlay has nothing to click and its link is the only credential, so framing adds no risk; the overlay's socket still connects from sver.tv's own origin.
 
 ## Done when
 
