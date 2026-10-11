@@ -148,6 +148,27 @@ async fn customs(app: &App, channel: &str, ready: bool) -> Res<Vec<Chosen>> {
         })
         .collect())
 }
+/// The channel's custom Skills with media, as board effect choices (`custom:<id>`).
+pub(crate) async fn board_options(app: &App, channel: &str) -> Res<Vec<Value>> {
+    Ok(customs(app, channel, true)
+        .await?
+        .iter()
+        .map(|c| json!({"value": format!("custom:{}", c.id), "name": c.name}))
+        .collect())
+}
+/// A board control's custom-Skill effect: the Skill's image and sound URLs, if it's the channel's
+/// own and has media.
+pub(crate) async fn custom_media(
+    app: &App,
+    channel: &str,
+    id: &str,
+) -> Res<Option<(Option<String>, Option<String>)>> {
+    Ok(customs(app, channel, true)
+        .await?
+        .into_iter()
+        .find(|c| c.id == id)
+        .map(|c| (c.image, c.audio)))
+}
 fn chosen_json(c: &Chosen, enabled: bool) -> Value {
     json!({"id": c.id, "name": c.name, "category": c.category, "valor": c.valor, "effect": c.effect, "enabled": enabled, "custom": true, "image": c.image, "audio": c.audio})
 }

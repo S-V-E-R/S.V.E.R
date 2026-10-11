@@ -245,6 +245,36 @@ pub async fn exercise(e: &Env) {
             && played["caption"] == "MoV1 played Airhorn",
         "{played}"
     );
+    // A board control can play the streamer's own custom Skill; someone else's or a missing one is refused.
+    let board = |effect: String| json!({"screens": [{"name": "Main", "controls": [{"id": "honk", "kind": "button", "label": "Honk", "effect": effect}]}]});
+    let draft = |body: Value| call(e, "PUT", "/api/me/board/draft", Some(&owner), body);
+    assert_eq!(
+        draft(board(format!("custom:{skill}"))).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        draft(board(format!("custom:{}", uuid::Uuid::new_v4())))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST,
+        "only the channel's own Skills"
+    );
+    let (status, played) = call(
+        e,
+        "POST",
+        "/api/me/board/test",
+        Some(&owner),
+        json!({"control": "honk"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{played}");
+    assert_eq!(played["effect"]["effect"], "custom");
+    assert!(
+        played["effect"]["audio"]
+            .as_str()
+            .unwrap()
+            .ends_with(".wav")
+    );
     let (_, catalog) = call(e, "GET", "/api/channels/MoOwner/skills", None, Value::Null).await;
     assert!(
         catalog["skills"]
