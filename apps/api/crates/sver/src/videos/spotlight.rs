@@ -13,6 +13,7 @@ pub async fn spotlight(db: &mut PgConnection, owner: &str, feature: &str) -> Res
     if settings.copyright_restricted
         || settings.clip_permission == "OFF"
         || held(db, &source.id).await?
+        || stalled(db, &source).await?
     {
         return Ok(());
     }

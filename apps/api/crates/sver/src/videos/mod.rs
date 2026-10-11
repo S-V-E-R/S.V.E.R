@@ -113,6 +113,18 @@ pub async fn held(db: &mut PgConnection, id: &str) -> Res<bool> {
             .await?,
     )
 }
+/// True when a live recording's newest saved segment ended over a minute ago: copying has
+/// stopped (storage outage, or a broadcast that predates the Plays exclusion), so a live cut
+/// would replay old video.
+pub async fn stalled(db: &mut PgConnection, video: &Video) -> Res<bool> {
+    if video.status != "RECORDING" || video.ended_at.is_some() {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar("SELECT coalesce(max(s.wall_start+make_interval(secs=>s.duration_ms/1000.0)),'-infinity')<now()-interval '60 seconds' FROM video_segments s JOIN video_objects o ON o.key=s.object_key WHERE s.video_id=$1 AND o.ready")
+        .bind(&video.id)
+        .fetch_one(db)
+        .await?)
+}
 pub async fn accessible(
     app: &App,
     video: &Video,

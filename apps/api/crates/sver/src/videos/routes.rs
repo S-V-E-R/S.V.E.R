@@ -277,6 +277,11 @@ async fn cut(
     {
         return Err(Fail::missing());
     }
+    if input.kind == "CLIP" && stalled(&mut tx, &source).await? {
+        return Err(Fail::unavailable(
+            "This stream's recording isn't keeping up right now. Try clipping again shortly.",
+        ));
+    }
     let prior: Option<String> =
         sqlx::query_scalar("SELECT id FROM videos WHERE clipper_id=$1 AND request_key=$2")
             .bind(&user.id)

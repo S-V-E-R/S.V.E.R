@@ -9,13 +9,13 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | 2 | Profiles | Channel pages, follows, War Council, the Wall, profile songs, schedules, sponsors and fan art | Done |
 | 3 | Live streams | Creator Studio, OBS streaming, playback, chat and moderation, viewbot detection, custom emotes, go-live alerts, raids and hosting. Live delivery is still being prepared and verified. | In progress |
 | 4 | Factions | Myria, Aetheron, Glint; membership, weekly genre checkpoints, seasonal rewards, private councils and faction hubs | Done |
-| 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff | In progress |
+| 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff. Built, including genre, faction and co-stream lanes and MAGNet chat; acceptance with real streams remains. | In progress |
 | 6 | Support | Subscriptions, Valor and tributes, channel rewards, co-streams, payouts. Live on Stripe since October 6, 2026. | Done |
 | 7 | CrowdSync | Interactive boards, Skills, polls and predictions, faction rallies. Boards, polls, predictions, counters, Skills, rallies, emote combos, Surge, the OBS bridge and the JavaScript game SDK are built; the Unity and Unreal SDKs await engine testing. | In progress |
-| 8 | VODs and clips | Past broadcasts, permanent Highlights, clipping and chat replay | Started |
-| 9 | Beacons | Short vertical videos that lead to live streams | Started |
+| 8 | VODs and clips | Past broadcasts, permanent Highlights, clipping and chat replay. Built and recording in production to private storage; storage purge, external clip previews and production playback acceptance remain. | In progress |
+| 9 | Beacons | Short vertical videos that lead to live streams. Built, with comments, faction tags and copyright notices; production acceptance remains. | In progress |
 
-Modules 1 to 5 make the site usable. After all nine: Progression (levels, XP, daily orders) and the remaining anti-abuse systems.
+Modules 1 to 5 make the site usable. Several later systems shipped early at the founder's direction: Progression (levels, XP, daily orders, channel loyalty ranks), achievements and chat cosmetics, Raven's Eye staff analytics, native alerts and overlays, linked chat and restreaming, and the developer platform. Ads and viewer payouts are designed and run on a test-only ledger.
 
 The numbered table is also the public roadmap feed. The API embeds it at build time and serves it at `GET /api/roadmap` with `no-store`; the website server-renders it and refreshes every 30 seconds while visible. Update this table when a module starts or passes acceptance, then deploy the API. The page follows that release without a frontend rebuild. Unreleased local edits never appear as live progress. Keep rows 0–9 in order and statuses `Done`, `In progress`, `Started` or `Planned`; the backend tests reject an incomplete or malformed table.
 
@@ -29,7 +29,7 @@ Static and informational pages run alongside the modules. They do not close or r
 - Live-stream chat now has mentions, replies, persistent pins, Broadcaster/Moderator/Staff badges and channel emotes, with Creator Studio uploads and staff media review. The remaining module scope and acceptance work are tracked in [Live streams](LIVE_STREAMS.md).
 - Second batch deployed: [Factions](https://sver.tv/factions) and the [live Roadmap](https://sver.tv/roadmap). The faction page explains the three sides, their lore and starting genres; Module 4 adds enrollment, live standings and private member hubs. The roadmap reads the running API's published module table and refreshes every 30 seconds while visible, retaining the last received progress with a warning during outages. Module status changes ship with the API; no frontend rebuild is needed.
 - Browse and public category discovery arrive with MAGNet. Faction enrollment, the war map, hubs, weekly board elections and staff genre/category tools are implemented.
-- The public homepage and focused watch page follow the shared design: real live/recent channel shelves, a manual spotlight carousel, direct watch links, and a responsive player/streamer/chat layout. Search, weighted MAGNet rotation and recommendations, Beacons, and clips remain with their planned modules; their availability is stated in the interface.
+- The public homepage and focused watch page follow the shared design: real live/recent channel shelves, a manual spotlight carousel, direct watch links, and a responsive player/streamer/chat layout. Search, MAGNet rotation and handoff, clips and Beacons are built; their remaining acceptance is tracked in the module rows above.
 
 - [SVER Plays](https://sver.tv/sverplays/live) is restored at the founder’s request: a dedicated 24/7 live-testing channel with viewer game controls, using the separate game runtime. This does not start the general CrowdSync module.
 - Guilds is implemented after Factions: cross-faction teams, applications, emblems, follows, combined schedules, staff review and team shortcuts. Joe brought co-streaming forward from Support on October 5, 2026: up to four players, accepted invitations and separate or shared moderated chat. Payment features remain in Module 6. See [Guilds](GUILDS.md) for acceptance checks.
