@@ -183,6 +183,11 @@ pub async fn exercise(e: &Env) {
         (status, &channel["username"]),
         (StatusCode::OK, &json!("Streamer"))
     );
+    // What an app needs to change the title (PATCH /api/me/stream) without a session.
+    assert!(
+        channel["revision"].is_i64() && channel.get("category_id").is_some(),
+        "{channel}"
+    );
 
     // Refresh rotates; reusing a spent refresh token revokes the grant and its access token.
     let refreshed = raw(

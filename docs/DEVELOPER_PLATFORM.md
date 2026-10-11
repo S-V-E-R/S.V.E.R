@@ -40,6 +40,8 @@ Reusing Mixer's code: MIT repositories (`carina`, `shortcode-oauth`, `interactiv
 
 **App actions (October 10, 2026), for the Stream Deck plugin and bots.** With `Authorization: Bearer` and `SVER-Client-Id`, an app calls the same endpoints Studio uses, as the person: `PATCH /api/me/stream` (title and category, `channel:edit`), and with the new `channel:run` scope `POST /api/me/raids`, `POST /api/channels/{name}/polls` (polls and predictions), `POST /api/channels/{name}/polls/{id}/close`, `POST /api/channels/{name}/marker` and `PUT /api/channels/{name}/board/disabled`. Every rule is the page's (owner or moderator roles, live checks); deleted, held and banned accounts are refused. The origin check is skipped for these paths only when a bearer token is sent, and then the cookie is never used.
 
+**Stream Deck plugin (October 10, 2026; `integrations/streamdeck`).** Five keys (set title, raid, poll or prediction, highlight marker, board pause) on these app actions, signed in with device sign-in at `sver.tv/go` and the scopes `user:read channel:edit channel:run`. To change the title without a session an app needs the stream's category and revision, so `GET /api/v1/channels/{name}` now also returns `category_id` and `revision` (neither is private). Stream Deck 7.1+ with its bundled Node 24, no dependencies; tested against fakes in CI, not yet on a real Stream Deck. It needs the official app registered in Settings → Developer and its client ID set in the plugin.
+
 ## 2. Live events (Mixer's "Constellation")
 
 One WebSocket, `wss://sver.tv/api/events`, where apps subscribe to topics instead of polling. This is the backbone for overlays, alerts, bots, SVER Desktop and Discord integrations.

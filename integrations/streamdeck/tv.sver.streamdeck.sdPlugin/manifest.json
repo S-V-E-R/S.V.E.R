@@ -1,0 +1,107 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "tv.sver.streamdeck",
+  "Name": "S.V.E.R",
+  "Version": "0.1.0.0",
+  "Author": "S.V.E.R",
+  "Description": "Change your title, raid, start polls and predictions, mark highlights and pause your board on S.V.E.R.",
+  "Category": "S.V.E.R",
+  "CategoryIcon": "imgs/plugin",
+  "Icon": "imgs/plugin",
+  "CodePath": "bin/plugin.mjs",
+  "PropertyInspectorPath": "ui/inspector.html",
+  "SDKVersion": 2,
+  "Nodejs": {
+    "Version": "24"
+  },
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    },
+    {
+      "Platform": "mac",
+      "MinimumVersion": "12"
+    }
+  ],
+  "Actions": [
+    {
+      "UUID": "tv.sver.streamdeck.title",
+      "Name": "Set stream title",
+      "Tooltip": "Changes your stream title (the category stays)",
+      "Icon": "imgs/title",
+      "States": [
+        {
+          "Image": "imgs/title"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ]
+    },
+    {
+      "UUID": "tv.sver.streamdeck.raid",
+      "Name": "Raid",
+      "Tooltip": "Raids the channel you set",
+      "Icon": "imgs/raid",
+      "States": [
+        {
+          "Image": "imgs/raid"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ]
+    },
+    {
+      "UUID": "tv.sver.streamdeck.poll",
+      "Name": "Start poll or prediction",
+      "Tooltip": "Starts the poll or prediction you set on your live stream",
+      "Icon": "imgs/poll",
+      "States": [
+        {
+          "Image": "imgs/poll"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ]
+    },
+    {
+      "UUID": "tv.sver.streamdeck.marker",
+      "Name": "Mark highlight",
+      "Tooltip": "Adds a highlight marker to your live stream",
+      "Icon": "imgs/marker",
+      "States": [
+        {
+          "Image": "imgs/marker"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ]
+    },
+    {
+      "UUID": "tv.sver.streamdeck.board",
+      "Name": "Pause board",
+      "Tooltip": "Pauses or resumes your board (panic switch)",
+      "Icon": "imgs/board",
+      "States": [
+        {
+          "Image": "imgs/board",
+          "Name": "Running"
+        },
+        {
+          "Image": "imgs/board-paused",
+          "Name": "Paused"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ]
+    }
+  ]
+}
