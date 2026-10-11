@@ -1,19 +1,22 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { EmoteImage, type ChannelEmote } from "./Emote";
-import { ReportButton, TakeDownLink } from "./Report";
+import { ReportForm, TakeDownLink } from "./Report";
 import { SkillArt } from "./SkillArt";
 import type { Reward } from "./Rewards";
 
 type Tab = "emotes" | "signature" | "rewards" | "skills";
 type Skill = { id: string; name: string; category: string; valor: number; effect: string; enabled: boolean; custom?: boolean; image?: string | null };
 
+/** Tiles per page: 3 rows of 4, so a panel never needs a scrollbar (Joe, October 11, 2026). */
+const PAGE = 12;
+
 /**
  * Everything a viewer can add to chat, in one row under the message box (Mixer's chat bar):
- * Emotes, Rewards (Engagement Valor) and Skills (Valor). Each opens a panel over the bottom of the
- * chat with tiles; the chat column itself stays messages plus the box.
+ * Emotes, Signature, Rewards (Engagement Valor) and Skills (Valor). Each opens a panel over the
+ * bottom of the chat with a fixed grid of tiles, paged instead of scrolled.
  */
 export function ChatDock({ username, account, emotes, outside = [], onOutsideReported, onEmote, rewardsVersion, onHighlight, shared }: {
   username: string; account: string | null; emotes: ChannelEmote[]; outside?: ChannelEmote[]; onOutsideReported?: () => void; onEmote: (code: string) => void;
@@ -22,47 +25,72 @@ export function ChatDock({ username, account, emotes, outside = [], onOutsideRep
   const [tab, setTab] = useState<Tab | null>(null);
   const base: [Tab, string][] = account ? [["emotes", "Emotes"], ["signature", "Signature"]] : [["emotes", "Emotes"]];
   const tabs: [Tab, string][] = shared ? base : [...base, ["rewards", "Rewards"], ["skills", "Skills"]];
+  const insert = (code: string) => { onEmote(code); setTab(null); };
   return <div className="chat-dock">
     {tab && <div className="chat-dock-panel panel" role="dialog" aria-label={tabs.find(t => t[0] === tab)?.[1]}>
-      <div className="chat-dock-tabs" role="tablist">{tabs.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className="small quiet" onClick={() => setTab(id)}>{label}</button>)}
+      <div className="chat-dock-head"><strong>{tabs.find(t => t[0] === tab)?.[1]}</strong>
         <button type="button" className="small quiet chat-dock-close" aria-label="Close" onClick={() => setTab(null)}>×</button></div>
-      {tab === "emotes" && <><EmotesTab username={username} account={account} emotes={emotes} onEmote={code => { onEmote(code); setTab(null); }} />
-        {outside.length > 0 && <OutsideTab username={username} account={account} emotes={outside} onReported={onOutsideReported} onEmote={code => { onEmote(code); setTab(null); }} />}</>}
-      {tab === "signature" && <SignatureTab onEmote={code => { onEmote(code); setTab(null); }} />}
-      {tab === "rewards" && <RewardsTab username={username} account={account} version={rewardsVersion} onHighlight={cost => { onHighlight(cost); setTab(null); }} />}
-      {tab === "skills" && <SkillsTab username={username} account={account} />}
+      {tab === "emotes" && <EmotesTab key="emotes" username={username} account={account} emotes={[...emotes, ...outside]} onEmote={insert} onOutsideReported={onOutsideReported} />}
+      {tab === "signature" && <SignatureTab key="signature" onEmote={insert} />}
+      {tab === "rewards" && <RewardsTab key="rewards" username={username} account={account} version={rewardsVersion} onHighlight={cost => { onHighlight(cost); setTab(null); }} />}
+      {tab === "skills" && <SkillsTab key="skills" username={username} account={account} />}
     </div>}
-    <div className="chat-dock-bar">{tabs.map(([id, label]) => <button key={id} type="button" className="small quiet" aria-expanded={tab === id} onClick={() => setTab(tab === id ? null : id)}>{label}</button>)}</div>
+    <div className="chat-dock-bar" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>{tabs.map(([id, label]) => <button key={id} type="button" className="small quiet" aria-expanded={tab === id} onClick={() => setTab(tab === id ? null : id)}>{label}</button>)}</div>
   </div>;
 }
 
-function EmotesTab({ username, account, emotes, onEmote }: { username: string; account: string | null; emotes: ChannelEmote[]; onEmote: (code: string) => void }) {
-  if (emotes.length === 0) return <p className="muted">No channel emotes yet.</p>;
-  return <ul className="dock-tiles">{emotes.map(emote => <li key={emote.id}>
-    {account ? <button type="button" className="dock-tile" onClick={() => onEmote(emote.code)} aria-label={`Insert ${emote.code}`}><EmoteImage emote={emote} /><span>{emote.code}</span></button>
-      : <span className="dock-tile"><EmoteImage emote={emote} /><span>{emote.code}</span></span>}
-    {account && account.toLowerCase() !== username.toLowerCase() ? <ReportButton label={`Report ${emote.code}`} target={{ target_type: "emote", target_id: emote.id }} /> : <TakeDownLink target={{ target_type: "emote", target_id: emote.id }} />}
-  </li>)}</ul>;
+/** A 4-wide grid of tiles, 12 to a page, with ‹ › when there are more. */
+function Tiles<T>({ items, children }: { items: T[]; children: (item: T) => ReactNode }) {
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(items.length / PAGE));
+  const at = Math.min(page, pages - 1);
+  return <>
+    <ul className="dock-tiles">{items.slice(at * PAGE, at * PAGE + PAGE).map(children)}</ul>
+    {pages > 1 && <div className="dock-pager">
+      <button type="button" className="small quiet" disabled={at === 0} aria-label="Previous page" onClick={() => setPage(at - 1)}>‹</button>
+      <span className="small-text">{at + 1} of {pages}</span>
+      <button type="button" className="small quiet" disabled={at === pages - 1} aria-label="Next page" onClick={() => setPage(at + 1)}>›</button>
+    </div>}
+  </>;
 }
 
-/** The channel's 7TV, BTTV and FFZ emotes. Reporting one hides it here until the streamer reviews it. */
-function OutsideTab({ username, account, emotes, onEmote, onReported }: { username: string; account: string | null; emotes: ChannelEmote[]; onEmote: (code: string) => void; onReported?: () => void }) {
+/**
+ * The channel's own emotes, then its 7TV, BTTV and FFZ emotes. Reporting is one mode for the whole
+ * tab rather than a link under every tile: switch it on, then pick the emote.
+ */
+function EmotesTab({ username, account, emotes, onEmote, onOutsideReported }: { username: string; account: string | null; emotes: ChannelEmote[]; onEmote: (code: string) => void; onOutsideReported?: () => void }) {
+  const [reporting, setReporting] = useState(false);
+  const [chosen, setChosen] = useState<ChannelEmote | null>(null);
   const [message, setMessage] = useState("");
-  async function report(emote: ChannelEmote) {
-    if (!emote.provider || !window.confirm(`Report ${emote.code}? It's hidden in this chat until the streamer reviews it.`)) return;
-    const r = await send("POST", `/api/channels/${encodeURIComponent(username)}/outside-emotes/${emote.provider}/${encodeURIComponent(emote.id)}/report`);
-    setMessage(r.ok ? `${emote.code} is hidden until the streamer reviews it.` : r.error);
-    if (r.ok) onReported?.();
-  }
+  if (emotes.length === 0) return <p className="muted">No channel emotes yet.</p>;
   const own = account?.toLowerCase() === username.toLowerCase();
-  return <section aria-label="7TV, BTTV and FFZ emotes"><h3 className="small">From 7TV, BTTV and FFZ</h3>
-    {message && <p role="status" className="small">{message}</p>}
-    <ul className="dock-tiles">{emotes.map(emote => <li key={`${emote.provider}:${emote.id}`}>
-      {account ? <button type="button" className="dock-tile" onClick={() => onEmote(emote.code)} aria-label={`Insert ${emote.code}`}><EmoteImage emote={emote} /><span>{emote.code}</span></button>
-        : <span className="dock-tile"><EmoteImage emote={emote} /><span>{emote.code}</span></span>}
-      {account && !own && <button type="button" className="quiet small" onClick={() => void report(emote)}>Report<span className="sr-only"> {emote.code}</span></button>}
-    </li>)}</ul>
-  </section>;
+  async function reportOutside(emote: ChannelEmote) {
+    const r = await send("POST", `/api/channels/${encodeURIComponent(username)}/outside-emotes/${emote.provider}/${encodeURIComponent(emote.id)}/report`);
+    setMessage(r.ok ? `${emote.code} is hidden in this chat until the streamer reviews it.` : r.error);
+    setChosen(null); setReporting(false);
+    if (r.ok) onOutsideReported?.();
+  }
+  function pick(emote: ChannelEmote) {
+    if (!reporting) { if (account) onEmote(emote.code); return; }
+    setMessage("");
+    if (emote.provider && account) { if (window.confirm(`Report ${emote.code}? It's hidden in this chat until the streamer reviews it.`)) void reportOutside(emote); }
+    else setChosen(emote);
+  }
+  return <>
+    <Tiles items={emotes}>{emote => <li key={`${emote.provider ?? "sver"}:${emote.id}`}>
+      <button type="button" className={`dock-tile${reporting ? " reporting" : ""}`} disabled={!account && !reporting} onClick={() => pick(emote)}
+        aria-label={reporting ? `Report ${emote.code}` : `Insert ${emote.code}`} title={emote.provider ? `${emote.code} (${emote.provider.toUpperCase()})` : emote.code}>
+        <EmoteImage emote={emote} /><span>{emote.code}</span>
+      </button>
+    </li>}</Tiles>
+    {!own && <div className="dock-foot">
+      <button type="button" className="link-button" aria-pressed={reporting} onClick={() => { setReporting(!reporting); setChosen(null); setMessage(""); }}>{reporting ? "Cancel report" : "Report an emote"}</button>
+      {reporting && !chosen && <span className="small-text">Pick the emote to report.</span>}
+    </div>}
+    {chosen && (account ? <ReportForm target={{ target_type: "emote", target_id: chosen.id }} onDone={() => { setChosen(null); setReporting(false); }} />
+      : <TakeDownLink target={{ target_type: "emote", target_id: chosen.id }} />)}
+    {message && <p role="status" className="small-text">{message}</p>}
+  </>;
 }
 
 /** Channel rewards bought with Engagement Valor (docs/SUPPORT.md). Highlight arms the chat box. */
@@ -88,15 +116,15 @@ function RewardsTab({ username, account, version, onHighlight }: { username: str
     await load();
   }
   return <>
-    <p className="muted small">{data.balance !== null ? <><strong>{data.balance.toLocaleString()}</strong> Engagement Valor, earned here by watching, chatting and following. No cash value.</> : account ? null : <><Link href="/login">Sign in</Link> to earn and spend Engagement Valor.</>}</p>
-    {data.rewards.length === 0 ? <p className="muted">This channel has no rewards yet.</p> : <ul className="dock-tiles">{data.rewards.map(reward => {
+    <p className="small-text">{data.balance !== null ? <><strong>{data.balance.toLocaleString()}</strong> Engagement Valor, earned here by watching, chatting and following. No cash value.</> : account ? null : <><Link href="/login">Sign in</Link> to earn and spend Engagement Valor.</>}</p>
+    {data.rewards.length === 0 ? <p className="muted">This channel has no rewards yet.</p> : <Tiles items={data.rewards}>{reward => {
       const affordable = data.balance !== null && data.balance >= reward.cost;
       const usable = !!account && !own && affordable && !busy;
       return <li key={reward.id}><button type="button" className="dock-tile" disabled={!usable} title={own ? "Your own channel" : !affordable && account ? "Not enough Engagement Valor yet" : undefined}
         onClick={() => { if (reward.kind === "highlight") onHighlight(reward.cost); else { setActive(reward); setInput(""); } }}>
         <span className="dock-tile-name">{reward.name}</span><span className="dock-cost">{reward.cost.toLocaleString()}</span></button></li>;
-    })}</ul>}
-    {active && <div className="row wrap">{active.prompt && <input aria-label={active.prompt} placeholder={active.prompt} value={input} maxLength={200} onChange={e => setInput(e.target.value)} />}
+    }}</Tiles>}
+    {active && <div className="dock-foot">{active.prompt && <input aria-label={active.prompt} placeholder={active.prompt} value={input} maxLength={200} onChange={e => setInput(e.target.value)} />}
       <button type="button" className="small" disabled={busy} onClick={() => redeem(active)}>Redeem {active.name}</button><button type="button" className="small quiet" onClick={() => setActive(null)}>Cancel</button></div>}
     {note && <p role="status" className="form-message">{note}</p>}
   </>;
@@ -126,13 +154,13 @@ function SkillsTab({ username, account }: { username: string; account: string | 
   if (!data) return <p className="loading">{note || "Loading…"}</p>;
   const canPlay = data.valor !== null;
   return <>
-    <p className="muted small">{canPlay ? <><strong>{data.valor!.toLocaleString()}</strong> Valor · <Link href="/wallet">Get Valor</Link>. Skills show on stream and in chat and pay the streamer.</> : account ? "Streamers can't play Skills on their own channel." : <><Link href="/login">Sign in</Link> to play Skills.</>}</p>
+    <p className="small-text">{canPlay ? <><strong>{data.valor!.toLocaleString()}</strong> Valor · <Link href="/wallet">Get Valor</Link>. Skills show on stream and in chat and pay the streamer.</> : account ? "Streamers can't play Skills on their own channel." : <><Link href="/login">Sign in</Link> to play Skills.</>}</p>
     {data.paused && <p className="form-message">Effects are paused on this channel right now.</p>}
-    {canPlay && <label className="field"><span>Message (optional)</span><input value={text} maxLength={200} onChange={e => setText(e.target.value)} /></label>}
-    <ul className="dock-tiles">{data.skills.filter(s => s.enabled).map(s => <li key={s.id}>
+    {canPlay && <input className="dock-message" aria-label="Message with the Skill (optional)" placeholder="Message (optional)" value={text} maxLength={200} onChange={e => setText(e.target.value)} />}
+    <Tiles items={data.skills.filter(s => s.enabled)}>{s => <li key={s.id}>
       <button type="button" className="dock-tile" disabled={!canPlay || busy || data.paused || (data.valor ?? 0) < s.valor} onClick={() => play(s)}>
         {/* eslint-disable-next-line @next/next/no-img-element -- the streamer's uploaded Skill image, already resized */}
-        {s.image ? <img src={s.image} alt="" width={40} height={40} className="skill-art" /> : <SkillArt id={s.custom ? "custom" : s.id} size={40} />}<span className="dock-tile-name">{s.name}</span><span className="dock-cost">{s.valor.toLocaleString()}</span></button></li>)}</ul>
+        {s.image ? <img src={s.image} alt="" width={32} height={32} className="skill-art" /> : <SkillArt id={s.custom ? "custom" : s.id} size={32} />}<span className="dock-tile-name">{s.name}</span><span className="dock-cost">{s.valor.toLocaleString()}</span></button></li>}</Tiles>
     {note && <p role="status" className="form-message">{note}</p>}
   </>;
 }
@@ -147,7 +175,7 @@ function SignatureTab({ onEmote }: { onEmote: (code: string) => void }) {
   useLoad(load);
   if (!emotes) return <p className="loading">Loading…</p>;
   if (emotes.length === 0) return <p className="muted">Channels you follow haven&apos;t chosen a signature emote yet.</p>;
-  return <ul className="dock-tiles">{emotes.map(emote => <li key={emote.id}>
+  return <Tiles items={emotes}>{emote => <li key={emote.id}>
     <button type="button" className="dock-tile" onClick={() => onEmote(emote.code)} aria-label={`Insert ${emote.code}`} title={`@${emote.owner}'s signature emote`}><EmoteImage emote={emote} /><span>{emote.code}</span></button>
-  </li>)}</ul>;
+  </li>}</Tiles>;
 }

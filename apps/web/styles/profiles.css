@@ -120,15 +120,25 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 /* Chat dock (ChatDock): Emotes, Rewards and Skills under the box; each opens a panel over the
    bottom of the chat with tiles, so the chat column stays messages plus the box. */
 .chat-dock{position:relative;margin-top:8px}
-.chat-dock-bar{display:flex;flex-wrap:wrap;gap:6px}
-.chat-dock-panel{position:absolute;left:0;right:0;bottom:calc(100% + 6px);z-index:20;max-height:min(420px,60vh);overflow:auto;padding:10px;background:linear-gradient(var(--surface),var(--surface)),var(--bg);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.5)}
-.chat-dock-tabs{display:flex;align-items:center;gap:6px;margin-bottom:8px}.chat-dock-tabs [aria-selected="true"],.chat-dock-bar [aria-expanded="true"]{border-color:var(--accent);color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}.chat-dock-close{margin-left:auto}
-.chat-dock-tabs button,.chat-dock-bar button{white-space:nowrap;padding:5px 9px;letter-spacing:.04em}
-.dock-tiles{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px}
-.dock-tiles li{display:flex;flex-direction:column;gap:2px;min-width:0}
-.dock-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;min-height:84px;padding:6px 4px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:6px;color:var(--ink);font:inherit;font-size:12px;letter-spacing:0;text-transform:none;box-shadow:none;text-align:center;overflow-wrap:anywhere}
+/* The bar splits the chat column evenly (columns set inline), so it can never scroll sideways. */
+.chat-dock-bar{display:grid;gap:6px}
+.chat-dock-bar button{min-width:0;padding:5px 2px;font-size:11px;letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-dock-bar [aria-expanded="true"]{border-color:var(--accent);color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+/* No scrollbars in the panel: it grows to fit a page of at most 12 tiles (ChatDock's PAGE). */
+.chat-dock-panel{position:absolute;left:0;right:0;bottom:calc(100% + 6px);z-index:20;display:grid;gap:8px;padding:10px;overflow:hidden;background:linear-gradient(var(--surface),var(--surface)),var(--bg);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.chat-dock-panel>p{margin:0}
+.chat-dock-head{display:flex;align-items:center;gap:8px}.chat-dock-close{margin-left:auto;min-height:32px;padding:0 10px}
+.dock-tiles{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.dock-tiles li{min-width:0}
+.dock-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:100%;min-width:0;min-height:68px;padding:6px 3px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:6px;color:var(--ink);font:inherit;font-size:11px;letter-spacing:0;text-transform:none;box-shadow:none;text-align:center;overflow:hidden}
+.dock-tile>span{max-width:100%;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-height:1.2}
+.dock-tile .chat-emote{width:28px;height:28px}
 button.dock-tile:not(:disabled):hover,button.dock-tile:focus-visible{border-color:var(--accent)}
+.dock-tile.reporting{border-style:dashed;border-color:var(--red)}
 .dock-tile:disabled{opacity:.45;cursor:not-allowed}
+.dock-pager{display:flex;align-items:center;justify-content:center;gap:10px}.dock-pager button{min-height:32px;padding:0 12px}
+.dock-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.dock-foot input{flex:1;min-width:0}
+.dock-message{width:100%;min-width:0}
 .dock-tile-name{font-weight:600}.dock-cost{color:var(--accent);font-weight:600}
 /* Notes above the box (highlight on) take the full row, so the box and Send keep their columns. */
 .chat-form .chat-draft-note{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;font-size:13px}
