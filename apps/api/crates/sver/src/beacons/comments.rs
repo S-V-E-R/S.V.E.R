@@ -127,9 +127,15 @@ async fn remove(
 }
 
 /// Report support (`safety.rs`): the comment if the reporter can see it, as (author, username, snapshot).
-pub async fn target(db: &mut PgConnection, id: &str) -> Res<Option<(String, String, Value)>> {
-    Ok(sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',m.body,'beacon',m.beacon_id) FROM beacon_comments m JOIN channel_users c ON c.id=m.author_id JOIN beacons b ON b.id=m.beacon_id WHERE m.id=$1 AND m.status='VISIBLE' AND m.deleted_at IS NULL AND b.status='PUBLISHED' AND c.deleted_at IS NULL")
-        .bind(id).fetch_optional(db).await?)
+pub async fn target(
+    db: &mut PgConnection,
+    id: &str,
+    reporter: &str,
+) -> Res<Option<(String, String, Value)>> {
+    Ok(sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',m.body,'beacon',m.beacon_id) FROM beacon_comments m JOIN channel_users c ON c.id=m.author_id JOIN beacons b ON b.id=m.beacon_id
+        WHERE m.id=$1 AND m.status='VISIBLE' AND m.deleted_at IS NULL AND b.status='PUBLISHED' AND NOT b.hidden AND c.deleted_at IS NULL
+        AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=$2 AND k.blocked_id IN (m.author_id,b.owner_id)) OR (k.blocked_id=$2 AND k.blocker_id IN (m.author_id,b.owner_id)))")
+        .bind(id).bind(reporter).fetch_optional(db).await?)
 }
 
 pub(super) fn routes() -> Router<App> {

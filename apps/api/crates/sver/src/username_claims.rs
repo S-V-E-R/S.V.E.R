@@ -32,6 +32,8 @@ async fn ask(State(app): State<App>, jar: CookieJar, Json(input): Json<Ask>) -> 
     }
     let name = input.username.trim().to_string();
     crate::security::validate_username(&name).map_err(|e| Fail::field("username", e.1))?;
+    // Each ask emails the holder: a few a day, so ask-withdraw loops can't flood anyone.
+    profiles::rate(&app, format!("username-claim:{}", me.id), 3, 86_400).await?;
     let mut tx = app.db.begin().await?;
     profiles::ensure_unrestricted(&mut tx, &me.id).await?;
     let renamed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM username_history WHERE user_id=$1 AND reason IN ('rename','claim') AND changed_at>now()-interval '60 days')")
@@ -150,11 +152,14 @@ async fn decide(
                 .await?;
             sqlx::query("INSERT INTO username_history(id,user_id,old_username,new_username,reason,note) VALUES($1,$2,$3,$4,'released',$5)")
                 .bind(profiles::new_id()).bind(&holder).bind(&old).bind(&replacement).bind(format!("claim {id}")).execute(&mut *tx).await?;
-            let mine: String =
-                sqlx::query_scalar("SELECT username FROM users WHERE id=$1 FOR UPDATE")
-                    .bind(&requester)
-                    .fetch_one(&mut *tx)
-                    .await?;
+            let mine: String = sqlx::query_scalar(
+                "SELECT username FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE",
+            )
+            .bind(&requester)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| Fail::conflict("The requester's account is gone; reject the claim."))?;
+            profiles::ensure_unrestricted(&mut tx, &requester).await?;
             sqlx::query("DELETE FROM username_holds WHERE handle_canonical=lower($1)")
                 .bind(&handle)
                 .execute(&mut *tx)

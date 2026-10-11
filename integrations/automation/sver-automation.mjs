@@ -51,7 +51,7 @@ export function forwardings(event, config) {
 export async function run(config, { tokensPath, fetch = globalThis.fetch, WebSocketImpl = globalThis.WebSocket } = {}) {
   const tokens = tokensPath && existsSync(tokensPath) ? JSON.parse(readFileSync(tokensPath, "utf8")) : null;
   const origin = config.origin ?? ORIGIN;
-  const sver = new Sver({ tokens, fetch, origin, clientId: config.client_id, scopes: SCOPES, save: t => tokensPath && writeFileSync(tokensPath, JSON.stringify(t)) });
+  const sver = new Sver({ tokens, fetch, origin, clientId: config.client_id, scopes: SCOPES, save: t => tokensPath && writeFileSync(tokensPath, JSON.stringify(t), { mode: 0o600 }) });
   if (!sver.tokens) {
     const { code, url, done } = await sver.signIn();
     log(`Sign in: open ${url} and approve code ${code}.`);
