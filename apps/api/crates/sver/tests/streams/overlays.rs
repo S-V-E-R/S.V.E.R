@@ -124,6 +124,39 @@ pub async fn exercise(e: &Env) {
         "the sub alert was off"
     );
 
+    // The local-file frame's poll: newest names from the lasting records, link only, no cookies.
+    for (id, valor) in [("ov-tribute-1", 150), ("ov-tribute-2", 50)] {
+        sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,tribute) VALUES($1,'stream-owner','ov-fan','gg',$2)")
+            .bind(id).bind(valor).execute(&e.app.db).await.unwrap();
+    }
+    let latest = format!("/api/overlays/latest?token={token}");
+    let (status, now) = e
+        .request("GET", &latest, Value::Null, false, false, false)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{now}");
+    assert_eq!(now["follow"]["name"], "OverlayFan");
+    assert!(now["sub"].is_null(), "the sub alert is off: {now}");
+    assert_eq!(
+        (
+            now["tribute"]["name"].as_str(),
+            now["tribute"]["valor"].as_i64()
+        ),
+        (Some("OverlayFan"), Some(150)),
+        "the newer 50 is under the minimum"
+    );
+    assert!(now["subscriber_count"].is_i64());
+    let (status, _) = e
+        .request(
+            "GET",
+            "/api/overlays/latest?token=wrong",
+            Value::Null,
+            false,
+            false,
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
     // Bad settings are refused; a new link stops the old one.
     let mut bad = settings.clone();
     bad["follow"]["seconds"] = json!(60);
