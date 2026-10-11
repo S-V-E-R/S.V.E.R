@@ -204,6 +204,37 @@ pub async fn exercise(e: &Env) {
     assert_eq!(linked, 0);
     webhook(e, "notification", chat("m7", "tw-v", "anyone?"), true).await;
     assert_eq!(outside(e).await.len(), 1);
+
+    // After a stream, Studio compares S.V.E.R chat with each linked platform's chat; the
+    // streamer's own messages and the bot's lines don't count.
+    e.sql("DELETE FROM outside_chat_messages").await;
+    e.sql("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES('lc-fan','lc-fan@example.test','LcFan',true,'1990-01-01') ON CONFLICT DO NOTHING").await;
+    e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,ended_at) VALUES('lc-b','stream-owner','lc-b',1,'ENDED','s','v','c',now()-interval '1 hour',now()-interval '1 hour',now()-interval '1 hour',now()-interval '1 minute')").await;
+    e.sql("INSERT INTO chat_messages(id,channel_id,author_id,body,created_at) VALUES('lc-m1','stream-owner','lc-fan','hi',now()-interval '30 minutes'),('lc-m2','stream-owner','lc-fan','gg',now()-interval '20 minutes'),('lc-m3','stream-owner','stream-owner','thanks',now()-interval '10 minutes')").await;
+    e.sql("INSERT INTO outside_chat_messages(id,seq,channel_id,platform,sender_id,sender_name,sender_login,sender_role,body,created_at) VALUES
+        ('lc-o1',nextval(pg_get_serial_sequence('chat_messages','seq')),'stream-owner','twitch','t1','A','a',NULL,'yo',now()-interval '30 minutes'),
+        ('lc-o2',nextval(pg_get_serial_sequence('chat_messages','seq')),'stream-owner','twitch','t2','B','b',NULL,'yo',now()-interval '25 minutes'),
+        ('lc-o3',nextval(pg_get_serial_sequence('chat_messages','seq')),'stream-owner','twitch','t0','Me','me','broadcaster','hey',now()-interval '20 minutes'),
+        ('lc-o4',nextval(pg_get_serial_sequence('chat_messages','seq')),'stream-owner','bot','bot','PYRE','pyre',NULL,'Welcome',now()-interval '15 minutes')").await;
+    let mine = e.call("GET", "/api/me/linked-chat", Value::Null).await;
+    let stream = mine["streams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["broadcast"] == "lc-b")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (&stream["sver"]["messages"], &stream["sver"]["chatters"]),
+        (&json!(2), &json!(1)),
+        "{stream}"
+    );
+    assert_eq!(
+        stream["linked"],
+        json!({"twitch": {"messages": 2, "chatters": 2}})
+    );
+    e.sql("DELETE FROM chat_messages WHERE id LIKE 'lc-m%'")
+        .await;
     e.sql("DELETE FROM outside_chat_messages").await;
     e.sql("DELETE FROM outside_chat_mutes").await;
 }

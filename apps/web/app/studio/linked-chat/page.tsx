@@ -5,7 +5,9 @@ import { send, useLoad, type Result } from "../../../lib/client-api";
 
 type Account = { platform: string; handle: string; enabled: boolean; status: string; detail: string | null };
 type Mute = { platform: string; sender_id: string; name: string; permanent: boolean };
-type Linked = { accounts: Account[]; mutes: Mute[]; available: Record<string, boolean> };
+type Activity = { messages: number; chatters: number };
+type StreamCompare = { broadcast: string; started_at: string; ended_at: string | null; sver: Activity & { peak_viewers: number }; linked: Record<string, Activity> };
+type Linked = { accounts: Account[]; mutes: Mute[]; available: Record<string, boolean>; streams: StreamCompare[] };
 
 const NAMES: Record<string, string> = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
 const STATUS: Record<string, string> = { idle: "Ready (connects when you go live)", connecting: "Connecting…", connected: "Connected", reconnecting: "Reconnecting", revoked: "Needs linking again" };
@@ -56,6 +58,16 @@ export default function LinkedChatPage() {
         </li>;
       })}</ul>
       <p className="muted small">Linking asks {NAMES.twitch} only for permission to read your channel&apos;s chat and post as you. S.V.E.R keeps the access encrypted and deletes it when you unlink. Some platforms don&apos;t allow other platforms&apos; chat inside the stream video, so keep linked chat off the video you send elsewhere; the S.V.E.R chat overlay for OBS leaves outside messages out.</p>
+    </Section>
+    <Section title="Your recent streams" intro="How S.V.E.R chat compared with your linked platforms' chat on each stream in the last 7 days (chat is kept that long). Your own messages and the bot's don't count.">
+      {data.streams.length === 0 ? <p className="muted">No streams in the last 7 days.</p>
+        : <table className="table"><thead><tr><th>Stream</th><th>S.V.E.R chat</th><th>S.V.E.R peak viewers</th>{Object.keys(NAMES).map(p => <th key={p}>{NAMES[p]} chat</th>)}</tr></thead>
+          <tbody>{data.streams.map(st => <tr key={st.broadcast}>
+            <td>{new Date(st.started_at).toLocaleString()}{st.ended_at ? "" : " (live)"}</td>
+            <td>{st.sver.messages.toLocaleString()} from {st.sver.chatters.toLocaleString()}</td>
+            <td>{st.sver.peak_viewers.toLocaleString()}</td>
+            {Object.keys(NAMES).map(p => <td key={p}>{st.linked[p] ? `${st.linked[p].messages.toLocaleString()} from ${st.linked[p].chatters.toLocaleString()}` : "—"}</td>)}
+          </tr>)}</tbody></table>}
     </Section>
     <Section title="Muted outside chatters" intro="Muting someone only hides them on S.V.E.R; use each platform's own tools to moderate there.">
       {data.mutes.length === 0 ? <p className="muted">Nobody is muted.</p>

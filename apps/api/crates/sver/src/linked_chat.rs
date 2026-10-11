@@ -551,8 +551,20 @@ async fn view(app: &App, owner: &str) -> Res<Json<Value>> {
             ((*p).to_string(), json!(on))
         })
         .collect();
+    // After a stream (docs/LINKED_CHAT.md "Studio insight"): S.V.E.R chat and viewers beside each
+    // linked platform's chat, for streams in the last 7 days (chat is kept that long). The
+    // streamer's own messages and the bot's lines don't count.
+    let streams: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('broadcast',b.id,'started_at',b.started_at,'ended_at',b.ended_at,
+            'sver',jsonb_build_object(
+                'messages',(SELECT count(*) FROM chat_messages m WHERE m.channel_id=$1 AND m.author_id<>$1 AND m.origin IS NULL AND m.created_at>=b.started_at AND m.created_at<coalesce(b.ended_at,now())),
+                'chatters',(SELECT count(DISTINCT m.author_id) FROM chat_messages m WHERE m.channel_id=$1 AND m.author_id<>$1 AND m.origin IS NULL AND m.created_at>=b.started_at AND m.created_at<coalesce(b.ended_at,now())),
+                'peak_viewers',(SELECT coalesce(max(n),0) FROM (SELECT sum(s.counted+s.trusted) n FROM integrity_snapshots s WHERE s.broadcast_id=b.id GROUP BY date_trunc('minute',s.taken_at)) p)),
+            'linked',(SELECT coalesce(jsonb_object_agg(platform,jsonb_build_object('messages',c,'chatters',d)),'{}') FROM (SELECT o.platform,count(*) c,count(DISTINCT o.sender_id) d FROM outside_chat_messages o
+                WHERE o.channel_id=$1 AND o.platform<>'bot' AND o.sender_role IS DISTINCT FROM 'broadcaster' AND o.created_at>=b.started_at AND o.created_at<coalesce(b.ended_at,now()) GROUP BY o.platform) x))
+        FROM broadcasts b WHERE b.owner_id=$1 AND b.started_at>now()-interval '7 days' ORDER BY b.started_at DESC LIMIT 10")
+        .bind(owner).fetch_all(&app.db).await?;
     Ok(Json(
-        json!({"accounts": accounts, "mutes": mutes, "available": available}),
+        json!({"accounts": accounts, "mutes": mutes, "available": available, "streams": streams}),
     ))
 }
 /// GET /api/me/linked-chat
