@@ -30,10 +30,47 @@ export default function Page() {
     await change(id ? "PUT" : "POST", `/api/admin/genres${id ? `/${id}` : ""}`, { name: f.get("name"), note: f.get("note") });
   }
   return <><h1>Factions</h1><p>Read-only scores, season timeline and checkpoint recovery. <Link href="/admin/categories">Manage category assignments</Link>.</p>{message && <p className="notice" role="status">{message}</p>}<button className="small quiet" disabled={busy} onClick={() => void load()}>Refresh</button>
+    <Skirmishes />
     <section className="panel"><h2>Season timeline</h2>{data?.seasons.map(s => <p key={s.number}><strong>Season {s.number}</strong> · {utcDate(s.starts_at)} to {utcDate(s.ends_at)} · {s.finished_at ? `Finished: ${s.winners.join(", ")}` : "Active or scheduled"} · Next: {utcDate(s.next_starts_at)}</p>)}</section>
     <section className="panel"><h2>Checkpoint jobs</h2><p>Retry only processes checkpoints that are due. Completed results cannot be run twice.</p><form onSubmit={e => { e.preventDefault(); void change("POST", "/api/admin/factions/retry", { note: new FormData(e.currentTarget).get("note") }); }}><label className="field"><span>Retry reason</span><input name="note" required maxLength={500} /></label><button className="small quiet" disabled={busy}>Retry due checkpoints</button></form><ul>{data?.jobs.map(j => <li key={j.id}>Season {j.season} · {utcDate(j.ends_at)} · {j.completed_at ? "Completed" : j.error ? "Failed" : "Pending"} · {j.attempts} attempts{j.error && ` · ${j.error}`}</li>)}</ul></section>
     <section><h2>Current scores</h2>{war && <GenreBoard genres={war.genres} />}</section>
     <section className="panel"><h2>Genres</h2><p>New genres start neutral. Home assignments remain fixed.</p><form onSubmit={e => genre(e)}><label className="field"><span>New genre name</span><input name="name" required maxLength={60} /></label><label className="field"><span>Reason</span><input name="note" required maxLength={500} /></label><button className="small" disabled={busy}>Add genre</button></form>{genres.map(g => <details key={g.id}><summary>{g.name} · {g.home ?? "neutral"}</summary><form onSubmit={e => genre(e, g.id)}><label className="field"><span>Name</span><input name="name" defaultValue={g.name} required maxLength={60} /></label><label className="field"><span>Reason</span><input name="note" required maxLength={500} /></label><button className="small quiet" disabled={busy}>Rename</button></form></details>)}</section>
     <section className="panel"><h2>Recent faction switches</h2><ul className="list">{data?.switches.map(s => <li key={s.id}>{s.user ? <UserChip user={s.user} /> : "Unavailable account"}<p>{s.from ?? "No faction"} → {s.to} · {utcDate(s.at)} · {s.reason.replaceAll("_", " ")}</p></li>)}</ul></section>
   </>;
+}
+
+type Skirmish = { id: string; starts_at: string; cancelled_at: string | null; by: string | null };
+/** Skirmish Hour (docs/FACTIONS.md): schedule on the hour, an hour or more ahead; cancel before it starts. */
+function Skirmishes() {
+  const [items, setItemsOnly] = useState<Skirmish[] | null>(null);
+  const [loadedAt, setLoadedAt] = useState(0);
+  const setItems = (list: Skirmish[]) => { setItemsOnly(list); setLoadedAt(Date.now()); };
+  const [message, setMessage] = useState("");
+  const load = useCallback(async () => {
+    const r = await send<{ items: Skirmish[] }>("GET", "/api/admin/skirmishes");
+    if (r.ok) setItems(r.data.items); else setMessage(r.error);
+  }, []);
+  useLoad(load);
+  async function schedule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const [date, hour] = [String(new FormData(event.currentTarget).get("date")), String(new FormData(event.currentTarget).get("hour"))];
+    const r = await send<{ items: Skirmish[] }>("POST", "/api/admin/skirmishes", { starts_at: `${date}T${hour.padStart(2, "0")}:00:00Z` });
+    if (r.ok) { setItems(r.data.items); setMessage("Scheduled. It shows on the war map and hubs now."); } else setMessage(r.error);
+  }
+  async function cancel(s: Skirmish) {
+    if (!window.confirm(`Cancel the Skirmish Hour at ${new Date(s.starts_at).toUTCString()}?`)) return;
+    const r = await send<{ items: Skirmish[] }>("DELETE", `/api/admin/skirmishes/${encodeURIComponent(s.id)}`);
+    if (r.ok) { setItems(r.data.items); setMessage("Cancelled."); } else setMessage(r.error);
+  }
+  const upcoming = (s: Skirmish) => !s.cancelled_at && new Date(s.starts_at).getTime() > loadedAt;
+  return <section className="panel"><h2>Skirmish Hours</h2>
+    <p>For one hour, influence counts double; the per-person caps still apply. Times are UTC. Scheduling and cancelling are audited.</p>
+    <form onSubmit={schedule} className="row wrap">
+      <label className="field narrow"><span>Date (UTC)</span><input type="date" name="date" required /></label>
+      <label className="field narrow"><span>Hour (UTC, 0–23)</span><input type="number" name="hour" min={0} max={23} required /></label>
+      <button className="small">Schedule</button>
+    </form>
+    {message && <p role="status" className="form-message">{message}</p>}
+    <ul>{items?.map(s => <li key={s.id}>{new Date(s.starts_at).toUTCString()} · {s.cancelled_at ? "cancelled" : upcoming(s) ? "scheduled" : "done"}{s.by && ` · by @${s.by}`} {upcoming(s) && <button type="button" className="small quiet" onClick={() => void cancel(s)}>Cancel</button>}</li>)}</ul>
+  </section>;
 }

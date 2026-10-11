@@ -4,8 +4,13 @@ import { Crest } from "./FactionIdentity";
 import { factions, factionInfo, type Faction } from "../lib/factions";
 import { type War, contest, utcDate } from "../lib/war";
 
+const utcTime = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso)) + " UTC";
+
 export function WarStanding({ war }: { war: War }) {
+  const skirmish = war.season && !war.season.finished ? war.skirmish : undefined;
   return <div className="war-standing">{war.season ? <p className="eyebrow">Season {war.season.number} · {war.season.finished ? `Break · next season ${utcDate(war.season.next_starts_at)}` : `Ends ${utcDate(war.season.ends_at)}`}</p> : <p>The first season has not started.</p>}
+    {skirmish?.active ? <p className="notice skirmish-notice"><strong>Skirmish Hour is on</strong> until {utcTime(skirmish.active.ends_at)}: influence counts {skirmish.multiplier}× (the usual per-person limits still apply).</p>
+      : skirmish?.next && <p className="notice skirmish-notice"><strong>Next Skirmish Hour:</strong> {utcTime(skirmish.next.starts_at)}. For one hour, influence counts {skirmish.multiplier}×.</p>}
     <div className="war-bar" aria-label="Territories held">{war.scoreboard.filter(s => s.territories > 0).map(s => <span key={s.faction} data-theme={s.faction} style={{ flex: s.territories }} title={`${factionInfo(s.faction).name}: ${s.territories} territories`} />)}</div>
     <ul className="war-scoreboard">{war.scoreboard.map(s => <li key={s.faction}><Link href={`/factions/${s.faction}`}><Crest faction={s.faction} size={24} />{factionInfo(s.faction).name}</Link><strong>{s.territories}</strong><span className="muted">{s.genre_weeks} genre-weeks</span></li>)}</ul>
   </div>;

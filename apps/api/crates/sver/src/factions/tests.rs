@@ -603,6 +603,8 @@ async fn exercise(app: App) {
             .unwrap(),
         1500
     );
+    // Skirmish Hour doubles influence; the per-person hourly cap still binds afterwards.
+    sql(&app.db, "INSERT INTO faction_skirmishes(id,starts_at) VALUES('skirmish-test',now()-interval '1 minute')").await;
     assert_eq!(
         chat(
             &app,
@@ -613,7 +615,8 @@ async fn exercise(app: App) {
         )
         .await
         .unwrap(),
-        2
+        4,
+        "Skirmish Hour doubles chat influence"
     );
     assert_eq!(
         chat(
@@ -625,9 +628,14 @@ async fn exercise(app: App) {
         )
         .await
         .unwrap(),
-        2,
-        "Hourly cap is applied after bonuses"
+        0,
+        "Hourly cap is applied after bonuses, Skirmish Hour included"
     );
+    sql(
+        &app.db,
+        "UPDATE faction_skirmishes SET cancelled_at=now() WHERE id='skirmish-test'",
+    )
+    .await;
     assert_eq!(
         chat(
             &app,

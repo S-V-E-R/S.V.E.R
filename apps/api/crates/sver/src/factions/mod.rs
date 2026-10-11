@@ -3,6 +3,7 @@ mod community;
 mod engine;
 mod influence;
 mod read;
+pub mod skirmish;
 #[cfg(test)]
 mod tests;
 mod tuning;
@@ -251,6 +252,14 @@ pub fn routes() -> Router<App> {
         )
         .route("/api/admin/factions", get(read::admin))
         .route("/api/admin/factions/retry", post(retry))
+        .route(
+            "/api/admin/skirmishes",
+            get(skirmish::list).post(skirmish::schedule),
+        )
+        .route(
+            "/api/admin/skirmishes/{id}",
+            axum::routing::delete(skirmish::cancel),
+        )
         .route(
             "/api/admin/genres",
             get(read::genres).post(read::create_genre),

@@ -31,6 +31,7 @@ pub(super) async fn war_data(db: &mut PgConnection, app: &App, at: DateTime<Utc>
         None => json!({"genres":[],"factions":[]}),
     };
     data["as_of"] = json!(at);
+    data["skirmish"] = super::skirmish::summary(db, at).await?;
     data["season"] = json!({"number":season.number,"starts_at":season.starts_at,"ends_at":season.ends_at,"next_starts_at":season.next_starts_at,"finished":season.finished_at.is_some(),"winners":season.winners});
     data["week"]=week.map_or(Value::Null,|w|json!({"id":w.id,"starts_at":w.starts_at,"ends_at":w.ends_at,"completed":w.completed_at.is_some()}));
     let counts:Vec<(String,i64)>=sqlx::query_as("SELECT holder,count(*) FROM faction_territories WHERE season_id=$1 AND holder IS NOT NULL GROUP BY holder")
