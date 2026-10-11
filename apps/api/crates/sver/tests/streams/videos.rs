@@ -1162,6 +1162,19 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
     .await
     .unwrap();
     assert_eq!(suggestion.1, "PENDING");
+    // A second lane featuring the same moment doesn't suggest it again.
+    let mut tx = e.app.db.begin().await.unwrap();
+    sver::videos::spotlight(&mut tx, "stream-owner", "second-lane-spotlight")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let second: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM videos WHERE request_key='magnet:second-lane-spotlight'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(second, 0);
     while sver::videos::worker::run_one(&e.app, false).await.unwrap() {}
     // Count the approved cap before enqueueing any new media work.
     sqlx::query("UPDATE videos SET duration_ms=36000000 WHERE id=$1")
@@ -1267,8 +1280,34 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
     .await
     .unwrap();
     assert_eq!(spotlights, 0);
+    // Staff see it on the Jobs page while the broadcast is live.
+    let broadcast: (String, String) = sqlx::query_as(
+        "SELECT b.id,b.state FROM broadcasts b JOIN videos v ON v.broadcast_id=b.id WHERE v.id=$1",
+    )
+    .bind(video)
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE broadcasts SET state='LIVE' WHERE id=$1")
+        .bind(&broadcast.0)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    let stalled = || async {
+        sver::videos::stalled_count(&mut e.app.db.acquire().await.unwrap())
+            .await
+            .unwrap()
+    };
+    assert_eq!(stalled().await, 1);
     sqlx::query("UPDATE video_segments SET wall_start=now() WHERE video_id=$1")
         .bind(video)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(stalled().await, 0);
+    sqlx::query("UPDATE broadcasts SET state=$2 WHERE id=$1")
+        .bind(&broadcast.0)
+        .bind(&broadcast.1)
         .execute(&e.app.db)
         .await
         .unwrap();
