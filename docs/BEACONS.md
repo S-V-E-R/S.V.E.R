@@ -112,7 +112,7 @@ Beacons are short vertical videos that lead people to creators and their live st
 
 Built October 10, 2026 by Joe's decision (faction-tagged clips; migration 0095).
 
-- Every Beacon and clip keeps the faction its channel belonged to when it was made (a database trigger sets it on insert; existing ones took their channel's faction at migration). A later faction switch doesn't move old work.
+- Every Beacon keeps the faction its channel belonged to when it was made (a database trigger sets it on insert; existing ones took their channel's faction at migration), and every clip already carries the faction of the stream it came from. A later faction switch doesn't move old work.
 - The feed has tabs: **For you** (the usual mix) and one per faction. A faction tab is that faction's Beacons in the same fair rotation, with no followed or faction sources and no Live now row; ordering still never reads views, likes or money.
 - Each faction hub shows that faction's latest public clips and links to its Beacons tab.
 
