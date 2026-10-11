@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "../../components/Avatar";
 import { ReportButton } from "../../components/Report";
 import { send, useLoad } from "../../lib/client-api";
-import { open as openEnvelope, seal, type Device, type Envelope, type Opened } from "../../lib/e2e";
+import { open as openEnvelope, safetyNumber, seal, type Device, type Envelope, type Opened } from "../../lib/e2e";
 import { ensureDevice, type ThisDevice } from "../../lib/e2e-device";
 import type { Chip } from "../../lib/types";
 
@@ -34,6 +34,7 @@ export default function Messages() {
   const [deviceNote, setDeviceNote] = useState("");
   const [plain, setPlain] = useState<Record<string, Opened | null>>({});
   const [devices, setDevices] = useState<MyDevice[]>([]);
+  const [safety, setSafety] = useState("");
   const opened = useRef<string | null>(null);
 
   const loadList = useCallback(async () => {
@@ -48,6 +49,9 @@ export default function Messages() {
     const r = await send<Thread>("GET", `/api/dms/${encodeURIComponent(name)}`);
     if (!r.ok) { setError(r.error); return; }
     setThread(r.data);
+    // Recomputed on every load, so a device change never leaves an old number showing.
+    const keys = r.data.private ? await send<{ mine: Device[]; theirs: Device[] }>("GET", `/api/dms/${encodeURIComponent(name)}/keys`) : null;
+    setSafety(keys?.ok ? await safetyNumber(keys.data.mine, keys.data.theirs) : "");
     if (r.data.messages.length) await send("POST", `/api/dms/${encodeURIComponent(name)}/read`);
     await loadList();
   }, [loadList]);
@@ -102,7 +106,7 @@ export default function Messages() {
   }, [device, thread, plain]);
 
   async function choose(name: string) {
-    setOpen(name); opened.current = name; setError(""); setDraft("");
+    setOpen(name); opened.current = name; setError(""); setDraft(""); setSafety("");
     history.replaceState(null, "", `/messages?with=${encodeURIComponent(name)}`);
     await loadThread(name);
   }
@@ -189,6 +193,11 @@ export default function Messages() {
           </header>
           {thread.private_changed && <p className="muted small" role="status">{thread.private_changed.by ? `@${thread.private_changed.by}` : "Someone"} turned Private mode {thread.private ? "on" : "off"} {time(thread.private_changed.at)}.{!thread.private && " New messages aren't end-to-end encrypted."}</p>}
           {thread.private && thread.their_device_at && thread.private_changed && Date.parse(thread.their_device_at) > Date.parse(thread.private_changed.at) && <p className="muted small" role="status">@{thread.with.username} added a device {time(thread.their_device_at)}. New private messages can be read there too.</p>}
+          {thread.private && <details className="small">
+            <summary>Safety number</summary>
+            <p><code>{safety || "Couldn't load the keys."}</code></p>
+            <p className="muted">Compare this with @{thread.with.username} in person or over another app. If both of you see the same number, your messages are going only to each other&apos;s devices. It changes when either of you adds or removes a device.</p>
+          </details>}
           <ol className="messages-body">{thread.messages.map(m => <li key={m.id} className={m.sender.toLowerCase() === me.toLowerCase() ? "mine" : "theirs"}>
             <span className="messages-text">{m.private ? <><span aria-label="Private">🔒 </span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
             <span className="muted small">{time(m.created_at)}{m.sender.toLowerCase() !== me.toLowerCase() && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>
