@@ -188,6 +188,37 @@ pub async fn exercise(e: &Env) {
         channel["revision"].is_i64() && channel.get("category_id").is_some(),
         "{channel}"
     );
+    // Each app call says how much of its per-minute budget is left.
+    let (limit, remaining, reset) = {
+        let response = sver::router(e.app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/channels/Streamer")
+                    .header("sver-client-id", &client)
+                    .extension(ConnectInfo(
+                        "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let header = |name: &str| {
+            response.headers()[name]
+                .to_str()
+                .unwrap()
+                .parse::<i64>()
+                .unwrap()
+        };
+        (
+            header("ratelimit-limit"),
+            header("ratelimit-remaining"),
+            header("ratelimit-reset"),
+        )
+    };
+    assert_eq!(limit, 600);
+    assert!((0..600).contains(&remaining));
+    assert!((0..=60).contains(&reset));
 
     // Refresh rotates; reusing a spent refresh token revokes the grant and its access token.
     let refreshed = raw(

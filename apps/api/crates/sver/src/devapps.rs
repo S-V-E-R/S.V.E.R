@@ -694,8 +694,49 @@ pub async fn caller(
         None => None,
     };
     let who = user.as_deref().unwrap_or("-");
-    profiles::rate(app, format!("api:{client}:{who}"), 600, 60).await?;
+    let key = format!("api:{client}:{who}");
+    let reserved = sec::reserve(app, vec![key.clone()], API_LIMIT, 60).await?;
+    // The budget left, for the RateLimit-* headers (`rate_headers`).
+    let used: i32 = sqlx::query_scalar("SELECT count FROM rate_limits WHERE key=$1")
+        .bind(&key)
+        .fetch_optional(&app.db)
+        .await?
+        .unwrap_or(1);
+    let reset = reserved.first().map_or(60, |(_, at)| {
+        (*at - chrono::Utc::now()).num_seconds().max(0)
+    });
+    let _ = BUDGET.try_with(|b| b.set(Some((API_LIMIT, (API_LIMIT - used).max(0), reset))));
     Ok((client, user))
+}
+
+/// Calls a minute per app and person.
+const API_LIMIT: i32 = 600;
+tokio::task_local! {
+    /// The calling app's budget for this request: (limit, remaining, seconds until reset).
+    static BUDGET: std::cell::Cell<Option<(i32, i32, i64)>>;
+}
+/// Adds `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` to responses for calls an
+/// app made with its client ID (docs/DEVELOPER_PLATFORM.md §1).
+pub async fn rate_headers(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    BUDGET
+        .scope(std::cell::Cell::new(None), async move {
+            let mut response = next.run(request).await;
+            if let Some((limit, remaining, reset)) = BUDGET.with(|b| b.get()) {
+                let headers = response.headers_mut();
+                for (name, value) in [
+                    ("ratelimit-limit", limit as i64),
+                    ("ratelimit-remaining", remaining as i64),
+                    ("ratelimit-reset", reset),
+                ] {
+                    headers.insert(name, value.into());
+                }
+            }
+            response
+        })
+        .await
 }
 /// A person who can act through an app: not deleted, held or banned.
 pub async fn person(app: &App, id: &str) -> Res<Option<auth::User>> {

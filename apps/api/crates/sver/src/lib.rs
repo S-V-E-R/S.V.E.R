@@ -503,6 +503,7 @@ pub fn router(app: App) -> Router {
         .merge(gateway::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
+        .layer(middleware::from_fn(devapps::rate_headers))
         .with_state(app)
 }
 /// Module 2 routes (docs/PROFILES.md, "API"). Upload routes carry their own 11 MB body limit and
