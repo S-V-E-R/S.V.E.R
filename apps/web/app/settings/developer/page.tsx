@@ -1,8 +1,10 @@
 "use client";
 import { FormEvent, useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
+import { Avatar } from "../../../components/Avatar";
+import type { Sizes } from "../../../lib/types";
 
-type DevApp = { client_id: string; name: string; redirect_uris: string[]; confidential: boolean; suspended: boolean; users: number };
+type DevApp = { client_id: string; name: string; icon: Sizes; redirect_uris: string[]; confidential: boolean; suspended: boolean; users: number };
 type Apps = { apps: DevApp[]; max: number; created?: { client_id: string; client_secret: string | null } };
 
 /** Settings → Developer: register apps that use S.V.E.R sign-in (docs/DEVELOPER_PLATFORM.md §1). */
@@ -38,6 +40,8 @@ export default function Developer() {
     {secret && <div className="panel" role="alert"><p><strong>Client secret for {secret.client_id}</strong>, shown once. Store it on your server; never put it in a browser or desktop app.</p><code className="secret">{secret.client_secret}</code> <button type="button" className="small quiet" onClick={() => setSecret(null)}>I&apos;ve saved it</button></div>}
     {data === null ? <p className="loading">Loading…</p> : <>
       {data.apps.length > 0 && <ul className="list">{data.apps.map(a => <li key={a.client_id} className="stack">
+        <Avatar sizes={a.icon} name={a.name} size={40} />
+        <label className="small">Icon (square, at least 128 px) <input type="file" accept="image/png,image/jpeg,image/webp" onChange={async e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (!f) return; const form = new FormData(); form.append("file", f); const r = await send<Apps>("POST", `/api/me/apps/${encodeURIComponent(a.client_id)}/icon`, form); if (r.ok) { setData(r.data); setMessage(`${a.name}’s icon saved.`); } else setMessage(r.error); }} /></label>
         <span><strong>{a.name}</strong> {a.suspended && <span className="badge">Suspended by staff</span>} <span className="muted small">{a.users} connected</span></span>
         <span className="small">Client ID <code>{a.client_id}</code> · {a.confidential ? "server app (has a secret)" : "public app (PKCE only)"}</span>
         <span className="muted small">Redirects: {a.redirect_uris.join(", ")}</span>

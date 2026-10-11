@@ -77,6 +77,21 @@ pub async fn exercise(e: &Env) {
         .await
         .unwrap();
     assert_ne!(stored, secret, "only a digest is kept");
+    // An icon goes through the image pipeline and shows wherever the app is named.
+    let image = image::RgbImage::from_fn(128, 128, |x, y| image::Rgb([x as u8, y as u8, 200]));
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let (status, apps) = super::overlays::upload(
+        e,
+        &e.cookie,
+        &format!("/api/me/apps/{client}/icon"),
+        png.into_inner(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{apps}");
+    assert!(apps["apps"][0]["icon"].is_object(), "{apps}");
 
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER.as_bytes()));
     let query = format!(
@@ -89,6 +104,7 @@ pub async fn exercise(e: &Env) {
         (&consent["app"]["name"], &consent["scopes"][0]["scope"]),
         (&json!("Overlay Kit"), &json!("user:read"))
     );
+    assert!(consent["app"]["icon"].is_object(), "{consent}");
     let (status, _) = e
         .request(
             "GET",
