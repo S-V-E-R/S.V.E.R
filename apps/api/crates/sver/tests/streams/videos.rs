@@ -1244,6 +1244,34 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
         .0,
         StatusCode::NOT_FOUND
     );
+    // Once copying stops (newest segment over a minute old), a live clip or spotlight would
+    // replay old video, so both refuse until segments arrive again.
+    sqlx::query(
+        "UPDATE video_segments SET wall_start=wall_start-interval '10 minutes' WHERE video_id=$1",
+    )
+    .bind(video)
+    .execute(&e.app.db)
+    .await
+    .unwrap();
+    let stale=e.request("POST",&format!("/api/videos/{video}/cuts"),json!({"kind":"CLIP","title":"Stale moment","start_ms":122000,"end_ms":128000,"request_id":uuid::Uuid::new_v4().to_string()}),true,true,false).await;
+    assert_eq!(stale.0, StatusCode::SERVICE_UNAVAILABLE);
+    let mut tx = e.app.db.begin().await.unwrap();
+    sver::videos::spotlight(&mut tx, "stream-owner", "stalled-spotlight")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let spotlights: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM videos WHERE request_key='magnet:stalled-spotlight'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(spotlights, 0);
+    sqlx::query("UPDATE video_segments SET wall_start=now() WHERE video_id=$1")
+        .bind(video)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
     let cut=e.call("POST",&format!("/api/videos/{video}/cuts"),json!({"kind":"CLIP","title":"Recording-off moment","start_ms":122000,"end_ms":128000,"request_id":uuid::Uuid::new_v4().to_string()})).await;
     // A storage outage can leave an old segment queued after it leaves the window.
     // Keep its ownership until the queued upload completes, then collect it.
