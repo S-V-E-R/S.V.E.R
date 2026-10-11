@@ -88,6 +88,8 @@ mod resets;
 mod rest;
 #[path = "streams/restream.rs"]
 mod restream;
+#[path = "streams/skirmish.rs"]
+mod skirmish;
 #[path = "streams/staff_streams.rs"]
 mod staff_streams;
 #[path = "streams/staff_window.rs"]
@@ -570,6 +572,7 @@ async fn exercise(e: &Env) {
     lights::exercise(e).await;
     username_claims::exercise(e).await;
     ads::exercise(e).await;
+    skirmish::exercise(e).await;
     // Live events: each flow above wrote its topic (docs/DEVELOPER_PLATFORM.md section 2).
     for kind in ["moderation", "raid:incoming"] {
         let written: bool = sqlx::query_scalar(

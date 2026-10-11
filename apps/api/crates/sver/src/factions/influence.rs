@@ -107,6 +107,10 @@ async fn award(
     if target {
         points = points * 11 / 10;
     }
+    // Skirmish Hour doubles influence before the caps, so the caps still bind.
+    if super::skirmish::active(db, at).await? {
+        points *= super::skirmish::MULTIPLIER;
+    }
     let day = at.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
     let hour = DateTime::from_timestamp(at.timestamp().div_euclid(3600) * 3600, 0).unwrap();
     let (daily,hourly):(i64,i64)=sqlx::query_as("SELECT coalesce(sum(points),0)::bigint,coalesce(sum(points) FILTER(WHERE happened_at >= $4),0)::bigint FROM faction_influence WHERE user_id=$1 AND source=$2 AND happened_at >= $3 AND happened_at<$3+interval '1 day'")

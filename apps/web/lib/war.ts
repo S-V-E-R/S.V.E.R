@@ -3,6 +3,8 @@ export type Genre = { id: string; name: string; home: Faction | null; holder: Fa
 export type War = {
   season: { number: number; starts_at: string; ends_at: string; next_starts_at: string; finished: boolean; winners: Faction[] } | null;
   week: { id: number; ends_at: string; completed: boolean } | null;
+  /** Skirmish Hour (docs/FACTIONS.md): influence counts double, under the usual caps. */
+  skirmish?: { multiplier: number; active: { starts_at: string; ends_at: string } | null; next: { starts_at: string; ends_at: string } | null };
   genres: Genre[];
   scoreboard: { faction: Faction; territories: number; genre_weeks: number }[];
   previous_winners: Faction[];

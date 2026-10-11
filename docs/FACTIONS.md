@@ -83,9 +83,17 @@ Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page; the
 - **Chat:** faction crests next to names; bots greet cross-faction raiders ([COMMUNITY.md](COMMUNITY.md)).
 - **Raids** into ally or enemy channels earn influence under the normal rules and caps (weights in tuning).
 
+## Skirmish Hour
+
+The first faction event (Phase 4), built October 10, 2026 by Joe's decision (`factions/skirmish.rs`, migration 0092).
+
+- Staff schedule a Skirmish Hour in `/admin/factions`: on the hour (UTC), at least an hour and at most 60 days ahead, never overlapping another. They can cancel one before it starts. Both are step-up and audited.
+- The war map and every faction hub announce the next one and show when one is running.
+- During the hour every influence source counts **double**. The doubling happens before the per-person daily and hourly caps, so the caps still bind: bots and grinders gain nothing beyond the usual limits, and anti-farming rules are unchanged.
+
 ## Not in this module
 
-Faction events (Skirmish Hour and similar), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (dropped), faction chat rooms (the faction board covers it).
+Other faction events (Territory Spotlight, Raid Night and similar; Skirmish Hour is built above), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (dropped), faction chat rooms (the faction board covers it).
 
 ## Legacy notes
 
