@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import type { Chip } from "../lib/types";
@@ -32,6 +33,7 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
   const [ageAck, setAgeAck] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const router = useRouter();
   const [cut, setCut] = useState<"CLIP" | "HIGHLIGHT" | null>(null);
   const [time, setTime] = useState(0);
   const [download, setDownload] = useState("");
@@ -63,9 +65,12 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
       {data.can_download && v.kind !== "CLIP" && <button className="quiet" onClick={() => void requestDownload()}>Prepare download</button>}
       {download && <a className="button" href={download}>Download MP4</a>}
       {data.signed_in && !data.is_owner ? <ReportButton target={target} /> : <TakeDownLink target={target} />}
-      {data.can_delete && <button className="quiet" onClick={() => setDeleting(true)}>Delete</button>}
+      {/* Confirmed right where Delete was clicked: a panel further down the page went unseen. */}
+      {data.can_delete && (deleting
+        ? <span className="row" role="group" aria-label={`Delete this ${v.kind === "CLIP" ? "clip" : "recording"} and its files? This cannot be undone.`}><button className="danger" autoFocus onClick={async () => { const result = await send("DELETE", `/api/videos/${id}`); if (result.ok) router.push(`/${data.channel.username}`); else { setMessage(result.error); setDeleting(false); } }}>Delete permanently</button><button className="quiet" onClick={() => setDeleting(false)}>Cancel</button></span>
+        : <button className="quiet" onClick={() => setDeleting(true)}>Delete</button>)}
     </div>
-    {deleting && <div className="panel video-manage"><p>Delete this {v.kind === "CLIP" ? "clip" : "recording"} and its files? This cannot be undone.</p><button onClick={async () => { if (await action("DELETE", `/api/videos/${id}`)) setDeleting(false); }}>Delete permanently</button> <button className="quiet" onClick={() => setDeleting(false)}>Cancel</button></div>}
+    {message && <p role="status">{message}</p>}
     {cut && <VideoCut key={`${id}-${cut}`} video={v} highlight={cut === "HIGHLIGHT"} ageAck={ageAck} />}
     {data.can_manage && v.kind === "CLIP" && v.approval === "PENDING" && <form className="panel video-manage" onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); await action("POST", `/api/videos/${id}/approval`, { approve: f.get("decision") === "approve", reason: f.get("reason") }); }}><h2>Review clip</h2><label className="field"><span>Decision</span><select name="decision"><option value="approve">Approve</option><option value="reject">Reject and delete</option></select></label><label className="field"><span>Reason</span><input name="reason" required maxLength={500} /></label><button>Save decision</button></form>}
     {data.is_owner && <details className="panel video-manage"><summary>Manage recording</summary>
@@ -73,6 +78,5 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
       {v.kind !== "CLIP" && <p><button className="quiet" onClick={() => void action("POST", `/api/videos/${id}/thumbnail`, { offset_ms: time })}>Use frame at {duration(time)} as thumbnail</button></p>}
       {data.chapters.length > 0 && <><h2>Chapters</h2>{data.chapters.map(c => <form className="row" key={c.id} onSubmit={async e => { e.preventDefault(); await action("PUT", `/api/videos/${id}/chapters`, { id: c.id, label: new FormData(e.currentTarget).get("label") }); }}><span>{duration(c.offset_ms)}</span><label className="field"><span className="sr-only">Chapter label</span><input key={c.label} name="label" required defaultValue={c.label} maxLength={100} /></label><button className="small">Rename</button><button className="small quiet" type="button" onClick={() => void action("PUT", `/api/videos/${id}/chapters`, { id: c.id, merge_next: true })}>Merge next</button><button className="small quiet" type="button" onClick={() => void action("PUT", `/api/videos/${id}/chapters`, { id: c.id })}>Remove</button></form>)}</>}
     </details>}
-    {message && <p role="status">{message}</p>}
   </section>{data.chat_replay && <Replay id={id} at={time} ageAck={ageAck} />}</div>;
 }
