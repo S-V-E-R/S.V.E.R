@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { useEffect, useState, useSyncExternalStore, type RefObject } from "react";
 import { send } from "../lib/client-api";
 
 export type CaptionStyle = { size: "s" | "m" | "l"; x: number; y: number };
@@ -38,7 +38,9 @@ export function CaptionOverlay({ video, on, channel, isOwner }: { video: RefObje
   const [lines, setLines] = useState<string[]>([]);
   const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [note, setNote] = useState("");
-  const dragging = useRef(false);
+  // While held, the box stays even if its line ends, so the release never lands on the video (a
+  // click there pauses it).
+  const [held, setHeld] = useState(false);
 
   // Keep the caption track decoding; draw it ourselves, or let the browser draw it in fullscreen.
   useEffect(() => {
@@ -90,16 +92,17 @@ export function CaptionOverlay({ video, on, channel, isOwner }: { video: RefObje
   }
 
   return <div className="caption-layer" style={box}>
-    {lines.length > 0 && <div
+    {(lines.length > 0 || held) && <div
       className={`caption-box caption-${style.size}`}
       style={{ left: `${style.x * 100}%`, top: `${style.y * 100}%` }}
       tabIndex={0}
       role="group"
       aria-label="Captions. Drag them, or use the arrow keys, to move them."
-      onPointerDown={event => { dragging.current = true; event.currentTarget.setPointerCapture(event.pointerId); }}
-      onPointerMove={event => { if (dragging.current) fromPointer(event); }}
-      onPointerUp={() => { dragging.current = false; }}
-      onPointerCancel={() => { dragging.current = false; }}
+      onPointerDown={event => { setHeld(true); event.currentTarget.setPointerCapture(event.pointerId); }}
+      onPointerMove={event => { if (held) fromPointer(event); }}
+      onPointerUp={() => setHeld(false)}
+      onPointerCancel={() => setHeld(false)}
+      onClick={event => event.stopPropagation()}
       onKeyDown={event => { const k = keys[event.key]; if (k) { event.preventDefault(); move(style.x + k[0], style.y + k[1]); } }}
     >
       <p aria-live="off">{lines.map((line, i) => <span key={i}>{line}</span>)}</p>
