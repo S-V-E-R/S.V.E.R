@@ -105,6 +105,24 @@ pub async fn exercise(e: &Env) {
     let (_, live) = call(e, "GET", "/api/channels/streamer/live", None, Value::Null).await;
     assert_eq!(live["viewers"], 2);
 
+    // One account on two devices shares a lease; their different timelines are not a race ahead.
+    for (browser, at) in [
+        ("pc", 10.0),
+        ("phone", 600.0),
+        ("pc", 20.0),
+        ("phone", 610.0),
+    ] {
+        e.sql("UPDATE playback_leases SET last_beat_at=now()-interval '10 seconds' WHERE viewer_key='u:int-member'").await;
+        call(e, "POST", BEAT, Some(&member), json!({"broadcast_id":"int-b","browser_id":format!("browser-integrity-{browser}"),"visible":true,"media_time":at})).await;
+    }
+    let strikes: i32 = sqlx::query_scalar(
+        "SELECT ahead_strikes FROM playback_leases WHERE viewer_key='u:int-member'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(strikes, 0, "two devices are not fabricated media time");
+
     // Hard evidence: media time racing ahead of the clock excludes the session for good.
     guest_beat(
         e,
