@@ -626,6 +626,7 @@ async fn restrict(
 }
 #[derive(Deserialize)]
 struct Reason {
+    #[serde(default)]
     reason: String,
 }
 async fn lift(

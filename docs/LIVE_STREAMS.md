@@ -168,10 +168,10 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 
 - Migration `0008`: `channel_moderators`, `channel_restrictions` (timeout with an end, ban until lifted; a new timeout replaces the old end and never clears a ban), `chat_settings` (slow mode off or 3–120 s, link blocking, up to 200 banned phrases of 1–64 characters) and `channel_moderation_log`.
 - `moderation.rs` implements the approved matrix. Roles are rechecked on every request: owner; appointed moderators who are still verified and eligible; staff with the admin role and MFA. Appointing needs the owner with a sign-in in the last five minutes; removal is the owner (same step-up) or staff. Nobody restricts the owner, themselves, a current moderator or staff (the owner removes a moderator first). Moderators cannot delete the owner's, other moderators' or staff messages.
-- Actions require a 1–500 character reason and commit with their audit row. Deletes are idempotent tombstones broadcast as `{"type":"delete"}` and logged once. Timeouts are 60 s to 14 days and return a retry time on send.
+- Timeouts and bans require a 1–500 character reason; deleting a message needs none (Joe, October 12, 2026; logged as "Message deleted" unless one is given). Actions commit with their audit row. Deletes are idempotent tombstones broadcast as `{"type":"delete"}` and logged once. Timeouts are 60 s to 14 days and return a retry time on send.
 - Sending applies, in order: ban/timeout, banned phrases (case-folded, whitespace-normalized literal match, no exemption), links (plain-text URL/domain detection; owner, moderators and staff exempt), slow mode (same exemptions, with retry time).
 - Decision 1: a channel ban also refuses signed-in playback (`banned: true`, no URLs, heartbeats not counted). Logged-out viewing is unaffected.
-- Web: moderator Delete/Timeout/Ban actions in the chat panel (confirmation and reason prompts), Studio → Chat for rules, moderators, active restrictions and the log, and the player's banned and no-playback states.
+- Web: moderator Delete/Timeout/Ban actions in the chat panel, plus inline quick tools (one-click delete, one-click 10-minute timeout, ban after one confirm, stock reasons) and the owner's /mod, /unmod and Mod button, Studio → Chat for rules, moderators, active restrictions and the log, and the player's banned and no-playback states.
 - Covered by `tests/streams/moderation.rs` and a unit test for link and phrase matching.
 
 ## Chat core (phase 4a) — October 3
@@ -254,7 +254,7 @@ A moderator cannot sanction the owner, themselves, another appointed moderator o
 
 - Timeout duration is an integer 60–1,209,600 seconds. A new timeout replaces the old end time and does not clear a ban. Expiry is checked against database time without waiting for a cleanup timer.
 - Bans last until lifted. **Decided:** channel bans prevent chat and signed-in playback; this requires playback-access enforcement and still cannot prevent logged-out public viewing.
-- Actions require a reason of 1–500 characters. Writes and audit records commit together; broadcasts happen after commit. Retrying the same action is idempotent. Delete replaces visible content with a tombstone and does not send the deleted body to new joins.
+- Timeouts and bans require a reason of 1–500 characters; deletes don't. Writes and audit records commit together; broadcasts happen after commit. Retrying the same action is idempotent. Delete replaces visible content with a tombstone and does not send the deleted body to new joins.
 - Slow mode exempts the owner, channel moderators and acting platform staff. The general abuse/send cap still applies. Display an accurate retry countdown.
 - Link blocking examines normalized plain text for URLs/domains, including mixed case and common `www.`/scheme-less forms. Do not treat it as a complete obfuscation detector. Never fetch a link. Owners/moderators are exempt as required by the plan.
 - **Proposed banned words:** up to 200 entries of 1–64 characters; Unicode case-folded literal phrase matching with whitespace normalization, no user regex. Reject matching sends before fanout and return a generic rules error. No role exemption for banned words unless the owner changes the list.

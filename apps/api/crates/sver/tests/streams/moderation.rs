@@ -149,28 +149,17 @@ pub async fn exercise(e: &Env) {
     let message = posted["message"]["id"].as_str().unwrap().to_string();
     let path = format!("{BASE}/chat/messages/{message}");
     assert_eq!(
-        call(e, "DELETE", &path, Some(&moderator), json!({"reason":" "}))
-            .await
-            .0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
         call(e, "DELETE", &path, Some(&outsider), json!({"reason":"no"}))
             .await
             .0,
         StatusCode::FORBIDDEN
     );
     assert_eq!(
-        call(
-            e,
-            "DELETE",
-            &path,
-            Some(&moderator),
-            json!({"reason":"spam"})
-        )
-        .await
-        .0,
-        StatusCode::OK
+        call(e, "DELETE", &path, Some(&moderator), json!({}))
+            .await
+            .0,
+        StatusCode::OK,
+        "deleting needs no reason"
     );
     assert_eq!(
         call(

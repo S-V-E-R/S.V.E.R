@@ -103,6 +103,13 @@ pub(crate) fn reason(text: &str) -> Res<String> {
     }
     Ok(text.to_string())
 }
+/// Deleting a message needs no reason (Joe, October 12); one given is still checked and logged.
+pub(crate) fn delete_reason(text: &str) -> Res<String> {
+    if text.trim().is_empty() {
+        return Ok("Message deleted".into());
+    }
+    reason(text)
+}
 /// When spike protection's followers-only chat ends, if it's on now.
 pub async fn followers_only(app: &App, channel: &str) -> Res<Option<DateTime<Utc>>> {
     Ok(sqlx::query_scalar("SELECT followers_only_until FROM chat_settings WHERE channel_id=$1 AND followers_only_until>now()")
@@ -462,6 +469,7 @@ pub async fn view(
 
 #[derive(Deserialize)]
 pub struct Reason {
+    #[serde(default)]
     reason: String,
 }
 pub async fn delete_message(
@@ -472,7 +480,7 @@ pub async fn delete_message(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     let (user, role) = actor(&app, &jar, &channel).await?;
-    let reason = reason(&input.reason)?;
+    let reason = delete_reason(&input.reason)?;
     let author: String = sqlx::query_scalar(
         "SELECT author_id FROM chat_messages WHERE id=$1 AND channel_id=$2 AND squad_id IS NULL",
     )

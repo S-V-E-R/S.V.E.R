@@ -856,7 +856,7 @@ pub async fn remove_shared(
     members: &[String],
     reason: &str,
 ) -> Res<()> {
-    let reason = moderation::reason(reason)?;
+    let reason = moderation::delete_reason(reason)?;
     let author: String =
         sqlx::query_scalar("SELECT author_id FROM chat_messages WHERE id=$1 AND squad_id=$2")
             .bind(id)

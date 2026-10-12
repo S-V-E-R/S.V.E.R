@@ -205,15 +205,22 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
       seconds = minutes * 60;
     }
     if (action === "ban" && !window.confirm(`Ban @${who} from this chat? They also can't watch here while signed in.`)) return;
-    const reason = quick ? { delete: "Quick delete", timeout: "Quick timeout (10 min)", ban: "Quick ban" }[action] : window.prompt("Reason (required)")?.trim();
-    if (!reason) return;
+    // Deleting needs no reason; timeouts and bans do (quick tools fill in a stock one).
+    const reason = action === "delete" ? "" : quick ? { timeout: "Quick timeout (10 min)", ban: "Quick ban" }[action] : window.prompt("Reason (required)")?.trim();
+    if (action !== "delete" && !reason) return;
     const result = action === "delete"
-      ? await send("DELETE", `${path}/messages/${m.id}`, { reason })
+      ? await send("DELETE", `${path}/messages/${m.id}`, {})
       : await send("POST", `${path}/restrictions`, { username: who, kind: action, seconds, reason });
     if (!result.ok) setError(result.error);
     else if (action === "delete") remove(m.id);
     else if (squad) await loadRole();
   }
+
+  // Mirrors the server: anyone with a role deletes their own lines; moderators can't touch the
+  // owner's, other moderators' or staff's; nobody times out or bans someone with a chat role.
+  const own = (m: Message) => !!account && m.author.username === account;
+  const canDelete = (m: Message) => !!role && !!m.author.username && (own(m) || role !== "moderator" || !m.role);
+  const canSanction = (m: Message) => !!role && !!m.author.username && !own(m) && !m.role;
 
   /** Owner only: appoint or remove a channel moderator (the same endpoints as Studio → Chat). */
   async function setModerator(name: string, on: boolean) {
@@ -359,10 +366,12 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
       </li> : <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
         {m.skill && <span className="badge skill-badge">✨ {m.skill}</span>}
-        {role && m.author.username && m.author.username !== account && <span className="chat-quick-mod">
+        {canDelete(m) && <span className="chat-quick-mod">
           <button type="button" className="chat-quick" onClick={() => moderate("delete", m, true)} aria-label={`Delete message from ${m.author.display_name}`} title="Delete">🗑</button>
-          <button type="button" className="chat-quick" onClick={() => moderate("timeout", m, true)} aria-label={`Time out ${m.author.display_name} for 10 minutes`} title="Timeout 10 min">⏱</button>
-          <button type="button" className="chat-quick" onClick={() => moderate("ban", m, true)} aria-label={`Ban ${m.author.display_name}`} title="Ban">⛔</button>
+          {canSanction(m) && <>
+            <button type="button" className="chat-quick" onClick={() => moderate("timeout", m, true)} aria-label={`Time out ${m.author.display_name} for 10 minutes`} title="Timeout 10 min">⏱</button>
+            <button type="button" className="chat-quick" onClick={() => moderate("ban", m, true)} aria-label={`Ban ${m.author.display_name}`} title="Ban">⛔</button>
+          </>}
         </span>}
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
@@ -377,10 +386,10 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
         {canPin && <button type="button" className="small quiet" aria-label={`Pin message from ${m.author.display_name}`} onClick={() => changePin(m.id)}>Pin</button>}
         {account && m.author.username && m.author.username !== account && <ReportButton target={{ target_type: "chat_message", target_id: m.id }} />}
         {(!account || !m.author.username || m.author.username === account) && <TakeDownLink target={{ target_type: "chat_message", target_id: m.id }} />}
-        {role && m.author.username && m.author.username !== account && <span className="chat-actions">
+        {canDelete(m) && <span className="chat-actions">
           <button type="button" className="small quiet" onClick={() => moderate("delete", m)} aria-label={`Delete message from ${m.author.display_name}`}>Delete</button>
-          <button type="button" className="small quiet" onClick={() => moderate("timeout", m)} aria-label={`Time out ${m.author.display_name}`}>Timeout</button>
-          <button type="button" className="small quiet" onClick={() => moderate("ban", m)} aria-label={`Ban ${m.author.display_name}`}>Ban</button>
+          {canSanction(m) && <button type="button" className="small quiet" onClick={() => moderate("timeout", m)} aria-label={`Time out ${m.author.display_name}`}>Timeout</button>}
+          {canSanction(m) && <button type="button" className="small quiet" onClick={() => moderate("ban", m)} aria-label={`Ban ${m.author.display_name}`}>Ban</button>}
           {role === "owner" && !squad && m.role !== "owner" && m.role !== "staff" && <button type="button" className="small quiet" onClick={() => setModerator(m.author.username!, m.role !== "moderator")}>{m.role === "moderator" ? "Unmod" : "Mod"}</button>}
         </span>}
         </div></details>
