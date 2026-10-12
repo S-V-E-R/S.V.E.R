@@ -205,6 +205,77 @@ pub async fn exercise(e: &Env) {
     webhook(e, "notification", chat("m7", "tw-v", "anyone?"), true).await;
     assert_eq!(outside(e).await.len(), 1);
 
+    // Outside messages can be reported to staff, who can hide them but never strike the sender:
+    // they have no S.V.E.R account.
+    let viewer = super::chat::person(e, "lc-reporter", "LcReporter", true).await;
+    let admin = super::bans::staff(e, "lc-staff", "LcStaff").await;
+    let report = |id: &'static str| {
+        let viewer = viewer.clone();
+        async move {
+            super::chat::call(e, "POST", "/api/reports", Some(&viewer), json!({"target_type":"outside_message","target_id":id,"reason":"harassment","note":"synthetic"})).await
+        }
+    };
+    assert_eq!(report("twitch:m6").await.0, StatusCode::OK);
+    assert_eq!(
+        report("twitch:m1").await.0,
+        StatusCode::NOT_FOUND,
+        "hidden messages can't be reported"
+    );
+    let (_, queue) = super::chat::call(
+        e,
+        "GET",
+        "/api/admin/reports?type=outside_message",
+        Some(&admin),
+        Value::Null,
+    )
+    .await;
+    let group = &queue["groups"][0];
+    assert_eq!(
+        (&group["target_id"], &group["username"]),
+        (&json!("twitch:m6"), &json!("twitch/tw-y_login")),
+        "{queue}"
+    );
+    assert_eq!(group["reports"][0]["snapshot"]["value"]["body"], "back");
+    let act = |body: Value| {
+        let admin = admin.clone();
+        async move {
+            super::chat::call(
+                e,
+                "POST",
+                "/api/admin/reports/outside_message/twitch:m6/actions",
+                Some(&admin),
+                body,
+            )
+            .await
+        }
+    };
+    let strike = json!({"reason":"harassment","severity":"STANDARD","message_to_user":""});
+    assert_eq!(
+        act(json!({"action":"remove_content","note":"n","strike":strike}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        act(json!({"action":"restrict","note":"n","interim_hours":2}))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, closed) = act(json!({"action":"remove_content","note":"reviewed"})).await;
+    assert_eq!(
+        (status, &closed["closed_reports"]),
+        (StatusCode::OK, &json!(1))
+    );
+    assert!(outside(e).await.is_empty(), "staff removal hides it here");
+    let (_, mine) =
+        super::chat::call(e, "GET", "/api/me/reports", Some(&viewer), Value::Null).await;
+    assert_eq!(
+        mine["reports"][0]["username"], "twitch/tw-y_login",
+        "{mine}"
+    );
+    assert_eq!(mine["reports"][0]["status"], "action_taken");
+
     // After a stream, Studio compares S.V.E.R chat with each linked platform's chat; the
     // streamer's own messages and the bot's lines don't count.
     e.sql("DELETE FROM outside_chat_messages").await;

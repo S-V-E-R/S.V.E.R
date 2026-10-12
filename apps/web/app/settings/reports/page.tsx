@@ -6,7 +6,7 @@ import { reasons } from "../../../lib/types";
 
 type Row = { id: string; target_type: string; username: string | null; reason: string; note: string; created_at: string; status: "under_review" | "action_taken" | "closed"; notice: string | null; unread: boolean };
 type Page = { reports: Row[]; next_cursor: string | null; email_updates: boolean; email_available: boolean };
-const kinds: Record<string, string> = { profile: "Channel", wall_post: "Wall post", wall_reply: "Wall reply", fan_art: "Fan art", setup_photo: "Setup photo", chat_message: "Chat message", live_stream: "Live stream" };
+const kinds: Record<string, string> = { profile: "Channel", wall_post: "Wall post", wall_reply: "Wall reply", fan_art: "Fan art", setup_photo: "Setup photo", chat_message: "Chat message", outside_message: "Linked chat message", live_stream: "Live stream" };
 const statuses = { under_review: "Under review", action_taken: "Action taken", closed: "Closed" };
 
 export default function Reports() {
@@ -33,7 +33,7 @@ export default function Reports() {
       {page?.email_available && <label className="checkbox"><input type="checkbox" checked={page.email_updates} onChange={e => toggle(e.target.checked)} /> Email me when action is taken on my reports</label>}
       {!page ? <p className="loading">Loading…</p> : rows.length === 0 ? <p className="muted">You haven&apos;t reported anything.</p> :
         <ul className="list">{rows.map(r => <li key={r.id} className="report-row">
-          <div className="row between"><strong>{kinds[r.target_type] || r.target_type} · {r.username ? `@${r.username}` : "Deleted user"}</strong><span className="badge">{r.unread && <span className="dot" aria-label="New" />} {statuses[r.status]}</span></div>
+          <div className="row between"><strong>{kinds[r.target_type] || r.target_type} · {r.username ? (r.target_type === "outside_message" ? r.username : `@${r.username}`) : "Deleted user"}</strong><span className="badge">{r.unread && <span className="dot" aria-label="New" />} {statuses[r.status]}</span></div>
           <p className="muted">{reason(r.reason)} · {new Date(r.created_at).toLocaleDateString(undefined, { dateStyle: "medium" })}</p>
           {r.note && <p>{r.note}</p>}
           {r.notice && <p className="notice">{r.notice}</p>}

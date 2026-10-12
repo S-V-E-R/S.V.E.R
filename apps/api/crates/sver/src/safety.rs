@@ -67,6 +67,7 @@ const TARGETS: &[&str] = &[
     "fan_art",
     "setup_photo",
     "chat_message",
+    "outside_message",
     "live_stream",
     "dm_message",
 ];
@@ -221,6 +222,7 @@ async fn target(
         "setup_photo" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('image',p.image_key||'/400.webp','alt',p.alt) FROM setup_photos p JOIN channel_users c ON c.id=p.user_id WHERE p.id=$1 AND p.status='VISIBLE' AND c.eligible").bind(id).fetch_optional(&mut *db).await?,
         // The snapshot keeps the body, so a chat report outlives the seven-day message expiry.
         "chat_message" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',m.body,'channel',coalesce(o.username,'MAGNet Hype'),'hype_lane',m.origin,'sent_at',m.created_at) FROM chat_messages m JOIN channel_users c ON c.id=m.author_id LEFT JOIN channel_users o ON o.id=m.channel_id WHERE m.id=$1 AND m.deleted_at IS NULL AND (m.channel_id IS NULL OR o.eligible) AND c.deleted_at IS NULL").bind(id).fetch_optional(&mut *db).await?,
+        "outside_message" => crate::linked_chat::report_target(db, id).await?,
         // Only a stream that is public now; no video is recorded as evidence.
         "live_stream" => sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('title',coalesce(s.title,c.username||'''s stream'),'category',k.name,'broadcast_id',b.id,'started_at',b.started_at,'reported_at',now()) FROM broadcasts b JOIN channel_users c ON c.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories k ON k.id=s.category_id WHERE b.id=$1 AND b.state IN ('LIVE','RECONNECTING') AND c.eligible").bind(id).fetch_optional(&mut *db).await?,
         _ => return Err(Fail::field("target_type", "Choose what you're reporting.")),
@@ -339,7 +341,7 @@ pub async fn my_reports(
     let user = profiles::signed_in(&app, &jar).await?;
     let cursor = parse_cursor(&q.cursor)?;
     let mut db = app.db.acquire().await?;
-    let rows: Vec<(String, DateTime<Utc>, Value)> = sqlx::query_as("SELECT r.id,r.created_at,jsonb_build_object('id',r.id,'target_type',r.target_type,'username',CASE WHEN u.id IS NULL OR u.deleted_at IS NOT NULL THEN NULL ELSE u.username END,'reason',r.reason,'note',r.note,'created_at',r.created_at,'status',CASE WHEN r.status='OPEN' THEN 'under_review' WHEN r.reporter_notice='ACTION_TAKEN' THEN 'action_taken' ELSE 'closed' END,'notice',CASE WHEN r.reporter_notice='ACTION_TAKEN' THEN 'We reviewed your report and took action. Thanks for helping keep S.V.E.R safe.' END,'unread',r.reporter_notice='ACTION_TAKEN' AND r.reporter_seen_at IS NULL) FROM reports r LEFT JOIN users u ON u.id=r.target_user_id WHERE r.reporter_id=$1 AND r.created_at>now()-interval '180 days' AND ($2::timestamptz IS NULL OR (r.created_at,r.id)<($2,$3)) ORDER BY r.created_at DESC,r.id DESC LIMIT 21")
+    let rows: Vec<(String, DateTime<Utc>, Value)> = sqlx::query_as("SELECT r.id,r.created_at,jsonb_build_object('id',r.id,'target_type',r.target_type,'username',CASE WHEN r.target_type='outside_message' THEN r.target_username WHEN u.id IS NULL OR u.deleted_at IS NOT NULL THEN NULL ELSE u.username END,'reason',r.reason,'note',r.note,'created_at',r.created_at,'status',CASE WHEN r.status='OPEN' THEN 'under_review' WHEN r.reporter_notice='ACTION_TAKEN' THEN 'action_taken' ELSE 'closed' END,'notice',CASE WHEN r.reporter_notice='ACTION_TAKEN' THEN 'We reviewed your report and took action. Thanks for helping keep S.V.E.R safe.' END,'unread',r.reporter_notice='ACTION_TAKEN' AND r.reporter_seen_at IS NULL) FROM reports r LEFT JOIN users u ON u.id=r.target_user_id WHERE r.reporter_id=$1 AND r.created_at>now()-interval '180 days' AND ($2::timestamptz IS NULL OR (r.created_at,r.id)<($2,$3)) ORDER BY r.created_at DESC,r.id DESC LIMIT 21")
         .bind(&user.id)
         .bind(cursor.as_ref().map(|c| c.0))
         .bind(cursor.as_ref().map(|c| c.1.clone()).unwrap_or_default())
@@ -922,6 +924,9 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
     if kind == "emote" {
         return crate::emotes::remove(db, id).await;
     }
+    if kind == "outside_message" {
+        return crate::linked_chat::report_remove(db, id).await;
+    }
     if kind == "dm_message" {
         let visible = crate::dms::remove(db, id).await?;
         let previous = if visible { "VISIBLE" } else { "REMOVED" };
@@ -1009,6 +1014,7 @@ async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
         "guild" | "guild_emblem" => crate::guilds::owner(db, id).await?,
         "faction_post" => crate::factions::owner(db, id).await?,
         "emote" => crate::emotes::owner(db, id).await?,
+        "outside_message" => crate::linked_chat::report_owner(db, id).await?,
         "dm_message" => {
             sqlx::query_scalar("SELECT sender_id FROM dm_messages WHERE id=$1")
                 .bind(id)
@@ -1084,6 +1090,7 @@ async fn current_content(
         "beacon_comment" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM beacon_comments WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "guild" | "guild_emblem" => crate::guilds::snapshot(db, id).await?,
         "emote" => crate::emotes::current(db, id).await?,
+        "outside_message" => crate::linked_chat::report_current(db, id).await?,
         // Never decrypted here: staff open the sealed excerpt through /api/admin/dm-reports.
         "dm_message" => sqlx::query_scalar("SELECT jsonb_build_object('sealed',true,'deleted',deleted_at IS NOT NULL) FROM dm_messages WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "profile" => match profile_snapshot(db, id, field).await {
@@ -1202,6 +1209,15 @@ pub async fn admin_action(
     if !TARGETS.contains(&kind.as_str()) {
         return Err(Fail::missing());
     }
+    // An outside sender has no S.V.E.R account: staff can only hide the message here.
+    if kind == "outside_message"
+        && (input.strike.is_some()
+            || !matches!(input.action.as_str(), "dismiss" | "remove_content"))
+    {
+        return Err(Fail::bad(
+            "This sender has no S.V.E.R account. Dismiss the report or remove the message.",
+        ));
+    }
     let note = note(input.note.as_deref(), "note", true)?;
     let mut tx = app.db.begin().await?;
     let reports: Vec<(String, Value)> = sqlx::query_as("SELECT id,snapshot FROM reports WHERE target_type=$1 AND target_id=$2 AND status='OPEN' ORDER BY created_at FOR UPDATE").bind(&kind).bind(&id).fetch_all(&mut *tx).await?;
@@ -1287,6 +1303,9 @@ pub async fn admin_action(
     // Open chats drop a message staff removed, as they do for a channel moderator's delete.
     if kind == "emote" {
         app.chat.publish(&owner, None, 0, json!({"type":"emotes"}));
+    }
+    if kind == "outside_message" && input.action == "remove_content" {
+        crate::linked_chat::report_removed(&app, &id).await?;
     }
     if kind == "chat_message" && input.action == "remove_content" {
         let place: Option<(Option<String>, Option<String>)> = sqlx::query_as(

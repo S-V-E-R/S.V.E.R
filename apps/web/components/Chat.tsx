@@ -354,11 +354,12 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         <span className={`badge platform-badge ${m.outside.platform}`} title={`From ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}>{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}<span className="sr-only"> message</span></span>{" "}
         {m.outside.url ? <a href={m.outside.url} target="_blank" rel="noopener noreferrer nofollow" title={`${m.outside.name} on ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}><strong>{m.outside.name}</strong></a> : <strong>{m.outside.name}</strong>}
         {m.outside.role && <span className="badge">{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform} {m.outside.role === "moderator" ? "mod" : m.outside.role === "subscriber" ? "sub" : "broadcaster"}</span>}: {m.body}
-        {canPin && <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.outside.name}`}>Actions</summary><div className="chat-message-controls">
-          {role === "owner" && <button type="button" className="small quiet" onClick={() => { setOutsideReply({ id: m.id, platform: m.outside!.platform, name: m.outside!.name }); setReply(null); input.current?.focus(); }}>Reply on {PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}</button>}
+        {account && <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.outside.name}`}>Actions</summary><div className="chat-message-controls">
+          <ReportButton target={{ target_type: "outside_message", target_id: m.id }} />
+          {canPin && <>{role === "owner" && <button type="button" className="small quiet" onClick={() => { setOutsideReply({ id: m.id, platform: m.outside!.platform, name: m.outside!.name }); setReply(null); input.current?.focus(); }}>Reply on {PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}</button>}
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "hide")}>Hide here</button>
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute")}>Mute here for this stream</button>
-          <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute-forever")}>Mute here permanently</button>
+          <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute-forever")}>Mute here permanently</button></>}
         </div></details>}
       </li> : <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}

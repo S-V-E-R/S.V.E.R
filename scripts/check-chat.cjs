@@ -61,6 +61,8 @@ const { Chat } = compile("apps/web/components/Chat.tsx", {
   // The dock (emote picker, rewards) has its own page check; this keeps its insert hook.
   "./ChatDock": { ChatDock: ({ emotes, onEmote }) => emotes.map(e => React.createElement("button", { key: e.id, type: "button", "aria-label": `Insert ${e.code}`, onClick: () => onEmote(e.code) })) },
   "./Rewards": { Rewards: () => null },
+  "./UserChip": { PlayerCardButton: ({ children, username, data, ...props }) => React.createElement("button", { type: "button", ...props }, children) },
+  "./Loyalty": { LOYALTY: ["Newcomer", "Regular", "Devoted", "Veteran", "Legend"] },
   "../styles/teams.css": {},
   "../lib/types": { CREATOR_TIERS: ["Scout", "Trailblazer", "Pioneer", "Pathfinder"] },
 });
@@ -99,7 +101,7 @@ async function draft(value) {
     assert.equal(document.querySelector('[aria-label="Pinned message"]'), null);
     await click(button("Pin"));
     assert.equal(calls.at(-1).body.message_id, "3");
-    assert.equal(calls.at(-1).body.reason, "Synthetic reason");
+    assert.equal(calls.at(-1).body.reason, "", "Pins need no reason");
     await click(button("Unpin"));
     assert.equal(calls.at(-1).body.message_id, null);
     await draft("New pinned text");

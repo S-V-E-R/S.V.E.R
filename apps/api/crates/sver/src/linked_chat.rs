@@ -250,6 +250,64 @@ async fn hide(app: &App, channel: &str, key: &str, by_sender: bool) -> Res<()> {
     Ok(())
 }
 
+// ---- Staff reports (docs/LINKED_CHAT.md "Moderation") ----
+
+/// A visible outside message as a report target: the sender's platform ID ("twitch:123", never a
+/// S.V.E.R account, so no strike can reach it), "platform/login" for staff, and the snapshot.
+/// The channel's bot lines aren't outside senders and can't be reported this way.
+pub(crate) async fn report_target(
+    db: &mut PgConnection,
+    id: &str,
+) -> Res<Option<(String, String, Value)>> {
+    Ok(sqlx::query_as("SELECT m.platform||':'||m.sender_id,m.platform||'/'||m.sender_login,jsonb_build_object('body',m.body,'platform',m.platform,'sender',m.sender_name,'login',m.sender_login,'channel',c.username,'sent_at',m.created_at) FROM outside_chat_messages m JOIN channel_users c ON c.id=m.channel_id WHERE m.id=$1 AND m.platform=ANY($2) AND m.hidden_at IS NULL AND m.expires_at>now() AND c.eligible")
+        .bind(id).bind(&PLATFORMS[..]).fetch_optional(&mut *db).await?)
+}
+pub(crate) async fn report_owner(db: &mut PgConnection, id: &str) -> Res<Option<String>> {
+    Ok(
+        sqlx::query_scalar(
+            "SELECT platform||':'||sender_id FROM outside_chat_messages WHERE id=$1",
+        )
+        .bind(id)
+        .fetch_optional(&mut *db)
+        .await?,
+    )
+}
+pub(crate) async fn report_current(db: &mut PgConnection, id: &str) -> Res<Value> {
+    Ok(sqlx::query_scalar("SELECT jsonb_build_object('body',body,'platform',platform,'sender',sender_name,'hidden',hidden_at IS NOT NULL) FROM outside_chat_messages WHERE id=$1")
+        .bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null))
+}
+/// Staff removal hides the message on S.V.E.R only; like a chat delete, it isn't restored.
+pub(crate) async fn report_remove(db: &mut PgConnection, id: &str) -> Res<Value> {
+    let visible: bool = sqlx::query_scalar(
+        "SELECT hidden_at IS NULL FROM outside_chat_messages WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *db)
+    .await?
+    .ok_or_else(Fail::missing)?;
+    if visible {
+        sqlx::query("UPDATE outside_chat_messages SET hidden_at=now() WHERE id=$1")
+            .bind(id)
+            .execute(&mut *db)
+            .await?;
+    }
+    let previous = if visible { "VISIBLE" } else { "REMOVED" };
+    Ok(json!({"type": "outside_message", "id": id, "previous": previous}))
+}
+/// Open chats drop a message staff removed (after the removal commits).
+pub(crate) async fn report_removed(app: &App, id: &str) -> Res<()> {
+    let row: Option<(String, i64)> =
+        sqlx::query_as("SELECT channel_id,seq FROM outside_chat_messages WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&app.db)
+            .await?;
+    if let Some((channel, seq)) = row {
+        app.chat
+            .publish(&channel, None, seq, json!({"type":"delete","id":id}));
+    }
+    Ok(())
+}
+
 // ---- Twitch EventSub webhook ----
 
 fn verified(app: &App, headers: &HeaderMap, body: &[u8]) -> bool {
