@@ -121,6 +121,44 @@ pub async fn exercise(e: &Env) {
         .await;
     let (_, captioned) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(captioned["captions"], true);
+    // The channel's default caption style: medium, centered near the bottom, until the owner saves one.
+    assert_eq!(
+        captioned["caption_style"],
+        json!({"size":"m","x":0.5,"y":0.85})
+    );
+    for bad in [
+        json!({"size":"xl","x":0.5,"y":0.5}),
+        json!({"size":"s","x":1.5,"y":0.5}),
+        json!({"size":"s","x":0.5,"y":-0.25}),
+    ] {
+        let (status, _) = e
+            .request("PUT", "/api/me/stream/captions", bad, true, true, false)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, _) = guest(
+        e,
+        "PUT",
+        "/api/me/stream/captions",
+        json!({"size":"l","x":0.25,"y":0.5}),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "only the owner sets the default"
+    );
+    e.call(
+        "PUT",
+        "/api/me/stream/captions",
+        json!({"size":"l","x":0.25,"y":0.5}),
+    )
+    .await;
+    let (_, styled) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
+    assert_eq!(
+        styled["caption_style"],
+        json!({"size":"l","x":0.25,"y":0.5})
+    );
     // Over the WebRTC limit the broadcast is on the CDN: no WHEP URL is offered.
     e.sql("UPDATE broadcasts SET delivery='cdn' WHERE public_id='pub-play'")
         .await;

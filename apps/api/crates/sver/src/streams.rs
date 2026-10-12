@@ -5,7 +5,7 @@ use axum::{
     Json, Router,
     extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Duration, Utc};
@@ -459,6 +459,35 @@ pub async fn save(
     let body = apply(&mut tx, &user.id, None, &input).await?;
     tx.commit().await?;
     Ok(Json(body))
+}
+#[derive(Deserialize)]
+pub struct CaptionStyle {
+    size: String,
+    x: f64,
+    y: f64,
+}
+/// PUT /api/me/stream/captions: the channel's default caption size and position, where every
+/// viewer's captions start until they resize or drag their own.
+async fn save_captions(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<CaptionStyle>,
+) -> Result<Json<Value>> {
+    if !["s", "m", "l"].contains(&input.size.as_str()) {
+        return Err(Error::bad("Choose a caption size."));
+    }
+    if !((0.0..=1.0).contains(&input.x) && (0.0..=1.0).contains(&input.y)) {
+        return Err(Error::bad("Caption position must be inside the player."));
+    }
+    let (mut tx, user, session) = auth::session(&app, &jar, false).await?;
+    auth::authorize_streaming(&user, &session)?;
+    settings(&mut tx, &user).await?;
+    sqlx::query("UPDATE stream_settings SET caption_size=$2,caption_x=$3,caption_y=$4,updated_at=now() WHERE owner_id=$1")
+        .bind(&user.id).bind(&input.size).bind(input.x).bind(input.y).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(
+        json!({"size": input.size, "x": input.x, "y": input.y}),
+    ))
 }
 /// Saves the stream's details for the owner or, with `editor`, one of their channel editors (who
 /// can't turn the Mature label off). Same revision check either way; the edit records who made it.
@@ -1062,6 +1091,7 @@ pub fn routes() -> Router<App> {
             get(stream_info).patch(editor_save),
         )
         .route("/api/me/stream", get(mine).patch(save))
+        .route("/api/me/stream/captions", put(save_captions))
         .route("/api/me/stream/health", get(mine))
         .route("/api/me/stream/key", post(create_key))
         .route("/api/me/stream/key/reveal", post(reveal_key))
