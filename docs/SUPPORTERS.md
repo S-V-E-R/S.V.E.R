@@ -6,6 +6,8 @@ This reverses the "paid platform supporter subscription" entry under "Considered
 
 **When:** with the Wall ([WALL.md](WALL.md)). It reuses Support's Stripe subscriptions (Module 6).
 
+**Built so far (October 12, 2026):** the marks themselves, in `apps/web/components/Supporter.tsx` with styles in `globals.css`. That covers the Wolf mark, both chat badges, the Founder mark, the Wolfsworn and Greycloak player-card frames, the silver name and "Supporting since". Joe asked for them to be made first. The reference image is [mockups/supporters.webp](design/mockups/supporters.webp). They aren't shown anywhere yet; the server decides who gets them once subscriptions are built.
+
 ## The tiers
 
 | | **Wolfsworn** | **Greycloak** |
@@ -38,7 +40,9 @@ This reverses the "paid platform supporter subscription" entry under "Considered
 - Chat priority, bypassing slow mode or chat gates, or extra emote slots.
 - Anything a streamer or moderator controls, such as unbans or skipped queues.
 
-**Keep paid and earned apart:** Progression's level rewards (open Question 1 in [PROGRESSION.md](PROGRESSION.md)) may add earned frames and name colours. Paid and earned looks must never match. Silver and the Wolf mark are reserved for supporters.
+**Keep paid and earned apart:** Progression's level rewards (open Question 1 in [PROGRESSION.md](PROGRESSION.md)) may add earned frames and name colours. Paid and earned looks must never match.
+- Reserved for supporters: the Wolf mark, silver player-card brackets, the walking frame line and the silver name.
+- The earned level badge already uses a silver border at levels 40 to 59. That stays, because it sits on the small level badge, not the player card or the name.
 
 ## Paying
 
@@ -59,8 +63,10 @@ This reverses the "paid platform supporter subscription" entry under "Considered
 - **`/wallet`:** the current plan, the next charge, change tier and cancel.
 - **Design:** there's no mockup. It's built from [DESIGN.md](DESIGN.md), reusing Support's tier cards, as `docs/design/README.md` says.
   - The two tier cards use `.frame`.
-  - New theme tokens: `--wolf` (silver) and `--wolf-ink`. They need AA contrast on every theme's surface.
-  - **Animation:** CSS only, with transform and opacity, no glow, at most a 4-second loop. Under reduced motion it stays still.
+  - New tokens, the same on every theme: `--wolf` (#D8DEE6), `--wolf-light`, `--wolf-mid` and `--wolf-deep`. The silver name and Founder text pass AA on every theme's surface.
+  - **Animation:** CSS only, no glow. Under reduced motion it stays still.
+    - Greycloak badge: the Wolf's eyes catch the light for under a second every 4 seconds (opacity only).
+    - Greycloak frame: a short silver line walks the card's border every 8 seconds (stroke-dashoffset on a small inline SVG, as [MOTION.md](MOTION.md) allows). With reduced motion it becomes a still, thin silver border.
   - The pull request includes 1440 px and 390 px screenshots.
 
 ## How it's built

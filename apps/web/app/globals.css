@@ -25,6 +25,8 @@
   /* Form status text (not theme colors; used only for success and error messages) */
   --green: #8FCFA4;
   --red: #F2A3A6;
+  /* The Wolf's silver: platform supporters only (docs/SUPPORTERS.md). The same on every theme. */
+  --wolf: #D8DEE6; --wolf-light: #F4F7FA; --wolf-mid: #9AA2AE; --wolf-deep: #2A2F38;
 }
 /* Theme tokens: neutral (signed out or no faction yet), then the three factions. */
 :root, [data-theme="neutral"] {
@@ -470,3 +472,21 @@ a.takedown-link:hover { color: var(--ink); }
 /* Shine Moments and Lights on channel pages. */
 .moment-list, .light-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
 .moment-list li { padding: 6px 10px; border-left: 3px solid var(--accent, currentColor); }
+
+/* Platform supporters and Founders (docs/SUPPORTERS.md). Silver, square, no glows. */
+.wolf-mark { flex: none; display: inline-block; vertical-align: -2px; }
+.wolf-mark .wolf-eyes { opacity: 0; animation: wolf-watch 4s ease-in-out infinite; }
+@keyframes wolf-watch { 0%, 70%, 100% { opacity: 0; } 78%, 86% { opacity: 1; } }
+.supporter-badge { padding: 1px 4px; border-color: var(--wolf-mid); }
+.supporter-badge[data-tier="greycloak"] { border: 1px solid var(--wolf); background: var(--wolf-deep); box-shadow: inset 0 0 0 1px var(--bg), inset 0 0 0 2px var(--wolf-mid); padding: 2px 5px; }
+.founder-mark { gap: 5px; border-color: var(--wolf); color: var(--wolf); background: var(--wolf-deep); }
+.founder-number { font-variant-numeric: tabular-nums; color: var(--wolf-light); }
+.supporting-since { display: inline-flex; align-items: center; gap: 6px; color: var(--wolf); font-size: 13px; }
+.faction-name.faction-name[data-supporter="greycloak"], .player-card[data-supporter="greycloak"] .player-card-name { color: var(--wolf); }
+.player-card[data-supporter] { border-color: color-mix(in srgb, var(--wolf) 40%, transparent); }
+.player-card[data-supporter]::before { --b: linear-gradient(var(--wolf), var(--wolf)); }
+.supporter-corner { position: absolute; top: 7px; right: 8px; line-height: 0; }
+.supporter-watch { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); overflow: visible; pointer-events: none; }
+.supporter-watch rect { fill: none; stroke: var(--wolf-light); stroke-width: 2; stroke-dasharray: 6 94; animation: wolf-patrol 8s linear infinite; }
+@keyframes wolf-patrol { to { stroke-dashoffset: -100; } }
+@media (prefers-reduced-motion: reduce) { .wolf-mark .wolf-eyes { opacity: 0; } .supporter-watch rect { stroke-dasharray: none; stroke: color-mix(in srgb, var(--wolf) 55%, transparent); stroke-width: 1; } }
