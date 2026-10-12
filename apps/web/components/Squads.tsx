@@ -8,30 +8,12 @@ import { LivePlayer } from "./LivePlayer";
 import { Chat } from "./Chat";
 import { Subscribe } from "./Subscribe";
 import { Crest } from "./FactionIdentity";
-import { Autocomplete } from "./Autocomplete";
+import { UsernameInput } from "./UsernameInput";
 
 export type Squad = { id: string; mode: "SEPARATE" | "MERGED"; ended: boolean; members: (Chip & { host: boolean })[]; host: boolean; joined: boolean; invited: boolean; pending: { username: string; expires_at: string }[] };
 export type MySquads = { current: string | null; live: boolean; invites: { id: string; host: string; mode: string; expires_at: string }[] };
 function UsernamePicker({ disabled, exclude }: { disabled: boolean; exclude: (string | null)[] }) {
-  const [username, setUsername] = useState("");
-  const [result, setResult] = useState<{ query: string; channels: Chip[]; error: string } | null>(null);
-  const query = username.trim().replace(/^@/, "");
-  useEffect(() => {
-    if (query.length < 2 || disabled) return;
-    let stopped = false;
-    const timer = setTimeout(async () => {
-      const response = await send<{ channels: Chip[] }>("GET", `/api/search?q=${encodeURIComponent(query)}`);
-      if (!stopped) setResult({ query, channels: response.ok ? response.data.channels : [], error: response.ok ? "" : response.error });
-    }, 200);
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [query, disabled]);
-  const current = result?.query === query ? result : null;
-  const options = (current?.channels ?? []).filter(channel => channel.username && !exclude.some(name => name?.toLowerCase() === channel.username?.toLowerCase()))
-    .slice(0, 10).map(channel => ({ value: channel.username!, label: channel.display_name === channel.username ? `@${channel.username}` : `${channel.display_name} · @${channel.username}` }));
-  return <>
-    <Autocomplete label="Live streamer username" name="username" required maxLength={26} disabled={disabled} value={username} onChange={setUsername} options={options} onPick={option => setUsername(option.value)} />
-    <p className="small-print" role="status">{query.length < 2 ? "Type at least 2 characters to find a streamer. Both streamers must be live to invite." : !current ? "Searching…" : current.error || (!options.length ? "No other matching channels." : "Choose a streamer, then send the invitation.")}</p>
-  </>;
+  return <UsernameInput label="Live streamer username" required disabled={disabled} exclude={exclude} hint="Type at least 2 characters to find a streamer. Both streamers must be live to invite." />;
 }
 export function SquadStudio({ initial }: { initial: MySquads }) {
   const [notice, setNotice] = useState("");

@@ -1,6 +1,7 @@
 "use client";
 import { FormEvent, useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
+import { UsernameInput } from "../../../components/UsernameInput";
 
 type Row = Record<string, string | number | boolean | null>;
 type Money = {
@@ -60,7 +61,7 @@ export default function MoneyPage() {
       <Table caption="Payout accounts and tax forms" rows={data.accounts} columns={[["user", "Creator", r => r.user], ["tax", "Tax information", r => r.tax_complete ? "Complete" : "Not complete"], ["payouts", "Payouts", r => r.payouts_enabled ? "Enabled" : "Not yet"], ["guardian", "Guardian", r => r.guardian ? (r.payouts_enabled ? "Approved" : "Waiting for guardian") : ""]]} />
       <h2>Adjust Valor</h2>
       <form className="stack" onSubmit={adjust}>
-        <label className="field narrow"><span>Username</span><input name="username" required maxLength={30} /></label>
+        <UsernameInput label="Username" required />
         <label className="field narrow"><span>Valor (negative to remove, up to {data.max_adjust.toLocaleString()})</span><input name="valor" type="number" required min={-data.max_adjust} max={data.max_adjust} step={1} /></label>
         <label className="field"><span>Reason (required)</span><input name="note" required maxLength={500} /></label>
         <button type="submit">Post adjustment</button>

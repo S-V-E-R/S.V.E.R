@@ -4,6 +4,7 @@ import { Avatar } from "../../components/Avatar";
 import { ReportButton } from "../../components/Report";
 import { PlayerCardButton } from "../../components/UserChip";
 import { send, useLoad } from "../../lib/client-api";
+import { UsernameInput } from "../../components/UsernameInput";
 import { open as openEnvelope, safetyNumber, seal, type Device, type Envelope, type Opened } from "../../lib/e2e";
 import { ensureDevice, type ThisDevice } from "../../lib/e2e-device";
 import type { Chip } from "../../lib/types";
@@ -179,8 +180,7 @@ export default function Messages() {
           <button type="button" className="small" aria-expanded={panel === "new"} onClick={() => setPanel(panel === "new" ? null : "new")}>New</button>
         </header>
         {panel === "new" && <form className="messages-new" onSubmit={e => { e.preventDefault(); const name = String(new FormData(e.currentTarget).get("to") ?? "").trim().replace(/^@/, ""); if (name) { setPanel(null); void choose(name); } }}>
-          <label htmlFor="dm-to" className="sr-only">Username</label>
-          <input id="dm-to" name="to" placeholder="Message @username" autoComplete="off" maxLength={26} autoFocus />
+          <UsernameInput label="Message @username" name="to" />
           <button type="submit" className="small">Open</button>
           <p className="small-text">The Message button on a channel or player card opens a conversation too.</p>
         </form>}

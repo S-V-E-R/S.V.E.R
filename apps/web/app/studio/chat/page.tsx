@@ -3,6 +3,7 @@ import { FormEvent, useCallback, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { UserChip } from "../../../components/UserChip";
 import { send, useLoad } from "../../../lib/client-api";
+import { UsernameInput } from "../../../components/UsernameInput";
 import type { Chip } from "../../../lib/types";
 
 type View = {
@@ -94,7 +95,7 @@ export default function ChatStudio() {
     </Section>
     <Section title="Moderators" intro="Moderators can delete messages, time out and ban chatters, and change these rules. They can't act on you, each other or staff.">
       <ul className="list">{view.moderators.length === 0 ? <li className="muted">No moderators yet.</li> : view.moderators.map(m => <li key={m.username} className="row between"><UserChip user={m} />{view.role === "owner" && m.username && <button type="button" className="small quiet" onClick={() => dismiss(m.username!)}>Remove</button>}</li>)}</ul>
-      {view.role === "owner" && <form onSubmit={appoint} className="row"><label className="field"><span>Add a moderator by username</span><input name="username" required /></label><button type="submit" className="small">Add</button></form>}
+      {view.role === "owner" && <form onSubmit={appoint} className="row"><UsernameInput label="Add a moderator by username" required /><button type="submit" className="small">Add</button></form>}
       <Status state={modState} />
     </Section>
     <Section title="Timeouts and bans" intro="A ban stops someone chatting and watching here while signed in.">

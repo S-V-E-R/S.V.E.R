@@ -3,6 +3,7 @@ import { ArrowIcon } from "./shell/Icons";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { send } from "../lib/client-api";
+import { UsernameInput } from "./UsernameInput";
 import { REDUCE_KEY, type BoardEvent } from "./BoardEffects";
 import "../styles/boards.css";
 
@@ -149,7 +150,7 @@ export function Board({ username }: { username: string }) {
       {view.can_run && <div className="board-run">
         <button type="button" className="small quiet" onClick={() => run("PUT", `${path}/disabled`, { disabled: !view.disabled })}>{view.disabled ? "Resume the board" : "Pause all effects (panic)"}</button>
         <form className="row" onSubmit={e => { e.preventDefault(); if (blockName.trim()) void run("PUT", `${path}/blocks/${encodeURIComponent(blockName.trim())}`); }}>
-          <label className="field narrow"><span>Block from the board</span><input value={blockName} maxLength={26} placeholder="Username" onChange={e => setBlockName(e.target.value)} /></label>
+          <UsernameInput label="Block from the board" name="block" value={blockName} onChange={setBlockName} />
           <button className="small quiet">Block</button>
         </form>
         {!!view.blocks?.length && <ul className="list">{view.blocks.map(name => <li key={name}>{name} <button type="button" className="link-button" onClick={() => run("DELETE", `${path}/blocks/${encodeURIComponent(name)}`)}>Unblock</button></li>)}</ul>}
