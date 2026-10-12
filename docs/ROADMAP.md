@@ -7,7 +7,7 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | 0 | Foundation | The site foundation, shared interface, security boundaries and automated checks | Done |
 | 1 | Login | Email and Google, Twitch, Discord sign-in; verification; sessions; 2FA for streamers | Done |
 | 2 | Profiles | Channel pages, follows, War Council, the Wall, profile songs, schedules, sponsors and fan art | Done |
-| 3 | Live streams | Creator Studio, OBS streaming, playback, chat and moderation, viewbot detection, custom emotes, go-live alerts, raids and hosting. Live delivery is still being prepared and verified. | In progress |
+| 3 | Live streams | Creator Studio, OBS streaming, playback, chat and moderation, viewbot detection, custom emotes, go-live alerts, raids and hosting. Closed October 12, 2026 after a real OBS acceptance run: direct and CDN latency, reconnect, viewer counts, captions and clip previews. | Done |
 | 4 | Factions | Myria, Aetheron, Glint; membership, weekly genre checkpoints, seasonal rewards, private councils and faction hubs | Done |
 | 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff. Built, including genre, faction and co-stream lanes and MAGNet chat; acceptance with real streams remains. | In progress |
 | 6 | Support | Subscriptions, Valor and tributes, channel rewards, co-streams, payouts. Live on Stripe since October 6, 2026. | Done |
