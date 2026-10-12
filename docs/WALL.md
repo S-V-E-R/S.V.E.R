@@ -11,7 +11,7 @@ Approved by Joe on October 9, 2026, after looking at the Million Dollar Homepage
   - Wall money never touches discovery. There's no MAGNet placement, home or sidebar placement, Browse or search ranking, faction points, war ground, badges, cosmetics or chat perks.
   - The page says so, in plain words.
 - **What it isn't:**
-  - It isn't the paid platform supporter subscription with cosmetic perks that [CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md) lists as not taken. A seat is bought once and gives no perks.
+  - It isn't the platform supporter subscription ([SUPPORTERS.md](SUPPORTERS.md)). A seat is bought once and gives no perks.
   - It isn't channel sponsors, which are logos a streamer chooses for their own profile ([PROFILES.md](PROFILES.md)).
   - It isn't creator support. Subscriptions, Valor and tributes ([SUPPORT.md](SUPPORT.md)) still pay creators.
 
