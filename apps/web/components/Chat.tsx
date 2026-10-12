@@ -194,17 +194,18 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
 
   useEffect(() => { list.current?.lastElementChild?.scrollIntoView({ block: "nearest" }); }, [messages]);
 
-  async function moderate(action: "delete" | "timeout" | "ban", m: Message) {
+  /** `quick`: the inline tools — no prompts, a 10-minute timeout and a stock reason; a ban still confirms. */
+  async function moderate(action: "delete" | "timeout" | "ban", m: Message, quick = false) {
     const who = m.author.username;
     if (!who) return;
     let seconds: number | undefined;
     if (action === "timeout") {
-      const minutes = Number(window.prompt(`Time out @${who} for how many minutes? (1–20160)`, "10"));
+      const minutes = quick ? 10 : Number(window.prompt(`Time out @${who} for how many minutes? (1–20160)`, "10"));
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 20160) return;
       seconds = minutes * 60;
     }
     if (action === "ban" && !window.confirm(`Ban @${who} from this chat? They also can't watch here while signed in.`)) return;
-    const reason = window.prompt("Reason (required)")?.trim();
+    const reason = quick ? { delete: "Quick delete", timeout: "Quick timeout (10 min)", ban: "Quick ban" }[action] : window.prompt("Reason (required)")?.trim();
     if (!reason) return;
     const result = action === "delete"
       ? await send("DELETE", `${path}/messages/${m.id}`, { reason })
@@ -212,6 +213,16 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     if (!result.ok) setError(result.error);
     else if (action === "delete") remove(m.id);
     else if (squad) await loadRole();
+  }
+
+  /** Owner only: appoint or remove a channel moderator (the same endpoints as Studio → Chat). */
+  async function setModerator(name: string, on: boolean) {
+    if (!on && !window.confirm(`Remove @${name} as a moderator?`)) return false;
+    const base = `/api/channels/${encodeURIComponent(username)}/moderators`;
+    const result = on ? await send("POST", base, { username: name }) : await send("DELETE", `${base}/${encodeURIComponent(name)}`);
+    if (result.ok) setNotice(on ? `@${name} is now a moderator.` : `@${name} is no longer a moderator.`);
+    else setError(result.status === 403 && result.error.includes("Confirm") ? "Confirm your sign-in method again on the Account page, then retry." : result.error);
+    return result.ok;
   }
 
   async function outsideAction(m: Message, action: "hide" | "mute" | "mute-forever") {
@@ -247,7 +258,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     if (/^\/help$/i.test(body) && !pinDraft) {
       const result = await send<{ commands: { name: string; access: string }[]; bot: string }>("GET", `/api/channels/${encodeURIComponent(username)}/commands`);
       const custom = result.ok && result.data.commands.length ? ` · ${result.data.bot}'s commands: ${result.data.commands.map(c => `!${c.name}${c.access === "everyone" ? "" : ` (${c.access})`}`).join(", ")}` : "";
-      setNotice(`Commands: !rally (rally your faction) · counters such as !deaths${canPin ? " · moderators: !marker, +/- on counters, Timeout and Ban from a message's Actions" : ""}${role === "owner" ? " · you: /raid name, /unraid, /flag" : ""}${custom}`);
+      setNotice(`Commands: !rally (rally your faction) · counters such as !deaths${canPin ? " · moderators: !marker, +/- on counters, Timeout and Ban from a message's Actions" : ""}${role === "owner" ? " · you: /raid name, /unraid, /mod name, /unmod name, /flag" : ""}${custom}`);
       setDraft("");
       return;
     }
@@ -256,6 +267,11 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
       const result = await send("POST", "/api/me/linked-chat/reply", { platform: outsideReply.platform, body, reply_to: outsideReply.id });
       setBusy(false);
       if (result.ok) { setDraft(""); setOutsideReply(null); } else setError(result.error);
+      return;
+    }
+    const mod = /^\/(mod|unmod)\s+@?([A-Za-z0-9_]{3,25})$/i.exec(body);
+    if (mod && role === "owner" && !squad && !pinDraft) {
+      if (await setModerator(mod[2], mod[1].toLowerCase() === "mod")) setDraft("");
       return;
     }
     const raid = /^\/(raid|unraid)(?:\s+@?([A-Za-z0-9_]{3,25}))?$/i.exec(body);
@@ -343,6 +359,11 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
       </li> : <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
         {m.skill && <span className="badge skill-badge">✨ {m.skill}</span>}
+        {role && m.author.username && m.author.username !== account && <span className="chat-quick-mod">
+          <button type="button" className="chat-quick" onClick={() => moderate("delete", m, true)} aria-label={`Delete message from ${m.author.display_name}`} title="Delete">🗑</button>
+          <button type="button" className="chat-quick" onClick={() => moderate("timeout", m, true)} aria-label={`Time out ${m.author.display_name} for 10 minutes`} title="Timeout 10 min">⏱</button>
+          <button type="button" className="chat-quick" onClick={() => moderate("ban", m, true)} aria-label={`Ban ${m.author.display_name}`} title="Ban">⛔</button>
+        </span>}
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
@@ -360,6 +381,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
           <button type="button" className="small quiet" onClick={() => moderate("delete", m)} aria-label={`Delete message from ${m.author.display_name}`}>Delete</button>
           <button type="button" className="small quiet" onClick={() => moderate("timeout", m)} aria-label={`Time out ${m.author.display_name}`}>Timeout</button>
           <button type="button" className="small quiet" onClick={() => moderate("ban", m)} aria-label={`Ban ${m.author.display_name}`}>Ban</button>
+          {role === "owner" && !squad && m.role !== "owner" && m.role !== "staff" && <button type="button" className="small quiet" onClick={() => setModerator(m.author.username!, m.role !== "moderator")}>{m.role === "moderator" ? "Unmod" : "Mod"}</button>}
         </span>}
         </div></details>
       </li>)}

@@ -145,6 +145,9 @@ button.dock-tile:not(:disabled):hover,button.dock-tile:focus-visible{border-colo
 .chat-actions{display:inline-flex;flex-wrap:wrap;gap:4px}
 .chat-message-actions{font-size:.85em}
 .chat-message-actions summary{cursor:pointer;color:var(--ink-muted);width:fit-content;padding:4px 0}
+.chat-quick-mod{display:inline-flex;gap:2px;margin-right:4px;vertical-align:middle}
+.chat-quick{background:none;border:1px solid transparent;border-radius:3px;padding:0 3px;font-size:.85em;line-height:1.4;cursor:pointer;opacity:.65}
+.chat-quick:hover,.chat-quick:focus-visible{opacity:1;border-color:var(--line,currentColor)}
 .chat-message-controls{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:4px 0}
 /* Parity additions P1-P9 (docs/PROFILES.md). Tags are square, uppercase Barlow; no fills, gradients or glows. */
 .page-label{display:inline-block;border:1px solid var(--line);color:var(--steel);font:700 11px/1.4 var(--font-label),sans-serif;letter-spacing:.16em;text-transform:uppercase;padding:2px 8px;margin:0 0 6px}
