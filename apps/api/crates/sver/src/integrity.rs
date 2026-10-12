@@ -200,6 +200,8 @@ pub fn keyed(app: &App, label: &str, value: &str) -> String {
 pub struct Report<'a> {
     pub visible: bool,
     pub media_time: Option<f64>,
+    /// Digest of the reporting browser's ID; media time is only compared within one browser.
+    pub browser: &'a str,
     pub turnstile: Option<&'a str>,
 }
 
@@ -216,6 +218,7 @@ struct Lease {
     interval_m2: f64,
     visible_seconds: f64,
     last_media_time: Option<f64>,
+    media_browser: Option<String>,
     ahead_strikes: i32,
     provisional_until: Option<DateTime<Utc>>,
 }
@@ -251,7 +254,7 @@ pub async fn record(
     let now: DateTime<Utc> = sqlx::query_scalar("SELECT now()")
         .fetch_one(&mut *tx)
         .await?;
-    let previous: Option<Lease> = sqlx::query_as("SELECT level,created_at,expires_at,last_beat_at,turnstile_ok,hard_excluded,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,provisional_until FROM playback_leases WHERE broadcast_id=$1 AND viewer_key=$2 FOR UPDATE")
+    let previous: Option<Lease> = sqlx::query_as("SELECT level,created_at,expires_at,last_beat_at,turnstile_ok,hard_excluded,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,media_browser,ahead_strikes,provisional_until FROM playback_leases WHERE broadcast_id=$1 AND viewer_key=$2 FOR UPDATE")
         .bind(broadcast).bind(key).fetch_optional(&mut *tx).await?;
     let mut l = previous.unwrap_or(Lease {
         level: "pending".into(),
@@ -265,6 +268,7 @@ pub async fn record(
         interval_m2: 0.0,
         visible_seconds: 0.0,
         last_media_time: None,
+        media_browser: None,
         ahead_strikes: 0,
         provisional_until: None,
     });
@@ -281,8 +285,10 @@ pub async fn record(
             l.visible_seconds += (elapsed / 1000.0).min(15.0);
         }
         // Live media can't play faster than the clock; a large jump ahead means fabricated
-        // heartbeats. Going backwards (a transport switch or seek) is ignored.
+        // heartbeats. Going backwards (a transport switch or seek) is ignored, and so is another
+        // browser on the same account (a phone and a PC have different timelines).
         if let (Some(before), Some(after)) = (l.last_media_time, report.media_time)
+            && l.media_browser.as_deref() == Some(report.browser)
             && after - before > elapsed / 1000.0 * 1.5 + 2.0
         {
             l.ahead_strikes += 1;
@@ -299,9 +305,9 @@ pub async fn record(
         .networks
         .asn(ip)
         .is_some_and(|asn| t.hosting_asns.contains(&asn));
-    sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,created_at,expires_at,signed_in,verified,turnstile_ok,hard_excluded,ip_hash,net_hash,beats,last_beat_at,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,hosting) VALUES($1,$2,$3,$4+interval '30 seconds',$5,$6,$7,$8,$9,$10,1,$4,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(broadcast_id,viewer_key) DO UPDATE SET hosting=EXCLUDED.hosting, expires_at=EXCLUDED.expires_at,signed_in=EXCLUDED.signed_in,verified=EXCLUDED.verified,turnstile_ok=EXCLUDED.turnstile_ok,hard_excluded=EXCLUDED.hard_excluded,ip_hash=EXCLUDED.ip_hash,net_hash=EXCLUDED.net_hash,beats=playback_leases.beats+1,last_beat_at=EXCLUDED.last_beat_at,interval_count=EXCLUDED.interval_count,interval_mean=EXCLUDED.interval_mean,interval_m2=EXCLUDED.interval_m2,visible_seconds=EXCLUDED.visible_seconds,last_media_time=EXCLUDED.last_media_time,ahead_strikes=EXCLUDED.ahead_strikes")
+    sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,created_at,expires_at,signed_in,verified,turnstile_ok,hard_excluded,ip_hash,net_hash,beats,last_beat_at,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,hosting,media_browser) VALUES($1,$2,$3,$4+interval '30 seconds',$5,$6,$7,$8,$9,$10,1,$4,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(broadcast_id,viewer_key) DO UPDATE SET hosting=EXCLUDED.hosting, expires_at=EXCLUDED.expires_at,signed_in=EXCLUDED.signed_in,verified=EXCLUDED.verified,turnstile_ok=EXCLUDED.turnstile_ok,hard_excluded=EXCLUDED.hard_excluded,ip_hash=EXCLUDED.ip_hash,net_hash=EXCLUDED.net_hash,beats=playback_leases.beats+1,last_beat_at=EXCLUDED.last_beat_at,interval_count=EXCLUDED.interval_count,interval_mean=EXCLUDED.interval_mean,interval_m2=EXCLUDED.interval_m2,visible_seconds=EXCLUDED.visible_seconds,last_media_time=EXCLUDED.last_media_time,ahead_strikes=EXCLUDED.ahead_strikes,media_browser=EXCLUDED.media_browser")
         .bind(broadcast).bind(key).bind(l.created_at).bind(now).bind(signed_in).bind(verified).bind(l.turnstile_ok).bind(l.hard_excluded)
-        .bind(&ip_hash).bind(&net_hash).bind(l.interval_count).bind(l.interval_mean).bind(l.interval_m2).bind(l.visible_seconds).bind(report.media_time).bind(l.ahead_strikes).bind(hosting)
+        .bind(&ip_hash).bind(&net_hash).bind(l.interval_count).bind(l.interval_mean).bind(l.interval_m2).bind(l.visible_seconds).bind(report.media_time).bind(l.ahead_strikes).bind(hosting).bind(report.browser)
         .execute(&mut *tx).await?;
     let same_network: i64 = sqlx::query_scalar("SELECT count(*) FROM playback_leases WHERE broadcast_id=$1 AND net_hash=$2 AND expires_at>now()")
         .bind(broadcast).bind(&net_hash).fetch_one(&mut *tx).await?;

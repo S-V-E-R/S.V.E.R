@@ -423,9 +423,11 @@ pub async fn beat(
         None => false,
     };
     let media_time = input.media_time.filter(|m| m.is_finite() && *m >= 0.0);
+    let browser = sec::digest(id);
     let report = crate::integrity::Report {
         visible: input.visible,
         media_time,
+        browser: &browser,
         turnstile: input.turnstile.as_deref(),
     };
     let outcome = crate::integrity::record(
