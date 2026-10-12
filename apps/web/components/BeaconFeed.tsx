@@ -9,6 +9,7 @@ import { Avatar } from "./Avatar";
 import { BeaconComments } from "./BeaconComments";
 import { Crest } from "./Crest";
 import { ReportForm, TakeDownLink } from "./Report";
+import { ShareButton } from "./ShareButton";
 import { Turnstile } from "./Turnstile";
 import "../styles/beacons.css";
 
@@ -204,13 +205,6 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
     if (result.ok) { setFollowed(true); setMessage(`Following ${c.display_name}.`); await send("POST", `/api/beacons/${b.id}/followed`); }
     else setMessage(result.error);
   }
-  async function share() {
-    const url = `${window.location.origin}/beacons/${b.id}`;
-    try {
-      if (navigator.share) await navigator.share({ title: b.title, url });
-      else { await navigator.clipboard.writeText(url); setMessage("Link copied."); }
-    } catch { /* the share sheet was dismissed */ }
-  }
   async function mute() {
     const result = await send("PUT", `/api/beacons/mutes/${c.username}`);
     setMessage(result.ok ? `You won't see ${c.display_name}'s Beacons in your feed.` : result.error);
@@ -243,7 +237,7 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
       <button type="button" className="beacon-action" onClick={() => void like()} aria-pressed={liked} aria-label={liked ? "Unlike" : "Like"}><span aria-hidden="true">{liked ? "♥" : "♡"}</span><span>{compact(likes)}</span></button>
       <span className="beacon-action beacon-stat" aria-label={`${b.views} views`}><span aria-hidden="true">▶</span><span>{compact(b.views)}</span></span>
       <button type="button" className="beacon-action" onClick={() => setPanel(panel === "comments" ? null : "comments")} aria-expanded={panel === "comments"} aria-label="Comments"><span aria-hidden="true">💬</span><span>Comments</span></button>
-      <button type="button" className="beacon-action" onClick={() => void share()}><span aria-hidden="true">↗</span><span>Share</span></button>
+      <ShareButton path={`/beacons/${b.id}`} title={b.title} className="beacon-action" label={<><span aria-hidden="true">↗</span><span>Share</span></>} />
       <button type="button" className="beacon-action" onClick={() => setPanel(panel === "more" ? null : "more")} aria-expanded={panel === "more"} aria-label="More actions"><span aria-hidden="true">⋯</span><span>More</span></button>
     </aside>
     {panel === "more" && <div className="beacon-panel panel" role="dialog" aria-label="More actions">

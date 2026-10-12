@@ -7,6 +7,7 @@ import { duration, type VideoPage } from "../lib/videos";
 import { RecordedPlayer } from "./RecordedPlayer";
 import { VideoCut } from "./VideoCut";
 import { ReportButton, TakeDownLink, type ReportTarget } from "./Report";
+import { ShareButton } from "./ShareButton";
 
 function Replay({ id, at, ageAck }: { id: string; at: number; ageAck: boolean }) {
   const [messages, setMessages] = useState<{ id: string; offset_ms: number; author: Chip; body: string }[]>([]);
@@ -57,7 +58,7 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
       {data.live && <Link className="button" href={`/${data.channel.username}/live`}>Watch live</Link>}
       {data.signed_in && v.kind !== "CLIP" && data.clip_permission !== "OFF" && <button className="quiet" onClick={() => setCut(cut === "CLIP" ? null : "CLIP")}>Create clip</button>}
       {data.can_highlight && v.recording && v.kind === "VOD" && <button className="quiet" onClick={() => setCut(cut === "HIGHLIGHT" ? null : "HIGHLIGHT")}>Save Highlight</button>}
-      <button className="quiet" onClick={async () => { try { await navigator.clipboard.writeText(window.location.href.split("?")[0]); setMessage("Link copied."); } catch { setMessage("Copy the address from your browser to share this video."); } }}>Share</button>
+      <ShareButton path={`/${v.kind === "CLIP" ? "clips" : "videos"}/${id}`} title={v.title} className="quiet" />
       {data.is_owner && v.kind === "CLIP" && v.status === "READY" && v.approval === "APPROVED" && <Link className="button quiet" href={`/studio/beacons?clip=${id}`}>Make a Beacon</Link>}
       {data.can_download && v.kind !== "CLIP" && <button className="quiet" onClick={() => void requestDownload()}>Prepare download</button>}
       {download && <a className="button" href={download}>Download MP4</a>}
