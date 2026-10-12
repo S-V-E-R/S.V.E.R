@@ -22,7 +22,7 @@ use chrono::{DateTime, Utc};
 pub use routes::routes;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-pub use spotlight::spotlight;
+pub use spotlight::{evidence, spotlight};
 use sqlx::PgConnection;
 
 pub const HIGHLIGHT_HOURS: [i64; 4] = [10, 25, 50, 100];

@@ -149,28 +149,17 @@ pub async fn exercise(e: &Env) {
     let message = posted["message"]["id"].as_str().unwrap().to_string();
     let path = format!("{BASE}/chat/messages/{message}");
     assert_eq!(
-        call(e, "DELETE", &path, Some(&moderator), json!({"reason":" "}))
-            .await
-            .0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
         call(e, "DELETE", &path, Some(&outsider), json!({"reason":"no"}))
             .await
             .0,
         StatusCode::FORBIDDEN
     );
     assert_eq!(
-        call(
-            e,
-            "DELETE",
-            &path,
-            Some(&moderator),
-            json!({"reason":"spam"})
-        )
-        .await
-        .0,
-        StatusCode::OK
+        call(e, "DELETE", &path, Some(&moderator), json!({}))
+            .await
+            .0,
+        StatusCode::OK,
+        "deleting needs no reason"
     );
     assert_eq!(
         call(
@@ -269,6 +258,78 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK
     );
     assert_eq!(say(e, &chatter, "thanks").await.0, StatusCode::OK);
+
+    // Act first, review later: a timeout with no reason takes effect at once, carries the chat
+    // before it as evidence and waits for its moderator to keep it (with a reason) or undo it.
+    let quick = |token: String| async move {
+        call(
+            e,
+            "POST",
+            &format!("{BASE}/chat/restrictions"),
+            Some(&token),
+            json!({"username":"ModChatter","kind":"timeout","seconds":600}),
+        )
+        .await
+    };
+    let (status, body) = quick(moderator.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["review"], true);
+    let view = |token: String| async move {
+        call(
+            e,
+            "GET",
+            &format!("{BASE}/chat/moderation"),
+            Some(&token),
+            Value::Null,
+        )
+        .await
+        .1
+    };
+    let pending = view(moderator.clone()).await["reviews"].clone();
+    assert_eq!(pending.as_array().map(Vec::len), Some(1), "{pending}");
+    assert!(
+        pending[0]["chat"].to_string().contains("thanks"),
+        "{pending}"
+    );
+    let entry = pending[0]["id"].as_str().unwrap().to_string();
+    let review = |token: String, body: Value| {
+        let path = format!("{BASE}/chat/reviews/{entry}");
+        async move { call(e, "POST", &path, Some(&token), body).await.0 }
+    };
+    assert_eq!(
+        review(moderator.clone(), json!({"keep":true})).await,
+        StatusCode::BAD_REQUEST,
+        "keeping needs a reason"
+    );
+    assert_eq!(
+        review(outsider.clone(), json!({"keep":true,"reason":"x"})).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        review(moderator.clone(), json!({"keep":true,"reason":"spam"})).await,
+        StatusCode::OK
+    );
+    assert_eq!(view(moderator.clone()).await["reviews"], json!([]));
+    // Undo lifts it.
+    quick(moderator.clone()).await;
+    let entry = view(moderator.clone()).await["reviews"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            &format!("{BASE}/chat/reviews/{entry}"),
+            Some(&moderator),
+            json!({"keep":false})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(say(e, &chatter, "back again").await.0, StatusCode::OK);
 
     // A ban stops chat and signed-in playback; logged-out viewing still gets playback.
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('mod-b','stream-owner','pub-mod',1,'LIVE','s','v','c',now(),now(),now()+interval '15 seconds')").await;

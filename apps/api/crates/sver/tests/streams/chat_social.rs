@@ -144,7 +144,8 @@ pub async fn exercise(e: &Env) {
         )
         .await
         .0,
-        StatusCode::BAD_REQUEST
+        StatusCode::OK,
+        "pinning needs no reason"
     );
     assert_eq!(
         pin(e, Some(&moderator), Some(&original)).await.0,

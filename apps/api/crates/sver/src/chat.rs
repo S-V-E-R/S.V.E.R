@@ -856,7 +856,7 @@ pub async fn remove_shared(
     members: &[String],
     reason: &str,
 ) -> Res<()> {
-    let reason = moderation::reason(reason)?;
+    let reason = moderation::delete_reason(reason)?;
     let author: String =
         sqlx::query_scalar("SELECT author_id FROM chat_messages WHERE id=$1 AND squad_id=$2")
             .bind(id)
@@ -897,6 +897,7 @@ pub async fn remove_shared(
 #[derive(Deserialize)]
 pub struct Pin {
     message_id: Option<String>,
+    #[serde(default)]
     reason: String,
 }
 /// A null message unpins. An upsert makes concurrent replacements leave exactly one pin.
@@ -913,7 +914,7 @@ pub async fn pin(
             "Only the channel owner or an appointed moderator can pin messages.",
         ));
     }
-    let reason = moderation::reason(&input.reason)?;
+    let reason = moderation::optional_reason(&input.reason, "Pin changed")?;
     let hidden = hidden(&app, Some(&user.id)).await?;
     let mut tx = app.db.begin().await?;
     if let Some(id) = &input.message_id {

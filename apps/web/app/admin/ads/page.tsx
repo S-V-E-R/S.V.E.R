@@ -2,6 +2,7 @@
 import { FormEvent, useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
+import { UsernameInput } from "../../../components/UsernameInput";
 
 type Segment = { id: string; channel: string; created_at: string; viewers: number; revenue: number | null; split: { streamer_percent: number; per_viewer: number; platform: number } | null; settled_at: string | null };
 type Balance = { account: "adv" | "earnings"; user: string; balance: number };
@@ -32,7 +33,7 @@ export default function AdminAds() {
   return <><h1>Ads (test book)</h1>
     <p>Ads are designed, not live: no provider is chosen and no ad is shown. Test breaks capture who would be counted on a live channel; settling posts the tier split to the <code>adtest:</code> book, which never reaches payouts. Every action is audited.</p>
     <Section title="Start a test break"><form onSubmit={start} className="row">
-      <label className="field narrow"><span>Live channel</span><input name="username" required maxLength={25} /></label>
+      <UsernameInput label="Live channel" required />
       <button type="submit" className="small">Start</button>
     </form></Section>
     <Section title="Segments">{view.segments.length === 0 ? <p className="muted">None yet.</p> : <ul className="list">{view.segments.map(s => <li key={s.id}>

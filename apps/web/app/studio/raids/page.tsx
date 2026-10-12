@@ -3,6 +3,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
 import { send, useLoad, type Result } from "../../../lib/client-api";
+import { UsernameInput } from "../../../components/UsernameInput";
 
 type Raid = { id: string; status: string; execute_at: string; target: { username: string; display_name: string } };
 type Hosting = { accept_raids: boolean; accept_hosts: boolean; auto_host: boolean; auto_list: string[]; raid_blocks: string[]; live: boolean; hosting: { username: string; display_name: string; source: "manual" | "auto" | "raid" } | null; raid: Raid | null };
@@ -50,13 +51,13 @@ export default function RaidsAndHosting() {
     <Section title="Raid" intro="While you're live, send your viewers to another live channel. They see a 10-second countdown and can choose to stay. You can raid once every 10 minutes. In your chat, /raid username works too, and /unraid cancels.">
       {data.raid ? <p role="status">Raiding <Link href={`/${data.raid.target.username}`}>{data.raid.target.display_name}</Link>{data.raid.status === "countdown" && <> <button type="button" className="small quiet" onClick={cancel}>Cancel raid</button></>}</p>
         : data.live ? <form className="row" onSubmit={e => field(e, raid)}>
-          <label className="field"><span>Channel to raid</span><input name="username" autoComplete="off" required maxLength={26} /></label><button type="submit">Start raid</button>
+          <UsernameInput label="Channel to raid" required /><button type="submit">Start raid</button>
         </form> : <p className="muted">Go live to start a raid.</p>}
     </Section>
     <Section title="Hosting" intro="While you're offline, your channel page can show another live channel. Hosting stops when you go live or they go offline. After you raid and end your stream, your channel hosts the channel you raided.">
       {data.hosting ? <p role="status">Hosting <Link href={`/${data.hosting.username}`}>{data.hosting.display_name}</Link> {data.hosting.source !== "manual" && <span className="muted">({data.hosting.source === "auto" ? "auto-host" : "after your raid"})</span>} <button type="button" className="small quiet" onClick={async () => apply(await send<Hosting>("PUT", "/api/me/hosting/target", { username: null }), "Stopped hosting.")}>Stop hosting</button></p>
         : <form className="row" onSubmit={e => field(e, async name => apply(await send<Hosting>("PUT", "/api/me/hosting/target", { username: name }), `Hosting @${name}.`))}>
-          <label className="field"><span>Channel to host</span><input name="username" autoComplete="off" required maxLength={26} disabled={data.live} /></label><button type="submit" disabled={data.live}>Host</button>
+          <UsernameInput label="Channel to host" required disabled={data.live} /><button type="submit" disabled={data.live}>Host</button>
         </form>}
       <label className="checkbox"><input type="checkbox" checked={data.auto_host} onChange={e => save({ auto_host: e.target.checked })} /> Auto-host: when I&apos;m offline, host the first live channel on my list</label>
       <form onSubmit={e => { e.preventDefault(); void save({}); }}>
@@ -69,7 +70,7 @@ export default function RaidsAndHosting() {
       <label className="checkbox"><input type="checkbox" checked={data.accept_raids} onChange={e => save({ accept_raids: e.target.checked })} /> Accept raids</label>
       <label className="checkbox"><input type="checkbox" checked={data.accept_hosts} onChange={e => save({ accept_hosts: e.target.checked })} /> Allow other channels to host me</label>
       <form className="row" onSubmit={e => field(e, async name => apply(await send<Hosting>("POST", "/api/me/raid-blocks", { username: name }), `@${name} can't raid or host you now.`))}>
-        <label className="field"><span>Block raids and hosts from a channel</span><input name="username" autoComplete="off" required maxLength={26} /></label><button type="submit" className="small">Block</button>
+        <UsernameInput label="Block raids and hosts from a channel" required /><button type="submit" className="small">Block</button>
       </form>
       {data.raid_blocks.length > 0 && <ul className="list">{data.raid_blocks.map(name => <li key={name} className="row between"><Link href={`/${name}`}>@{name}</Link><button type="button" className="small quiet" onClick={async () => apply(await send<Hosting>("DELETE", `/api/me/raid-blocks/${encodeURIComponent(name)}`))}>Unblock</button></li>)}</ul>}
     </Section>

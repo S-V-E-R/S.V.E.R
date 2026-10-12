@@ -3,6 +3,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
+import { UsernameInput } from "../../../components/UsernameInput";
 import { GameCatalogReview } from "../../../components/GameCatalogReview";
 
 type Stream = { id: string; state: string; started_at: string; title: string; category: string | null; open_reports: number; followers_only_until: string | null; mature?: boolean; mature_locked?: boolean;
@@ -118,7 +119,7 @@ function Spotlights() {
   }
   return <Section title="Spotlights" intro="Staff picks shown on the homepage with a short public reason. At most 14 days, one at a time per channel, then 7 days before the same channel again. First streams and returning creators are spotlighted automatically.">
     <form className="row" onSubmit={create}>
-      <label className="field"><span>Channel</span><input name="username" required maxLength={26} autoComplete="off" /></label>
+      <UsernameInput label="Channel" required />
       <label className="field"><span>Public reason</span><input name="reason" required maxLength={120} /></label>
       <label className="field"><span>Days</span><input name="days" type="number" min={1} max={14} defaultValue={7} required /></label>
       <button type="submit" className="small">Spotlight</button>

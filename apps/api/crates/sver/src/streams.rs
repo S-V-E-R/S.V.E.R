@@ -254,6 +254,9 @@ async fn end(db: &mut PgConnection, owner: &str, reason: &str) -> Result<()> {
         .bind(owner).bind(reason).execute(&mut *db).await?;
     if ended.rows_affected() > 0 {
         crate::events::emit(db, owner, "live", serde_json::json!({"live": false})).await?;
+        crate::moderation::stream_ended(db, owner)
+            .await
+            .map_err(|_| Error::internal())?;
     }
     crate::videos::ended(db, owner)
         .await
