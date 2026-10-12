@@ -276,6 +276,9 @@ async fn mp4(app: &App, job: &Job, download: bool) -> Res<()> {
         finish_cut(app, job, Some(&key)).await
     }
 }
+/// Segments fed to the thumbnail decoder: at least 6 s of video, so keyframes up to 6 s apart
+/// still give a frame.
+const THUMBNAIL_SEGMENTS: usize = 6;
 async fn thumbnail(app: &App, job: &Job) -> Res<()> {
     let video = load(&mut *app.db.acquire().await?, &job.video_id).await?;
     if !matches!(video.status.as_str(), "READY" | "RECORDING") {
@@ -284,15 +287,22 @@ async fn thumbnail(app: &App, job: &Job) -> Res<()> {
     let source = sources(app, &video.id, video.kind == "CLIP").await?;
     let wanted = job.input["offset_ms"].as_i64().unwrap_or(0).max(0);
     let mut end = 0;
-    let source = source
+    let first = source
         .iter()
-        .find(|s| {
+        .position(|s| {
             end += s.duration_ms;
             end > wanted
         })
-        .or_else(|| source.last())
-        .ok_or_else(|| Fail::unavailable("Thumbnail source is not ready."))?;
-    let bytes = object(app, &source.object_key).await?;
+        .unwrap_or(source.len().saturating_sub(1));
+    if source.is_empty() {
+        return Err(Fail::unavailable("Thumbnail source is not ready."));
+    }
+    // A segment can start mid-GOP and hold no keyframe (keyframes further apart than the 2 s
+    // segments), so decode from the wanted one onward until the next keyframe.
+    let mut bytes = Vec::new();
+    for s in source.iter().skip(first).take(THUMBNAIL_SEGMENTS) {
+        bytes.extend(object(app, &s.object_key).await?);
+    }
     let mut child = Command::new("ffmpeg")
         .args([
             "-hide_banner",
