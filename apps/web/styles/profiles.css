@@ -277,6 +277,14 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 /* Staff site banner (docs/ADMIN.md): one line above the page content, dismissible. */
 .site-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:8px 12px;border:1px solid var(--accent);background:var(--panel);color:var(--ink)}
 .site-banner p{margin:0}
+/* Live captions drawn over the video: viewers pick a size and drag them (CaptionOverlay). */
+.caption-layer{position:absolute;z-index:2;pointer-events:none;overflow:hidden;container-type:inline-size}
+.caption-box{position:absolute;transform:translate(-50%,-50%);max-width:90%;pointer-events:auto;cursor:grab;touch-action:none;text-align:center}.caption-box:active{cursor:grabbing}
+.caption-box p{margin:0;display:flex;flex-direction:column;align-items:center}.caption-box span{padding:1px 8px;background:rgba(0,0,0,.78);color:#fff;line-height:1.35;white-space:pre-wrap}
+.caption-s{font-size:max(12px,2.2cqi)}.caption-m{font-size:max(14px,2.9cqi)}.caption-l{font-size:max(17px,3.8cqi)}
+.caption-tools{position:absolute;left:50%;bottom:100%;transform:translateX(-50%);display:none;gap:4px;padding-bottom:4px;white-space:nowrap;font-size:12px}
+.caption-box:hover .caption-tools,.caption-box:focus-within .caption-tools{display:flex}.caption-box:focus-visible{outline:2px solid var(--accent, #fff);outline-offset:2px}
+.caption-note{position:absolute;left:8px;bottom:8px;margin:0;padding:4px 8px;background:var(--surface);border:1px solid var(--line);font-size:12px}
 .player-cc{position:absolute;top:8px;right:8px;z-index:2;min-width:44px}.player-cc[aria-pressed="true"]{outline:2px solid var(--accent, currentColor);outline-offset:1px}
 .chat-gif{display:block;padding:0;margin:4px 0;border:0;background:none;cursor:pointer;max-width:min(220px,100%)}.chat-gif img{display:block;width:100%;height:auto;border-radius:4px}
 .gif-picker{grid-column:1/-1;border:1px solid var(--line);padding:8px;display:grid;gap:6px}.gif-picker-head{display:flex;gap:8px}.gif-picker-head input{flex:1;min-width:0}

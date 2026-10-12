@@ -9,12 +9,13 @@ import { UpNext } from "./UpNext";
 import { RecordedPlayer } from "./RecordedPlayer";
 import { LiveVideoTools } from "./LiveVideoTools";
 import { PlayerSettings, Uptime } from "./PlayerSettings";
+import { CaptionOverlay, type CaptionStyle } from "./CaptionOverlay";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string; mature?: boolean } };
 type Live =
   | { live: false; hosting?: { username: string; display_name: string } }
-  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; started_at: string; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean };
+  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; started_at: string; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean; caption_style?: CaptionStyle };
 type Phase = "loading" | "playing" | "reconnecting" | "blocked" | "failed";
 
 let cachedBrowserId = "";
@@ -123,6 +124,8 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const [transport, setTransport] = useState<"webrtc" | "hls" | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [rewind, setRewind] = useState<string | null>(null);
+  // Paused by the viewer (a stray click on the video pauses it): offer the way back to live.
+  const [paused, setPaused] = useState(false);
   // Closed captions from OBS (docs/COMMUNITY.md). Browsers drop caption data from WebRTC, so
   // turning them on plays the stream over HLS, a few seconds further behind live.
   const captionsOn = useSyncExternalStore(onCaptions, captionsPreferred, () => false);
@@ -247,16 +250,6 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     return () => { cancelled = true; stop?.(); };
   }, [broadcast, webrtc, hlsKey, preferred, attempt, rewind, warning, wantCaptions]);
 
-  // hls.js adds a caption track once caption data arrives; show it only when captions are on.
-  useEffect(() => {
-    const tracks = video.current?.textTracks;
-    if (!tracks) return;
-    const apply = () => { for (const t of Array.from(tracks)) if (t.kind === "captions" || t.kind === "subtitles") t.mode = wantCaptions ? "showing" : "disabled"; };
-    apply();
-    tracks.addEventListener("addtrack", apply);
-    return () => tracks.removeEventListener("addtrack", apply);
-  }, [wantCaptions, transport, broadcast]);
-
   // Retry a dropped transport a few seconds later; the broadcast's 60-second reconnect grace keeps it live meanwhile.
   useEffect(() => {
     if (phase !== "reconnecting") return;
@@ -309,11 +302,19 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
   return <div className={focused ? "live-player focused" : "live-player"}>
-    {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} aria-label={`${live.title}, live`} />}
+    {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} onPause={() => setPaused(true)} onPlay={() => setPaused(false)} aria-label={`${live.title}, live`} />}
     {!rewind && <PlayerEffects username={username} video={video} transport={transport} />}
     {!rewind && status && <p className="player-status" role="status">{status}</p>}
     {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
+    {!rewind && paused && phase === "playing" && <button type="button" className="player-action" onClick={() => {
+      const element = video.current;
+      if (!element) return;
+      // WebRTC is always live; HLS jumps to its live edge.
+      if (element.seekable.length) element.currentTime = Math.max(0, element.seekable.end(element.seekable.length - 1) - 2);
+      void element.play();
+    }}>Jump to live</button>}
     {!rewind && autoMuted && phase === "playing" && <button type="button" className="player-action" onClick={() => { if (video.current) video.current.muted = false; }}>Unmute</button>}
+    {!rewind && captioned && <CaptionOverlay key={transport ?? ""} video={video} on={wantCaptions} channel={live.caption_style} isOwner={live.is_owner} />}
     {!rewind && captioned && <button type="button" className="player-cc small" aria-pressed={captionsOn} onClick={() => setCaptionsPreferred(!captionsOn)} title={captionsOn ? "Turn captions off" : "Turn captions on (the stream plays a few seconds further behind live)"}>CC</button>}
     {!rewind && phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />

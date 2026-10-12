@@ -125,6 +125,10 @@ struct Live {
     delivery: String,
     /// The probe found closed captions in this broadcast's video.
     captions: bool,
+    /// The channel's default caption size (s, m, l) and position (center, fractions of the player).
+    caption_size: Option<String>,
+    caption_x: Option<f64>,
+    caption_y: Option<f64>,
     started_at: DateTime<Utc>,
     title: String,
     category: Option<String>,
@@ -246,7 +250,7 @@ pub async fn live(
     axum::extract::Query(query): axum::extract::Query<LiveQuery>,
 ) -> Res<Json<Value>> {
     let owner = owner_id(&app, &name).await?;
-    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,CASE WHEN b.state='STARTING' THEN 'RECONNECTING' ELSE b.state END AS state,b.delivery,coalesce((b.health->>'captions')::bool,false) AS captions,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND (b.state IN ('LIVE','RECONNECTING') OR (b.state='STARTING' AND b.confirmed_live_at IS NOT NULL))")
+    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,CASE WHEN b.state='STARTING' THEN 'RECONNECTING' ELSE b.state END AS state,b.delivery,coalesce((b.health->>'captions')::bool,false) AS captions,s.caption_size,s.caption_x,s.caption_y,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND (b.state IN ('LIVE','RECONNECTING') OR (b.state='STARTING' AND b.confirmed_live_at IS NOT NULL))")
         .bind(&owner).fetch_optional(&app.db).await?;
     let Some(b) = current else {
         // An offline channel may host a live one; its page shows that stream.
@@ -335,6 +339,7 @@ pub async fn live(
         "playback": {"webrtc": webrtc, "hls": hls, "preferred": preferred},
         // Browsers drop caption data from WebRTC, so the player shows captions over HLS.
         "captions": b.captions && hls.is_some(),
+        "caption_style": {"size": b.caption_size.as_deref().unwrap_or("m"), "x": b.caption_x.unwrap_or(0.5), "y": b.caption_y.unwrap_or(0.85)},
         "raid": crate::raids::for_viewers(&app, &b.id, viewer.as_ref().map(|v| v.id.as_str())).await?,
     })))
 }
