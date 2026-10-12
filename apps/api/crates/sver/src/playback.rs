@@ -427,6 +427,10 @@ pub async fn beat(
         visible: input.visible,
         media_time,
         turnstile: input.turnstile.as_deref(),
+        browser: headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default(),
     };
     let outcome = crate::integrity::record(
         &app,

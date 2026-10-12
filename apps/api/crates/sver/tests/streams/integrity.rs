@@ -281,6 +281,9 @@ pub async fn exercise(e: &Env) {
     assert!(not_counted >= 1, "{studio}");
     assert!(!studio.to_string().contains("b:"), "no viewer identities");
 
+    // Cohorts: several sessions from one network with one browser build starting within seconds.
+    cohorts(e).await;
+
     // Retention: session rows go 30 days after their broadcast ended.
     tick(e).await;
     let old: i64 =
@@ -292,11 +295,117 @@ pub async fn exercise(e: &Env) {
 
     for statement in [
         "DELETE FROM integrity_cases",
-        "DELETE FROM broadcasts WHERE id IN ('int-b','int-old')",
+        "DELETE FROM broadcasts WHERE id IN ('int-b','int-old','coh-b')",
         "DELETE FROM moderation_actions",
         "DELETE FROM staff_roles",
     ] {
         e.sql(statement).await;
     }
     e.sql("DELETE FROM users WHERE id LIKE 'int-%'").await;
+}
+
+async fn cohort_count(e: &Env, like: &str) -> (i64, i64) {
+    sqlx::query_as("SELECT count(*) FILTER (WHERE cohort), count(*) FILTER (WHERE level='excluded') FROM playback_leases WHERE broadcast_id='coh-b' AND viewer_key LIKE $1")
+        .bind(like).fetch_one(&e.app.db).await.unwrap()
+}
+/// Inserts `n` checked guest sessions on one network, `spacing` seconds apart.
+async fn sessions(
+    e: &Env,
+    prefix: &str,
+    n: i32,
+    net: &str,
+    ua: &str,
+    spacing: i32,
+    lane: Option<&str>,
+) {
+    sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,created_at,turnstile_ok,net_hash,ua_hash,magnet_lane) SELECT 'coh-b','b:'||$1||'-'||g,now()+interval '30 seconds',now()-interval '30 seconds'+make_interval(secs=>g*$2),true,$3,$4,$5 FROM generate_series(1,$6) g")
+        .bind(prefix).bind(spacing).bind(net).bind(ua).bind(lane).bind(n)
+        .execute(&e.app.db).await.unwrap();
+}
+
+async fn cohorts(e: &Env) {
+    use axum::{body::Body, extract::ConnectInfo, http::Request};
+    use tower::ServiceExt;
+    e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('coh-b','stream-owner','pub-coh',1,'LIVE','s','v','c',now()-interval '20 minutes',now(),now())").await;
+
+    // A heartbeat keeps only a keyed hash of the browser build.
+    let ua = "Mozilla/5.0 (X11; Linux x86_64) SyntheticBrowser/123.0";
+    let request = Request::builder()
+        .method("POST")
+        .uri(BEAT)
+        .header("content-type", "application/json")
+        .header("origin", &e.app.config.origin)
+        .header("user-agent", ua)
+        .extension(ConnectInfo(
+            "127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap(),
+        ))
+        .body(Body::from(
+            json!({"broadcast_id":"coh-b","browser_id":"browser-cohort-0001","visible":true})
+                .to_string(),
+        ))
+        .unwrap();
+    let response = sver::router(e.app.clone()).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let row: String = sqlx::query_scalar(
+        "SELECT row_to_json(l)::text FROM playback_leases l WHERE broadcast_id='coh-b'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert!(
+        row.contains("\"ua_hash\":\"") && !row.contains("SyntheticBrowser"),
+        "{row}"
+    );
+    e.sql("DELETE FROM playback_leases WHERE broadcast_id='coh-b'")
+        .await;
+
+    // Five from one network and browser build within seconds are a cohort; four aren't; nor are
+    // five spread out, five browser builds on one network, or five that MAGNet brought.
+    sessions(e, "cohort", 5, "net-a", "ua-a", 2, None).await;
+    sessions(e, "four", 4, "net-b", "ua-b", 2, None).await;
+    sessions(e, "spread", 5, "net-c", "ua-c", 15, None).await;
+    for g in 1..=5 {
+        sessions(
+            e,
+            &format!("mixed{g}"),
+            1,
+            "net-d",
+            &format!("ua-d{g}"),
+            1,
+            None,
+        )
+        .await;
+    }
+    sessions(e, "magnet", 5, "net-e", "ua-e", 1, Some("global")).await;
+    tick(e).await;
+    assert_eq!(cohort_count(e, "b:cohort-%").await.0, 5);
+    for like in ["b:four-%", "b:spread-%", "b:mixed%", "b:magnet-%"] {
+        assert_eq!(cohort_count(e, like).await.0, 0, "{like}");
+    }
+
+    // A cohort alone still counts; with a second signal (metronomic beats) it is excluded.
+    // These 24 test arrivals are also a spike; clear its window to look at the cohort alone.
+    e.sql("UPDATE playback_leases SET created_at=created_at-interval '2 minutes',provisional_until=NULL WHERE broadcast_id='coh-b'").await;
+    tick(e).await;
+    let levels: Vec<String> = sqlx::query_scalar("SELECT DISTINCT level FROM playback_leases WHERE broadcast_id='coh-b' AND viewer_key LIKE 'b:cohort-%'")
+        .fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(levels, ["counted"], "one soft signal never excludes");
+    e.sql("UPDATE playback_leases SET interval_count=10,interval_mean=10000,interval_m2=1 WHERE broadcast_id='coh-b' AND viewer_key LIKE 'b:cohort-%'").await;
+    tick(e).await;
+    assert_eq!(
+        cohort_count(e, "b:cohort-%").await,
+        (5, 5),
+        "two signals exclude"
+    );
+
+    // While a committed handoff explains the burst, nothing is marked, even untagged arrivals.
+    e.sql("INSERT INTO magnet_lanes(id) VALUES('coh-lane')")
+        .await;
+    e.sql("INSERT INTO magnet_features(id,lane,broadcast_id,owner_id,kind,reason) VALUES('coh-f','coh-lane','coh-b','stream-owner','rotation','synthetic')").await;
+    sessions(e, "handoff", 5, "net-f", "ua-f", 1, None).await;
+    tick(e).await;
+    assert_eq!(cohort_count(e, "b:handoff-%").await.0, 0);
+    e.sql("DELETE FROM magnet_lanes WHERE id='coh-lane'").await;
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test' WHERE id='coh-b'")
+        .await;
 }

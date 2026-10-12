@@ -37,6 +37,11 @@ pub struct Tuning {
     /// Networks (IPinfo ASNs such as `AS16509`) that are hosting or VPN providers.
     pub hosting_asns: Vec<String>,
     pub hosting_risk: f32,
+    /// A cohort: at least `cohort_min` sessions from one network with one browser build that
+    /// started within `cohort_window_seconds` of each other.
+    pub cohort_min: i64,
+    pub cohort_window_seconds: f64,
+    pub cohort_risk: f32,
     pub exclude_risk: f32,
     pub trust_max_risk: f32,
     pub ahead_strikes_hard: i32,
@@ -62,6 +67,9 @@ impl Default for Tuning {
                 .map(String::from)
                 .into(),
             hosting_risk: 0.6,
+            cohort_min: 5,
+            cohort_window_seconds: 10.0,
+            cohort_risk: 0.6,
             exclude_risk: 1.0,
             trust_max_risk: 0.5,
             ahead_strikes_hard: 2,
@@ -123,6 +131,8 @@ pub struct Inputs {
     pub same_network: i64,
     /// The viewer's network is a hosting or VPN provider (IPinfo Lite).
     pub hosting: bool,
+    /// The session joined as part of a cohort (`mark_cohorts`).
+    pub cohort: bool,
 }
 
 /// No single soft signal excludes a viewer: exclusion needs risk from two signals (or hard
@@ -144,6 +154,10 @@ pub fn assess(t: &Tuning, i: &Inputs) -> (Level, f32, Vec<&'static str>) {
     if i.hosting {
         risk += t.hosting_risk;
         flags.push("hosting_network");
+    }
+    if i.cohort {
+        risk += t.cohort_risk;
+        flags.push("cohort");
     }
     if i.hard {
         flags.push("media_ahead_of_clock");
@@ -201,6 +215,8 @@ pub struct Report<'a> {
     pub visible: bool,
     pub media_time: Option<f64>,
     pub turnstile: Option<&'a str>,
+    /// The browser's User-Agent, stored only as a keyed hash (the "browser build" of a cohort).
+    pub browser: &'a str,
 }
 
 #[derive(sqlx::FromRow)]
@@ -218,6 +234,7 @@ struct Lease {
     last_media_time: Option<f64>,
     ahead_strikes: i32,
     provisional_until: Option<DateTime<Utc>>,
+    cohort: bool,
 }
 
 /// Records one heartbeat and rescores its lease. None when the broadcast isn't public.
@@ -251,7 +268,7 @@ pub async fn record(
     let now: DateTime<Utc> = sqlx::query_scalar("SELECT now()")
         .fetch_one(&mut *tx)
         .await?;
-    let previous: Option<Lease> = sqlx::query_as("SELECT level,created_at,expires_at,last_beat_at,turnstile_ok,hard_excluded,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,provisional_until FROM playback_leases WHERE broadcast_id=$1 AND viewer_key=$2 FOR UPDATE")
+    let previous: Option<Lease> = sqlx::query_as("SELECT level,created_at,expires_at,last_beat_at,turnstile_ok,hard_excluded,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,provisional_until,cohort FROM playback_leases WHERE broadcast_id=$1 AND viewer_key=$2 FOR UPDATE")
         .bind(broadcast).bind(key).fetch_optional(&mut *tx).await?;
     let mut l = previous.unwrap_or(Lease {
         level: "pending".into(),
@@ -267,6 +284,7 @@ pub async fn record(
         last_media_time: None,
         ahead_strikes: 0,
         provisional_until: None,
+        cohort: false,
     });
     // Timing only continues within a live lease; a beat after a lapse starts a new run.
     if let Some(last) = l.last_beat_at
@@ -294,14 +312,15 @@ pub async fn record(
     l.turnstile_ok |= passed;
     let net_hash = keyed(app, "net", &network(ip));
     let ip_hash = keyed(app, "ip", &ip.to_canonical().to_string());
+    let ua_hash = (!report.browser.is_empty()).then(|| keyed(app, "ua", report.browser));
     let hosting = app
         .config
         .networks
         .asn(ip)
         .is_some_and(|asn| t.hosting_asns.contains(&asn));
-    sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,created_at,expires_at,signed_in,verified,turnstile_ok,hard_excluded,ip_hash,net_hash,beats,last_beat_at,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,hosting) VALUES($1,$2,$3,$4+interval '30 seconds',$5,$6,$7,$8,$9,$10,1,$4,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(broadcast_id,viewer_key) DO UPDATE SET hosting=EXCLUDED.hosting, expires_at=EXCLUDED.expires_at,signed_in=EXCLUDED.signed_in,verified=EXCLUDED.verified,turnstile_ok=EXCLUDED.turnstile_ok,hard_excluded=EXCLUDED.hard_excluded,ip_hash=EXCLUDED.ip_hash,net_hash=EXCLUDED.net_hash,beats=playback_leases.beats+1,last_beat_at=EXCLUDED.last_beat_at,interval_count=EXCLUDED.interval_count,interval_mean=EXCLUDED.interval_mean,interval_m2=EXCLUDED.interval_m2,visible_seconds=EXCLUDED.visible_seconds,last_media_time=EXCLUDED.last_media_time,ahead_strikes=EXCLUDED.ahead_strikes")
+    sqlx::query("INSERT INTO playback_leases(broadcast_id,viewer_key,created_at,expires_at,signed_in,verified,turnstile_ok,hard_excluded,ip_hash,net_hash,beats,last_beat_at,interval_count,interval_mean,interval_m2,visible_seconds,last_media_time,ahead_strikes,hosting,ua_hash) VALUES($1,$2,$3,$4+interval '30 seconds',$5,$6,$7,$8,$9,$10,1,$4,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(broadcast_id,viewer_key) DO UPDATE SET hosting=EXCLUDED.hosting,ua_hash=EXCLUDED.ua_hash, expires_at=EXCLUDED.expires_at,signed_in=EXCLUDED.signed_in,verified=EXCLUDED.verified,turnstile_ok=EXCLUDED.turnstile_ok,hard_excluded=EXCLUDED.hard_excluded,ip_hash=EXCLUDED.ip_hash,net_hash=EXCLUDED.net_hash,beats=playback_leases.beats+1,last_beat_at=EXCLUDED.last_beat_at,interval_count=EXCLUDED.interval_count,interval_mean=EXCLUDED.interval_mean,interval_m2=EXCLUDED.interval_m2,visible_seconds=EXCLUDED.visible_seconds,last_media_time=EXCLUDED.last_media_time,ahead_strikes=EXCLUDED.ahead_strikes")
         .bind(broadcast).bind(key).bind(l.created_at).bind(now).bind(signed_in).bind(verified).bind(l.turnstile_ok).bind(l.hard_excluded)
-        .bind(&ip_hash).bind(&net_hash).bind(l.interval_count).bind(l.interval_mean).bind(l.interval_m2).bind(l.visible_seconds).bind(report.media_time).bind(l.ahead_strikes).bind(hosting)
+        .bind(&ip_hash).bind(&net_hash).bind(l.interval_count).bind(l.interval_mean).bind(l.interval_m2).bind(l.visible_seconds).bind(report.media_time).bind(l.ahead_strikes).bind(hosting).bind(&ua_hash)
         .execute(&mut *tx).await?;
     let same_network: i64 = sqlx::query_scalar("SELECT count(*) FROM playback_leases WHERE broadcast_id=$1 AND net_hash=$2 AND expires_at>now()")
         .bind(broadcast).bind(&net_hash).fetch_one(&mut *tx).await?;
@@ -318,6 +337,7 @@ pub async fn record(
         visible_seconds: l.visible_seconds,
         same_network,
         hosting,
+        cohort: l.cohort,
     };
     let (level, risk, flags) = assess(t, &inputs);
     save_level(&mut tx, broadcast, key, level, risk, &flags).await?;
@@ -384,6 +404,7 @@ struct Scored {
     visible_seconds: f64,
     same_network: i64,
     hosting: bool,
+    cohort: bool,
 }
 
 /// Background pass, run with the other jobs: spike windows, rescoring (so sessions can recover),
@@ -399,10 +420,12 @@ pub async fn tick(app: &App) -> Res<()> {
         // Raids and committed MAGNet handoffs explain their arrival bursts. After a handoff's first
         // two minutes, viewers MAGNet brought still don't count toward a burst: sessions tagged with
         // a lane that was featuring this broadcast when they started. Other arrivals still do.
-        if running >= t.spike_grace_seconds as f64
-            && !crate::raids::explains_burst(&mut tx, &broadcast).await?
-            && !crate::magnet::explains_burst(&mut tx, &broadcast).await?
-        {
+        let explained = crate::raids::explains_burst(&mut tx, &broadcast).await?
+            || crate::magnet::explains_burst(&mut tx, &broadcast).await?;
+        if !explained {
+            mark_cohorts(&mut tx, &t, &broadcast).await?;
+        }
+        if running >= t.spike_grace_seconds as f64 && !explained {
             let (arrivals, baseline): (i64, i64) = sqlx::query_as("SELECT count(*) FILTER (WHERE created_at>now()-interval '60 seconds' AND provisional_until IS NULL AND NOT EXISTS(SELECT 1 FROM magnet_features f WHERE f.lane=playback_leases.magnet_lane AND f.broadcast_id=playback_leases.broadcast_id AND playback_leases.created_at>=f.started_at-interval '15 seconds' AND (f.ended_at IS NULL OR playback_leases.created_at<=f.ended_at))), count(*) FILTER (WHERE created_at<=now()-interval '60 seconds' AND created_at>now()-interval '6 minutes') FROM playback_leases WHERE broadcast_id=$1")
                 .bind(&broadcast).fetch_one(&mut *tx).await?;
             let per_minute = (baseline as f64 / 5.0).max(1.0);
@@ -412,7 +435,7 @@ pub async fn tick(app: &App) -> Res<()> {
             }
         }
         // ponytail: one UPDATE per live lease every pass; batch it if audiences reach thousands.
-        let leases: Vec<Scored> = sqlx::query_as("SELECT l.viewer_key, extract(epoch FROM now()-l.created_at)::float8 AS age_seconds, l.signed_in, l.verified, l.turnstile_ok, l.hard_excluded, coalesce(l.provisional_until>now(),false) AS provisional, l.interval_count, l.interval_mean, l.interval_m2, l.visible_seconds, (SELECT count(*) FROM playback_leases n WHERE n.broadcast_id=l.broadcast_id AND n.net_hash=l.net_hash AND n.expires_at>now()) AS same_network, l.hosting FROM playback_leases l WHERE l.broadcast_id=$1 AND l.expires_at>now()")
+        let leases: Vec<Scored> = sqlx::query_as("SELECT l.viewer_key, extract(epoch FROM now()-l.created_at)::float8 AS age_seconds, l.signed_in, l.verified, l.turnstile_ok, l.hard_excluded, coalesce(l.provisional_until>now(),false) AS provisional, l.interval_count, l.interval_mean, l.interval_m2, l.visible_seconds, (SELECT count(*) FROM playback_leases n WHERE n.broadcast_id=l.broadcast_id AND n.net_hash=l.net_hash AND n.expires_at>now()) AS same_network, l.hosting, l.cohort FROM playback_leases l WHERE l.broadcast_id=$1 AND l.expires_at>now()")
             .bind(&broadcast).fetch_all(&mut *tx).await?;
         for l in &leases {
             let inputs = Inputs {
@@ -428,6 +451,7 @@ pub async fn tick(app: &App) -> Res<()> {
                 visible_seconds: l.visible_seconds,
                 same_network: l.same_network,
                 hosting: l.hosting,
+                cohort: l.cohort,
             };
             let (level, risk, flags) = assess(&t, &inputs);
             save_level(&mut tx, &broadcast, &l.viewer_key, level, risk, &flags).await?;
@@ -455,6 +479,21 @@ pub async fn tick(app: &App) -> Res<()> {
     )
     .execute(&app.db)
     .await?;
+    Ok(())
+}
+
+/// Marks sessions that joined as a cohort: at least `cohort_min` sessions on this broadcast from
+/// one network with one browser build, started within `cohort_window_seconds` of each other.
+/// Network is required because one browser build joining at once is normal on its own (most
+/// viewers run the same browser release). Sessions a raid or MAGNet brought are never part of a
+/// cohort, and the caller skips this while a raid or handoff explains the burst. Only sessions
+/// from the last minute are marked, so arrivals a raid explained are never marked later. The mark
+/// lasts for the session: it describes how it joined, and as one soft signal it never excludes
+/// on its own.
+async fn mark_cohorts(db: &mut PgConnection, t: &Tuning, broadcast: &str) -> Res<()> {
+    sqlx::query("UPDATE playback_leases l SET cohort=true WHERE l.broadcast_id=$1 AND NOT l.cohort AND l.ua_hash IS NOT NULL AND l.net_hash IS NOT NULL AND l.raid_id IS NULL AND l.magnet_lane IS NULL AND l.created_at>now()-interval '60 seconds' AND (SELECT count(*) FROM playback_leases o WHERE o.broadcast_id=l.broadcast_id AND o.net_hash=l.net_hash AND o.ua_hash=l.ua_hash AND o.raid_id IS NULL AND o.magnet_lane IS NULL AND abs(extract(epoch FROM o.created_at-l.created_at))<=$2)>=$3")
+        .bind(broadcast).bind(t.cohort_window_seconds).bind(t.cohort_min)
+        .execute(db).await?;
     Ok(())
 }
 
@@ -715,6 +754,41 @@ mod tests {
         };
         assert_eq!(
             assess(&t, &metronomic).0,
+            Level::Excluded,
+            "two signals exclude"
+        );
+    }
+
+    #[test]
+    fn cohort_is_one_soft_signal() {
+        let t = Tuning::default();
+        let joined = Inputs {
+            cohort: true,
+            ..counted_guest()
+        };
+        let (level, _, flags) = assess(&t, &joined);
+        assert_eq!(
+            (level, flags.contains(&"cohort")),
+            (Level::Counted, true),
+            "a cohort alone still counts"
+        );
+        let member = Inputs {
+            signed_in: true,
+            verified: true,
+            visible_seconds: 600.0,
+            ..joined
+        };
+        assert_eq!(
+            assess(&t, &member).0,
+            Level::Counted,
+            "but is never Trusted"
+        );
+        let crowded = Inputs {
+            same_network: t.network_limit + 1,
+            ..joined
+        };
+        assert_eq!(
+            assess(&t, &crowded).0,
             Level::Excluded,
             "two signals exclude"
         );
