@@ -289,6 +289,43 @@ async fn list(
     Ok(Json(json!({"rewards": rewards, "balance": balance})))
 }
 
+/// GET /api/channels/{username}/loyalty: the watch page's standing pill and effort leaders box.
+/// Leaders rank this week's Engagement Valor earned here (watching, chatting, following), never
+/// spending (docs/CROWDSYNC.md "No spending leaderboards"). `me` is null for guests and the owner.
+async fn loyalty(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+) -> Res<Json<Value>> {
+    let channel = channel(&app, &name).await?;
+    let viewer = profiles::viewer(&app, &jar).await?;
+    // Only the fixed chip SQL is interpolated; the channel is bound.
+    let mut leaders: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT jsonb_build_object('user',{chip},'points',e.week_earned) FROM engagement e JOIN channel_users u ON u.id=e.user_id \
+         WHERE e.channel_id=$1 AND e.week_of=date_trunc('week',now() AT TIME ZONE 'UTC')::date AND e.week_earned>0 AND u.eligible AND u.deleted_at IS NULL \
+         AND NOT EXISTS(SELECT 1 FROM channel_restrictions r WHERE r.channel_id=e.channel_id AND r.user_id=e.user_id AND r.kind='ban') \
+         ORDER BY e.week_earned DESC, e.user_id LIMIT 5",
+        chip = profiles::chip_sql("u")
+    )))
+    .bind(&channel)
+    .fetch_all(&app.db)
+    .await?;
+    leaders.iter_mut().for_each(|v| profiles::hydrate(&app, v));
+    let me = match &viewer {
+        Some(v) if v.id != channel => {
+            let (earned, balance, week): (i64, i64, i64) = sqlx::query_as("SELECT coalesce(max(earned),0),coalesce(max(balance),0),coalesce(max(week_earned) FILTER (WHERE week_of=date_trunc('week',now() AT TIME ZONE 'UTC')::date),0) FROM engagement WHERE channel_id=$1 AND user_id=$2")
+                .bind(&channel).bind(&v.id).fetch_one(&app.db).await?;
+            let rank = crate::progression::loyalty(earned);
+            let next = crate::progression::LOYALTY.get(rank as usize + 1);
+            Some(
+                json!({"rank": rank, "earned": earned, "from": crate::progression::LOYALTY[rank as usize].1, "balance": balance, "week": week, "next": next.map(|(name, at)| json!({"name": name, "at": at}))}),
+            )
+        }
+        _ => None,
+    };
+    Ok(Json(json!({"me": me, "leaders": leaders})))
+}
+
 #[derive(Deserialize)]
 pub struct Redeem {
     id: String,
@@ -560,6 +597,7 @@ async fn resolve(
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/channels/{username}/rewards", get(list))
+        .route("/api/channels/{username}/loyalty", get(loyalty))
         .route("/api/channels/{username}/rewards/{id}/redeem", post(redeem))
         .route("/api/channels/{username}/redemptions", get(queue))
         .route("/api/channels/{username}/redemptions/{id}", post(resolve))

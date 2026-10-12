@@ -314,8 +314,82 @@ pub async fn exercise(e: &Env) {
     );
     assert_eq!(balance(e, "ev-viewer").await, 600);
 
+    // Watch page loyalty: the viewer's standing, and this week's leaders by points earned here.
+    // Spending never lowers the week; unverified and banned viewers are left out.
+    let (status, mine) = call(
+        e,
+        "GET",
+        &format!("{CHANNEL}/loyalty"),
+        Some(&viewer),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{mine}");
+    let earned = mine["me"]["earned"].as_i64().unwrap();
+    assert_eq!(mine["me"]["balance"], 600);
+    assert_eq!(mine["me"]["rank"], 1, "{mine}");
+    assert_eq!(mine["me"]["from"], 200);
+    assert_eq!(mine["me"]["next"]["name"], "Devoted");
+    assert_eq!(mine["leaders"].as_array().unwrap().len(), 1, "{mine}");
+    assert_eq!(mine["leaders"][0]["user"]["username"], "EvViewer");
+    assert!(mine["leaders"][0]["points"].as_i64().unwrap() >= earned);
+    assert_eq!(mine["me"]["week"], mine["leaders"][0]["points"]);
+    let (_, theirs) = call(
+        e,
+        "GET",
+        &format!("{CHANNEL}/loyalty"),
+        Some(&owner),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        theirs["me"],
+        Value::Null,
+        "the owner has no standing in their own channel"
+    );
+    let (_, guest) = call(e, "GET", &format!("{CHANNEL}/loyalty"), None, Value::Null).await;
+    assert_eq!(guest["me"], Value::Null);
+    // A new week starts the count again from what's earned in it.
+    e.sql("UPDATE engagement SET week_of=week_of-7 WHERE channel_id='ev-owner'")
+        .await;
+    let (_, stale) = call(e, "GET", &format!("{CHANNEL}/loyalty"), None, Value::Null).await;
+    assert_eq!(stale["leaders"], json!([]));
+    e.sql(
+        "UPDATE engagement SET earned=earned+5 WHERE channel_id='ev-owner' AND user_id='ev-viewer'",
+    )
+    .await;
+    let (_, fresh) = call(e, "GET", &format!("{CHANNEL}/loyalty"), None, Value::Null).await;
+    assert_eq!(fresh["leaders"][0]["points"], 5, "{fresh}");
+
+    // Report playback problem: fixed choices, one per viewer per broadcast every 10 minutes.
+    let path = format!("{CHANNEL}/live/problem");
+    let problem = |kind: &str| {
+        call(
+            e,
+            "POST",
+            &path,
+            None,
+            json!({"broadcast_id": "ev-b", "browser_id": "problem-browser-0001", "kind": kind, "transport": "hls", "delay_ms": 2100, "height": 720, "dropped_frames": 3}),
+        )
+    };
+    assert_eq!(problem("bad").await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(problem("stutter").await.0, StatusCode::OK);
+    assert_eq!(problem("no_audio").await.0, StatusCode::TOO_MANY_REQUESTS);
+    let saved: (String, Option<i32>) =
+        sqlx::query_as("SELECT kind,height FROM playback_problems WHERE broadcast_id='ev-b'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(saved, ("stutter".into(), Some(720)));
+
     // A channel ban freezes earning and spending there.
     e.sql("INSERT INTO channel_restrictions(channel_id,user_id,kind) VALUES('ev-owner','ev-viewer','ban')").await;
+    let (_, banned) = call(e, "GET", &format!("{CHANNEL}/loyalty"), None, Value::Null).await;
+    assert_eq!(
+        banned["leaders"],
+        json!([]),
+        "banned viewers leave the leaders box"
+    );
     assert_eq!(
         redeem(e, &viewer, hydrate, json!({"id": id()})).await.0,
         StatusCode::FORBIDDEN

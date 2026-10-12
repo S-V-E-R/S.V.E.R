@@ -8,12 +8,13 @@ import { Turnstile } from "./Turnstile";
 import { UpNext } from "./UpNext";
 import { RecordedPlayer } from "./RecordedPlayer";
 import { LiveVideoTools } from "./LiveVideoTools";
+import { PlayerSettings, Uptime } from "./PlayerSettings";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string; mature?: boolean } };
 type Live =
   | { live: false; hosting?: { username: string; display_name: string } }
-  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean };
+  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; started_at: string; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean };
 type Phase = "loading" | "playing" | "reconnecting" | "blocked" | "failed";
 
 let cachedBrowserId = "";
@@ -312,6 +313,8 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} size={nested ? "compact" : "normal"} />}
     {raidBar}
-    <p className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching</span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>} {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</p>
+    <div className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching</span> <Uptime since={live.started_at} /> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>}
+      {!rewind && <PlayerSettings username={username} broadcast={live.broadcast_id} video={video} transport={transport} browserId={browserId} />}
+      {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</div>
   </div>;
 }

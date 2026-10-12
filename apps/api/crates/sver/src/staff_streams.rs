@@ -26,11 +26,12 @@ type Row = (
     Option<String>,
     i64,
     Option<DateTime<Utc>>,
+    Value,
 );
 /// GET /api/admin/streams: every open broadcast, oldest first.
 async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     safety::staff(&app, &jar).await?;
-    let rows: Vec<Row> = sqlx::query_as("SELECT b.id,b.state,b.started_at,b.health,c.username,c.display_name,coalesce(s.title,c.username||'''s stream'),k.name,(SELECT count(*) FROM reports r WHERE r.target_type='live_stream' AND r.target_id=b.id AND r.status='OPEN'),(SELECT followers_only_until FROM chat_settings WHERE channel_id=b.owner_id AND followers_only_until>now()) FROM broadcasts b JOIN channel_users c ON c.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories k ON k.id=s.category_id WHERE b.state<>'ENDED' ORDER BY b.started_at LIMIT 200")
+    let rows: Vec<Row> = sqlx::query_as("SELECT b.id,b.state,b.started_at,b.health,c.username,c.display_name,coalesce(s.title,c.username||'''s stream'),k.name,(SELECT count(*) FROM reports r WHERE r.target_type='live_stream' AND r.target_id=b.id AND r.status='OPEN'),(SELECT followers_only_until FROM chat_settings WHERE channel_id=b.owner_id AND followers_only_until>now()),(SELECT coalesce(jsonb_object_agg(kind,n),'{}') FROM (SELECT kind,count(*) n FROM playback_problems p WHERE p.broadcast_id=b.id GROUP BY kind) x) FROM broadcasts b JOIN channel_users c ON c.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories k ON k.id=s.category_id WHERE b.state<>'ENDED' ORDER BY b.started_at LIMIT 200")
         .fetch_all(&app.db)
         .await?;
     let mut db = app.db.acquire().await?;
@@ -46,6 +47,7 @@ async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         category,
         reports,
         followers_only,
+        problems,
     ) in rows
     {
         let (raw, counted, trusted, excluded, pending) =
@@ -55,7 +57,7 @@ async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         items.push(json!({"id":id,"state":state,"started_at":started_at,"health":health,
             "mature":mature.0,"mature_locked":mature.1,
             "channel":{"username":username,"display_name":display_name},"title":title,"category":category,
-            "open_reports":reports,"followers_only_until":followers_only,
+            "open_reports":reports,"followers_only_until":followers_only,"playback_problems":problems,
             "counts":{"sessions":raw,"public":counted,"trusted":trusted,"excluded":excluded,"pending":pending}}));
     }
     Ok(Json(json!({"items":items})))

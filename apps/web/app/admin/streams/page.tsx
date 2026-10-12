@@ -6,12 +6,13 @@ import { send, useLoad } from "../../../lib/client-api";
 import { UsernameInput } from "../../../components/UsernameInput";
 import { GameCatalogReview } from "../../../components/GameCatalogReview";
 
-type Stream = { id: string; state: string; started_at: string; title: string; category: string | null; open_reports: number; followers_only_until: string | null; mature?: boolean; mature_locked?: boolean;
+type Stream = { id: string; state: string; started_at: string; title: string; category: string | null; open_reports: number; followers_only_until: string | null; playback_problems?: Record<string, number>; mature?: boolean; mature_locked?: boolean;
   channel: { username: string; display_name: string };
   health: { video_codec?: string | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean; keyframe_warning?: boolean; keyframe_seconds?: number | null; b_frames?: boolean | null };
   counts: { sessions: number; public: number; trusted: number; excluded: number; pending: number } };
 type Category = { id: string; name: string; genre: string; active: boolean; channels: number };
 
+const PROBLEM_NAMES: Record<string, string> = { stutter: "stutters", no_audio: "no audio", wont_load: "won't load", out_of_sync: "out of sync", blurry: "blurry", distorted: "distorted" };
 const since = (iso: string) => { const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
 
 /** Staff → Live streams: what's on now (health, counts, reports), an audited stop, and the category catalog. */
@@ -69,6 +70,7 @@ export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boo
           <p className="muted">Public {s.counts.public} · trusted {s.counts.trusted} · pending {s.counts.pending} · excluded {s.counts.excluded} · sessions {s.counts.sessions}</p>
           <p className="muted">{s.health.video_codec ?? "codec not measured"}{s.health.input_kbps != null && ` · ${Math.round(s.health.input_kbps)} Kbps`}{s.health.keyframe_seconds != null && ` · keyframes ${s.health.keyframe_seconds} s`}{s.health.b_frames != null && ` · B-frames ${s.health.b_frames ? "on" : "off"}`}
             {(s.health.codec_warning || s.health.bitrate_warning || s.health.keyframe_warning || s.health.b_frames) && <strong> · OBS warning</strong>}</p>
+          {Object.keys(s.playback_problems ?? {}).length > 0 && <p className="muted">Viewer playback reports: {Object.entries(s.playback_problems ?? {}).map(([k, n]) => `${PROBLEM_NAMES[k] ?? k} ${n}`).join(" · ")}</p>}
           {(s.open_reports > 0 || s.followers_only_until) && <p>{s.open_reports > 0 && <Link href="/admin/reports">{s.open_reports} open report{s.open_reports === 1 ? "" : "s"}</Link>}{s.followers_only_until && <span className="muted"> Followers-only chat on</span>}</p>}
           <div className="row">{s.mature_locked ? <span className="muted">Labeled mature by staff (locked until this broadcast ends)</span> : <button type="button" className="small quiet" onClick={() => lockMature(s)}>{s.mature ? "Lock the Mature label" : "Label mature and lock"}</button>}
           <button type="button" className="small quiet danger-text" onClick={() => stop(s)}>Stop stream</button></div>

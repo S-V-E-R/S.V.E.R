@@ -485,6 +485,13 @@ New tables: chat replies and pins (columns on chat messages plus a channel pin r
 
 Automated coverage adds: mention matching and XSS, reply-to-deleted, pin permissions and reconnect, emote validation and render rules, alert throttling and opt-outs, push failure cleanup, raid eligibility, blocks and arrival counting, and host start/stop transitions.
 
+### Watch page additions — October 12, 2026
+
+- **Info bar:** under the player, LIVE (and MATURE), title, category, viewers and uptime ("Live 1 h 12 min", from `started_at`), then **Settings** and Report stream.
+- **Settings menu:** *Stats for nerds* over the video (delivery WebRTC or HLS, resolution, seconds behind live over HLS, dropped frames) and *Report playback problem*: one tap on a fixed choice (stutters, no sound, won't load, out of sync, blurry, distorted), sent with what the player measured. Guests may report; one report per viewer per broadcast every 10 minutes, 20 per IP per hour. Staff → Live streams shows the counts per broadcast (`playback_problems`, `POST /api/channels/{username}/live/problem`).
+- **Standing pill:** in the streamer bar for signed-in viewers: their loyalty rank here, progress to the next rank, and Engagement Valor balance.
+- **Most loyal this week:** at the top of chat, the five viewers who earned the most Engagement Valor in this channel this week (Monday 00:00 UTC), by watching, chatting and following. Never by spending (docs/CROWDSYNC.md). Banned, deleted and ineligible accounts are left out. A trigger on `engagement` keeps `week_earned`, so every way of earning counts and spending never lowers it (`GET /api/channels/{username}/loyalty`).
+
 ## Delivery phases and checks
 
 1. **Media proof and concrete deployment design.** Use an isolated SRS instance/vhost with synthetic media and separate ports/output. Validate public-ID/secret separation, callback authentication, one-publisher enforcement, audio/video compatibility, CDN protocol/cache behavior, and fallback. No restart, hook switch or load test against the active sver-plays runtime. Save only aggregate measurements and sanitized configs in the repository.

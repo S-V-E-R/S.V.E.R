@@ -11,6 +11,7 @@ import { Crest } from "../../../components/FactionIdentity";
 import { factionInfo } from "../../../lib/factions";
 import { Avatar } from "../../../components/Avatar";
 import { ChannelActions } from "../../../components/ChannelActions";
+import { EffortLeaders, StandingPill } from "../../../components/Loyalty";
 import { SectionHead, StreamGrid } from "../../../components/home/Shelves";
 import type { LiveCard } from "../../../components/home/types";
 import { apiGet } from "../../../lib/server-api";
@@ -47,6 +48,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
     <section className="streamer-bar" aria-label="Streamer">
       <Link href={`/${c.username}`} aria-label={`${c.display_name}'s channel`}>{c.faction ? <Crest faction={c.faction} size={48} /> : <Avatar sizes={c.avatar} name={c.display_name} size={48} />}</Link>
       <div className="streamer-name"><h1><Link href={`/${c.username}`}>{c.display_name}</Link></h1><p className="handle">@{c.username}</p><p className="streamer-tags">{c.faction && <Link href={`/factions/${c.faction}`} className="badge faction-tag">{factionInfo(c.faction).name}</Link>}<span className="muted">{c.follower_count.toLocaleString()} followers</span></p></div>
+      {account && <StandingPill username={c.username} />}
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
       {account && <EditStreamInfo username={c.username} />}
     </section>
@@ -57,6 +59,6 @@ export default async function Live({ params }: { params: ChannelParams }) {
     </div>
     <section className="watch-next" aria-labelledby="up-next"><SectionHead id="up-next" title="Up next" note="Same genre first, then same faction" href="/browse" link="Browse" />{next.length ? <StreamGrid streams={next} viewerFaction={account?.faction ?? null} /> : <p className="shelf-empty panel">{suggestions.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>
     </div>
-    {squad?.mode === "MERGED" && squadHost ? <Chat key={squad.id} username={squadHost} squad={squad.id} account={account?.username ?? null} /> : <Chat username={c.username} account={account?.username ?? null} />}
+    {squad?.mode === "MERGED" && squadHost ? <Chat key={squad.id} username={squadHost} squad={squad.id} account={account?.username ?? null} /> : <Chat username={c.username} account={account?.username ?? null} top={<EffortLeaders username={c.username} />} />}
   </div>;
 }
