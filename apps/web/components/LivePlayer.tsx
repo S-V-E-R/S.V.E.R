@@ -267,14 +267,20 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   // Heartbeat only while media is actually advancing; the owner's own preview is never counted.
   useEffect(() => {
     if (!broadcast || isOwner) return;
-    let last = -1;
+    // Each attached media (a WebRTC stream, an hls.js blob) has its own timeline, so media_time is
+    // reported from the start of the current one: a reload or transport switch then reads as going
+    // back, which the server ignores, instead of a jump ahead that excludes the viewer.
+    let run: { media: unknown; base: number; last: number } = { media: null, base: 0, last: -1 };
     const timer = setInterval(() => {
       const element = video.current;
-      if (!element || element.paused || element.currentTime <= last) return;
-      last = element.currentTime;
+      if (!element || element.paused) return;
+      const media = element.srcObject ?? element.currentSrc;
+      if (media !== run.media) run = { media, base: element.currentTime, last: -1 };
+      if (element.currentTime <= run.last) return;
+      run.last = element.currentTime;
       const check = token.current;
       token.current = "";
-      void send<{ recorded: boolean; needs_turnstile?: boolean }>("POST", `${path}/beat`, { broadcast_id: broadcast, browser_id: browserId(), visible: !document.hidden, media_time: element.currentTime, turnstile: check || undefined, raid: arrivedFrom.current || undefined, magnet: magnetLane }).then(async result => {
+      void send<{ recorded: boolean; needs_turnstile?: boolean }>("POST", `${path}/beat`, { broadcast_id: broadcast, browser_id: browserId(), visible: !document.hidden, media_time: element.currentTime - run.base, turnstile: check || undefined, raid: arrivedFrom.current || undefined, magnet: magnetLane }).then(async result => {
         if (!result.ok || !result.data.needs_turnstile) { setSitekey(null); return; }
         const config = await send<{ turnstile_site_key: string }>("GET", "/api/auth/config");
         if (config.ok) setSitekey(config.data.turnstile_site_key);
