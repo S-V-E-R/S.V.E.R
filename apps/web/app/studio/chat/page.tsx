@@ -11,29 +11,50 @@ type View = {
   settings: { slow_mode_seconds: number; block_links: boolean; banned_words: string[]; overlay_fade_seconds?: number; allow_signatures?: boolean; min_loyalty?: number; gifs?: string };
   moderators: Chip[];
   restrictions: { user: Chip; kind: "timeout" | "ban"; until: string | null }[];
-  log: { action: string; actor_role: string; actor: string | null; target: string | null; reason: string; created_at: string }[];
+  log: { action: string; actor_role: string; actor: string | null; target: string | null; reason: string; created_at: string; detail?: Evidence }[];
+  reviews: ({ id: string; action: "timeout" | "ban"; actor: string | null; target: string | null; created_at: string; theirs: boolean } & Evidence)[];
 };
+type Evidence = { chat?: { user: string; body: string; at: string; deleted: boolean }[]; clip?: string | null };
+
+/** What the team sees for a timeout or ban: the chat before it and the stream's last minute. */
+function EvidenceView({ chat, clip, target }: Evidence & { target: string | null }) {
+  if (!chat && !clip) return null;
+  return <details><summary>Evidence</summary>
+    {clip ? <p><a href={`/clips/${clip}`} target="_blank" rel="noreferrer">Watch the minute before it</a> (private to your team, kept 90 days)</p> : <p className="muted">No video: the stream wasn&apos;t recording.</p>}
+    {chat && chat.length > 0 ? <ol className="list">{chat.map((m, i) => <li key={i} className={m.user === target ? "" : "muted"}>
+      <span className="muted">{time(m.at)}</span> <strong>@{m.user}</strong>: {m.body}{m.deleted && " (deleted)"}
+    </li>)}</ol> : <p className="muted">No chat in the 10 minutes before.</p>}
+  </details>;
+}
 const label = (action: string) => action.replaceAll("_", " ");
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
-/** Chat rules, moderators, active timeouts/bans and the audit log for the owner's channel. */
+/** Chat rules, moderators, timeouts/bans, reviews and the log: the owner's channel, or `?channel=`
+ * for a channel the viewer moderates. */
 export default function ChatStudio() {
   const [username, setUsername] = useState("");
   const [view, setView] = useState<View | null>(null);
+  const [error, setError] = useState("");
+  const [reviewState, setReviewState] = useState<SaveState>({});
   const [words, setWords] = useState("");
   const [state, setState] = useState<SaveState>({});
   const [modState, setModState] = useState<SaveState>({});
   const base = username ? `/api/channels/${encodeURIComponent(username)}` : "";
 
   const load = useCallback(async () => {
-    const me = await send<{ username: string }>("GET", "/api/auth/me");
-    if (!me.ok) return;
-    setUsername(me.data.username);
-    const r = await send<View>("GET", `/api/channels/${encodeURIComponent(me.data.username)}/chat/moderation`);
-    if (r.ok) { setView(r.data); setWords(r.data.settings.banned_words.join("\n")); }
+    let name = new URLSearchParams(location.search).get("channel");
+    if (!name) {
+      const me = await send<{ username: string }>("GET", "/api/auth/me");
+      if (!me.ok) return;
+      name = me.data.username;
+    }
+    setUsername(name);
+    const r = await send<View>("GET", `/api/channels/${encodeURIComponent(name)}/chat/moderation`);
+    if (r.ok) { setView(r.data); setWords(r.data.settings.banned_words.join("\n")); } else setError(r.error);
   }, []);
   useLoad(load);
-  if (!view) return <p className="loading">Loading…</p>;
+  if (!view) return error ? <p role="alert">{error}</p> : <p className="loading">Loading…</p>;
 
   async function saveRules(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -63,15 +84,35 @@ export default function ChatStudio() {
     if (result.ok) load();
   }
   async function lift(name: string, kind: string) {
-    const reason = window.prompt(`Reason for lifting this ${kind}`);
-    if (!reason) return;
-    const result = await send("DELETE", `${base}/chat/restrictions/${encodeURIComponent(name)}/${kind}`, { reason });
+    const result = await send("DELETE", `${base}/chat/restrictions/${encodeURIComponent(name)}/${kind}`, {});
     setModState(result.ok ? { saved: kind === "ban" ? "Ban lifted." : "Timeout lifted." } : result);
     if (result.ok) load();
   }
 
+  async function review(event: FormEvent<HTMLFormElement>, id: string) {
+    event.preventDefault();
+    const keep = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "keep";
+    const reason = String(new FormData(event.currentTarget).get("reason") ?? "").trim();
+    if (keep && !reason) { setReviewState({ error: "Give a reason to keep it." }); return; }
+    const result = await send("POST", `${base}/chat/reviews/${encodeURIComponent(id)}`, { keep, reason });
+    setReviewState(result.ok ? { saved: keep ? "Kept with your reason." : "Undone." } : result);
+    if (result.ok) load();
+  }
+
   const s = view.settings;
-  return <><h1>Chat</h1>
+  return <><h1>Chat{view.role !== "owner" && <> · @{username}</>}</h1>
+    {view.reviews.length > 0 && <Section title={`Waiting for review (${view.reviews.length})`} intro="Timeouts and bans take effect right away. Give each one a reason to keep it, or undo it. Unreviewed bans stay in place.">
+      <ul className="list">{view.reviews.map(r => <li key={r.id} className="stack">
+        <span><strong>{r.action === "ban" ? "Ban" : "Timeout"}</strong> of @{r.target} · <span className="muted">{when(r.created_at)}</span>{r.theirs && <> · by @{r.actor} <span className="badge">No reason given</span></>}</span>
+        <EvidenceView chat={r.chat} clip={r.clip} target={r.target} />
+        <form className="row" onSubmit={e => review(e, r.id)}>
+          <label className="field"><span>Reason</span><input name="reason" maxLength={500} /></label>
+          <button type="submit" value="keep" className="small">Keep</button>
+          <button type="submit" value="undo" className="small quiet">Undo</button>
+        </form>
+      </li>)}</ul>
+      <Status state={reviewState} />
+    </Section>}
     <Section title="Rules" intro="Slow mode and the link rule don't apply to you or your moderators. Banned words apply to everyone.">
       <form onSubmit={saveRules} className="stack">
         <label className="field"><span>Slow mode (0 for off, or 3–120 seconds between messages)</span><input name="slow" type="number" min={0} max={120} defaultValue={s.slow_mode_seconds} /></label>
@@ -107,6 +148,7 @@ export default function ChatStudio() {
     <Section title="Moderation log" intro="The latest 50 actions in your chat.">
       <ul className="list">{view.log.length === 0 ? <li className="muted">Nothing yet.</li> : view.log.map((l, i) => <li key={i}>
         <span className="muted">{when(l.created_at)}</span> {l.actor ? `@${l.actor}` : "Someone"} ({l.actor_role}) {label(l.action)}{l.target && ` @${l.target}`}: {l.reason}
+        {(l.action === "timeout" || l.action === "ban") && l.detail && <EvidenceView chat={l.detail.chat} clip={l.detail.clip} target={l.target} />}
       </li>)}</ul>
     </Section>
   </>;

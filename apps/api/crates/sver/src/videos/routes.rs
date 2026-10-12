@@ -47,7 +47,7 @@ async fn mine(
     let mut db = app.db.acquire().await?;
     let settings = settings(&mut db, &user.id).await?;
     let tier = tiers::tier_of(&mut db, &user.id).await?;
-    let mut videos:Vec<Video>=sqlx::query_as("SELECT * FROM videos WHERE owner_id=$1 AND status NOT IN ('DELETED','EXPIRED') AND ($2 IN ('','ALL') OR kind=$2 OR ($2='PENDING' AND approval='PENDING')) ORDER BY created_at DESC,id DESC LIMIT 101 OFFSET $3").bind(&user.id).bind(&query.kind).bind(query.offset).fetch_all(&mut *db).await?;
+    let mut videos:Vec<Video>=sqlx::query_as("SELECT * FROM videos WHERE owner_id=$1 AND status NOT IN ('DELETED','EXPIRED') AND coalesce(request_key,'') NOT LIKE 'evidence:%' AND ($2 IN ('','ALL') OR kind=$2 OR ($2='PENDING' AND approval='PENDING')) ORDER BY created_at DESC,id DESC LIMIT 101 OFFSET $3").bind(&user.id).bind(&query.kind).bind(query.offset).fetch_all(&mut *db).await?;
     let has_more = videos.len() > 100;
     videos.truncate(100);
     let editors: Vec<String> =
@@ -160,7 +160,7 @@ async fn channel(
         .await?
         .ok_or_else(Fail::channel_missing)?;
     let user = profiles::viewer(&app, &jar).await?;
-    let rows:Vec<Video>=sqlx::query_as("WITH ranked AS (SELECT v.*,row_number() OVER (PARTITION BY kind ORDER BY CASE WHEN $3 THEN views ELSE 0 END DESC,created_at DESC,id DESC) AS position FROM videos v WHERE owner_id=$1 AND status='READY' AND recording AND (expires_at IS NULL OR expires_at>now())) SELECT * FROM ranked WHERE position>$2 AND position<=$2+21 ORDER BY kind,position")
+    let rows:Vec<Video>=sqlx::query_as("WITH ranked AS (SELECT v.*,row_number() OVER (PARTITION BY kind ORDER BY CASE WHEN $3 THEN views ELSE 0 END DESC,created_at DESC,id DESC) AS position FROM videos v WHERE owner_id=$1 AND status='READY' AND coalesce(request_key,'') NOT LIKE 'evidence:%' AND recording AND (expires_at IS NULL OR expires_at>now())) SELECT * FROM ranked WHERE position>$2 AND position<=$2+21 ORDER BY kind,position")
         .bind(&channel.id).bind(query.offset).bind(query.popular).fetch_all(&mut *db).await?;
     drop(db);
     let mut videos = Vec::new();

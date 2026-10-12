@@ -103,13 +103,18 @@ pub(crate) fn reason(text: &str) -> Res<String> {
     }
     Ok(text.to_string())
 }
-/// Deleting a message needs no reason (Joe, October 12); one given is still checked and logged.
-pub(crate) fn delete_reason(text: &str) -> Res<String> {
+/// Only timeouts and bans need a reason (Joe, October 12, 2026); elsewhere a blank one is fine.
+pub(crate) fn optional_reason(text: &str, default: &str) -> Res<String> {
     if text.trim().is_empty() {
-        return Ok("Message deleted".into());
+        return Ok(default.into());
     }
     reason(text)
 }
+pub(crate) fn delete_reason(text: &str) -> Res<String> {
+    optional_reason(text, "Message deleted")
+}
+/// What a timeout or ban given without a reason is logged with until it's reviewed.
+const NO_REASON_YET: &str = "No reason given yet";
 /// When spike protection's followers-only chat ends, if it's on now.
 pub async fn followers_only(app: &App, channel: &str) -> Res<Option<DateTime<Utc>>> {
     Ok(sqlx::query_scalar("SELECT followers_only_until FROM chat_settings WHERE channel_id=$1 AND followers_only_until>now()")
@@ -432,7 +437,7 @@ pub async fn view(
     Path(name): Path<String>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
-    let (_, role) = actor(&app, &jar, &channel).await?;
+    let (me, role) = actor(&app, &jar, &channel).await?;
     let settings: Option<(i32, bool, Vec<String>, i16, bool, i16)> = sqlx::query_as(
         "SELECT slow_mode_seconds, block_links, banned_words, overlay_fade_seconds, allow_signatures, min_loyalty FROM chat_settings WHERE channel_id=$1",
     )
@@ -451,7 +456,11 @@ pub async fn view(
         .iter_mut()
         .chain(restrictions.iter_mut())
         .for_each(|v| profiles::hydrate(&app, v));
-    let log: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('action',l.action,'actor_role',l.actor_role,'actor',a.username,'target',t.username,'reason',l.reason,'detail',l.detail,'created_at',l.created_at) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 ORDER BY l.created_at DESC LIMIT 50")
+    // Timeouts and bans waiting for a reason: a moderator sees their own, the owner and staff all
+    // (`theirs` flags the ones another moderator left).
+    let reviews: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'action',l.action,'actor',a.username,'target',t.username,'created_at',l.created_at,'chat',l.detail->'chat','clip',l.detail->>'clip','theirs',l.actor_id<>$2) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 AND l.needs_review AND ($3 OR l.actor_id=$2) ORDER BY l.created_at")
+        .bind(&channel).bind(&me.id).bind(role != Role::Moderator).fetch_all(&app.db).await?;
+    let log: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'action',l.action,'actor_role',l.actor_role,'actor',a.username,'target',t.username,'reason',l.reason,'detail',l.detail,'created_at',l.created_at) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 ORDER BY l.created_at DESC LIMIT 50")
         .bind(&channel).fetch_all(&app.db).await?;
     // A provisional (spike) window on the live broadcast offers the followers-only prompt.
     let spike: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING') AND l.provisional_until>now())")
@@ -463,7 +472,7 @@ pub async fn view(
         "spike": spike,
         "followers_only_until": followers_only(&app, &channel).await?,
         "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade, "allow_signatures": signatures, "min_loyalty": min_loyalty, "gifs": crate::chat::gif_setting(&app, &channel).await?},
-        "moderators": moderators, "restrictions": restrictions, "log": log,
+        "moderators": moderators, "restrictions": restrictions, "log": log, "reviews": reviews,
     })))
 }
 
@@ -531,6 +540,7 @@ pub struct Restrict {
     username: String,
     kind: String,
     seconds: Option<i64>,
+    #[serde(default)]
     reason: String,
 }
 pub async fn restrict(
@@ -541,7 +551,9 @@ pub async fn restrict(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     let (user, role) = actor(&app, &jar, &channel).await?;
-    let reason = reason(&input.reason)?;
+    // Act first, review later: without a reason it takes effect now and waits for review.
+    let review = input.reason.trim().is_empty();
+    let reason = optional_reason(&input.reason, NO_REASON_YET)?;
     let until = match (input.kind.as_str(), input.seconds) {
         ("timeout", Some(s)) if (60..=1_209_600).contains(&s) => {
             Some(Utc::now() + Duration::seconds(s))
@@ -574,8 +586,85 @@ pub async fn restrict(
         &reason,
     )
     .await?;
+    let entry: String = sqlx::query_scalar("SELECT id FROM channel_moderation_log WHERE channel_id=$1 AND actor_id=$2 AND target_id=$3 AND action=$4 ORDER BY created_at DESC LIMIT 1")
+        .bind(&channel).bind(&user.id).bind(&target).bind(&input.kind).fetch_one(&mut *tx).await?;
+    // Evidence for the team: the chat leading up to it and the stream's last minute.
+    let chat: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('user',u.username,'body',m.body,'at',m.created_at,'deleted',m.deleted_at IS NOT NULL) FROM (SELECT * FROM chat_messages WHERE channel_id=$1 AND squad_id IS NULL AND created_at>now()-interval '10 minutes' ORDER BY created_at DESC LIMIT 30) m JOIN users u ON u.id=m.author_id ORDER BY m.created_at")
+        .bind(&channel).fetch_all(&mut *tx).await?;
+    let clip = crate::videos::evidence(&mut tx, &channel, &entry).await?;
+    sqlx::query("UPDATE channel_moderation_log SET needs_review=$2, detail=detail||jsonb_build_object('chat',$3::jsonb,'clip',$4::text) WHERE id=$1")
+        .bind(&entry).bind(review).bind(json!(chat)).bind(&clip).execute(&mut *tx).await?;
     tx.commit().await?;
-    Ok(Json(json!({"kind": input.kind, "until": until})))
+    Ok(Json(
+        json!({"kind": input.kind, "until": until, "review": review}),
+    ))
+}
+#[derive(Deserialize)]
+pub struct Review {
+    keep: bool,
+    #[serde(default)]
+    reason: String,
+}
+/// POST /api/channels/{u}/chat/reviews/{id}: keep a timeout or ban with a reason, or undo it.
+/// The moderator who gave it reviews it; the owner and staff can review anyone's.
+pub async fn review(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path((name, id)): Path<(String, String)>,
+    Json(input): Json<Review>,
+) -> Res<Json<Value>> {
+    let channel = channel(&app, &name).await?;
+    let (user, role) = actor(&app, &jar, &channel).await?;
+    let reason = if input.keep {
+        Some(reason(&input.reason)?)
+    } else {
+        None
+    };
+    let mut tx = app.db.begin().await?;
+    let (actor_id, target, kind): (String, Option<String>, String) = sqlx::query_as("SELECT actor_id,target_id,action FROM channel_moderation_log WHERE id=$1 AND channel_id=$2 AND needs_review FOR UPDATE")
+        .bind(&id).bind(&channel).fetch_optional(&mut *tx).await?.ok_or_else(Fail::missing)?;
+    if role == Role::Moderator && actor_id != user.id {
+        return Err(Fail::denied(
+            "Only the moderator who gave it, or the owner, can review this.",
+        ));
+    }
+    sqlx::query("UPDATE channel_moderation_log SET needs_review=false, reason=coalesce($2,reason) WHERE id=$1")
+        .bind(&id).bind(&reason).execute(&mut *tx).await?;
+    if !input.keep {
+        let lifted = sqlx::query(
+            "DELETE FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND kind=$3",
+        )
+        .bind(&channel)
+        .bind(&target)
+        .bind(&kind)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            == 1;
+        if lifted {
+            log(
+                &mut tx,
+                &channel,
+                &user.id,
+                role,
+                &format!("lift_{kind}"),
+                target.as_deref(),
+                None,
+                json!({}),
+                "Undone on review",
+            )
+            .await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(Json(json!({"reviewed": true})))
+}
+/// When a stream ends, everyone with timeouts or bans still waiting for a reason gets one
+/// notification pointing at the review list (called by streams in its end transaction).
+pub async fn stream_ended(db: &mut PgConnection, channel: &str) -> Res<()> {
+    sqlx::query("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload) SELECT gen_random_uuid()::text,l.actor_id,'mod_review',$1,'mod_review:'||$1||':'||extract(epoch FROM now())::bigint,jsonb_build_object('title','Review your timeouts and bans','body',count(*)||' from the stream on '||c.display_name||' need a reason, or you can undo them.','url','/studio/chat?channel='||c.username) FROM channel_moderation_log l JOIN channel_users c ON c.id=l.channel_id WHERE l.channel_id=$1 AND l.needs_review GROUP BY l.actor_id,c.display_name,c.username ON CONFLICT DO NOTHING")
+        .bind(channel).execute(db).await?;
+    Ok(())
 }
 pub async fn lift(
     State(app): State<App>,
@@ -585,7 +674,7 @@ pub async fn lift(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     let (user, role) = actor(&app, &jar, &channel).await?;
-    let reason = reason(&input.reason)?;
+    let reason = optional_reason(&input.reason, "Lifted")?;
     let target = user_id(&app, &target).await?;
     let mut tx = app.db.begin().await?;
     let lifted = sqlx::query(
@@ -612,6 +701,8 @@ pub async fn lift(
         )
         .await?;
     }
+    sqlx::query("UPDATE channel_moderation_log SET needs_review=false WHERE channel_id=$1 AND target_id=$2 AND action=$3 AND needs_review")
+        .bind(&channel).bind(&target).bind(&kind).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(json!({"lifted": lifted})))
 }
@@ -621,6 +712,7 @@ pub struct Settings {
     slow_mode_seconds: i32,
     block_links: bool,
     banned_words: Vec<String>,
+    #[serde(default)]
     reason: String,
     /// The OBS chat overlay's message lifetime (10–120 seconds).
     #[serde(default)]
@@ -643,7 +735,7 @@ pub async fn save_settings(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     let (user, role) = actor(&app, &jar, &channel).await?;
-    let reason = reason(&input.reason)?;
+    let reason = optional_reason(&input.reason, "Chat rules changed")?;
     if !(input.slow_mode_seconds == 0 || (3..=120).contains(&input.slow_mode_seconds)) {
         return Err(Fail::field(
             "slow_mode_seconds",
@@ -809,6 +901,7 @@ pub fn routes() -> Router<App> {
             delete(delete_message),
         )
         .route("/api/channels/{username}/chat/restrictions", post(restrict))
+        .route("/api/channels/{username}/chat/reviews/{id}", post(review))
         .route(
             "/api/channels/{username}/chat/restrictions/{target}/{kind}",
             delete(lift),

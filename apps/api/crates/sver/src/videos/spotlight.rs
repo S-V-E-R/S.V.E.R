@@ -69,3 +69,53 @@ pub async fn spotlight(db: &mut PgConnection, owner: &str, feature: &str) -> Res
     )
     .await
 }
+
+/// Moderation evidence (Joe, October 12, 2026): the last minute of a live stream when someone in
+/// its chat is timed out or banned. A private clip only the channel's team and staff can play,
+/// kept out of the library, held 90 days. Returns its id, or None when there's no live recording.
+/// ponytail: one fixed 90-day window; keep evidence for a ban's whole appeal if staff need longer.
+pub async fn evidence(db: &mut PgConnection, owner: &str, key: &str) -> Res<Option<String>> {
+    let source:Option<Video>=sqlx::query_as("SELECT * FROM videos WHERE owner_id=$1 AND kind='VOD' AND status='RECORDING' AND ended_at IS NULL").bind(owner).fetch_optional(&mut *db).await?;
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    if settings(db, owner).await?.copyright_restricted
+        || held(db, &source.id).await?
+        || stalled(db, &source).await?
+    {
+        return Ok(None);
+    }
+    let segments:Vec<(String,i64,i64)>=sqlx::query_as("SELECT s.id,s.start_ms,s.duration_ms FROM video_segments s JOIN video_objects o ON o.key=s.object_key WHERE s.video_id=$1 AND o.ready AND s.start_ms>=greatest(0,$2-60000) ORDER BY s.start_ms").bind(&source.id).bind(source.duration_ms).fetch_all(&mut *db).await?;
+    let (Some(first), Some(last)) = (segments.first(), segments.last()) else {
+        return Ok(None);
+    };
+    let (start, end) = (first.1, last.1 + last.2);
+    if end - start < 1000 || segments.windows(2).any(|w| w[0].1 + w[0].2 != w[1].1) {
+        return Ok(None);
+    }
+    let id = profiles::new_id();
+    let added=sqlx::query("INSERT INTO videos(id,owner_id,clipper_id,broadcast_id,parent_id,kind,status,visibility,mature,title,category_id,category,genre,faction,started_at,ended_at,duration_ms,source_start_ms,source_end_ms,request_key,expires_at) VALUES($1,$2,$2,$3,$4,'CLIP','PROCESSING','PRIVATE',$5,'Moderation evidence',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now()+interval '90 days') ON CONFLICT(clipper_id,request_key) DO NOTHING")
+        .bind(&id).bind(owner).bind(&source.broadcast_id).bind(&source.id).bind(source.mature).bind(&source.category_id).bind(&source.category).bind(&source.genre).bind(&source.faction).bind(source.started_at+chrono::Duration::milliseconds(start)).bind(source.started_at+chrono::Duration::milliseconds(end)).bind(end-start).bind(start).bind(end).bind(format!("evidence:{key}")).execute(&mut *db).await?.rows_affected();
+    if added == 0 {
+        return Ok(None);
+    }
+    for (position, (segment, _, _)) in segments.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO video_copy_sources(video_id,position,segment_id) VALUES($1,$2,$3)",
+        )
+        .bind(&id)
+        .bind(position as i32)
+        .bind(segment)
+        .execute(&mut *db)
+        .await?;
+    }
+    enqueue(
+        db,
+        &id,
+        "ASSEMBLE",
+        Some(&format!("{id}:assemble")),
+        json!({}),
+    )
+    .await?;
+    Ok(Some(id))
+}

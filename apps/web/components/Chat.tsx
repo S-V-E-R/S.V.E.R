@@ -194,7 +194,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
 
   useEffect(() => { list.current?.lastElementChild?.scrollIntoView({ block: "nearest" }); }, [messages]);
 
-  /** `quick`: the inline tools — no prompts, a 10-minute timeout and a stock reason; a ban still confirms. */
+  /** `quick`: the inline tools — no prompts and a 10-minute timeout; a ban still confirms. */
   async function moderate(action: "delete" | "timeout" | "ban", m: Message, quick = false) {
     const who = m.author.username;
     if (!who) return;
@@ -205,9 +205,9 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
       seconds = minutes * 60;
     }
     if (action === "ban" && !window.confirm(`Ban @${who} from this chat? They also can't watch here while signed in.`)) return;
-    // Deleting needs no reason; timeouts and bans do (quick tools fill in a stock one).
-    const reason = action === "delete" ? "" : quick ? { timeout: "Quick timeout (10 min)", ban: "Quick ban" }[action] : window.prompt("Reason (required)")?.trim();
-    if (action !== "delete" && !reason) return;
+    // Act first, review later: no reason now; the moderator gives one in Studio → Chat after the
+    // stream (shared co-stream chats still take a stock reason).
+    const reason = squad && action !== "delete" ? { timeout: "Timeout", ban: "Ban" }[action] : "";
     const result = action === "delete"
       ? await send("DELETE", `${path}/messages/${m.id}`, {})
       : await send("POST", `${path}/restrictions`, { username: who, kind: action, seconds, reason });
@@ -241,9 +241,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     if (!result.ok) setError(result.error);
   }
 
-  async function changePin(messageId: string | null, reason?: string) {
-    reason ??= window.prompt("Reason for changing the pinned message (required)")?.trim();
-    if (!reason) return;
+  async function changePin(messageId: string | null, reason = "") {
     const result = await send<{ pinned: Message | null }>("PUT", `${path}/pin`, { message_id: messageId, reason });
     if (result.ok) setPinned(result.data.pinned); else setError(result.error);
   }
@@ -252,8 +250,6 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     event.preventDefault();
     const body = draft.trim();
     if (!body || busy) return;
-    const reason = pinDraft ? window.prompt("Reason for pinning this message (required)")?.trim() : undefined;
-    if (pinDraft && !reason) return;
     setError("");
     // Owner commands: /raid username starts a raid, /unraid cancels it during the countdown.
     if (/^\/flag$/i.test(body) && !pinDraft) {
@@ -300,7 +296,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
     if (result.ok) {
       merge([result.data.message]); setDraft(""); setReply(null); setTribute(null);
       if (highlight !== null) { setHighlight(null); setRewardsVersion(v => v + 1); }
-      if (pinDraft) await changePin(result.data.message.id, reason);
+      if (pinDraft) await changePin(result.data.message.id);
     } else setError(result.error);
     setBusy(false);
   }
