@@ -50,8 +50,10 @@ fn timestamp(b: &[u8]) -> u64 {
         | u64::from(b[4]) >> 1
 }
 /// Whether an MPEG-TS segment's H.264 video is reordered (B-frames); None without video PES.
+/// Reordering means a PTS earlier than the one before it in decode order. A DTS that merely
+/// differs from its PTS is not enough: AMD's encoder offsets DTS with B-frames off.
 pub fn b_frames(ts: &[u8]) -> Option<bool> {
-    let (mut pmt, mut video, mut seen) = (None, None, false);
+    let (mut pmt, mut video, mut seen, mut last) = (None, None, false, None::<u64>);
     for packet in ts.as_chunks::<188>().0 {
         if packet[0] != 0x47 {
             return None;
@@ -91,8 +93,15 @@ pub fn b_frames(ts: &[u8]) -> Option<bool> {
             }
         } else if Some(pid) == video && payload.len() >= 19 && payload[..3] == [0, 0, 1] {
             seen = true;
-            if payload[7] >> 6 == 3 && timestamp(&payload[9..14]) != timestamp(&payload[14..19]) {
-                return Some(true);
+            if payload[7] >> 6 >= 2 {
+                let pts = timestamp(&payload[9..14]);
+                // 33-bit clock: "earlier" is less than half the range behind, so a wrap isn't one.
+                if last.is_some_and(|l| {
+                    (1..1 << 32).contains(&(l.wrapping_sub(pts) & ((1 << 33) - 1)))
+                }) {
+                    return Some(true);
+                }
+                last = Some(pts);
             }
         }
     }
@@ -378,18 +387,35 @@ mod tests {
         assert_eq!(list[2].1, "rebuild/a-3.ts");
         assert_eq!(keyframe_seconds(&list), Some(4.0));
         assert_eq!(keyframe_seconds(&segments("#EXTM3U\n")), None);
-        // Equal or absent DTS: no reordering. A DTS different from its PTS: B-frames.
+        // PTS rising in decode order: no reordering, even with a constant DTS offset (AMD AMF).
         assert_eq!(
             b_frames(&segment(&[(90_000, Some(90_000)), (93_000, None)])),
             Some(false)
         );
         assert_eq!(
-            b_frames(&segment(&[(90_000, Some(90_000)), (99_000, Some(93_000))])),
+            b_frames(&segment(&[
+                (96_000, Some(90_000)),
+                (99_000, Some(93_000)),
+                (102_000, Some(96_000))
+            ])),
+            Some(false)
+        );
+        // I P B: the B-frame's PTS is earlier than the P before it.
+        assert_eq!(
+            b_frames(&segment(&[
+                (93_000, Some(90_000)),
+                (99_000, Some(93_000)),
+                (96_000, Some(96_000))
+            ])),
             Some(true)
         );
+        // The 33-bit clock wrapping is not reordering.
         assert_eq!(
-            b_frames(&segment(&[(8_589_934_000, Some(8_589_933_000))])),
-            Some(true)
+            b_frames(&segment(&[
+                (8_589_934_000, Some(8_589_933_000)),
+                (2_000, Some(1_000))
+            ])),
+            Some(false)
         );
         assert_eq!(b_frames(&segment(&[])), None, "no video");
         assert_eq!(b_frames(&[0u8; 188]), None, "not TS");
