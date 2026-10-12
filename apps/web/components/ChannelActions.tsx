@@ -17,8 +17,8 @@ export function ChannelActions({ username, displayName, viewer, path }: { userna
   const [menu, setMenu] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [error, setError] = useState("");
-  if (viewer.is_owner) return <div className="channel-actions"><Link className="button small" href="/settings/profile">Edit profile</Link><Link className="button small quiet" href="/studio/channel">Creator Studio</Link><ShareButton username={username} displayName={displayName} /><TakeDownLink target={{ target_type: "profile", target_id: username }} /></div>;
-  if (!viewer.signed_in) return <div className="channel-actions"><Link className="button small" href="/login" data-from={path}>Log in to follow</Link><ShareButton username={username} displayName={displayName} /><TakeDownLink target={{ target_type: "profile", target_id: username }} /></div>;
+  if (viewer.is_owner) return <div className="channel-actions"><Link className="button small" href="/settings/profile">Edit profile</Link><Link className="button small quiet" href="/studio/channel">Creator Studio</Link><ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} /><TakeDownLink target={{ target_type: "profile", target_id: username }} /></div>;
+  if (!viewer.signed_in) return <div className="channel-actions"><Link className="button small" href="/login" data-from={path}>Log in to follow</Link><ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} /><TakeDownLink target={{ target_type: "profile", target_id: username }} /></div>;
   async function follow() {
     const result = await send<{ following: boolean }>(following ? "DELETE" : "PUT", `/api/follows/${encodeURIComponent(username)}`);
     if (result.ok) { setFollowing(result.data.following); setError(""); router.refresh(); } else setError(result.error);
@@ -33,7 +33,7 @@ export function ChannelActions({ username, displayName, viewer, path }: { userna
     {following && !blocked && <AlertBell username={username} initial={viewer.following ? viewer.alerts !== false : true} />}
     {!blocked && viewer.can_message && <Link className="button small quiet" href={`/messages?with=${encodeURIComponent(username)}`}>Message</Link>}
     {!blocked && !viewer.interaction_blocked && <Subscribe username={username} />}
-    <ShareButton username={username} displayName={displayName} />
+    <ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} />
     <div className="menu">
       <button type="button" className="small quiet" aria-haspopup="true" aria-expanded={menu} onClick={() => setMenu(!menu)}>More <span aria-hidden="true">▾</span></button>
       {menu && <div className="menu-list panel" role="menu">
