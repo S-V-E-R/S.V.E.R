@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { LOYALTY } from "./Loyalty";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { ReportButton, TakeDownLink } from "./Report";
@@ -17,7 +18,6 @@ type Message = { id: string; seq: number; author: Chip; body: string; created_at
 /** A message from a linked platform (docs/LINKED_CHAT.md): always badged, never a S.V.E.R account. */
 type Outside = { platform: string; sender_id: string; name: string; login: string; role: string | null; url: string | null };
 const PLATFORM_NAMES: Record<string, string> = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
-const LOYALTY = ["Newcomer", "Regular", "Devoted", "Veteran", "Legend"];
 /** Subscriber badge milestones: 1, 3, 6, 9 and 12 months, then each further year (docs/SUPPORT.md). */
 export function subBadge(months: number) {
   if (months >= 24) return `${Math.floor(months / 12)} years`;
@@ -62,7 +62,7 @@ function MessageBody({ message, account, emotes }: { message: Message; account: 
  * dock ("dock": no header, compact) or a read-only OBS overlay ("overlay": messages fade after `fade`
  * seconds). See docs/CHANNEL_ADDITIONS.md "Pop-out chat".
  */
-export function Chat({ username, account, squad, variant = "full", fade = 30 }: { username: string; account: string | null; squad?: string; variant?: "full" | "popout" | "dock" | "overlay"; fade?: number }) {
+export function Chat({ username, account, squad, variant = "full", fade = 30, top }: { username: string; account: string | null; squad?: string; variant?: "full" | "popout" | "dock" | "overlay"; fade?: number; top?: React.ReactNode }) {
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
     if (variant !== "overlay") return;
@@ -331,6 +331,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30 }: 
   return <section className={variant === "dock" ? "chat panel chat-compact" : "chat panel"} aria-label="Chat">
     {variant !== "dock" && <h2>Chat {mode !== "live" && <span className="muted small">{mode === "polling" ? "(updates every few seconds)" : "(connecting…)"}</span>}
       {variant === "full" && !squad && <button type="button" className="small quiet chat-popout" onClick={() => window.open(`/${encodeURIComponent(username)}/chat`, `sver-chat-${username}`, "width=400,height=700")}>Pop out</button>}</h2>}
+    {top}
     {pinned && <aside className="chat-pin" aria-label="Pinned message" aria-live="polite">
       <strong>Pinned message</strong><div className="chat-pin-content"><strong>{pinned.author.display_name}: </strong><MessageBody message={pinned} account={account} emotes={shown} /></div>
       {canPin && <button type="button" className="small quiet" onClick={() => changePin(null)}>Unpin</button>}

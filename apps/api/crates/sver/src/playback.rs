@@ -457,6 +457,73 @@ pub async fn beat(
     }))
 }
 
+const PROBLEMS: [&str; 6] = [
+    "stutter",
+    "no_audio",
+    "wont_load",
+    "out_of_sync",
+    "blurry",
+    "distorted",
+];
+#[derive(Deserialize)]
+pub struct Problem {
+    broadcast_id: String,
+    browser_id: String,
+    kind: String,
+    #[serde(default)]
+    transport: Option<String>,
+    #[serde(default)]
+    delay_ms: Option<i32>,
+    #[serde(default)]
+    height: Option<i32>,
+    #[serde(default)]
+    dropped_frames: Option<i32>,
+}
+/// POST /api/channels/{username}/live/problem: the player menu's one-tap "Report playback
+/// problem" (fixed choices plus what the player measured; staff see counts per broadcast). Guests
+/// may report; one report per viewer per broadcast every 10 minutes.
+pub async fn problem(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Json(input): Json<Problem>,
+) -> Res<Json<Value>> {
+    let id = &input.browser_id;
+    if !(16..=64).contains(&id.len()) || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+    {
+        return Err(Fail::bad("Invalid browser ID."));
+    }
+    if !PROBLEMS.contains(&input.kind.as_str()) {
+        return Err(Fail::field("kind", "Choose what went wrong."));
+    }
+    let transport = input.transport.filter(|t| t == "webrtc" || t == "hls");
+    let ip = sec::client_ip(&app, peer, &headers);
+    sec::reserve(&app, vec![format!("playback-problem:{ip}")], 20, 3600).await?;
+    let owner = owner_id(&app, &name).await?;
+    let viewer = profiles::viewer(&app, &jar).await?;
+    let key = match &viewer {
+        Some(v) => format!("u:{}", v.id),
+        None => format!("b:{}", sec::digest(id)),
+    };
+    sec::reserve(
+        &app,
+        vec![format!("playback-problem:{key}:{}", input.broadcast_id)],
+        1,
+        600,
+    )
+    .await?;
+    let saved = sqlx::query("INSERT INTO playback_problems(id,broadcast_id,user_id,kind,transport,delay_ms,height,dropped_frames) SELECT $1,b.id,$3,$4,$5,$6,$7,$8 FROM broadcasts b WHERE b.id=$2 AND b.owner_id=$9 AND b.state IN ('LIVE','RECONNECTING')")
+        .bind(profiles::new_id()).bind(&input.broadcast_id).bind(viewer.as_ref().map(|v| &v.id)).bind(&input.kind).bind(transport)
+        .bind(input.delay_ms.map(|d| d.clamp(0, 600_000))).bind(input.height.map(|h| h.clamp(0, 4320))).bind(input.dropped_frames.map(|d| d.max(0)))
+        .bind(&owner).execute(&app.db).await?;
+    if saved.rows_affected() == 0 {
+        return Err(Fail::bad("This stream has ended."));
+    }
+    Ok(Json(json!({"saved": true})))
+}
+
 type DirectoryRow = (String, DateTime<Utc>, String, Option<String>, i64);
 
 /// A circular queue advances one place every 30 seconds. Every faction stream gets a turn;
@@ -484,6 +551,7 @@ pub fn routes() -> Router<App> {
         .route("/api/channels/{username}/live", get(live))
         .route("/api/channels/{username}/overlay", get(overlay))
         .route("/api/channels/{username}/live/beat", post(beat))
+        .route("/api/channels/{username}/live/problem", post(problem))
 }
 
 #[cfg(test)]
