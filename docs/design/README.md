@@ -12,6 +12,7 @@ These are the approved page designs from the S.V.E.R design canvas, rendered at 
 | [roadmap.webp](mockups/roadmap.webp) | `/roadmap` | |
 | [legal.webp](mockups/legal.webp) | `/terms`, `/privacy`, `/guidelines`, `/dmca`, `/take-it-down` | |
 | [plays.webp](mockups/plays.webp) | Plays watch page | The controller board under the player ([PLAYS.md](../PLAYS.md)). |
+| [supporters.webp](mockups/supporters.webp) | Player card, chat, user card | Supporter and Founder marks on each theme: no supporter, Wolfsworn and Greycloak player cards, the chat badges, the silver name, Founder marks and "Supporting since" ([SUPPORTERS.md](../SUPPORTERS.md)). Rendered from `components/Supporter.tsx`. |
 
 ## Rules for building UI
 
