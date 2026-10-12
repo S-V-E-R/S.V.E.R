@@ -151,6 +151,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     let closed = false;
     let poll: ReturnType<typeof setInterval> | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let connected = false;
     const fallback = () => {
       if (closed || poll) return;
       setMode("polling");
@@ -162,7 +163,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       const ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/chat/ws?${squad ? `squad=${encodeURIComponent(squad)}` : `channel=${encodeURIComponent(username)}`}`);
       socket.current = ws;
       let opened = false;
-      ws.onopen = () => { opened = true; setMode("live"); };
+      ws.onopen = () => { opened = connected = true; clearInterval(poll); poll = undefined; setMode("live"); };
       ws.onmessage = event => {
         if (closed) return;
         const data = JSON.parse(event.data) as Event;
@@ -183,9 +184,12 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       ws.onclose = () => {
         socket.current = null;
         if (closed) return;
-        // Never connected: fall back to polling. Dropped (including a server resync): reconnect and reload.
-        if (!opened || attempt >= 5) fallback();
-        else { setMode("connecting"); retry = setTimeout(() => open(attempt + 1), 1000 * (attempt + 1)); }
+        // Never connected (sockets blocked): poll. Dropped (a server restart or resync): retry with
+        // backoff, which restarts after each connection; if the server stays away, poll meanwhile
+        // and keep trying the socket every 30 seconds.
+        if (!connected) fallback();
+        else if (!opened && attempt >= 5) { fallback(); retry = setTimeout(() => open(attempt), 30000); }
+        else { const next = opened ? 0 : attempt + 1; setMode("connecting"); retry = setTimeout(() => open(next), 1000 * (next + 1)); }
       };
     };
     open(0);

@@ -26,10 +26,12 @@ export function HypeChat({ lane, account, upNext }: { lane: string; account: str
     let poll: ReturnType<typeof setInterval> | undefined;
     const load = async () => { const r = await send<Snapshot>("GET", `/api/magnet/${encodeURIComponent(lane)}/chat`); if (!closed && r.ok) setState(r.data); };
     let ws: WebSocket | null = null;
+    let connected = false;
+    const fallback = () => { if (poll) return; void load(); poll = setInterval(() => { if (!document.hidden) void load(); }, 4000); };
     const open = (attempt: number) => {
       ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/magnet/${encodeURIComponent(lane)}/ws`);
       let opened = false;
-      ws.onopen = () => { opened = true; };
+      ws.onopen = () => { opened = connected = true; clearInterval(poll); poll = undefined; };
       ws.onmessage = event => {
         const data = JSON.parse(event.data) as Event;
         if (data.type === "snapshot") setState(data);
@@ -38,8 +40,10 @@ export function HypeChat({ lane, account, upNext }: { lane: string; account: str
       };
       ws.onclose = () => {
         if (closed) return;
-        if (!opened || attempt >= 5) { void load(); poll = setInterval(() => { if (!document.hidden) void load(); }, 4000); }
-        else retry = setTimeout(() => open(attempt + 1), 1000 * (attempt + 1));
+        // As in Chat: poll only if sockets never worked; after a drop (a server restart) keep retrying.
+        if (!connected) fallback();
+        else if (!opened && attempt >= 5) { fallback(); retry = setTimeout(() => open(attempt), 30000); }
+        else { const next = opened ? 0 : attempt + 1; retry = setTimeout(() => open(next), 1000 * (next + 1)); }
       };
     };
     open(0);
