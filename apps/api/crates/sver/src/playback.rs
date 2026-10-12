@@ -233,7 +233,8 @@ async fn owner_id(app: &App, name: &str) -> Res<String> {
         .id)
 }
 
-/// Only confirmed media (LIVE) or the reconnect grace (RECONNECTING) is public; STARTING is not.
+/// Only confirmed media (LIVE) or the reconnect grace (RECONNECTING) is public; STARTING is not,
+/// except a broadcast that was live and whose publisher is back (shown as still reconnecting).
 #[derive(Deserialize)]
 pub struct LiveQuery {
     transport: Option<String>,
@@ -245,7 +246,7 @@ pub async fn live(
     axum::extract::Query(query): axum::extract::Query<LiveQuery>,
 ) -> Res<Json<Value>> {
     let owner = owner_id(&app, &name).await?;
-    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,b.state,b.delivery,coalesce((b.health->>'captions')::bool,false) AS captions,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')")
+    let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,CASE WHEN b.state='STARTING' THEN 'RECONNECTING' ELSE b.state END AS state,b.delivery,coalesce((b.health->>'captions')::bool,false) AS captions,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND (b.state IN ('LIVE','RECONNECTING') OR (b.state='STARTING' AND b.confirmed_live_at IS NOT NULL))")
         .bind(&owner).fetch_optional(&app.db).await?;
     let Some(b) = current else {
         // An offline channel may host a live one; its page shows that stream.

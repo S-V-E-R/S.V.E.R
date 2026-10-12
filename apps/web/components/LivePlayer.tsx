@@ -180,7 +180,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const [ended, setEnded] = useState(false);
   const wasLive = useRef(false);
   useEffect(() => {
-    if (live?.live) wasLive.current = true;
+    if (live?.live) { wasLive.current = true; setEnded(false); }
     else if (live && wasLive.current && !isOwner) setEnded(true);
   }, [live, isOwner]);
   // The last raid seen while live: a stream can end during a raid's countdown, and the raid still

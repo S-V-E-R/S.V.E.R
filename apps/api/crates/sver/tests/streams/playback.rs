@@ -260,6 +260,16 @@ pub async fn exercise(e: &Env) {
     let (_, reconnecting) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
     assert_eq!(reconnecting["state"], "RECONNECTING");
     assert_eq!(reconnecting["viewers"], 1);
+    // The publisher is back and its media isn't confirmed yet: still reconnecting, not ended,
+    // so open players don't send their viewers on to the next stream.
+    e.sql("UPDATE broadcasts SET state='STARTING',reconnect_deadline=NULL,confirmed_live_at=coalesce(confirmed_live_at,now()) WHERE id='play-1'").await;
+    let (_, resumed) = guest(e, "GET", "/api/channels/streamer/live", Value::Null).await;
+    assert_eq!(
+        (resumed["live"].as_bool(), resumed["state"].as_str()),
+        (Some(true), Some("RECONNECTING"))
+    );
+    e.sql("UPDATE broadcasts SET state='RECONNECTING',reconnect_deadline=now()+interval '60 seconds' WHERE id='play-1'")
+        .await;
     e.sql("UPDATE broadcasts SET reconnect_deadline=now()-interval '1 second' WHERE id='play-1'")
         .await;
     assert!(
