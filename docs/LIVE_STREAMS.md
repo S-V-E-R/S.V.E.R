@@ -536,8 +536,9 @@ Checks Joe ran himself on production with a real OBS stream (JoeTheChode). Cloud
 | October 13, 2026 | OBS stopped and restarted within 60 seconds; the same stream continued | Pass |
 | October 13, 2026 | Studio shows measured OBS values: keyframe interval 2 seconds, B-frames off (no warning: the warning starts above 2 seconds) | Pass |
 | October 13, 2026 | Direct WebRTC latency, target about 1 second | Pass, about 1 second |
+| October 13, 2026 | Raid from JoeTheChode to the live SVER Plays channel with one signed-out viewer: countdown, viewer moved, SVER Plays chat showed "raiding with 1" | Pass |
 
-Still open: a raid between two real broadcasts.
+Still open: manual hosting and auto-host with real broadcasts.
 
 ## Done when
 
