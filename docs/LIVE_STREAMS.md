@@ -535,8 +535,9 @@ Checks Joe ran himself on production with a real OBS stream (JoeTheChode). Cloud
 | October 13, 2026 | Viewer count rises when a viewer watches and falls after they leave | Pass |
 | October 13, 2026 | OBS stopped and restarted within 60 seconds; the same stream continued | Pass |
 | October 13, 2026 | Studio shows measured OBS values: keyframe interval 2 seconds, B-frames off (no warning: the warning starts above 2 seconds) | Pass |
+| October 13, 2026 | Direct WebRTC latency, target about 1 second | Pass, about 1 second |
 
-Still open: direct WebRTC latency (about 1 second) and a raid between two real broadcasts.
+Still open: a raid between two real broadcasts.
 
 ## Done when
 
