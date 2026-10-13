@@ -524,6 +524,17 @@ Required automated coverage:
 3. Approved as proposed: the moderation permission table, account bans with restricted sessions and one appeal within 14 days, and staff username resets for impersonation.
 4. Approved as proposed: the small seeded category catalog, the OBS guidance and the playback-lease viewer-count rules. Capacity thresholds and the final bitrate cap remain measured engineering outcomes.
 
+## Real-OBS acceptance log
+
+Checks Joe ran himself on production with a real OBS stream (JoeTheChode). Cloud test sessions couldn't reach sver.tv (blocked by their network policy), so these are his observations, not automated measurements.
+
+| Date | Check | Result |
+| --- | --- | --- |
+| October 12, 2026 | Closed captions from OBS (CEA-608 in the stream) shown on the watch page | Pass |
+| October 12, 2026 | CDN path latency (`?transport=hls`), target 3–5 seconds | Pass, about 4 seconds |
+
+Still open: direct WebRTC latency (about 1 second), viewer counts rising and falling with real playback, a reconnect within 60 seconds keeping the broadcast, Studio's measured OBS warnings from real OBS output, and a raid between two real broadcasts.
+
 ## Done when
 
 A verified creator with MFA broadcasts from OBS; an anonymous viewer watches through tested direct and CDN paths at the accepted latency targets; a reconnect within 60 seconds retains the broadcast; real playback drives counts; verified users chat; channel moderators can delete, timeout and ban; slow mode/link/word rules work; staff can handle stream/chat reports with the approved standing/appeal behavior; and Studio shows measured OBS warnings. Mentions, replies, pins, badges and custom emotes work; followers get go-live alerts from the channels they choose, with per-channel opt-out; a raid moves viewers after a countdown and reports an accurate arrival count; manual hosting and auto-host start and stop correctly; viewer integrity levels, the three counts and the staff integrity queue work, and no raw IP is stored. Existing accounts, legacy data and sver-plays remain intact. Completing documentation or passing mocked media tests alone does not close this module.
