@@ -11,6 +11,10 @@ pub struct Tuning {
     pub clip_watch_seconds: f64,
     pub beats_per_viewer_minute: i32,
     pub beats_per_ip_minute: i32,
+    /// Take It Down frame matching: differing bits (of 64) still counted as a copy, and how
+    /// often a live recording's frames are compared.
+    pub frame_distance: i32,
+    pub frame_every_ms: i64,
 }
 impl Default for Tuning {
     fn default() -> Self {
@@ -22,6 +26,8 @@ impl Default for Tuning {
             clip_watch_seconds: 3.0,
             beats_per_viewer_minute: 60,
             beats_per_ip_minute: 600,
+            frame_distance: 6,
+            frame_every_ms: 5000,
         }
     }
 }
@@ -124,6 +130,8 @@ impl Config {
             || !(0.1..=60.0).contains(&tuning.clip_watch_seconds)
             || tuning.beats_per_viewer_minute < 1
             || tuning.beats_per_ip_minute < 1
+            || !(0..=16).contains(&tuning.frame_distance)
+            || !(1000..=60_000).contains(&tuning.frame_every_ms)
         {
             return Err("Invalid recording queue or clipping limits".into());
         }

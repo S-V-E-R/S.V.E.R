@@ -171,9 +171,52 @@ pub async fn purge_urls(app: &App, urls: &[String]) -> Res<()> {
     Ok(())
 }
 
+/// Frame hashes for a hold whose originals were saved before frame matching existed, taken
+/// from the sealed originals. Runs on every quarantine call, which a decision makes before
+/// `make_permanent`, and from the Take It Down tick.
+pub async fn index_saved_frames(app: &App, root: &str) -> Res<()> {
+    let mut tx = app.db.begin().await?;
+    let saved: Option<String> = sqlx::query_scalar("SELECT saved FROM media_removal_holds WHERE root=$1 AND frames IS NULL AND saved IS NOT NULL FOR UPDATE")
+        .bind(root)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some(saved) = saved else { return Ok(()) };
+    let originals: serde_json::Map<String, Value> =
+        serde_json::from_str(&security::unseal(app, "media-quarantine", &saved)?)
+            .map_err(|_| Fail::internal())?;
+    let mut frames = vec![];
+    for value in originals.values() {
+        let bytes = STANDARD
+            .decode(value.as_str().ok_or_else(Fail::internal)?)
+            .map_err(|_| Fail::internal())?;
+        if let Ok(decoded) = decode(&bytes, Kind::Banner) {
+            frames.extend(super::frames::image_hash(&decoded));
+        }
+    }
+    frames.sort_unstable();
+    frames.dedup();
+    sqlx::query("UPDATE media_removal_holds SET frames=$2 WHERE root=$1")
+        .bind(root)
+        .bind(&frames)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+pub async fn index_all_saved_frames(app: &App) -> Res<()> {
+    let roots: Vec<String> = sqlx::query_scalar("SELECT root FROM media_removal_holds WHERE frames IS NULL AND saved IS NOT NULL ORDER BY created_at LIMIT 20")
+        .fetch_all(&app.db)
+        .await?;
+    for root in roots {
+        index_saved_frames(app, &root).await?;
+    }
+    Ok(())
+}
+
 /// Each original is encrypted in Postgres before deleting its public object. A crash retries the
 /// delete and purge, never overwriting a saved original with an empty result.
 pub async fn quarantine(app: &App, root: &str) -> Res<()> {
+    index_saved_frames(app, root).await?;
     let mut tx = app.db.begin().await?;
     let row: Option<(Option<String>, Option<chrono::DateTime<Utc>>)> =
         sqlx::query_as("SELECT saved,hidden_at FROM media_removal_holds WHERE root=$1 FOR UPDATE")
@@ -194,14 +237,23 @@ pub async fn quarantine(app: &App, root: &str) -> Res<()> {
     .await?;
     if saved.is_none() {
         let mut originals = serde_json::Map::new();
+        let mut frames = vec![];
         for key in &keys {
             if let Some(bytes) = app.config.media.storage.get(&app.http, key).await? {
                 let decoded = decode(&bytes, Kind::Banner)?;
                 sqlx::query("INSERT INTO media_fingerprints(root,hashes) VALUES($1,$2) ON CONFLICT(root) DO UPDATE SET hashes=(SELECT ARRAY(SELECT DISTINCT unnest(media_fingerprints.hashes || EXCLUDED.hashes)))")
                     .bind(root).bind(fingerprints(&bytes,&decoded)).execute(&mut *tx).await?;
+                frames.extend(super::frames::image_hash(&decoded));
                 originals.insert(key.clone(), json!(STANDARD.encode(bytes)));
             }
         }
+        frames.sort_unstable();
+        frames.dedup();
+        sqlx::query("UPDATE media_removal_holds SET frames=$2 WHERE root=$1")
+            .bind(root)
+            .bind(&frames)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(
             "UPDATE media_objects SET fingerprinted=true WHERE key=$1 OR key LIKE $1||'/%'",
         )
@@ -243,6 +295,9 @@ pub async fn quarantine(app: &App, root: &str) -> Res<()> {
 
 pub async fn make_permanent(db: &mut PgConnection, root: &str, minor: bool) -> Res<()> {
     sqlx::query("INSERT INTO blocked_media_hashes(hash) SELECT unnest(hashes) FROM media_fingerprints WHERE root=$1 ON CONFLICT DO NOTHING")
+        .bind(root).execute(&mut *db).await?;
+    // Video frames showing this image are found by frames::tick and at each new upload.
+    sqlx::query("INSERT INTO removed_frames(source,hash) SELECT 'image:'||root,unnest(frames) FROM media_removal_holds WHERE root=$1 AND hidden_at IS NOT NULL ON CONFLICT DO NOTHING")
         .bind(root).execute(&mut *db).await?;
     sqlx::query("UPDATE media_removal_holds SET permanent=true,legal_hold=legal_hold OR $2,saved=CASE WHEN legal_hold OR $2 THEN saved ELSE NULL END WHERE root=$1 AND hidden_at IS NOT NULL")
         .bind(root).bind(minor).execute(&mut *db).await?;

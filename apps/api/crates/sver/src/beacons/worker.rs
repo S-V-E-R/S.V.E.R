@@ -1,6 +1,7 @@
 //! Durable Beacon jobs: one PROCESS job per Beacon (probe, Take It Down check, the one re-encode,
 //! watermark, metadata strip, thumbnail) and one DELETE job that removes every stored copy.
 use super::*;
+use crate::media::frames;
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
@@ -581,6 +582,9 @@ async fn process(app: &App, job: &Job, token: &str) -> Result<(), Stop> {
     for path in [&hd, &sd, &clean] {
         hashes.push(sha256_file(path)?);
     }
+    // Frame matching sees both the full source frame and the creator's crop (docs/TAKE_IT_DOWN.md).
+    let mut frame_hashes = frames::file_hashes(&source).await?;
+    frame_hashes.extend(frames::file_hashes(&clean).await?);
     let prefix = format!("beacons/{}/{token}", beacon.id);
     let keys = (
         format!("{prefix}-hd.mp4"),
@@ -608,6 +612,7 @@ async fn process(app: &App, job: &Job, token: &str) -> Result<(), Stop> {
         .bind(&beacon.id).bind(duration).bind(&hashes).bind(&keys.0).bind(&keys.1).bind(&keys.2).bind(&keys.3)
         .execute(&mut *tx).await?.rows_affected();
     if published == 1 {
+        compare(app, &mut tx, &beacon.id, &frame_hashes).await?;
         sqlx::query("UPDATE beacon_objects SET ready=true WHERE key=ANY($1)")
             .bind([&keys.0, &keys.1, &keys.2, &keys.3])
             .execute(&mut *tx)
@@ -643,7 +648,53 @@ async fn process(app: &App, job: &Job, token: &str) -> Result<(), Stop> {
     Ok(())
 }
 
+/// Stores a Beacon's frames; a match with removed media hides it and files a report.
+async fn compare(app: &App, db: &mut PgConnection, id: &str, hashes: &[i64]) -> Res<()> {
+    let source = format!("beacon:{id}");
+    let distance = app.config.videos.tuning.frame_distance;
+    if let Some(removed) = frames::record(db, &source, hashes, distance).await? {
+        frames::flag(db, &source, &removed).await?;
+    }
+    Ok(())
+}
+/// Frames of a stored Beacon file; a file already gone has none.
+async fn stored_frames(app: &App, key: &str) -> Res<Vec<i64>> {
+    let dir = std::env::temp_dir().join(format!("sver-beacon-frames-{}", profiles::new_id()));
+    std::fs::create_dir_all(&dir).map_err(|_| Fail::internal())?;
+    let scratch = Scratch(dir);
+    let path = scratch.0.join("video");
+    match fetch(app, key, &path).await {
+        Ok(_) => frames::file_hashes(&path).await,
+        Err(Stop::Failed(_)) => Ok(vec![]),
+        Err(Stop::Retry(error)) => Err(error),
+    }
+}
+
 async fn remove(app: &App, job: &Job, token: &str) -> Res<bool> {
+    let source = format!("beacon:{}", job.beacon_id);
+    // A legal removal's frames become removed media before its files are deleted.
+    if job.input["legal"] == true {
+        let mut hashes = None;
+        if !frames::indexed(&mut *app.db.acquire().await?, &source).await? {
+            let key: Option<String> =
+                sqlx::query_scalar("SELECT clean_key FROM beacons WHERE id=$1")
+                    .bind(&job.beacon_id)
+                    .fetch_optional(&app.db)
+                    .await?
+                    .flatten();
+            if let Some(key) = key {
+                hashes = Some(stored_frames(app, &key).await?);
+            }
+        }
+        // One transaction: a crash never leaves the source indexed without its frames.
+        let mut tx = app.db.begin().await?;
+        if let Some(hashes) = hashes {
+            let distance = app.config.videos.tuning.frame_distance;
+            frames::record(&mut tx, &source, &hashes, distance).await?;
+        }
+        frames::removed(&mut tx, &source).await?;
+        tx.commit().await?;
+    }
     let mut tx = app.db.begin().await?;
     fence(&mut tx, job, token).await?;
     sqlx::query("SELECT id FROM beacons WHERE id=$1 FOR UPDATE")
@@ -702,6 +753,7 @@ async fn remove(app: &App, job: &Job, token: &str) -> Res<bool> {
         .execute(&mut *tx)
         .await?;
     }
+    frames::forget(&mut tx, &source).await?;
     sqlx::query("UPDATE beacons SET status='DELETED',hidden=true,mp4_key=NULL,mp4_small_key=NULL,clean_key=NULL,thumbnail_key=NULL,upload_key=NULL,crop=NULL,revision=revision+1 WHERE id=$1")
         .bind(&job.beacon_id)
         .execute(&mut *tx)
@@ -723,6 +775,22 @@ pub async fn maintain(app: &App) -> Res<()> {
     sqlx::query("DELETE FROM beacon_playback WHERE day<current_date-2")
         .execute(&app.db)
         .await?;
+    // Beacons published before frame matching are compared once, one per pass.
+    let unindexed: Option<(String, String)> = sqlx::query_as("SELECT id,clean_key FROM beacons b WHERE status IN ('PUBLISHED','READY') AND clean_key IS NOT NULL AND NOT EXISTS(SELECT 1 FROM frame_sources WHERE source='beacon:'||b.id) ORDER BY created_at LIMIT 1")
+        .fetch_optional(&app.db).await?;
+    if let Some((id, key)) = unindexed {
+        let hashes = stored_frames(app, &key).await?;
+        let mut tx = app.db.begin().await?;
+        let current: Option<String> =
+            sqlx::query_scalar("SELECT status FROM beacons WHERE id=$1 FOR UPDATE")
+                .bind(&id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if current.is_some_and(|s| matches!(s.as_str(), "PUBLISHED" | "READY")) {
+            compare(app, &mut tx, &id, &hashes).await?;
+        }
+        tx.commit().await?;
+    }
     Ok(())
 }
 

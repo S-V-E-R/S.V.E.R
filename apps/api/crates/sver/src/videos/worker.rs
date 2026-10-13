@@ -1,4 +1,5 @@
 use super::*;
+use crate::media::frames;
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncWriteExt, process::Command};
 
@@ -80,12 +81,17 @@ async fn process(app: &App, job: &Job) -> Res<bool> {
             let key = job.object_key.as_deref().ok_or_else(Fail::internal)?;
             let bytes = job.payload.as_ref().ok_or_else(Fail::internal)?;
             put(app, key, bytes.clone(), "video/mp2t").await?;
+            let sampled = live_frames(app, key, bytes).await?;
             let mut tx = app.db.begin().await?;
             fence(&mut tx, job).await?;
             sqlx::query("UPDATE video_objects SET ready=true WHERE key=$1")
                 .bind(key)
                 .execute(&mut *tx)
                 .await?;
+            if let Some((start, hashes)) = sampled {
+                compare(app, &mut tx, &job.video_id, &hashes).await?;
+                frames::decoded(&mut tx, &format!("video:{}", job.video_id), start).await?;
+            }
             tx.commit().await?;
             Ok(true)
         }
@@ -93,8 +99,83 @@ async fn process(app: &App, job: &Job) -> Res<bool> {
         "ASSEMBLE" => assemble(app, job).await.map(|_| true),
         "DOWNLOAD" => mp4(app, job, true).await.map(|_| true),
         "DELETE" => remove(app, job).await,
+        "FRAMES" => {
+            let video = load(&mut *app.db.acquire().await?, &job.video_id).await?;
+            if video.status != "READY" {
+                return Ok(true);
+            }
+            let hashes = frames(app, &video).await?;
+            let mut tx = app.db.begin().await?;
+            fence(&mut tx, job).await?;
+            compare(app, &mut tx, &video.id, &hashes).await?;
+            tx.commit().await?;
+            Ok(true)
+        }
         _ => Err(Fail::internal()),
     }
+}
+/// Take It Down frame matching (docs/TAKE_IT_DOWN.md): a live recording is compared every
+/// `frame_every_ms`, using the keyframe of the first segment due. A segment without a keyframe
+/// passes the turn to the next one. A decode problem never holds up the recording itself.
+async fn live_frames(app: &App, key: &str, bytes: &[u8]) -> Res<Option<(i64, Vec<i64>)>> {
+    let segment: Option<(i64, Option<i64>)> = sqlx::query_as("SELECT s.start_ms,f.decoded_ms FROM video_segments s LEFT JOIN frame_sources f ON f.source='video:'||s.video_id WHERE s.object_key=$1")
+        .bind(key)
+        .fetch_optional(&app.db)
+        .await?;
+    let every = app.config.videos.tuning.frame_every_ms;
+    match segment {
+        Some((start, last)) if frames::due(start, last, every) => {
+            match frames::segment_hashes(bytes).await {
+                Ok(hashes) => Ok(hashes.map(|hashes| (start, hashes))),
+                Err(_) => {
+                    eprintln!("frames_event=live outcome=unavailable");
+                    Ok(None)
+                }
+            }
+        }
+        _ => Ok(None),
+    }
+}
+/// Frames of a stored video: a clip's MP4, or a recording's segments sampled as live. Objects
+/// already deleted are skipped rather than waited for.
+async fn frames(app: &App, video: &Video) -> Res<Vec<i64>> {
+    let get = |key: String| async move { app.config.videos.storage.get(&app.http, &key).await };
+    if video.kind == "CLIP" {
+        return match video.mp4_key.clone() {
+            Some(key) => match get(key).await? {
+                Some(bytes) => frames::video_hashes(&bytes, "mp4").await,
+                None => Ok(vec![]),
+            },
+            None => Ok(vec![]),
+        };
+    }
+    let every = app.config.videos.tuning.frame_every_ms;
+    let segments: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT object_key,start_ms FROM video_segments WHERE video_id=$1 ORDER BY start_ms",
+    )
+    .bind(&video.id)
+    .fetch_all(&app.db)
+    .await?;
+    let (mut hashes, mut last) = (vec![], None);
+    for (key, start) in segments {
+        if frames::due(start, last, every)
+            && let Some(bytes) = get(key).await?
+            && let Some(found) = frames::segment_hashes(&bytes).await?
+        {
+            hashes.extend(found);
+            last = Some(start);
+        }
+    }
+    Ok(hashes)
+}
+/// Stores the frames; a match with removed media files a report and holds the video.
+async fn compare(app: &App, db: &mut PgConnection, video: &str, hashes: &[i64]) -> Res<()> {
+    let source = format!("video:{video}");
+    let distance = app.config.videos.tuning.frame_distance;
+    if let Some(removed) = frames::record(db, &source, hashes, distance).await? {
+        frames::flag(db, &source, &removed).await?;
+    }
+    Ok(())
 }
 #[derive(sqlx::FromRow)]
 struct Source {
@@ -167,6 +248,14 @@ async fn finish_cut(app: &App, job: &Job, artifact: Option<&str>) -> Res<()> {
         .execute(&mut *tx)
         .await?;
     }
+    enqueue(
+        &mut tx,
+        &job.video_id,
+        "FRAMES",
+        Some(&format!("{}:frames", job.video_id)),
+        json!({}),
+    )
+    .await?;
     // Thumbnail is generated while its original segments are still pinned.
     enqueue(
         &mut tx,
@@ -363,6 +452,25 @@ async fn thumbnail(app: &App, job: &Job) -> Res<()> {
     Ok(())
 }
 async fn remove(app: &App, job: &Job) -> Res<bool> {
+    let source = format!("video:{}", job.video_id);
+    // A legal removal's frames become removed media before any copy is deleted, so copies
+    // elsewhere are found (docs/TAKE_IT_DOWN.md). Idempotent across delete batches.
+    if job.input["legal"] == true {
+        let hashes = if frames::indexed(&mut *app.db.acquire().await?, &source).await? {
+            None
+        } else {
+            let video = load(&mut *app.db.acquire().await?, &job.video_id).await?;
+            Some(frames(app, &video).await?)
+        };
+        // One transaction: a crash never leaves the source indexed without its frames.
+        let mut tx = app.db.begin().await?;
+        if let Some(hashes) = hashes {
+            let distance = app.config.videos.tuning.frame_distance;
+            frames::record(&mut tx, &source, &hashes, distance).await?;
+        }
+        frames::removed(&mut tx, &source).await?;
+        tx.commit().await?;
+    }
     let mut tx = app.db.begin().await?;
     fence(&mut tx, job).await?;
     sqlx::query("SELECT id FROM videos WHERE id=$1 FOR UPDATE")
@@ -442,6 +550,7 @@ async fn remove(app: &App, job: &Job) -> Res<bool> {
         .bind(&job.video_id)
         .execute(&mut *tx)
         .await?;
+    frames::forget(&mut tx, &source).await?;
     sqlx::query(
         "UPDATE videos SET status=$2,thumbnail_key=NULL,mp4_key=NULL,download_key=NULL WHERE id=$1",
     )
@@ -472,6 +581,19 @@ pub async fn maintain(app: &App) -> Res<()> {
     let due:Vec<String>=sqlx::query_scalar("SELECT id FROM videos v WHERE status='READY' AND (expires_at<=now() OR (kind='VOD' AND NOT recording)) AND NOT EXISTS(SELECT 1 FROM video_holds WHERE video_id=v.id) ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?;
     for id in due {
         request_delete(&mut tx, &id, true).await?;
+    }
+    // Videos saved before frame matching, or never sampled live, are compared once.
+    let unindexed: Vec<String> = sqlx::query_scalar("SELECT id FROM videos v WHERE status='READY' AND NOT EXISTS(SELECT 1 FROM frame_sources WHERE source='video:'||v.id) AND NOT EXISTS(SELECT 1 FROM video_jobs j WHERE j.video_id=v.id AND j.kind IN ('FRAMES','DELETE')) ORDER BY created_at LIMIT 20")
+        .fetch_all(&mut *tx).await?;
+    for id in unindexed {
+        enqueue(
+            &mut tx,
+            &id,
+            "FRAMES",
+            Some(&format!("{id}:frames")),
+            json!({}),
+        )
+        .await?;
     }
     // A recording-off broadcast owns only its rolling clipping buffer; pending cuts pin sources.
     sqlx::query("UPDATE video_objects o SET delete_after=now() FROM video_segments s JOIN videos v ON v.id=s.video_id WHERE o.key=s.object_key AND v.kind='VOD' AND NOT v.recording AND s.start_ms+s.duration_ms<v.duration_ms-120000 AND NOT EXISTS(SELECT 1 FROM video_copy_sources WHERE segment_id=s.id) AND NOT EXISTS(SELECT 1 FROM video_holds WHERE video_id=v.id)").execute(&mut *tx).await?;

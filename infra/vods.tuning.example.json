@@ -4,5 +4,7 @@
   "queued_segment_bytes": 268435456,
   "clip_watch_seconds": 3.0,
   "beats_per_viewer_minute": 60,
-  "beats_per_ip_minute": 600
+  "beats_per_ip_minute": 600,
+  "frame_distance": 6,
+  "frame_every_ms": 5000
 }
