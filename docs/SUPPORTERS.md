@@ -6,7 +6,11 @@ This reverses the "paid platform supporter subscription" entry under "Considered
 
 **When:** with the Wall ([WALL.md](WALL.md)). It reuses Support's Stripe subscriptions (Module 6).
 
-**Built so far (October 12, 2026):** the marks themselves, in `apps/web/components/Supporter.tsx` with styles in `globals.css`. That covers the Wolf mark, both chat badges, the Founder mark, the Wolfsworn and Greycloak player-card frames, the silver name and "Supporting since". Joe asked for them to be made first. The reference image is [mockups/supporters.webp](design/mockups/supporters.webp). They aren't shown anywhere yet; the server decides who gets them once subscriptions are built.
+**Built (October 13, 2026):** all of it.
+- The marks are in `apps/web/components/Supporter.tsx` with styles in `globals.css` (reference image: [mockups/supporters.webp](design/mockups/supporters.webp)). The server decides who gets them: chat messages, user cards, profiles and the player card.
+- The server is `apps/api/crates/sver/src/supporters.rs` with `migrations/0108_supporters.sql`, and the tests are `tests/streams/supporters.rs`.
+- The pages are `/supporters`, the "Support S.V.E.R" section of `/wallet` and `/admin/supporters`.
+- `platform_subscriptions` keeps `paid_through` (the period end) instead of a separate status column, and a downgrade waits in `pending_tier`. A revoked Founder row is deleted rather than marked, which frees the number; the audit log keeps the history.
 
 ## The tiers
 

@@ -1,4 +1,5 @@
 "use client";
+import { FounderMark, SupporterBadge, type SupporterMarks } from "./Supporter";
 import Link from "next/link";
 import { type CSSProperties, type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { send } from "../lib/client-api";
@@ -6,7 +7,7 @@ import { joined, platformNames, type Chip, type Sizes } from "../lib/types";
 import { Crest } from "./FactionIdentity";
 import { Avatar } from "./Avatar";
 
-type Card = { username: string; display_name: string; avatar: Sizes; bio: string; follower_count: number; joined_at: string; faction?: Chip["faction"]; viewer: { signed_in: boolean; is_self: boolean; following: boolean; blocked: boolean; can_message?: boolean }; live: boolean; level?: number; title?: string; frame?: number; showcase?: { key: string; name: string }[]; also_known_as?: { platform: string; handle: string; url: string | null }[] };
+type Card = { username: string; display_name: string; avatar: Sizes; bio: string; follower_count: number; joined_at: string; faction?: Chip["faction"]; viewer: { signed_in: boolean; is_self: boolean; following: boolean; blocked: boolean; can_message?: boolean }; live: boolean; level?: number; title?: string; frame?: number; showcase?: { key: string; name: string }[]; also_known_as?: { platform: string; handle: string; url: string | null }[]; supporter?: SupporterMarks };
 
 /**
  * A button that opens someone's player card (docs/PROFILES.md, "User card"): used by name chips,
@@ -63,12 +64,13 @@ export function PlayerCardButton({ username, className, title, data, children }:
         <span className="card-head">
           <Avatar sizes={card.avatar} name={card.display_name} size={64} />
           <span className="grow">
-            <strong className="faction-name" data-faction={card.faction ?? undefined}>{card.display_name}</strong>
+            <strong className="faction-name" data-faction={card.faction ?? undefined} data-supporter={card.supporter?.tier ?? undefined}>{card.display_name}</strong>
             <span className="handle">@{card.username}</span>
             {card.faction && <span className="card-faction"><Crest faction={card.faction} size={16} /> {card.title}</span>}
           </span>
           {card.live && <span className="live badge">Live</span>}
         </span>
+        {(card.supporter?.tier || card.supporter?.founder) && <span className="card-supporter">{card.supporter.tier && <SupporterBadge tier={card.supporter.tier} monthsSupported={card.supporter.months ?? undefined} />}{!!card.supporter.founder && <FounderMark number={card.supporter.founder} />}</span>}
         {card.level ? <span className="card-level"><span className="player-level" data-frame={card.frame ?? 0}>Level {card.level}</span>{!card.faction && card.title && ` ${card.title}`}</span> : null}
         {card.bio && <span className="card-bio">{card.bio}</span>}
         <span className="small-text">{card.follower_count.toLocaleString()} followers · Joined {joined(card.joined_at)}</span>

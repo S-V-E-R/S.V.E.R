@@ -1,3 +1,4 @@
+import { FounderMark, SupporterBadge, SupportingSince } from "./Supporter";
 import Link from "next/link";
 import { CREATOR_TIERS, joined, linkHost, platformNames, type Channel } from "../lib/types";
 import { PlatformIcon } from "./PlatformIcon";
@@ -44,7 +45,8 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
         <div className="identity-text">
           {data.header?.label && <span className="page-label">{data.header.label}</span>}
           <h1>{c.display_name}</h1>
-          <p className="handle">@{c.username}{!!c.creator_tier && <span className="badge tier-badge" title="Creator tier">{CREATOR_TIERS[c.creator_tier]}</span>}</p>
+          <p className="handle">@{c.username}{!!c.creator_tier && <span className="badge tier-badge" title="Creator tier">{CREATOR_TIERS[c.creator_tier]}</span>}{c.supporter?.tier && <SupporterBadge tier={c.supporter.tier} monthsSupported={c.supporter.months ?? undefined} />}{!!c.supporter?.founder && <FounderMark number={c.supporter.founder} />}</p>
+          {c.supporter?.since && <p className="supporter-line"><SupportingSince since={c.supporter.since} /></p>}
           {faction && <p className="faction-line"><Link href={`/factions/${faction.slug}`}><Crest faction={faction.slug} initial="" size={22} />{faction.name} · {faction.title}</Link></p>}
           {c.shine?.live && <p className="shine-banner" role="note">Charity stream for <strong>{c.shine.live.name}</strong> <a className="button small" href={c.shine.live.url} target="_blank" rel="noopener noreferrer">Donate to {c.shine.live.name}</a></p>}
           {c.shine && c.shine.badges.length > 0 && <p className="good-works">{c.shine.badges.map(b => <span key={b.charity + b.verified_at} className="badge good-works-badge" title="Good Works, verified by S.V.E.R staff">Good Works · {b.charity} · ${(b.raised_cents / 100).toLocaleString()}</span>)}</p>}

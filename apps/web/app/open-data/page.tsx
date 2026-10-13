@@ -11,7 +11,7 @@ const WEEKLY: [string, string, string][] = [
   ["hours_streamed", "Hours streamed", ""], ["rotation_reach", "Streams the fair rotation put first", "%"],
   ["faction_myria", "Myria members", ""], ["faction_aetheron", "Aetheron members", ""], ["faction_glint", "Glint members", ""],
 ];
-const MONTHLY: [string, string][] = [["creators_cents", "Creators' share"], ["platform_cents", "S.V.E.R's share"], ["payouts_cents", "Payouts sent"], ["wall_cents", "Wall seats sold"]];
+const MONTHLY: [string, string][] = [["creators_cents", "Creators' share"], ["platform_cents", "S.V.E.R's share"], ["payouts_cents", "Payouts sent"], ["wall_cents", "Wall seats sold"], ["supporters_cents", "Platform supporters"]];
 const dollars = (cents: number) => `$${(cents / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 /** One figure over time: a bar per period, "fewer than 10" where the value is withheld. */

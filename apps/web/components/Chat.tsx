@@ -1,4 +1,5 @@
 "use client";
+import { FounderMark, SupporterBadge, type SupporterTier } from "./Supporter";
 import Link from "next/link";
 import { LOYALTY } from "./Loyalty";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -14,7 +15,7 @@ import { GifImage, GifPicker, type Gif, type GifAccess } from "./GifPicker";
 import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
-type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null; loyalty?: number; outside?: Outside | null; gif?: Gif | null };
+type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null; loyalty?: number; outside?: Outside | null; gif?: Gif | null; supporter?: { tier: SupporterTier; months: number; founder: number | null } | null };
 /** A message from a linked platform (docs/LINKED_CHAT.md): always badged, never a S.V.E.R account. */
 type Outside = { platform: string; sender_id: string; name: string; login: string; role: string | null; url: string | null };
 const PLATFORM_NAMES: Record<string, string> = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
@@ -373,8 +374,10 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         <span className="muted">{time(m.created_at)}</span>{" "}
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
-        {m.author.username ? <PlayerCardButton username={m.author.username} className="chip-button faction-name chat-name" data={{ faction: m.author.faction ?? undefined, style: m.author.name_style ?? undefined }} title={`${LOYALTY[m.loyalty ?? 0]} in this channel`}><strong>{m.author.display_name}</strong></PlayerCardButton> : <strong>{m.author.display_name}</strong>}
+        {m.author.username ? <PlayerCardButton username={m.author.username} className="chip-button faction-name chat-name" data={{ faction: m.author.faction ?? undefined, style: m.author.name_style ?? undefined, supporter: m.supporter?.tier }} title={`${LOYALTY[m.loyalty ?? 0]} in this channel`}><strong>{m.author.display_name}</strong></PlayerCardButton> : <strong>{m.author.display_name}</strong>}
         {m.creator_tier ? <span className="badge tier-badge" title="Creator tier">{CREATOR_TIERS[m.creator_tier]}</span> : null}
+        {m.supporter && <SupporterBadge tier={m.supporter.tier} monthsSupported={m.supporter.months} />}
+        {m.supporter?.founder ? <FounderMark number={m.supporter.founder} /> : null}
         {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber`}>{subBadge(m.sub.months)}</span>}
         {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet">MAGNet</span>}
         {m.role && <span className="badge">{m.role === "owner" && squad && m.author.username?.toLowerCase() !== username.toLowerCase() ? "Co-streamer" : { owner: "Broadcaster", moderator: "Moderator", staff: "Staff" }[m.role]}</span>}: <MessageBody message={m} account={account} emotes={shown} />

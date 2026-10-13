@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 import { Wallet } from "../../components/Wallet";
 import { MySubscriptions } from "../../components/MySubscriptions";
+import { SupporterWallet } from "../../components/SupporterWallet";
 import { currentAccount } from "../session";
 import "../../styles/profiles.css";
+import "../../styles/supporters.css";
 
 export const metadata = { title: "Valor | S.V.E.R", robots: { index: false, follow: false } };
 export default async function WalletPage({ searchParams }: { searchParams: Promise<{ checkout?: string }> }) {
@@ -12,5 +14,6 @@ export default async function WalletPage({ searchParams }: { searchParams: Promi
     <h1>Valor</h1>
     <Wallet returned={returned} />
     <MySubscriptions />
+    <SupporterWallet />
   </div></div>;
 }

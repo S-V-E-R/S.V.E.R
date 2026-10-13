@@ -13,6 +13,7 @@ import { apiGet } from "../lib/server-api";
 import { themeFor } from "../lib/theme";
 import { factionOf } from "../lib/factions";
 import { Crest } from "../components/Crest";
+import { SupporterFrame, type SupporterMarks } from "../components/Supporter";
 import { currentAccount, hasAlerts } from "./session";
 import "./globals.css";
 import "../styles/profiles.css";
@@ -46,7 +47,11 @@ async function sidebarLive(signedIn: boolean): Promise<LiveCard[]> {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const account = await currentAccount();
-  const [alerts, live, progress, dms, site] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account), account ? apiGet<{ xp: number; level: number; level_xp: number; next_xp: number | null; title?: string; frame?: number }>("/api/me/progression").then(r => r.data) : null, account ? apiGet<{ unread: number }>("/api/dms/unread").then(r => r.data?.unread ?? 0) : 0, apiGet<{ banner: Banner | null }>("/api/site").then(r => r.data)]);
+  const [alerts, live, progress, dms, site, supporter] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account), account ? apiGet<{ xp: number; level: number; level_xp: number; next_xp: number | null; title?: string; frame?: number }>("/api/me/progression").then(r => r.data) : null, account ? apiGet<{ unread: number }>("/api/dms/unread").then(r => r.data?.unread ?? 0) : 0, apiGet<{ banner: Banner | null }>("/api/site").then(r => r.data), account ? apiGet<SupporterMarks>("/api/me/supporter").then(r => r.data) : null]);
+  // Platform supporters' player card (docs/SUPPORTERS.md): silver frame and name while subscribed; a Founder number for good.
+  const supporterCard = { "data-supporter": supporter?.tier ?? undefined };
+  const supporterMarks = <>{supporter?.tier && <SupporterFrame tier={supporter.tier} />}</>;
+  const founderLine = supporter?.founder ? <span className="player-card-founder">Founder #{String(supporter.founder).padStart(3, "0")}</span> : null;
   // Level and XP bar on the player card (docs/PROGRESSION.md).
   const xpBar = progress && <span className="player-card-xp" title={`${progress.xp.toLocaleString()} XP`}><span className="player-level" data-frame={progress.frame ?? 0} title={progress.title}>Lv {progress.level}</span>{progress.title && <span className="player-title">{progress.title}</span>}<span className="xp-bar" aria-hidden="true"><span style={{ width: `${progress.next_xp ? Math.round(100 * (progress.xp - progress.level_xp) / (progress.next_xp - progress.level_xp)) : 100}%` }} /></span></span>;
   const initial = account?.username.slice(0, 1).toUpperCase();
@@ -71,13 +76,15 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   const sidebar = <>
     {account && (faction
-      ? <Link href={`/${account.username}`} className="player-card frame">
+      ? <Link href={`/${account.username}`} className="player-card frame" {...supporterCard}>
+        {supporterMarks}
         <Crest faction={account.faction} initial={initial ?? "?"} size={56} label={faction.name} />
-        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">{faction.title}</span>{xpBar}</span>
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">{faction.title}</span>{founderLine}{xpBar}</span>
       </Link>
-      : <Link href="/welcome" className="player-card frame unchosen">
+      : <Link href="/welcome" className="player-card frame unchosen" {...supporterCard}>
+        {supporterMarks}
         <Crest faction={null} initial={initial ?? "?"} size={56} />
-        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side</span>{xpBar}</span>
+        <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side</span>{founderLine}{xpBar}</span>
       </Link>)}
     <SideNav faction={faction ? { name: faction.name, slug: faction.slug } : null} />
     {account && <DailyOrders />}

@@ -448,9 +448,22 @@ async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -
         "charge.dispute.created" => disputed(tx, object, false).await,
         "charge.dispute.closed" if object["status"] == "won" => disputed(tx, object, true).await,
         "account.updated" => sync_account(tx, object).await,
-        "invoice.paid" => crate::subs::invoice_paid(app, tx, object).await,
+        "invoice.paid" => {
+            crate::subs::invoice_paid(app, tx, object).await?;
+            crate::supporters::invoice_paid(app, tx, object).await
+        }
         "customer.subscription.updated" | "customer.subscription.deleted" => {
-            crate::subs::subscription_changed(tx, kind, object).await
+            crate::subs::subscription_changed(tx, kind, object).await?;
+            crate::supporters::subscription_changed(tx, kind, object).await
+        }
+        // A lost dispute of a platform payment also revokes a Founder spot it claimed.
+        "charge.dispute.closed" if object["status"] == "lost" => {
+            match object["payment_intent"].as_str() {
+                Some(intent) => {
+                    crate::supporters::reversed(tx, intent, "Payment lost to a dispute").await
+                }
+                None => Ok(()),
+            }
         }
         _ => Ok(()),
     }
@@ -564,7 +577,8 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
     if status == "paid" {
         return Ok(());
     }
-    if kind != "sub" && object["amount_total"].as_i64() != Some(cents.into()) {
+    let subscription = matches!(kind.as_str(), "sub" | "platform");
+    if !subscription && object["amount_total"].as_i64() != Some(cents.into()) {
         return Err(Fail::bad("Checkout amount doesn't match."));
     }
     let intent = object["payment_intent"].as_str();
@@ -573,7 +587,8 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
         .bind(intent)
         .execute(&mut *tx)
         .await?;
-    if kind == "sub" {
+    // A card subscription is credited by its invoices instead.
+    if subscription {
         return Ok(());
     }
     if kind == "gift" {
@@ -646,6 +661,13 @@ async fn payment_of(
         };
         return Ok(Some((intent.to_string(), cents, pairs)));
     }
+    if let Some(cents) = crate::supporters::payment(tx, intent).await? {
+        return Ok(Some((
+            intent.to_string(),
+            cents,
+            crate::supporters::pairs(cents),
+        )));
+    }
     if object["metadata"]["sver_user"].is_string() {
         return Err(Fail::conflict("Purchase not credited yet."));
     }
@@ -680,6 +702,7 @@ async fn refunded(tx: &mut PgConnection, object: &Value) -> Res<()> {
     .await?;
     if refunded == cents {
         crate::subs::refunded_in_full(tx, &intent).await?;
+        crate::supporters::reversed(tx, &intent, "Payment refunded in full").await?;
     }
     Ok(())
 }
