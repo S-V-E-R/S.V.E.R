@@ -4,6 +4,8 @@ Approved by Joe on October 8, 2026. Two signature moments get choreographed anim
 
 **When:** with the channel and transparency additions ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)), after VODs and clips (Module 8) closes.
 
+**Built:** the welcome ceremony (`app/welcome/Onboarding.tsx`) and the season reveal (`components/SeasonReveal.tsx`), both through `lib/choreography.ts`, with `motion` as a dependency of `apps/web`.
+
 ## Why Motion, and only here
 
 - **Why a library at all.** Both moments are timed sequences: several elements, in order, with overlaps. That's where CSS keyframes get brittle.

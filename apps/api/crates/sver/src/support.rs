@@ -512,6 +512,8 @@ fn checkout_pairs(
                 detail["share_tenths"].as_i64().unwrap_or(0),
             ),
         },
+        // A Wall seat is S.V.E.R's own sale; no creator share (docs/WALL.md).
+        "wall" => vec![("usd:stripe".into(), "usd:wall".into(), "usd", cents * 10)],
         _ => vec![
             (
                 format!("valor:{}", user.unwrap_or("unclaimed")),
@@ -577,6 +579,9 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
     if kind == "gift" {
         crate::subs::grant_gifts(tx, &detail).await?;
     }
+    if kind == "wall" {
+        crate::seats::paid(tx, id, &detail, intent).await?;
+    }
     let cents = i64::from(cents);
     let pairs = checkout_pairs(
         &kind,
@@ -587,10 +592,10 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
     );
     post_pairs(
         tx,
-        if kind == "gift" {
-            "gift_purchase"
-        } else {
-            "valor_purchase"
+        match kind.as_str() {
+            "gift" => "gift_purchase",
+            "wall" => "wall_purchase",
+            _ => "valor_purchase",
         },
         &format!("checkout:{id}"),
         json!({"session": id, "payment_intent": intent, "user": user, "cents": cents}),

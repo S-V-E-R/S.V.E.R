@@ -106,6 +106,8 @@ mod teams;
 mod username_claims;
 #[path = "streams/videos.rs"]
 mod videos;
+#[path = "streams/wall_seats.rs"]
+mod wall_seats;
 
 #[derive(Default)]
 struct Media {
@@ -411,6 +413,7 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/account_links", post(stripe))
         .route("/v1/accounts/{id}", get(stripe))
         .route("/v1/checkout/sessions/{id}", get(stripe))
+        .route("/v1/checkout/sessions/{id}/expire", post(stripe))
         .route("/v1/invoice_payments", get(stripe))
         .route("/v1/transfers", post(stripe))
         .route("/v1/payouts", post(stripe))
@@ -538,6 +541,7 @@ async fn exercise(e: &Env) {
     playback::exercise(e).await;
     chat::exercise(e).await;
     support::exercise(e).await;
+    wall_seats::exercise(e).await;
     subs::exercise(e).await;
     engagement::exercise(e).await;
     boards::exercise(e).await;

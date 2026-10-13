@@ -160,6 +160,7 @@ pub const RESERVED: &[&str] = &[
     "trust",
     "unsubscribe",
     "vanity",
+    "wall",
     "wallet",
 ];
 

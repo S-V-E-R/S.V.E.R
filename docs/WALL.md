@@ -4,6 +4,17 @@ Approved by Joe on October 9, 2026, after looking at the Million Dollar Homepage
 
 **When:** as its own small change, built next after the current channel additions step. It reuses the Stripe setup from Support (Module 6). Sales open only once everything under [Before sales open](#before-sales-open) is done.
 
+**Built October 13, 2026 (migration 0107, `seats.rs`). Sales are closed.** The backend (holds, checkout, the webhook, review, refunds, edits, removal, reports, the switch, open data), `/wall`, `/wall/{n}` with its share card, `/admin/wall` and the review queue in `/admin/media` are in place. Sales stay closed until staff press "Open sales" in `/admin/wall`, which needs everything under [Before sales open](#before-sales-open). Until then the page shows the Wall with "seats aren't on sale yet" and no buy controls.
+
+As built:
+- **Grid and holds.** `wall_tiles` (the tile number is `/wall/{n}`) and `wall_cells`, with one row per cell, so overlapping holds fail on the key. A buyer has one open hold at a time. Holds lapse after 15 minutes. The jobs loop frees them, refunds what's owed (a late payment for a spot taken meanwhile, a refund request, 30 days rejected) by payment intent with an idempotency key per tile, and a late payment for a spot that's still free gets it back.
+- **Prices.** `wall_settings` holds the prices per stage, the cell counts at which later stages start, the limits and `sales_opened_at`. Cells sold count paid tiles that weren't refunded; a removed tile's spot stays sold and empty. After sales open, only prices of stages not reached yet can change and the limits are fixed.
+- **Pictures** go through the image pipeline as `wall_tile` (square, kept at 100, 200 and 400 px, never upscaled), so Take It Down fingerprinting and quarantine cover them. Tables need 200 px and halls 400 px.
+- **Money.** Checkout uses `checkout_sessions` (kind `wall`) and Support's signed webhook. A paid seat posts `wall_purchase` from `usd:stripe` to `usd:wall` only; refunds and disputes reverse it through the existing handlers. Open data shows "Wall seats sold" per month.
+- **Review** is in `/admin/media`. Rejecting needs a reason, which the buyer sees on `/wall/{n}` and by email. A change to a live tile waits in `pending` while the approved version stays up.
+- **Reports** use the `wall_tile` target ("Report this seat"); removing through the report queue or `/admin/wall` keeps the spot empty, and an overturned removal restores the tile. Staff can also remove just the link. Every staff action is audited.
+- **`wall` is a reserved username**, since `/wall` is a site route.
+
 ## What it is, and what it isn't
 
 - **What a seat is:** a tile on `/wall` with a picture, a name, an optional link and an optional short message. People and brands can both buy one.

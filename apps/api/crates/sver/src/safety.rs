@@ -69,6 +69,7 @@ const TARGETS: &[&str] = &[
     "chat_message",
     "live_stream",
     "dm_message",
+    "wall_tile",
 ];
 pub const STANDING_MAIL: &str =
     "There's an update to your account standing. See sver.tv/settings/standing.";
@@ -205,6 +206,7 @@ async fn target(
     let row: Option<(String, String, Value)> = match kind {
         "vod"|"highlight"|"clip"=>crate::videos::review::target(db,kind,id).await?,
         "beacon" => crate::beacons::review::target(db, id).await?,
+        "wall_tile" => crate::seats::report_target(db, id).await?,
         "beacon_comment" => crate::beacons::comment_target(db, id, reporter).await?,
         "guild" | "guild_emblem" => crate::guilds::target(db,id,reporter,kind=="guild_emblem").await?,
         "faction_post" => crate::factions::target(db,id,reporter).await?,
@@ -943,6 +945,9 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
     if kind == "beacon" {
         return crate::beacons::review::remove(db, id).await;
     }
+    if kind == "wall_tile" {
+        return crate::seats::remove(db, id).await;
+    }
     if matches!(kind, "guild" | "guild_emblem") {
         return crate::guilds::remove(db, id, kind == "guild_emblem").await;
     }
@@ -1030,6 +1035,7 @@ async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
     let owner: Option<String> = match kind {
         "vod" | "highlight" | "clip" => crate::videos::review::owner(db, id).await?,
         "beacon" => crate::beacons::review::owner(db, id).await?,
+        "wall_tile" => crate::seats::owner(db, id).await?,
         "beacon_comment" => {
             sqlx::query_scalar("SELECT author_id FROM beacon_comments WHERE id=$1")
                 .bind(id)
@@ -1111,6 +1117,7 @@ async fn current_content(
     Ok(match kind {
         "vod"|"highlight"|"clip"=>crate::videos::review::snapshot(db,id).await?,
         "beacon" => crate::beacons::review::snapshot(db, id).await?,
+        "wall_tile" => crate::seats::current(db, id).await?,
         "beacon_comment" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM beacon_comments WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "guild" | "guild_emblem" => crate::guilds::snapshot(db, id).await?,
         "emote" => crate::emotes::current(db, id).await?,
@@ -1647,6 +1654,10 @@ pub async fn decide(
                 }
                 "beacon" => {
                     crate::beacons::review::restore(&mut tx, item_id, previous).await?;
+                    continue;
+                }
+                "wall_tile" => {
+                    crate::seats::restore(&mut tx, item_id, previous).await?;
                     continue;
                 }
                 "wall_post" => "wall_posts",
