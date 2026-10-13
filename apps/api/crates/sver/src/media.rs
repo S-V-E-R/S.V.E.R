@@ -30,6 +30,8 @@ use std::{io::Cursor, path::PathBuf};
 
 /// Body limit for upload routes (10 MB banners plus multipart overhead; nginx allows 11 MB).
 pub const UPLOAD_LIMIT: usize = 11 * 1024 * 1024;
+#[path = "media_frames.rs"]
+pub mod frames;
 #[path = "media_removal.rs"]
 pub mod removal;
 #[path = "media_stream.rs"]

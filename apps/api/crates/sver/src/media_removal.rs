@@ -194,14 +194,23 @@ pub async fn quarantine(app: &App, root: &str) -> Res<()> {
     .await?;
     if saved.is_none() {
         let mut originals = serde_json::Map::new();
+        let mut frames = vec![];
         for key in &keys {
             if let Some(bytes) = app.config.media.storage.get(&app.http, key).await? {
                 let decoded = decode(&bytes, Kind::Banner)?;
                 sqlx::query("INSERT INTO media_fingerprints(root,hashes) VALUES($1,$2) ON CONFLICT(root) DO UPDATE SET hashes=(SELECT ARRAY(SELECT DISTINCT unnest(media_fingerprints.hashes || EXCLUDED.hashes)))")
                     .bind(root).bind(fingerprints(&bytes,&decoded)).execute(&mut *tx).await?;
+                frames.extend(super::frames::image_hash(&decoded));
                 originals.insert(key.clone(), json!(STANDARD.encode(bytes)));
             }
         }
+        frames.sort_unstable();
+        frames.dedup();
+        sqlx::query("UPDATE media_removal_holds SET frames=$2 WHERE root=$1")
+            .bind(root)
+            .bind(&frames)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(
             "UPDATE media_objects SET fingerprinted=true WHERE key=$1 OR key LIKE $1||'/%'",
         )
@@ -243,6 +252,9 @@ pub async fn quarantine(app: &App, root: &str) -> Res<()> {
 
 pub async fn make_permanent(db: &mut PgConnection, root: &str, minor: bool) -> Res<()> {
     sqlx::query("INSERT INTO blocked_media_hashes(hash) SELECT unnest(hashes) FROM media_fingerprints WHERE root=$1 ON CONFLICT DO NOTHING")
+        .bind(root).execute(&mut *db).await?;
+    // Video frames showing this image are found by frames::tick and at each new upload.
+    sqlx::query("INSERT INTO removed_frames(source,hash) SELECT 'image:'||root,unnest(frames) FROM media_removal_holds WHERE root=$1 AND hidden_at IS NOT NULL ON CONFLICT DO NOTHING")
         .bind(root).execute(&mut *db).await?;
     sqlx::query("UPDATE media_removal_holds SET permanent=true,legal_hold=legal_hold OR $2,saved=CASE WHEN legal_hold OR $2 THEN saved ELSE NULL END WHERE root=$1 AND hidden_at IS NOT NULL")
         .bind(root).bind(minor).execute(&mut *db).await?;

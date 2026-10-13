@@ -164,6 +164,12 @@ pub async fn exercise(e: &Env, dir: &std::path::Path) {
         )
         .await;
     assert!(!dir.join(key).exists());
+    // The removed image's frame hash joins the removed set that video frames are compared with.
+    assert!(
+        e.count("SELECT count(*) FROM removed_frames WHERE source LIKE 'image:%'")
+            .await
+            > 0
+    );
     assert_eq!(
         e.count("SELECT count(*) FROM media_removal_holds WHERE permanent AND saved IS NOT NULL")
             .await,

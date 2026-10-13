@@ -325,6 +325,14 @@ async fn recordings_retry_privacy_cuts_and_retention() {
     );
     e.sql("UPDATE video_jobs SET available_at=now()").await;
     assert!(sver::videos::worker::run_one(&e.app, true).await.unwrap());
+    // Take It Down frame matching samples the live recording as its segments arrive.
+    let sampled: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM frame_hashes WHERE source='video:'||$1")
+            .bind(&video)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert!(sampled > 0, "live segments are sampled");
     e.sql("UPDATE video_objects SET ready=false WHERE key=(SELECT object_key FROM video_segments WHERE start_ms=7000)").await;
     let incomplete = e.request("POST", &format!("/api/videos/{video}/cuts"), json!({"kind":"HIGHLIGHT","title":"Pending tail","start_ms":0,"end_ms":8000,"request_id":uuid::Uuid::new_v4().to_string()}), true, true, false).await;
     assert_eq!(
@@ -601,6 +609,7 @@ async fn recordings_retry_privacy_cuts_and_retention() {
         .0,
         StatusCode::OK
     );
+    frame_matching(&e, &highlight, &clip).await;
     permissions_and_holds(&e, &highlight, &clip).await;
     server.abort();
     db.close().await;
@@ -1116,6 +1125,58 @@ async fn permissions_and_holds(e: &Env, highlight: &str, clip: &str) {
         .0,
         StatusCode::NOT_FOUND
     );
+}
+
+/// Take It Down frame matching (docs/TAKE_IT_DOWN.md): cuts are hashed once saved. A removed
+/// image showing one of their frames holds them for staff review; dismissing releases them.
+async fn frame_matching(e: &Env, highlight: &str, clip: &str) {
+    while sver::videos::worker::run_one(&e.app, false).await.unwrap() {}
+    let frames = |id: &str| {
+        sqlx::query_scalar::<_, i64>("SELECT hash FROM frame_hashes WHERE source='video:'||$1")
+            .bind(id.to_string())
+            .fetch_all(&e.app.db)
+    };
+    let saved = frames(highlight).await.unwrap();
+    assert!(!saved.is_empty(), "Highlights are hashed");
+    assert!(!frames(clip).await.unwrap().is_empty(), "clips are hashed");
+    let mut tx = e.app.db.begin().await.unwrap();
+    sver::media::frames::removed_hashes(&mut tx, "image:synthetic-frame", &saved[..1])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    sver::media::frames::tick(&e.app).await.unwrap();
+    let reports: Vec<(String, String)> = sqlx::query_as("SELECT id,target_id FROM reports WHERE reason='removal_match' AND status='OPEN' AND reporter_id IS NULL")
+        .fetch_all(&e.app.db)
+        .await
+        .unwrap();
+    assert!(reports.iter().any(|(_, id)| id == highlight), "{reports:?}");
+    assert!(reports.iter().any(|(_, id)| id == clip), "{reports:?}");
+    let (status, _) = e
+        .request(
+            "GET",
+            &format!("/api/videos/{clip}"),
+            Value::Null,
+            true,
+            true,
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a matched clip is held");
+    let ids: Vec<String> = reports.into_iter().map(|(id, _)| id).collect();
+    let mut tx = e.app.db.begin().await.unwrap();
+    sqlx::query("UPDATE reports SET status='DISMISSED',closed_at=now() WHERE id=ANY($1)")
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sver::videos::review::release(&mut tx, "REPORT", &ids)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM removed_frames")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
 }
 
 async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {

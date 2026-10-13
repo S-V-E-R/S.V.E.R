@@ -429,7 +429,12 @@ async fn queue(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         .fetch_all(&app.db).await?;
     let compliance: Value = sqlx::query_scalar("SELECT jsonb_build_object('received',count(*),'removed',count(*) FILTER(WHERE status='removed'),'overdue',count(*) FILTER(WHERE coalesce(resolved_at,now())>deadline),'median_hours',percentile_cont(0.5) WITHIN GROUP(ORDER BY extract(epoch FROM resolved_at-received_at)/3600) FILTER(WHERE status='removed'),'longest_hours',max(extract(epoch FROM resolved_at-received_at)/3600) FILTER(WHERE status='removed')) FROM take_down_requests WHERE received_at>=date_trunc('month',now())")
         .fetch_one(&app.db).await?;
-    Ok(Json(json!({"requests":rows,"monthly":compliance})))
+    // Likely copies found by frame matching wait in the report queue (reason removal_match).
+    let matches: i64 = sqlx::query_scalar("SELECT count(DISTINCT (target_type,target_id)) FROM reports WHERE reason='removal_match' AND status='OPEN'")
+        .fetch_one(&app.db).await?;
+    Ok(Json(
+        json!({"requests":rows,"monthly":compliance,"frame_matches":matches}),
+    ))
 }
 async fn detail(
     State(app): State<App>,
@@ -737,6 +742,9 @@ async fn restore_request(app: &App, id: i64) -> Res<()> {
 pub async fn tick(app: &App) -> Res<()> {
     if media::removal::index_existing(app).await.is_err() {
         eprintln!("take_down_event=fingerprint_index outcome=retry");
+    }
+    if media::frames::tick(app).await.is_err() {
+        eprintln!("take_down_event=frame_scan outcome=retry");
     }
     let pending: Vec<String> = sqlx::query_scalar(
         "SELECT root FROM media_removal_holds WHERE hidden_at IS NULL ORDER BY created_at LIMIT 50",

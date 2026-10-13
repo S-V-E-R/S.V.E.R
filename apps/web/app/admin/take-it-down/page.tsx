@@ -1,12 +1,13 @@
 "use client";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { send, useLoad } from "../../../lib/client-api";
 import { EnableStaffPush } from "../../../components/StaffRemovalAlerts";
 import { RecordingEvidence } from "../../../components/RecordedPlayer";
 import { BeaconEvidence } from "../../../components/BeaconEvidence";
 
 type Request = { number: string; status: string; received_at: string; deadline: string; resolved_at: string | null; reason: string; media_pending: number; target_count: number };
-type Queue = { requests: Request[]; monthly: { received: number; removed: number; overdue: number; median_hours: number | null; longest_hours: number | null } };
+type Queue = { frame_matches: number; requests: Request[]; monthly: { received: number; removed: number; overdue: number; median_hours: number | null; longest_hours: number | null } };
 type Detail = { number: string; minor: boolean; preservation_reference: string; details: { name: string; email: string; capacity: string; authority: string; locations: string[]; description: string; extra: string; signature: string; signed_on: string; good_faith: boolean }; events: { at: string; action: string; actor: string | null; detail: string }[]; notices: { channel: "email" | "push"; audience: string; state: string; queued_at: string; last_attempt_at: string | null; attempts: number; accepted_at: string | null }[]; targets: { kind: string; id: string }[]; evidence: string[] };
 const when = (date: string) => new Date(date).toLocaleString();
 
@@ -83,6 +84,7 @@ export default function TakeItDownQueue() {
     <EnableStaffPush />
     {error && <p role="alert">{error}</p>}
     {queue && <><p>This month: {queue.monthly.received} received · {queue.monthly.removed} removed · {queue.monthly.overdue} over 48 hours. Median removal: {queue.monthly.median_hours?.toFixed(1) ?? "—"} hours; longest: {queue.monthly.longest_hours?.toFixed(1) ?? "—"} hours.</p>
+      {queue.frame_matches > 0 && <p role="alert"><strong><Link href="/admin/reports?reason=removal_match">{queue.frame_matches} likely {queue.frame_matches === 1 ? "copy" : "copies"} of removed media</Link></strong> found by frame matching {queue.frame_matches === 1 ? "is" : "are"} hidden and waiting in Reports.</p>}
       {queue.requests.length === 0 && <p>No requests.</p>}
       {queue.requests.map(item => {
         const minutes = now === null ? null : Math.ceil((Date.parse(item.deadline)-now)/60000);

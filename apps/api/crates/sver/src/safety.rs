@@ -330,6 +330,36 @@ pub async fn report(
     Ok(Json(json!({"message": "Thanks. We'll review this."})))
 }
 
+/// A report filed by S.V.E.R itself (no reporter), such as a frame match with removed media.
+/// Returns the report id, or None when the content is gone or already has an open one.
+pub async fn system_report(
+    db: &mut PgConnection,
+    kind: &str,
+    id: &str,
+    note: &str,
+    extra: Value,
+) -> Res<Option<String>> {
+    let open: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM reports WHERE reporter_id IS NULL AND target_type=$1 AND target_id=$2 AND reason='removal_match' AND status='OPEN')")
+        .bind(kind).bind(id).fetch_one(&mut *db).await?;
+    if open {
+        return Ok(None);
+    }
+    let target = match target(db, kind, id, None, "").await {
+        Ok(target) => target,
+        Err(e) if e.status == axum::http::StatusCode::NOT_FOUND => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut snapshot = target.snapshot;
+    if let (Some(snapshot), Some(extra)) = (snapshot.as_object_mut(), extra.as_object()) {
+        snapshot.extend(extra.clone());
+    }
+    let report: String = sqlx::query_scalar("INSERT INTO reports(id,reporter_id,target_type,target_id,target_user_id,target_username,reason,note,snapshot) VALUES($1,NULL,$2,$3,$4,$5,'removal_match',$6,$7) RETURNING id")
+        .bind(new_id()).bind(kind).bind(&target.target_id).bind(&target.owner_id).bind(&target.owner_name).bind(note).bind(snapshot)
+        .fetch_one(db).await?;
+    log("system_report_filed", "ok");
+    Ok(Some(report))
+}
+
 /// GET /api/me/reports: the reporter's own reports from the last 180 days, 20 per page.
 pub async fn my_reports(
     State(app): State<App>,
@@ -1261,6 +1291,14 @@ pub async fn admin_action(
     let actioned = input.action != "dismiss";
     if crate::videos::review::is_video(&kind) {
         crate::videos::review::release(&mut tx, "REPORT", &report_ids).await?;
+    }
+    // A dismissed frame match returns a Beacon it hid (docs/TAKE_IT_DOWN.md).
+    if kind == "beacon" && input.action == "dismiss" {
+        for (_, snapshot) in &reports {
+            if let Some(previous) = snapshot.get("hidden") {
+                crate::beacons::review::unhide(&mut tx, &id, previous).await?;
+            }
+        }
     }
     if kind == "emote" && matches!(input.action.as_str(), "dismiss" | "remove_content") {
         crate::emotes::reviewed(&mut tx, &id).await?;

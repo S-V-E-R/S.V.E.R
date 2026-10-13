@@ -1134,6 +1134,163 @@ async fn beacons_publish_watermark_count_and_remove() {
             .await
             .unwrap();
     assert_eq!(blocked, 4);
+
+    // Frame matching (docs/TAKE_IT_DOWN.md): the removed Beacon's frames join the removed set,
+    // so a re-encoded copy that dodges the exact blocklist is hidden and reported, not published.
+    let removed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM removed_frames WHERE source='beacon:'||$1")
+            .bind(&from_clip)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert!(removed > 0, "a legal removal records its frames");
+    let copy_file = root.join("copy.mp4");
+    ffmpeg(&[
+        "-i",
+        clip_file.to_str().unwrap(),
+        "-vf",
+        "scale=480:270",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "32",
+        "-g",
+        "25",
+        "-c:a",
+        "aac",
+        copy_file.to_str().unwrap(),
+    ]);
+    let copy = e
+        .call("POST", "/api/me/beacons", upload("Re-encoded copy"))
+        .await;
+    let copy_id = copy["id"].as_str().unwrap().to_string();
+    put_bytes(
+        &e,
+        copy["upload"]["url"].as_str().unwrap(),
+        std::fs::read(&copy_file).unwrap(),
+    )
+    .await;
+    e.call(
+        "POST",
+        &format!("/api/beacons/{copy_id}/complete"),
+        Value::Null,
+    )
+    .await;
+    work(&e.app).await;
+    let copy_row = beacon(&e, &copy_id).await;
+    assert_eq!(
+        (copy_row["status"].as_str(), copy_row["hidden"].as_bool()),
+        (Some("PUBLISHED"), Some(true)),
+        "{copy_row}"
+    );
+    assert_eq!(
+        call(
+            &e,
+            "GET",
+            &format!("/api/beacons/{copy_id}"),
+            None,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let report: (Option<String>, String) = sqlx::query_as("SELECT reporter_id,note FROM reports WHERE target_type='beacon' AND target_id=$1 AND reason='removal_match' AND status='OPEN'")
+        .bind(&copy_id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(report.0, None, "S.V.E.R files the report itself");
+    assert!(report.1.contains("closely match"), "{}", report.1);
+    let (status, matches) = call(
+        &e,
+        "GET",
+        "/api/admin/take-it-down",
+        Some(&staff),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{matches}");
+    assert!(matches["frame_matches"].as_i64().unwrap() >= 1, "{matches}");
+    let filtered = call(
+        &e,
+        "GET",
+        "/api/admin/reports?reason=removal_match",
+        Some(&staff),
+        Value::Null,
+    )
+    .await
+    .1;
+    assert!(filtered.to_string().contains(&copy_id), "{filtered}");
+    // A near match is not proof: staff dismiss it and the Beacon returns.
+    let (status, body) = call(
+        &e,
+        "POST",
+        &format!("/api/admin/reports/beacon/{copy_id}/actions"),
+        Some(&staff),
+        json!({"action":"dismiss","note":"A different video"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(beacon(&e, &copy_id).await["hidden"], false);
+    assert_eq!(
+        call(
+            &e,
+            "GET",
+            &format!("/api/beacons/{copy_id}"),
+            None,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    // Media removed later is compared with what is already published: one removed still from
+    // the clip is enough to find the copy again.
+    let still = root.join("still.png");
+    ffmpeg(&[
+        "-ss",
+        "2",
+        "-i",
+        clip_file.to_str().unwrap(),
+        "-frames:v",
+        "1",
+        still.to_str().unwrap(),
+    ]);
+    let still = image::open(&still).unwrap();
+    let hash = sver::media::frames::image_hash(&still).expect("an informative still");
+    let mut tx = db.begin().await.unwrap();
+    sver::media::frames::removed_hashes(&mut tx, "image:synthetic-still", &[hash])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    sver::media::frames::tick(&e.app).await.unwrap();
+    assert_eq!(beacon(&e, &copy_id).await["hidden"], true);
+    let open: i64 = sqlx::query_scalar("SELECT count(*) FROM reports WHERE target_type='beacon' AND target_id=$1 AND reason='removal_match' AND status='OPEN'")
+        .bind(&copy_id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(open, 1);
+    let unscanned: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM removed_frames WHERE NOT scanned")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(unscanned, 0);
+    // Deleting a Beacon drops its frames from the comparison set.
+    e.call("DELETE", &format!("/api/beacons/{copy_id}"), Value::Null)
+        .await;
+    work(&e.app).await;
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM frame_hashes WHERE source='beacon:'||$1")
+            .bind(&copy_id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
     let _ = other;
 
     std::fs::remove_dir_all(&root).ok();

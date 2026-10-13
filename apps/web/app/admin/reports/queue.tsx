@@ -48,9 +48,12 @@ function Action({ group, onDone }: { group: Group; onDone: () => void }) {
   </form>;
 }
 
-export default function QueuePage() {
+/** Frame matches are filed by S.V.E.R itself, so viewers never pick this reason. */
+const queueReasons: [string, string][] = [...reasons, ["removal_match", "Matches removed media"]];
+
+export default function QueuePage({ reason = "" }: { reason?: string }) {
   const [queue, setQueue] = useState<Queue | null>(null);
-  const [filter, setFilter] = useState({ type: "", reason: "" });
+  const [filter, setFilter] = useState({ type: "", reason });
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     const q = new URLSearchParams(Object.entries(filter).filter(([, v]) => v));
@@ -73,7 +76,7 @@ export default function QueuePage() {
       <ul className="list">{queue.interim_restrictions.map(i => <li key={i.id} className="row between"><span><Link href={`/admin/users/${i.username}`}>@{i.username}</Link> until {when(i.until)} {i.overdue && <span className="badge danger-text">Overdue: record a strike or lift</span>}</span><button type="button" className="small quiet" onClick={() => lift(i.username)}>Lift</button></li>)}</ul>
     </Section>}
     <div className="row"><select aria-label="Type" value={filter.type} onChange={e => setFilter({ ...filter, type: e.target.value })}><option value="">All types</option><option value="profile">Channels</option><option value="wall_post">Wall posts</option><option value="wall_reply">Wall replies</option><option value="fan_art">Fan art</option><option value="setup_photo">Setup photos</option><option value="chat_message">Chat messages</option><option value="live_stream">Live streams</option><option value="emote">Emotes</option><option value="faction_post">Faction posts</option><option value="guild">Guilds</option><option value="guild_emblem">Guild emblems</option><option value="vod">Past broadcasts</option><option value="highlight">Highlights</option><option value="clip">Clips</option><option value="beacon">Beacons</option></select>
-      <select aria-label="Reason" value={filter.reason} onChange={e => setFilter({ ...filter, reason: e.target.value })}>{[<option key="" value="">All reasons</option>, ...reasons.map(([v, l]) => <option key={v} value={v}>{l}</option>)]}</select></div>
+      <select aria-label="Reason" value={filter.reason} onChange={e => setFilter({ ...filter, reason: e.target.value })}>{[<option key="" value="">All reasons</option>, ...queueReasons.map(([v, l]) => <option key={v} value={v}>{l}</option>)]}</select></div>
     {queue.groups.length === 0 ? <p className="panel section muted">The queue is empty.</p> : queue.groups.map(g => <Section key={`${g.target_type}:${g.target_id}`} title={`${g.target_type.replace("_", " ")} · @${g.username}`}>
       <p className="muted">{g.count} report(s) since {when(g.oldest)} · {g.reasons.join(", ")} · <Link href={`/admin/users/${g.username}`}>Standing</Link></p>
       <details open><summary>Reports and snapshots</summary><ul className="list">{g.reports.map(r => <li key={r.id}><strong>{r.reason}</strong>{r.field && ` · ${r.field}`} · {when(r.created_at)}{r.note && <p>{r.note}</p>}<pre className="snapshot">{JSON.stringify(r.snapshot.value, null, 2)}</pre></li>)}</ul></details>
