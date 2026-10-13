@@ -3,7 +3,9 @@
 -- content until staff decide.
 CREATE TABLE frame_sources (
     source text PRIMARY KEY,
-    indexed_at timestamptz NOT NULL DEFAULT now()
+    indexed_at timestamptz NOT NULL DEFAULT now(),
+    -- Start of the newest live segment that decoded a frame; the next is due frame_every_ms later.
+    decoded_ms bigint
 );
 CREATE TABLE frame_hashes (
     source text NOT NULL REFERENCES frame_sources(source) ON DELETE CASCADE,
@@ -18,9 +20,10 @@ CREATE TABLE removed_frames (
     PRIMARY KEY (source, hash)
 );
 CREATE INDEX removed_frames_unscanned ON removed_frames(source, hash) WHERE NOT scanned;
--- Hashes of a held image's originals, taken when it is quarantined; they become removed frames
--- only if the request is upheld.
-ALTER TABLE media_removal_holds ADD COLUMN frames bigint[] NOT NULL DEFAULT '{}';
+-- Hashes of a held image's originals, taken when it is quarantined (NULL until then, and for
+-- holds quarantined before this migration until they are indexed from the saved originals);
+-- they become removed frames only if the request is upheld.
+ALTER TABLE media_removal_holds ADD COLUMN frames bigint[];
 ALTER TABLE video_jobs DROP CONSTRAINT IF EXISTS video_jobs_kind_check;
 ALTER TABLE video_jobs ADD CONSTRAINT video_jobs_kind_check CHECK (kind IN ('SEGMENT','ASSEMBLE','THUMBNAIL','DOWNLOAD','DELETE','FRAMES'));
 ALTER TABLE reports DROP CONSTRAINT reports_reason_check;

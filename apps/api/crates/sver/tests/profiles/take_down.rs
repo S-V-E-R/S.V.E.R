@@ -156,6 +156,8 @@ pub async fn exercise(e: &Env, dir: &std::path::Path) {
             json!({"action":"review","reason":"Reviewing the provided location"}),
         )
         .await;
+    // A hold quarantined before frame matching existed is indexed from its saved originals.
+    e.sql("UPDATE media_removal_holds SET frames=NULL").await;
     staff
         .ok(
             "POST",

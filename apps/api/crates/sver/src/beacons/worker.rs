@@ -674,6 +674,7 @@ async fn remove(app: &App, job: &Job, token: &str) -> Res<bool> {
     let source = format!("beacon:{}", job.beacon_id);
     // A legal removal's frames become removed media before its files are deleted.
     if job.input["legal"] == true {
+        let mut hashes = None;
         if !frames::indexed(&mut *app.db.acquire().await?, &source).await? {
             let key: Option<String> =
                 sqlx::query_scalar("SELECT clean_key FROM beacons WHERE id=$1")
@@ -682,12 +683,17 @@ async fn remove(app: &App, job: &Job, token: &str) -> Res<bool> {
                     .await?
                     .flatten();
             if let Some(key) = key {
-                let hashes = stored_frames(app, &key).await?;
-                let distance = app.config.videos.tuning.frame_distance;
-                frames::record(&mut *app.db.acquire().await?, &source, &hashes, distance).await?;
+                hashes = Some(stored_frames(app, &key).await?);
             }
         }
-        frames::removed(&mut *app.db.acquire().await?, &source).await?;
+        // One transaction: a crash never leaves the source indexed without its frames.
+        let mut tx = app.db.begin().await?;
+        if let Some(hashes) = hashes {
+            let distance = app.config.videos.tuning.frame_distance;
+            frames::record(&mut tx, &source, &hashes, distance).await?;
+        }
+        frames::removed(&mut tx, &source).await?;
+        tx.commit().await?;
     }
     let mut tx = app.db.begin().await?;
     fence(&mut tx, job, token).await?;

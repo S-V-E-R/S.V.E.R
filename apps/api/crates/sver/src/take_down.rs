@@ -743,6 +743,9 @@ pub async fn tick(app: &App) -> Res<()> {
     if media::removal::index_existing(app).await.is_err() {
         eprintln!("take_down_event=fingerprint_index outcome=retry");
     }
+    if media::removal::index_all_saved_frames(app).await.is_err() {
+        eprintln!("take_down_event=frame_index outcome=retry");
+    }
     if media::frames::tick(app).await.is_err() {
         eprintln!("take_down_event=frame_scan outcome=retry");
     }

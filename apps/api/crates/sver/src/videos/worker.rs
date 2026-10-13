@@ -81,15 +81,16 @@ async fn process(app: &App, job: &Job) -> Res<bool> {
             let key = job.object_key.as_deref().ok_or_else(Fail::internal)?;
             let bytes = job.payload.as_ref().ok_or_else(Fail::internal)?;
             put(app, key, bytes.clone(), "video/mp2t").await?;
-            let hashes = live_frames(app, key, bytes).await?;
+            let sampled = live_frames(app, key, bytes).await?;
             let mut tx = app.db.begin().await?;
             fence(&mut tx, job).await?;
             sqlx::query("UPDATE video_objects SET ready=true WHERE key=$1")
                 .bind(key)
                 .execute(&mut *tx)
                 .await?;
-            if let Some(hashes) = hashes {
+            if let Some((start, hashes)) = sampled {
                 compare(app, &mut tx, &job.video_id, &hashes).await?;
+                frames::decoded(&mut tx, &format!("video:{}", job.video_id), start).await?;
             }
             tx.commit().await?;
             Ok(true)
@@ -114,19 +115,18 @@ async fn process(app: &App, job: &Job) -> Res<bool> {
     }
 }
 /// Take It Down frame matching (docs/TAKE_IT_DOWN.md): a live recording is compared every
-/// `frame_every_ms`, using the keyframe of the segment that covers that moment. A decode problem
-/// never holds up the recording itself.
-async fn live_frames(app: &App, key: &str, bytes: &[u8]) -> Res<Option<Vec<i64>>> {
-    let segment: Option<(i64, i64)> =
-        sqlx::query_as("SELECT start_ms,duration_ms FROM video_segments WHERE object_key=$1")
-            .bind(key)
-            .fetch_optional(&app.db)
-            .await?;
+/// `frame_every_ms`, using the keyframe of the first segment due. A segment without a keyframe
+/// passes the turn to the next one. A decode problem never holds up the recording itself.
+async fn live_frames(app: &App, key: &str, bytes: &[u8]) -> Res<Option<(i64, Vec<i64>)>> {
+    let segment: Option<(i64, Option<i64>)> = sqlx::query_as("SELECT s.start_ms,f.decoded_ms FROM video_segments s LEFT JOIN frame_sources f ON f.source='video:'||s.video_id WHERE s.object_key=$1")
+        .bind(key)
+        .fetch_optional(&app.db)
+        .await?;
     let every = app.config.videos.tuning.frame_every_ms;
     match segment {
-        Some((start, duration)) if frames::sampled(start, duration, every) => {
-            match frames::video_hashes(bytes, "mpegts").await {
-                Ok(hashes) => Ok(Some(hashes)),
+        Some((start, last)) if frames::due(start, last, every) => {
+            match frames::segment_hashes(bytes).await {
+                Ok(hashes) => Ok(hashes.map(|hashes| (start, hashes))),
                 Err(_) => {
                     eprintln!("frames_event=live outcome=unavailable");
                     Ok(None)
@@ -136,8 +136,8 @@ async fn live_frames(app: &App, key: &str, bytes: &[u8]) -> Res<Option<Vec<i64>>
         _ => Ok(None),
     }
 }
-/// Frames of a stored video: a clip's MP4, or a recording's sampled segments. Objects already
-/// deleted are skipped rather than waited for.
+/// Frames of a stored video: a clip's MP4, or a recording's segments sampled as live. Objects
+/// already deleted are skipped rather than waited for.
 async fn frames(app: &App, video: &Video) -> Res<Vec<i64>> {
     let get = |key: String| async move { app.config.videos.storage.get(&app.http, &key).await };
     if video.kind == "CLIP" {
@@ -150,14 +150,20 @@ async fn frames(app: &App, video: &Video) -> Res<Vec<i64>> {
         };
     }
     let every = app.config.videos.tuning.frame_every_ms;
-    let segments: Vec<(String, i64, i64)> = sqlx::query_as("SELECT object_key,start_ms,duration_ms FROM video_segments WHERE video_id=$1 ORDER BY start_ms")
-        .bind(&video.id).fetch_all(&app.db).await?;
-    let mut hashes = vec![];
-    for (key, start, duration) in segments {
-        if frames::sampled(start, duration, every)
+    let segments: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT object_key,start_ms FROM video_segments WHERE video_id=$1 ORDER BY start_ms",
+    )
+    .bind(&video.id)
+    .fetch_all(&app.db)
+    .await?;
+    let (mut hashes, mut last) = (vec![], None);
+    for (key, start) in segments {
+        if frames::due(start, last, every)
             && let Some(bytes) = get(key).await?
+            && let Some(found) = frames::segment_hashes(&bytes).await?
         {
-            hashes.extend(frames::video_hashes(&bytes, "mpegts").await?);
+            hashes.extend(found);
+            last = Some(start);
         }
     }
     Ok(hashes)
@@ -450,13 +456,20 @@ async fn remove(app: &App, job: &Job) -> Res<bool> {
     // A legal removal's frames become removed media before any copy is deleted, so copies
     // elsewhere are found (docs/TAKE_IT_DOWN.md). Idempotent across delete batches.
     if job.input["legal"] == true {
-        if !frames::indexed(&mut *app.db.acquire().await?, &source).await? {
+        let hashes = if frames::indexed(&mut *app.db.acquire().await?, &source).await? {
+            None
+        } else {
             let video = load(&mut *app.db.acquire().await?, &job.video_id).await?;
-            let hashes = frames(app, &video).await?;
+            Some(frames(app, &video).await?)
+        };
+        // One transaction: a crash never leaves the source indexed without its frames.
+        let mut tx = app.db.begin().await?;
+        if let Some(hashes) = hashes {
             let distance = app.config.videos.tuning.frame_distance;
-            frames::record(&mut *app.db.acquire().await?, &source, &hashes, distance).await?;
+            frames::record(&mut tx, &source, &hashes, distance).await?;
         }
-        frames::removed(&mut *app.db.acquire().await?, &source).await?;
+        frames::removed(&mut tx, &source).await?;
+        tx.commit().await?;
     }
     let mut tx = app.db.begin().await?;
     fence(&mut tx, job).await?;

@@ -43,8 +43,10 @@ pub fn image_hash(image: &DynamicImage) -> Option<i64> {
         .to_luma8();
     Some(dhash(&gray)).filter(|h| informative(*h))
 }
-fn parse(raw: &[u8]) -> Vec<i64> {
+/// Frames decoded, and the informative hashes among them.
+fn parse(raw: &[u8]) -> (usize, Vec<i64>) {
     let size = (WIDTH * HEIGHT) as usize;
+    let decoded = raw.len() / size;
     let mut hashes: Vec<i64> = raw
         .chunks_exact(size)
         .take(MAX_FRAMES)
@@ -54,7 +56,7 @@ fn parse(raw: &[u8]) -> Vec<i64> {
         .collect();
     hashes.sort_unstable();
     hashes.dedup();
-    hashes
+    (decoded, hashes)
 }
 /// Keyframes only: decoding them is cheap, and a live segment or a clip has one at least every
 /// couple of seconds. Files are thinned to a frame a second; a recording segment is a few seconds.
@@ -91,7 +93,7 @@ fn args(input: &str, format: Option<&str>, per_second: bool) -> Vec<String> {
     ]);
     args
 }
-async fn run(args: Vec<String>, input: Option<&[u8]>) -> Res<Vec<i64>> {
+async fn run(args: Vec<String>, input: Option<&[u8]>) -> Res<(usize, Vec<i64>)> {
     let mut child = Command::new("ffmpeg")
         .args(args)
         .stdin(if input.is_some() {
@@ -119,22 +121,39 @@ async fn run(args: Vec<String>, input: Option<&[u8]>) -> Res<Vec<i64>> {
     }
     Ok(parse(&output.stdout))
 }
-/// Hashes of a video held in memory (`mpegts` segments, fragmented `mp4` clips).
+/// Hashes of a fragmented MP4 held in memory, at most one frame a second.
 pub async fn video_hashes(bytes: &[u8], format: &str) -> Res<Vec<i64>> {
-    run(
-        args("pipe:0", Some(format), format != "mpegts"),
-        Some(bytes),
-    )
-    .await
+    Ok(run(args("pipe:0", Some(format), true), Some(bytes))
+        .await?
+        .1)
+}
+/// Hashes of one recording segment, or None when it decoded no frame at all: a segment can
+/// start mid-GOP and hold no keyframe, and then the next segment is tried instead.
+pub async fn segment_hashes(bytes: &[u8]) -> Res<Option<Vec<i64>>> {
+    let (decoded, hashes) = run(args("pipe:0", Some("mpegts"), false), Some(bytes)).await?;
+    Ok((decoded > 0).then_some(hashes))
 }
 /// Hashes of a local video file, at most one frame a second.
 pub async fn file_hashes(path: &Path) -> Res<Vec<i64>> {
-    run(args(&path.to_string_lossy(), None, true), None).await
+    Ok(run(args(&path.to_string_lossy(), None, true), None)
+        .await?
+        .1)
 }
-/// Whether a live recording segment is one of the sampled ones: it covers a multiple of `every`.
-pub fn sampled(start_ms: i64, duration_ms: i64, every: i64) -> bool {
-    let next = (start_ms + every - 1).div_euclid(every) * every;
-    next < start_ms + duration_ms
+/// Whether a recording segment starting at `start_ms` is due for comparison: `every` after the
+/// last segment that decoded a frame (`last`), or the first one.
+pub fn due(start_ms: i64, last: Option<i64>, every: i64) -> bool {
+    last.is_none_or(|last| start_ms >= last + every)
+}
+/// Notes the newest live segment that decoded a frame, so the next one due is `every` later.
+pub async fn decoded(db: &mut PgConnection, source: &str, start_ms: i64) -> Res<()> {
+    sqlx::query(
+        "UPDATE frame_sources SET decoded_ms=greatest(coalesce(decoded_ms,$2),$2) WHERE source=$1",
+    )
+    .bind(source)
+    .bind(start_ms)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Stores a source's frames and returns the removed media they match, if any. The caller hides
@@ -338,15 +357,12 @@ mod tests {
         assert_eq!(image_hash(&fade), None);
     }
     #[test]
-    fn live_sampling_takes_one_segment_per_interval() {
-        let starts: Vec<i64> = (0..10).map(|i| i * 1000).collect();
-        let picked: Vec<i64> = starts
-            .into_iter()
-            .filter(|s| sampled(*s, 1000, 5000))
-            .collect();
-        assert_eq!(picked, [0, 5000]);
-        assert!(sampled(4500, 1000, 5000));
-        assert!(!sampled(5001, 1000, 5000));
+    fn live_sampling_waits_for_a_decoded_frame() {
+        assert!(due(0, None, 5000));
+        assert!(!due(4999, Some(0), 5000));
+        assert!(due(5000, Some(0), 5000));
+        // A keyframe-less segment at 5000 decoded nothing, so 6000 is still due.
+        assert!(due(6000, Some(0), 5000));
     }
     #[tokio::test]
     #[ignore = "requires ffmpeg; run explicitly with --ignored"]
@@ -392,12 +408,7 @@ mod tests {
         assert!(!frames.is_empty() && frames.len() <= 3);
         assert!(frames.iter().any(|f| distance(*f, removed) <= 6));
         let bytes = std::fs::read(&video).unwrap();
-        assert!(
-            video_hashes(b"not a video", "mpegts")
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(segment_hashes(b"not a video").await.unwrap(), None);
         assert!(!video_hashes(&bytes, "mp4").await.unwrap().is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
