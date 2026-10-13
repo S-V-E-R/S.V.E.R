@@ -67,7 +67,7 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
       {data.signed_in && !data.is_owner ? <ReportButton target={target} /> : <TakeDownLink target={target} />}
       {/* Confirmed right where Delete was clicked: a panel further down the page went unseen. */}
       {data.can_delete && (deleting
-        ? <span className="row" role="group" aria-label={`Delete this ${v.kind === "CLIP" ? "clip" : "recording"} and its files? This cannot be undone.`}><button className="danger" autoFocus onClick={async () => { const result = await send("DELETE", `/api/videos/${id}`); if (result.ok) router.push(`/${data.channel.username}`); else { setMessage(result.error); setDeleting(false); } }}>Delete permanently</button><button className="quiet" onClick={() => setDeleting(false)}>Cancel</button></span>
+        ? <span className="row" role="group" aria-labelledby="delete-question"><span id="delete-question">{v.kind === "CLIP" ? "Delete this clip, its files and any Beacons made from it?" : "Delete this recording and its files?"} This can&apos;t be undone.</span><button className="danger" autoFocus onClick={async () => { const result = await send("DELETE", `/api/videos/${id}`); if (result.ok) router.push(`/${data.channel.username}`); else { setMessage(result.error); setDeleting(false); } }}>Delete permanently</button><button className="quiet" onClick={() => setDeleting(false)}>Cancel</button></span>
         : <button className="quiet" onClick={() => setDeleting(true)}>Delete</button>)}
     </div>
     {message && <p role="status">{message}</p>}
