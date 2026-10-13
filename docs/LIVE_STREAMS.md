@@ -530,7 +530,7 @@ Checks Joe ran himself on production with a real OBS stream (JoeTheChode). Cloud
 
 | Date | Check | Result |
 | --- | --- | --- |
-| October 12, 2026 | Closed captions from OBS (CEA-608 in the stream) shown on the watch page | Pass |
+| October 12, 2026 | Closed captions from OBS shown on the watch page | Pass |
 | October 12, 2026 | CDN path latency (`?transport=hls`), target 3–5 seconds | Pass, about 4 seconds |
 
 Still open: direct WebRTC latency (about 1 second), viewer counts rising and falling with real playback, a reconnect within 60 seconds keeping the broadcast, Studio's measured OBS warnings from real OBS output, and a raid between two real broadcasts.
