@@ -48,6 +48,10 @@ const MONTHLY: &[(&str, &str)] = &[
         "wall_cents",
         "Wall seats sold, in cents (all of it goes to S.V.E.R)",
     ),
+    (
+        "supporters_cents",
+        "Platform supporter subscriptions, in cents (all of it goes to S.V.E.R)",
+    ),
 ];
 
 /// Recomputes the last 12 weeks and 12 months, at most once a day (the jobs loop calls it).

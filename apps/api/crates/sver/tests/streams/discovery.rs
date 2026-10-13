@@ -536,6 +536,13 @@ async fn open_data(e: &Env) {
         csv.starts_with("period,accounts_total,") && csv.contains("fewer than 10"),
         "{csv}"
     );
+    let (_, csv) = get_text(e, "/api/open-data/monthly.csv").await;
+    assert!(
+        csv.starts_with(
+            "period,creators_cents,platform_cents,payouts_cents,wall_cents,supporters_cents\n"
+        ),
+        "Wall and platform supporters are their own lines: {csv}"
+    );
 }
 async fn get_text(e: &Env, path: &str) -> (StatusCode, String) {
     use axum::body::Body;
