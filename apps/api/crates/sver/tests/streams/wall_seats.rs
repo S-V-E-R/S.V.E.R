@@ -329,6 +329,86 @@ pub async fn exercise(e: &Env) {
     );
     assert_eq!(status(e, viewer_n).await, "in_review");
 
+    // A second checkout for the same hold closes the first; a payment that still arrives for
+    // the first is refunded in full and changes nothing.
+    let (code, held) = hold(e, &third, 35, 20, "seat").await;
+    assert_eq!(code, StatusCode::OK, "{held}");
+    let twice = held["tile"]["n"].as_i64().unwrap();
+    let path = format!("/api/wall/{twice}/checkout");
+    assert_eq!(
+        form(
+            e,
+            "POST",
+            &path,
+            &third,
+            Some(picture(100, 7)),
+            &[("name", "Twice")]
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let first = format!("cs_test_{}", e.fake.lock().unwrap().stripe.len());
+    assert_eq!(
+        form(
+            e,
+            "POST",
+            &path,
+            &third,
+            Some(picture(100, 7)),
+            &[("name", "Twice")]
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let second = format!("cs_test_{}", e.fake.lock().unwrap().stripe.len());
+    assert!(
+        e.fake
+            .lock()
+            .unwrap()
+            .stripe
+            .iter()
+            .any(|(p, _)| *p == format!("/v1/checkout/sessions/{first}/expire")),
+        "the earlier checkout is closed"
+    );
+    assert_eq!(
+        webhook(e, "evt_wall_first", &first, 2500, "pi_wall_first").await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        status(e, twice).await,
+        "held",
+        "a superseded checkout doesn't buy the tile"
+    );
+    assert_eq!(
+        webhook(e, "evt_wall_second", &second, 2500, "pi_wall_second").await,
+        StatusCode::OK
+    );
+    assert_eq!(status(e, twice).await, "in_review");
+    assert_eq!(
+        webhook(e, "evt_wall_first_again", &first, 2500, "pi_wall_first").await,
+        StatusCode::OK
+    );
+    sver::seats::tick(&e.app).await.unwrap();
+    let refunds = e
+        .fake
+        .lock()
+        .unwrap()
+        .stripe
+        .iter()
+        .filter(|(p, b)| p == "/v1/refunds" && b.contains("pi_wall_first"))
+        .count();
+    assert_eq!(refunds, 1, "the extra payment is refunded once");
+    assert!(
+        !e.fake
+            .lock()
+            .unwrap()
+            .stripe
+            .iter()
+            .any(|(p, b)| p == "/v1/refunds" && b.contains("pi_wall_second"))
+    );
+
     // Prices follow the stage at checkout start.
     e.sql("UPDATE wall_settings SET stages='{1,600}'").await;
     let (n4, sent) = buy(e, &other, 30, 0, "seat", "Second stage").await;

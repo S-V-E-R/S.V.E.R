@@ -57,6 +57,14 @@ CREATE TABLE wall_cells (
 );
 CREATE INDEX wall_cells_tile ON wall_cells(tile_n);
 
+-- A payment for a superseded checkout or an already-paid tile, refunded in full by the jobs loop.
+CREATE TABLE wall_extra_payments (
+    payment_intent text PRIMARY KEY,
+    tile_n bigint NOT NULL REFERENCES wall_tiles(n),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    refunded_at timestamptz
+);
+
 ALTER TABLE checkout_sessions DROP CONSTRAINT checkout_sessions_kind_check;
 ALTER TABLE checkout_sessions ADD CONSTRAINT checkout_sessions_kind_check CHECK (kind IN ('valor', 'sub', 'gift', 'wall'));
 

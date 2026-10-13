@@ -413,6 +413,7 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/account_links", post(stripe))
         .route("/v1/accounts/{id}", get(stripe))
         .route("/v1/checkout/sessions/{id}", get(stripe))
+        .route("/v1/checkout/sessions/{id}/expire", post(stripe))
         .route("/v1/invoice_payments", get(stripe))
         .route("/v1/transfers", post(stripe))
         .route("/v1/payouts", post(stripe))

@@ -144,13 +144,14 @@ struct Tile {
     pending: Option<Value>,
     review_note: String,
     hold_until: chrono::DateTime<chrono::Utc>,
+    checkout_id: Option<String>,
     payment_intent: Option<String>,
     paid_at: Option<chrono::DateTime<chrono::Utc>>,
     rejected_at: Option<chrono::DateTime<chrono::Utc>>,
     approved_at: Option<chrono::DateTime<chrono::Utc>>,
     created_at: chrono::DateTime<chrono::Utc>,
 }
-const TILE: &str = "SELECT n,owner_id,x,y,size,status,price_cents,image_key,name,link,message,crest,pending,review_note,hold_until,payment_intent,paid_at,rejected_at,approved_at,created_at FROM wall_tiles";
+const TILE: &str = "SELECT n,owner_id,x,y,size,status,price_cents,image_key,name,link,message,crest,pending,review_note,hold_until,checkout_id,payment_intent,paid_at,rejected_at,approved_at,created_at FROM wall_tiles";
 async fn load(db: &mut PgConnection, n: i64, lock: bool) -> Res<Tile> {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{TILE} WHERE n=$1{}",
@@ -508,6 +509,19 @@ async fn checkout(
     let cents = price(&settings, size, stage).ok_or_else(Fail::internal)?;
     media::record(&mut tx, &user.id, media::Kind::WallTile, image).await?;
     let crest = crest(&mut tx, &user.id, content.crest).await?;
+    // One open checkout per hold: a new one first closes the last, so a second tab can't pay
+    // twice. If Stripe can't close it, it was already paid or is finishing.
+    if let Some(previous) = &tile.checkout_id {
+        stripe::post(
+            &app.http,
+            &app.config.stripe,
+            &format!("checkout/sessions/{previous}/expire"),
+            &[],
+            None,
+        )
+        .await
+        .map_err(|_| Fail::conflict("A payment for this tile is already being processed."))?;
+    }
     let origin = &app.config.origin;
     let expires = chrono::Utc::now().timestamp() + CHECKOUT_MINUTES * 60;
     let session = stripe::post(
@@ -552,11 +566,29 @@ async fn checkout(
 
 /// A paid Wall checkout (from the Stripe webhook, in its transaction). A payment that arrives
 /// after its hold lapsed gets the spot back if it's still free, and is refunded otherwise.
-pub(crate) async fn paid(tx: &mut PgConnection, detail: &Value, intent: Option<&str>) -> Res<()> {
+pub(crate) async fn paid(
+    tx: &mut PgConnection,
+    session: &str,
+    detail: &Value,
+    intent: Option<&str>,
+) -> Res<()> {
     let Some(n) = detail["tile"].as_i64() else {
         return Ok(());
     };
     let tile = load(tx, n, true).await?;
+    // A payment for a superseded checkout, or for a tile already paid, is refunded in full.
+    if tile.checkout_id.as_deref() != Some(session)
+        || !matches!(tile.status.as_str(), "held" | "expired")
+    {
+        if let Some(intent) = intent {
+            sqlx::query("INSERT INTO wall_extra_payments(payment_intent,tile_n) VALUES($1,$2) ON CONFLICT DO NOTHING")
+                .bind(intent)
+                .bind(n)
+                .execute(&mut *tx)
+                .await?;
+        }
+        return Ok(());
+    }
     let status = match tile.status.as_str() {
         "held" => "in_review",
         "expired" => {
@@ -730,6 +762,23 @@ pub async fn tick(app: &App) -> Res<()> {
     let due: Vec<(i64, Option<String>)> = sqlx::query_as("SELECT n,payment_intent FROM wall_tiles WHERE status='refund_due' ORDER BY updated_at LIMIT 20")
         .fetch_all(&app.db)
         .await?;
+    let extra: Vec<String> = sqlx::query_scalar("SELECT payment_intent FROM wall_extra_payments WHERE refunded_at IS NULL ORDER BY created_at LIMIT 20")
+        .fetch_all(&app.db)
+        .await?;
+    for intent in extra {
+        stripe::post(
+            &app.http,
+            &app.config.stripe,
+            "refunds",
+            &[("payment_intent", intent.clone())],
+            Some(&format!("wall-extra-refund-{intent}")),
+        )
+        .await?;
+        sqlx::query("UPDATE wall_extra_payments SET refunded_at=now() WHERE payment_intent=$1")
+            .bind(&intent)
+            .execute(&app.db)
+            .await?;
+    }
     for (n, intent) in due {
         if let Some(intent) = &intent {
             // Idempotent by tile: a retry after a lost response never refunds twice.

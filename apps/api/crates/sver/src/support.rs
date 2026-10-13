@@ -580,7 +580,7 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
         crate::subs::grant_gifts(tx, &detail).await?;
     }
     if kind == "wall" {
-        crate::seats::paid(tx, &detail, intent).await?;
+        crate::seats::paid(tx, id, &detail, intent).await?;
     }
     let cents = i64::from(cents);
     let pairs = checkout_pairs(

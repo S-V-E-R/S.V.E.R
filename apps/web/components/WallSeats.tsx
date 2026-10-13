@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { send } from "../lib/client-api";
 import { dollars, place, sizeLabel, statusLabel, type MyTile, type WallData, type WallSize, type WallTile } from "../lib/wall";
 import { Status, type SaveState } from "./Form";
@@ -82,9 +82,15 @@ function Zoom({ data, origin, size, onPan, onPick, picking }: {
 
 function Countdown({ until, onEnd }: { until: string; onEnd: () => void }) {
   const [now, setNow] = useState<number | null>(null);
+  // Ends once per hold, even though the parent hands over a new onEnd on every render.
+  const ended = useRef("");
+  const end = useRef(onEnd);
+  useEffect(() => { end.current = onEnd; }, [onEnd]);
   useEffect(() => { const tick = () => setNow(Date.now()); tick(); const timer = setInterval(tick, 1000); return () => clearInterval(timer); }, []);
   const left = now === null ? null : Math.max(0, Math.floor((Date.parse(until) - now) / 1000));
-  useEffect(() => { if (left === 0) onEnd(); }, [left, onEnd]);
+  useEffect(() => {
+    if (left === 0 && ended.current !== until) { ended.current = until; end.current(); }
+  }, [left, until]);
   if (left === null) return null;
   return <span className="badge">Held for {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}</span>;
 }
