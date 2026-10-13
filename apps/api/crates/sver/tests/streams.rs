@@ -106,6 +106,8 @@ mod teams;
 mod username_claims;
 #[path = "streams/videos.rs"]
 mod videos;
+#[path = "streams/wall_seats.rs"]
+mod wall_seats;
 
 #[derive(Default)]
 struct Media {
@@ -538,6 +540,7 @@ async fn exercise(e: &Env) {
     playback::exercise(e).await;
     chat::exercise(e).await;
     support::exercise(e).await;
+    wall_seats::exercise(e).await;
     subs::exercise(e).await;
     engagement::exercise(e).await;
     boards::exercise(e).await;

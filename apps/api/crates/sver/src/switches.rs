@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use sqlx::PgConnection;
 
 /// Each switch and the name shown to people while it's off.
-pub const SWITCHES: [(&str, &str); 11] = [
+pub const SWITCHES: [(&str, &str); 12] = [
     ("signups", "Sign-ups"),
     ("going_live", "Going live"),
     ("restreaming", "Restreaming"),
@@ -32,6 +32,7 @@ pub const SWITCHES: [(&str, &str); 11] = [
     ("dms", "Direct messages"),
     ("purchases", "Purchases"),
     ("payouts", "Payouts"),
+    ("wall_sales", "Wall sales"),
 ];
 fn label(name: &str) -> &'static str {
     SWITCHES

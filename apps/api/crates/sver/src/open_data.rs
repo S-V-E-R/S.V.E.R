@@ -44,6 +44,10 @@ const MONTHLY: &[(&str, &str)] = &[
         "The same money: S.V.E.R's share, in cents",
     ),
     ("payouts_cents", "Payouts sent to creators, in cents"),
+    (
+        "wall_cents",
+        "Wall seats sold, in cents (all of it goes to S.V.E.R)",
+    ),
 ];
 
 /// Recomputes the last 12 weeks and 12 months, at most once a day (the jobs loop calls it).
@@ -87,7 +91,8 @@ pub async fn compute(app: &App) -> Res<()> {
           ('creators_cents',money.creators/10),
           ('platform_cents',(money.gross-money.creators)/10),
           ('payouts_cents',(SELECT coalesce(sum(amount_cents),0) FROM payout_runs WHERE status='paid' AND completed_at>=m AND completed_at<m+interval '1 month')::float8),
-          ('creators_paid',(SELECT count(DISTINCT user_id) FROM payout_runs WHERE status='paid' AND completed_at>=m AND completed_at<m+interval '1 month')::float8)
+          ('creators_paid',(SELECT count(DISTINCT user_id) FROM payout_runs WHERE status='paid' AND completed_at>=m AND completed_at<m+interval '1 month')::float8),
+          ('wall_cents',(SELECT coalesce(sum((detail->>'cents')::bigint),0) FROM ledger_transactions WHERE kind='wall_purchase' AND created_at>=m AND created_at<m+interval '1 month')::float8)
         ) x(metric,value)
         ON CONFLICT(period,metric) DO UPDATE SET value=EXCLUDED.value,computed_at=now()")
         .execute(&mut *tx).await?;
@@ -132,7 +137,7 @@ async fn figures(app: &App) -> Res<(Vec<Value>, Vec<Value>)> {
         weekly.push(row);
     }
     let mut monthly = Vec::new();
-    let mut carried = [0.0f64; 3];
+    let mut carried = [0.0f64; MONTHLY.len()];
     let mut paid = 0.0;
     let mut since: Option<&String> = None;
     for period in periods.iter().filter(|p| !p.contains('W')) {
@@ -148,7 +153,7 @@ async fn figures(app: &App) -> Res<(Vec<Value>, Vec<Value>)> {
                 row[*metric] = json!(carried[i].round());
             }
             monthly.push(row);
-            carried = [0.0; 3];
+            carried = [0.0; MONTHLY.len()];
             paid = 0.0;
             since = None;
         }
