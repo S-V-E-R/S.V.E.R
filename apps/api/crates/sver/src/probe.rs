@@ -170,13 +170,17 @@ pub async fn tick(app: &App) -> Res<()> {
     Ok(())
 }
 
-/// Decodes one frame of a segment to a 640-pixel-wide WebP. The stream itself is never altered.
 /// Closed captions in the video (docs/COMMUNITY.md "Live captions from OBS"): OBS carries them as
-/// ATSC A/53 caption data ("GA94" user data in H.264 SEI), which SRS keeps in HLS and WebRTC.
+/// ATSC A/53 caption data in H.264 SEI, registered user data with the whole T.35 header (US, ATSC,
+/// "GA94", cc_data). "GA94" alone turns up by chance in compressed video (1 in 54 matches in a real
+/// captioned stream), and the flag sticks for the broadcast, so a 24/7 stream would always show CC.
 pub fn captions(ts: &[u8]) -> bool {
-    ts.windows(4).any(|w| w == b"GA94")
+    ts.windows(CAPTION_SIGNATURE.len())
+        .any(|w| w == CAPTION_SIGNATURE)
 }
+const CAPTION_SIGNATURE: &[u8] = &[0xb5, 0x00, 0x31, b'G', b'A', b'9', b'4', 0x03];
 
+/// Decodes one frame of a segment to a 640-pixel-wide WebP. The stream itself is never altered.
 pub async fn snapshot(ts: Vec<u8>) -> Option<Vec<u8>> {
     use tokio::io::AsyncWriteExt;
     let mut child = tokio::process::Command::new("ffmpeg")
@@ -375,6 +379,10 @@ mod tests {
             0, 0, 1, 6, 4, 11, 0xb5, 0, 0x31, b'G', b'A', b'9', b'4', 3
         ])));
         assert!(!captions(&segment(&[(90_000, Some(90_000))])));
+        // "GA94" by chance in coded video, without the T.35 header, is not captions.
+        assert!(!captions(&segment_with(&[
+            0, 0, 1, 0x41, 0x9a, b'G', b'A', b'9', b'4', 3
+        ])));
     }
     fn segment_with(payload: &[u8]) -> Vec<u8> {
         packet(0x100, true, payload)
