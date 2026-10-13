@@ -157,6 +157,40 @@ async fn subscribe(
     let mut tx = app.db.begin().await?;
     // One checkout at a time per buyer, so concurrent tabs can't slip past the under-18 cap.
     ledger::lock(&mut tx, &format!("checkout:{}", user.id)).await?;
+    // One supporter checkout at a time: a new one first closes the last, so two tabs can't start
+    // two renewing subscriptions. A session Stripe can't close was paid or is finishing.
+    let previous: Vec<(String, String)> = sqlx::query_as("SELECT c.id,c.status FROM checkout_sessions c WHERE c.user_id=$1 AND c.kind='platform' AND c.detail->>'upgrade' IS NULL AND c.created_at>now()-interval '1 hour' AND (c.status='open' OR c.status='paid' AND NOT EXISTS(SELECT 1 FROM platform_invoices i WHERE i.user_id=c.user_id AND i.created_at>c.created_at))")
+        .bind(&user.id).fetch_all(&mut *tx).await?;
+    for (id, status) in previous {
+        let closed = status == "open"
+            && stripe::post(
+                &app.http,
+                &app.config.stripe,
+                &format!("checkout/sessions/{id}/expire"),
+                &[],
+                None,
+            )
+            .await
+            .is_ok();
+        let gone = closed
+            || status == "open"
+                && stripe::get(
+                    &app.http,
+                    &app.config.stripe,
+                    &format!("checkout/sessions/{id}"),
+                )
+                .await
+                .is_ok_and(|s| s["status"] == "expired");
+        if !gone {
+            return Err(Fail::conflict(
+                "A supporter payment is already being processed. Give it a minute, then check your wallet.",
+            ));
+        }
+        sqlx::query("UPDATE checkout_sessions SET status='expired' WHERE id=$1 AND status='open'")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+    }
     support::card_gate(&mut tx, &user.id, cents, input.guardian_consent).await?;
     let origin = &app.config.origin;
     let name = if tier == 2 { "Greycloak" } else { "Wolfsworn" };
@@ -216,6 +250,8 @@ async fn renewing(app: &App, user: &str) -> Res<(String, i16)> {
 #[derive(Deserialize)]
 struct Change {
     tier: String,
+    #[serde(default)]
+    guardian_consent: bool,
 }
 /// POST /api/supporters/change: up to Greycloak now, with Stripe's prorated charge for the rest of
 /// the month; down to Wolfsworn at the next renewal (the paid Greycloak month runs out first).
@@ -227,17 +263,29 @@ async fn change(
     let user = profiles::signed_in(&app, &jar).await?;
     let tier = tier_named(&input.tier)?;
     let (subscription, current) = renewing(&app, &user.id).await?;
-    let pending: Option<i16> =
-        sqlx::query_scalar("SELECT pending_tier FROM platform_subscriptions WHERE user_id=$1")
-            .bind(&user.id)
-            .fetch_one(&app.db)
-            .await?;
+    // The row's last change: the same request sent twice reuses one Stripe idempotency key.
+    let (pending, version): (Option<i16>, String) = sqlx::query_as(
+        "SELECT pending_tier,(extract(epoch FROM updated_at)*1000000)::bigint::text FROM platform_subscriptions WHERE user_id=$1",
+    )
+    .bind(&user.id)
+    .fetch_one(&app.db)
+    .await?;
     if tier == pending.unwrap_or(current) {
         return Err(Fail::field("tier", "That's already your plan."));
     }
     let up = tier > current;
+    let mut tx = app.db.begin().await?;
+    let gate = format!("platform-upgrade:{subscription}:{version}");
     if up {
-        switches::guard(&mut *app.db.acquire().await?, "purchases").await?;
+        switches::guard(&mut tx, "purchases").await?;
+        // The prorated charge is at most the difference for a full month; it counts toward the
+        // under-18 cap like any other purchase.
+        let cents = price(tier) - price(current);
+        ledger::lock(&mut tx, &format!("checkout:{}", user.id)).await?;
+        support::card_gate(&mut tx, &user.id, cents, input.guardian_consent).await?;
+        sqlx::query("INSERT INTO checkout_sessions(id,user_id,kind,amount_cents,detail,status) VALUES($1,$2,'platform',$3,$4,'paid') ON CONFLICT(id) DO NOTHING")
+            .bind(&gate).bind(&user.id).bind(cents as i32).bind(json!({"tier": tier, "upgrade": true}))
+            .execute(&mut *tx).await?;
     }
     let sub = stripe::get(
         &app.http,
@@ -265,24 +313,31 @@ async fn change(
                 "proration_behavior",
                 if up { "always_invoice" } else { "none" }.into(),
             ),
+            // Up: the change applies only if the prorated charge is paid now.
+            (
+                "payment_behavior",
+                if up {
+                    "error_if_incomplete"
+                } else {
+                    "allow_incomplete"
+                }
+                .into(),
+            ),
             ("metadata[sver_platform_tier]", tier.to_string()),
         ],
-        Some(&format!(
-            "sver-platform-change-{subscription}-{tier}-{}",
-            profiles::new_id()
-        )),
+        Some(&format!("sver-{gate}-{tier}")),
     )
     .await?;
     if up {
         sqlx::query("UPDATE platform_subscriptions SET tier=$2,pending_tier=NULL,updated_at=now() WHERE user_id=$1")
-            .bind(&user.id).bind(tier).execute(&app.db).await?;
+            .bind(&user.id).bind(tier).execute(&mut *tx).await?;
     } else if tier == current {
         // Undoing a downgrade that hadn't happened yet.
         sqlx::query(
             "UPDATE platform_subscriptions SET pending_tier=NULL,updated_at=now() WHERE user_id=$1",
         )
         .bind(&user.id)
-        .execute(&app.db)
+        .execute(&mut *tx)
         .await?;
     } else {
         sqlx::query(
@@ -290,9 +345,10 @@ async fn change(
         )
         .bind(&user.id)
         .bind(tier)
-        .execute(&app.db)
+        .execute(&mut *tx)
         .await?;
     }
+    tx.commit().await?;
     Ok(Json(mine(&mut *app.db.acquire().await?, &user.id).await?))
 }
 
@@ -309,6 +365,24 @@ async fn cancel(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     )
     .await?;
     sqlx::query("UPDATE platform_subscriptions SET cancel_at_period_end=true,updated_at=now() WHERE stripe_subscription=$1")
+        .bind(&subscription).execute(&app.db).await?;
+    Ok(Json(mine(&mut *app.db.acquire().await?, &user.id).await?))
+}
+
+/// POST /api/supporters/resume: turns renewal back on before the paid month ends.
+async fn resume(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let (subscription, _) = renewing(&app, &user.id).await?;
+    switches::guard(&mut *app.db.acquire().await?, "purchases").await?;
+    stripe::post(
+        &app.http,
+        &app.config.stripe,
+        &format!("subscriptions/{subscription}"),
+        &[("cancel_at_period_end", "false".into())],
+        None,
+    )
+    .await?;
+    sqlx::query("UPDATE platform_subscriptions SET cancel_at_period_end=false,updated_at=now() WHERE stripe_subscription=$1")
         .bind(&subscription).execute(&app.db).await?;
     Ok(Json(mine(&mut *app.db.acquire().await?, &user.id).await?))
 }
@@ -467,19 +541,34 @@ pub(crate) async fn payment(tx: &mut PgConnection, intent: &str) -> Res<Option<i
     .await?
     .map(i64::from))
 }
-/// A fully refunded or lost platform payment ends its period now and revokes the Founder spot it
-/// claimed, which frees the number for the next new Greycloak.
-pub(crate) async fn reversed(tx: &mut PgConnection, intent: &str, why: &str) -> Res<()> {
-    let Some((invoice, user)): Option<(String, String)> =
-        sqlx::query_as("SELECT id,user_id FROM platform_invoices WHERE payment_intent=$1")
+/// A fully refunded or lost platform payment revokes the Founder spot it claimed, which frees the
+/// number for the next new Greycloak. When it paid for the current period, that period ends now
+/// and the subscription stops renewing; an older month's refund leaves a later paid month alone.
+pub(crate) async fn reversed(app: &App, tx: &mut PgConnection, intent: &str, why: &str) -> Res<()> {
+    let Some((invoice, user, latest)): Option<(String, String, bool)> =
+        sqlx::query_as("SELECT i.id,i.user_id,NOT EXISTS(SELECT 1 FROM platform_invoices l WHERE l.user_id=i.user_id AND l.amount_cents>0 AND l.created_at>i.created_at) FROM platform_invoices i WHERE i.payment_intent=$1")
             .bind(intent)
             .fetch_optional(&mut *tx)
             .await?
     else {
         return Ok(());
     };
-    sqlx::query("UPDATE platform_subscriptions SET paid_through=least(paid_through,now()),updated_at=now() WHERE user_id=$1")
-        .bind(&user).execute(&mut *tx).await?;
+    if latest {
+        let renewing: Option<String> = sqlx::query_scalar("UPDATE platform_subscriptions SET paid_through=least(paid_through,now()),cancel_at_period_end=true,pending_tier=NULL,updated_at=now() WHERE user_id=$1 RETURNING stripe_subscription")
+            .bind(&user).fetch_optional(&mut *tx).await?.flatten();
+        // Nothing more is charged for a payment taken back. A Stripe error fails the webhook, which
+        // Stripe then retries.
+        if let Some(subscription) = renewing {
+            stripe::post(
+                &app.http,
+                &app.config.stripe,
+                &format!("subscriptions/{subscription}"),
+                &[("cancel_at_period_end", "true".into())],
+                None,
+            )
+            .await?;
+        }
+    }
     let revoked: Option<i32> =
         sqlx::query_scalar("DELETE FROM founders WHERE invoice_id=$1 RETURNING number")
             .bind(&invoice)
@@ -625,6 +714,7 @@ pub fn routes() -> Router<App> {
         .route("/api/supporters/subscribe", post(subscribe))
         .route("/api/supporters/change", post(change))
         .route("/api/supporters/cancel", post(cancel))
+        .route("/api/supporters/resume", post(resume))
         .route("/api/supporters/founder", put(founder_setting))
         .route("/api/me/supporter", get(my_marks))
         .route("/api/admin/supporters", get(admin))

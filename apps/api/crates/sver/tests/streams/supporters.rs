@@ -289,6 +289,7 @@ pub async fn exercise(e: &Env) {
     assert!(
         path.starts_with("/v1/subscriptions/")
             && form.contains("always_invoice")
+            && form.contains("payment_behavior=error_if_incomplete")
             && form.contains("unit_amount%5D=2500"),
         "{form}"
     );
@@ -354,6 +355,28 @@ pub async fn exercise(e: &Env) {
     .await;
     assert_eq!(code, StatusCode::OK, "{cancelled}");
     assert_eq!(cancelled["plan"]["auto_renew"], false);
+    let (code, resumed) = call(
+        e,
+        "POST",
+        "/api/supporters/resume",
+        Some(&grey),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(
+        (code, resumed["plan"]["auto_renew"].as_bool()),
+        (StatusCode::OK, Some(true)),
+        "renewal can be turned back on during the paid month"
+    );
+    assert!(last_stripe(e).1.contains("cancel_at_period_end=false"));
+    call(
+        e,
+        "POST",
+        "/api/supporters/cancel",
+        Some(&grey),
+        Value::Null,
+    )
+    .await;
     assert_eq!(event(e, json!({"id": "evt_su_del", "type": "customer.subscription.deleted", "data": {"object": {"id": "sub_su-grey", "status": "canceled"}}})).await, StatusCode::OK);
     assert!(plan(e, "su-grey").await.3, "the paid period still runs");
     e.sql("UPDATE platform_subscriptions SET paid_through=now()-interval '1 second' WHERE user_id='su-grey'").await;
@@ -394,6 +417,14 @@ pub async fn exercise(e: &Env) {
     assert_eq!(founder(e, "su-f3").await, None);
     let freed: i32 = sqlx::query_scalar("SELECT n FROM generate_series(1,500) n WHERE NOT EXISTS(SELECT 1 FROM founders WHERE number=n) LIMIT 1").fetch_one(&e.app.db).await.unwrap();
     assert!(!plan(e, "su-f3").await.3, "a refunded month ends now");
+    assert_eq!(
+        last_stripe(e),
+        (
+            "/v1/subscriptions/sub_su-f3".to_owned(),
+            "cancel_at_period_end=true".to_owned()
+        ),
+        "nothing more is charged after a refund"
+    );
     let lost = json!({"id": "evt_su_lost", "type": "charge.dispute.closed", "data": {"object": {
         "id": "dp_su", "status": "lost", "amount": 2500, "payment_intent": "pi_in_su-f5"}}});
     assert_eq!(event(e, lost).await, StatusCode::OK);
@@ -486,6 +517,13 @@ pub async fn exercise(e: &Env) {
         .0,
         StatusCode::OK
     );
+    // A second checkout closes the first, so two tabs can't start two subscriptions.
+    let first = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM checkout_sessions WHERE user_id='su-teen' AND status='open'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
     assert_eq!(
         call(
             e,
@@ -498,12 +536,63 @@ pub async fn exercise(e: &Env) {
         .0,
         StatusCode::OK
     );
+    assert!(
+        e.fake
+            .lock()
+            .unwrap()
+            .stripe
+            .iter()
+            .any(|(p, _)| *p == format!("/v1/checkout/sessions/{first}/expire")),
+        "the earlier checkout is closed"
+    );
+    // A checkout that's paid but whose invoice hasn't arrived yet blocks a new one.
+    e.sql("UPDATE checkout_sessions SET status='paid' WHERE user_id='su-teen' AND status='open'")
+        .await;
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/supporters/subscribe",
+            Some(&teen),
+            json!({"tier": "greycloak"})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    e.sql(
+        "UPDATE checkout_sessions SET status='expired' WHERE user_id='su-teen' AND kind='platform'",
+    )
+    .await;
+    e.sql("INSERT INTO checkout_sessions(id,user_id,kind,amount_cents,status) VALUES('cs_su_teen_valor','su-teen','valor',4600,'paid')").await;
     let (code, body) = call(
         e,
         "POST",
         "/api/supporters/subscribe",
         Some(&teen),
         json!({"tier": "wolfsworn"}),
+    )
+    .await;
+    assert_eq!(
+        (code, body["field"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("cents")),
+        "{body}"
+    );
+    // An upgrade's prorated charge counts toward the cap too.
+    assert_eq!(
+        event(
+            e,
+            invoice("in_su_t1", "su-teen", 1, 0, "subscription_create", 30)
+        )
+        .await,
+        StatusCode::OK
+    );
+    let (code, body) = call(
+        e,
+        "POST",
+        "/api/supporters/change",
+        Some(&teen),
+        json!({"tier": "greycloak"}),
     )
     .await;
     assert_eq!(
@@ -565,6 +654,20 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK
     );
     assert!(last_stripe(e).1.contains("pi_in_su_w3"));
+    let older = json!({"id": "evt_su_refund_w1", "type": "charge.refunded", "data": {"object": {
+        "payment_intent": "pi_in_su_w1", "amount": 500, "amount_refunded": 500}}});
+    assert_eq!(event(e, older).await, StatusCode::OK);
+    assert!(
+        plan(e, "su-wolf").await.3,
+        "refunding an older month leaves the later paid month"
+    );
+    let latest = json!({"id": "evt_su_refund_w3", "type": "charge.refunded", "data": {"object": {
+        "payment_intent": "pi_in_su_w3", "amount": 2500, "amount_refunded": 2500}}});
+    assert_eq!(event(e, latest).await, StatusCode::OK);
+    assert!(
+        !plan(e, "su-wolf").await.3,
+        "refunding the current month ends it"
+    );
     assert_eq!(
         call(
             e,

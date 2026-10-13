@@ -444,7 +444,7 @@ async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -
             .await?;
             Ok(())
         }
-        "charge.refunded" => refunded(tx, object).await,
+        "charge.refunded" => refunded(app, tx, object).await,
         "charge.dispute.created" => disputed(tx, object, false).await,
         "charge.dispute.closed" if object["status"] == "won" => disputed(tx, object, true).await,
         "account.updated" => sync_account(tx, object).await,
@@ -460,7 +460,7 @@ async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -
         "charge.dispute.closed" if object["status"] == "lost" => {
             match object["payment_intent"].as_str() {
                 Some(intent) => {
-                    crate::supporters::reversed(tx, intent, "Payment lost to a dispute").await
+                    crate::supporters::reversed(app, tx, intent, "Payment lost to a dispute").await
                 }
                 None => Ok(()),
             }
@@ -677,7 +677,7 @@ async fn payment_of(
 /// Refunds reverse a payment in proportion: Valor, cash and the streamer's share. `amount_refunded`
 /// is cumulative, so each event posts only the increase over earlier refund events. A full refund
 /// of a subscription payment also ends its benefits.
-async fn refunded(tx: &mut PgConnection, object: &Value) -> Res<()> {
+async fn refunded(app: &App, tx: &mut PgConnection, object: &Value) -> Res<()> {
     let Some((intent, cents, pairs)) = payment_of(tx, object).await? else {
         return Ok(());
     };
@@ -702,7 +702,7 @@ async fn refunded(tx: &mut PgConnection, object: &Value) -> Res<()> {
     .await?;
     if refunded == cents {
         crate::subs::refunded_in_full(tx, &intent).await?;
-        crate::supporters::reversed(tx, &intent, "Payment refunded in full").await?;
+        crate::supporters::reversed(app, tx, &intent, "Payment refunded in full").await?;
     }
     Ok(())
 }

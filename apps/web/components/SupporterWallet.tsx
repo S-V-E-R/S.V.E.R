@@ -13,6 +13,8 @@ export function SupporterWallet() {
   const [data, setData] = useState<SupportersData | null>(null);
   const [state, setState] = useState<SaveState>({});
   const [busy, setBusy] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [needsConsent, setNeedsConsent] = useState(false);
   const load = useCallback(async () => {
     const r = await send<SupportersData>("GET", "/api/supporters");
     if (r.ok) setData(r.data);
@@ -26,14 +28,14 @@ export function SupporterWallet() {
     setBusy(true); setState({});
     const r = await send<SupporterMine>(method, path, body);
     setBusy(false);
-    if (!r.ok) { setState(r); return; }
+    if (!r.ok) { if (r.field === "guardian_consent") setNeedsConsent(true); setState(r); return; }
     setData(d => d && { ...d, mine: r.data });
     setState({ saved });
   }
   const change = (tier: SupporterTier) => {
     const up = tier === "greycloak";
     const ask = up ? "Move up to Greycloak now? Stripe charges the difference for the rest of this month today." : "Move down to Wolfsworn? You keep Greycloak until this month ends, then renew at $5 a month.";
-    if (window.confirm(ask)) void act("POST", "/api/supporters/change", { tier }, up ? "You're a Greycloak now." : "You'll move to Wolfsworn when this month ends.");
+    if (window.confirm(ask)) void act("POST", "/api/supporters/change", { tier, guardian_consent: consent }, up ? "You're a Greycloak now." : "You'll move to Wolfsworn when this month ends.");
   };
 
   if (!plan && !mine?.founder) return <Section title="Support S.V.E.R" intro="A monthly subscription to S.V.E.R itself. The perks are only how you look.">
@@ -50,11 +52,14 @@ export function SupporterWallet() {
           : <button type="button" className="small" disabled={busy} onClick={() => change(other)}>{other === "greycloak" ? "Move up to Greycloak ($25 a month)" : "Move down to Wolfsworn ($5 a month)"}</button>}
         <button type="button" className="small quiet" disabled={busy} onClick={() => { if (window.confirm("Stop renewing? Your supporter look lasts to the end of the paid month.")) void act("POST", "/api/supporters/cancel", undefined, "Renewal is off."); }}>Cancel renewal</button>
       </div>}
-      {!plan.auto_renew && <p><Link href="/supporters" className="button quiet">Subscribe again</Link></p>}
+      {!plan.auto_renew && (plan.card
+        ? <button type="button" className="small" disabled={busy} onClick={() => act("POST", "/api/supporters/resume", undefined, "Renewal is back on.")}>Turn renewal back on</button>
+        : <p><Link href="/supporters" className="button quiet">Subscribe again</Link></p>)}
     </div> : <p><Link href="/supporters" className="button quiet">Support S.V.E.R again</Link></p>}
     {mine?.founder && <label className="checkbox"><input type="checkbox" checked={mine.founder.hidden} disabled={busy}
       onChange={e => act("PUT", "/api/supporters/founder", { hidden: e.target.checked }, e.target.checked ? `The Founders list now shows "Founder ${founderNumber(mine.founder!.number)}".` : "Your name is back on the Founders list.")} />
       {" "}Hide my name on the Founders list (you&apos;re Founder {founderNumber(mine.founder.number)})</label>}
+    {needsConsent && <label className="checkbox"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} /> I&apos;m this account holder&apos;s parent or legal guardian, I&apos;m the cardholder, and I consent to this purchase.</label>}
     <Status state={state} />
   </Section>;
 }
