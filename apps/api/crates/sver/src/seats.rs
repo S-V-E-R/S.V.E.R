@@ -512,15 +512,29 @@ async fn checkout(
     // One open checkout per hold: a new one first closes the last, so a second tab can't pay
     // twice. If Stripe can't close it, it was already paid or is finishing.
     if let Some(previous) = &tile.checkout_id {
-        stripe::post(
+        let closed = stripe::post(
             &app.http,
             &app.config.stripe,
             &format!("checkout/sessions/{previous}/expire"),
             &[],
             None,
         )
-        .await
-        .map_err(|_| Fail::conflict("A payment for this tile is already being processed."))?;
+        .await;
+        // Stripe refuses to expire a session that already expired (say, by an earlier try whose
+        // new checkout then failed). Only a session that is complete or still open blocks.
+        if closed.is_err() {
+            let session = stripe::get(
+                &app.http,
+                &app.config.stripe,
+                &format!("checkout/sessions/{previous}"),
+            )
+            .await;
+            if !session.is_ok_and(|s| s["status"] == "expired") {
+                return Err(Fail::conflict(
+                    "A payment for this tile is already being processed.",
+                ));
+            }
+        }
     }
     let origin = &app.config.origin;
     let expires = chrono::Utc::now().timestamp() + CHECKOUT_MINUTES * 60;
@@ -765,15 +779,20 @@ pub async fn tick(app: &App) -> Res<()> {
     let extra: Vec<String> = sqlx::query_scalar("SELECT payment_intent FROM wall_extra_payments WHERE refunded_at IS NULL ORDER BY created_at LIMIT 20")
         .fetch_all(&app.db)
         .await?;
+    // Each refund stands alone: one Stripe refuses (or that is down) never holds up the rest.
     for intent in extra {
-        stripe::post(
+        let refund = stripe::post(
             &app.http,
             &app.config.stripe,
             "refunds",
             &[("payment_intent", intent.clone())],
             Some(&format!("wall-extra-refund-{intent}")),
         )
-        .await?;
+        .await;
+        if refund.is_err() {
+            eprintln!("wall_event=extra_refund outcome=retry");
+            continue;
+        }
         sqlx::query("UPDATE wall_extra_payments SET refunded_at=now() WHERE payment_intent=$1")
             .bind(&intent)
             .execute(&app.db)
@@ -782,14 +801,18 @@ pub async fn tick(app: &App) -> Res<()> {
     for (n, intent) in due {
         if let Some(intent) = &intent {
             // Idempotent by tile: a retry after a lost response never refunds twice.
-            stripe::post(
+            let refund = stripe::post(
                 &app.http,
                 &app.config.stripe,
                 "refunds",
                 &[("payment_intent", intent.clone())],
                 Some(&format!("wall-refund-{n}")),
             )
-            .await?;
+            .await;
+            if refund.is_err() {
+                eprintln!("wall_event=refund outcome=retry");
+                continue;
+            }
         }
         sqlx::query("UPDATE wall_tiles SET status='refunded',updated_at=now() WHERE n=$1 AND status='refund_due'")
             .bind(n)
