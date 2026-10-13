@@ -415,7 +415,6 @@ pub async fn exercise(e: &Env) {
         "payment_intent": "pi_in_su-f3", "amount": 2500, "amount_refunded": 2500, "metadata": {"sver_user": "su-f3"}}}});
     assert_eq!(event(e, refund).await, StatusCode::OK);
     assert_eq!(founder(e, "su-f3").await, None);
-    let freed: i32 = sqlx::query_scalar("SELECT n FROM generate_series(1,500) n WHERE NOT EXISTS(SELECT 1 FROM founders WHERE number=n) LIMIT 1").fetch_one(&e.app.db).await.unwrap();
     assert!(!plan(e, "su-f3").await.3, "a refunded month ends now");
     assert_eq!(
         last_stripe(e),
@@ -429,6 +428,7 @@ pub async fn exercise(e: &Env) {
         "id": "dp_su", "status": "lost", "amount": 2500, "payment_intent": "pi_in_su-f5"}}});
     assert_eq!(event(e, lost).await, StatusCode::OK);
     assert_eq!(founder(e, "su-f5").await, None);
+    let freed: i32 = sqlx::query_scalar("SELECT n FROM generate_series(1,500) n WHERE NOT EXISTS(SELECT 1 FROM founders WHERE number=n) LIMIT 1").fetch_one(&e.app.db).await.unwrap();
     person(e, "su-late", "SuLate", true).await;
     assert_eq!(
         event(
