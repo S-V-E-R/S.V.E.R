@@ -290,7 +290,7 @@ pub async fn search(
     pattern: &str,
 ) -> Res<Vec<Value>> {
     let sql = format!(
-        "SELECT b.* FROM beacons b WHERE {} AND (unaccent(b.title) ILIKE unaccent($3) OR unaccent(b.category) ILIKE unaccent($3)) ORDER BY b.published_at DESC,b.id DESC LIMIT 8",
+        "SELECT b.* FROM beacons b WHERE {} AND (fold_accents(b.title) ILIKE fold_accents($3) OR fold_accents(b.category) ILIKE fold_accents($3)) ORDER BY b.published_at DESC,b.id DESC LIMIT 8",
         visible("b")
     );
     let rows: Vec<Beacon> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
