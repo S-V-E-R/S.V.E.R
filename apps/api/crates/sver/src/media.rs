@@ -435,6 +435,8 @@ pub enum Kind {
     SetupPhoto,
     Emote,
     AlertImage,
+    /// A Wall tile (docs/WALL.md): square, at least 100 px.
+    WallTile,
     /// Not an image: only its upload limit is used (overlays.rs transcodes sounds).
     AlertSound,
 }
@@ -449,12 +451,13 @@ impl Kind {
             Kind::SetupPhoto => "setup_photo",
             Kind::Emote => "emote",
             Kind::AlertImage => "alert_image",
+            Kind::WallTile => "wall_tile",
             Kind::AlertSound => "alert_sound",
         }
     }
     pub fn max_bytes(self) -> usize {
         match self {
-            Kind::Avatar | Kind::FanArt | Kind::SetupPhoto => 5 * 1024 * 1024,
+            Kind::Avatar | Kind::FanArt | Kind::SetupPhoto | Kind::WallTile => 5 * 1024 * 1024,
             Kind::Banner => 10 * 1024 * 1024,
             Kind::SponsorLogo => 2 * 1024 * 1024,
             Kind::SongThumb => 5 * 1024 * 1024,
@@ -474,6 +477,7 @@ impl Kind {
                 Kind::SetupPhoto => "Setup photos can be up to 5 MB.",
                 Kind::Emote => "Emotes can be up to 1 MB.",
                 Kind::AlertImage => "Alert images can be up to 2 MB.",
+                Kind::WallTile => "Wall pictures can be up to 5 MB.",
                 Kind::AlertSound => "Alert sounds can be up to 1 MB.",
             },
         )
@@ -704,6 +708,41 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
             }
         }
         Kind::AlertSound => Err(Fail::bad("That isn't an image.")),
+        Kind::WallTile => {
+            if width != height || width < 100 {
+                return Err(Fail::field(
+                    "file",
+                    "Use a square picture at least 100 pixels wide.",
+                ));
+            }
+            let crop = Crop {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+            let prefix = format!("wall/{}", content_hash(bytes, kind, &crop));
+            let mut variants = Vec::new();
+            // Never upscaled: the largest size kept says which tile sizes the picture can fill.
+            for size in crate::seats::IMAGE_SIZES {
+                if size > width && size != crate::seats::IMAGE_SIZES[0] {
+                    break;
+                }
+                let resized = image.resize_exact(size, size, FilterType::Lanczos3);
+                variants.push(Variant {
+                    key: format!("{prefix}/{size}.webp"),
+                    bytes: encode(&resized)?,
+                    width: size,
+                    height: size,
+                });
+            }
+            let largest = variants.last().map_or(0, |v| v.width);
+            Ok(Processed {
+                stored: format!("{prefix}@{largest}"),
+                variants,
+                fingerprints,
+            })
+        }
         Kind::SponsorLogo | Kind::SongThumb | Kind::AlertImage => {
             let size = match kind {
                 Kind::SponsorLogo => 256,

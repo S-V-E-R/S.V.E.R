@@ -63,6 +63,7 @@ pub mod reserved;
 pub mod restream;
 pub mod roadmap;
 pub mod safety;
+pub mod seats;
 pub mod security;
 pub mod shine;
 pub mod skills;
@@ -501,6 +502,7 @@ pub fn router(app: App) -> Router {
         .merge(skills::routes())
         .merge(surge::routes())
         .merge(gateway::routes())
+        .merge(seats::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .layer(middleware::from_fn(devapps::rate_headers))
