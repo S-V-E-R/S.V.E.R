@@ -12,8 +12,8 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff, including genre, faction and co-stream lanes and MAGNet chat. Closed October 15, 2026 after acceptance with three live streams: rotation, suggestions, stream-end handoff, search and empty states. | Done |
 | 6 | Support | Subscriptions, Valor and tributes, channel rewards, co-streams, payouts. Live on Stripe since October 6, 2026. | Done |
 | 7 | CrowdSync | Interactive boards, Skills, polls and predictions, faction rallies. Boards, polls, predictions, counters, Skills, rallies, emote combos, Surge, the OBS bridge and the JavaScript game SDK are built; the Unity and Unreal SDKs await engine testing. | In progress |
-| 8 | VODs and clips | Past broadcasts, permanent Highlights, clipping and chat replay. Built and recording in production to private storage; storage purge, external clip previews and production playback acceptance remain. | In progress |
-| 9 | Beacons | Short vertical videos that lead to live streams. Built, with comments, faction tags and copyright notices; production acceptance remains. | In progress |
+| 8 | VODs and clips | Past broadcasts, permanent Highlights, clipping and chat replay. Closed October 15, 2026 after production acceptance: recording, rewind, expiry with files removed, chapters, Highlights, live and VOD clips, approval, deletion and chat replay. | Done |
+| 9 | Beacons | Short vertical videos that lead to live streams, with comments, faction tags and copyright notices. Closed October 15, 2026 after production acceptance of Beacons made from clips; video uploads stay closed for now. | Done |
 
 Modules 1 to 5 make the site usable. Several later systems shipped early at the founder's direction: Progression (levels, XP, daily orders, channel loyalty ranks), achievements and chat cosmetics, Raven's Eye staff analytics, native alerts and overlays, linked chat and restreaming, and the developer platform. Ads and viewer payouts are designed and run on a test-only ledger.
 

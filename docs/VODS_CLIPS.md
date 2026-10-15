@@ -1,5 +1,7 @@
 # Module 8: VODs and clips
 
+**Closed October 15, 2026 by user acceptance** after a production run: a broadcast recorded automatically and was watchable within seconds of ending; a signed-out viewer rewound the live recording to its start; an expired VOD returned 404 with its files gone; chapters came from category changes, `!marker` and MAGNet spotlights, and only the streamer could rename them; a Highlight kept playing after its VOD expired and counted against the cap; live, trimmed and VOD clips worked for the streamer and a viewer, approval held a viewer's clip until approved, and deleting a clip removed every file; chat replay on the VOD, a clip and a Highlight left out a deleted message; a clip's decoded frames matched the source exactly (codec copy). Visibility and ticket expiry were verified in production on October 12, and a clip link played inline on Discord. Fixes found during the run: clipping at the live edge, and duplicate MAGNet spotlight chapters.
+
 Specified October 4, 2026, from the plan's decisions and Joe's answers that day. This module builds after CrowdSync (Module 7). Beacons (Module 9) builds on it.
 
 Live streams are recorded so people can catch up. Streamers keep their best moments as Highlights, and viewers clip moments to share. Everything links back to the live channel.
