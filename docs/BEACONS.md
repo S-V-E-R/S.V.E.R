@@ -1,5 +1,7 @@
 # Module 9: Beacons
 
+**Closed October 15, 2026 by user acceptance** for Beacons made from clips, after a production run: a Beacon from an approved clip with a 9:16 crop published in seconds; the public copy carries the moving watermark and the clean copy reaches only its creator; the feed, home shelf, channel tab, search and link-preview tags show it; likes count once per account and counters refuse requests without a session; Live now leads to the stream; a report reaches the review queue; deleting removes every file and the page. **Video uploads stay closed** until a known-abuse matching service is integrated (Joe's decision). Still to check: link previews on X and Reddit (Discord confirmed October 12).
+
 Specified October 4, 2026, from the plan's hardened decisions and the legacy review. This module builds after VODs and clips ([VODS_CLIPS.md](VODS_CLIPS.md)). It is the last core module, and Phase 2 starts when it closes.
 
 Beacons are short vertical videos that lead people to creators and their live streams. A Beacon is a light that shows where to go, so success means viewers who join a live stream or follow a creator, not time spent scrolling.
