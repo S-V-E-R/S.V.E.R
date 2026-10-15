@@ -2,7 +2,9 @@
 
 The product name is **MAGNet**. Its channels, chat and Creator Studio labels use that name.
 
-Expanded October 3, 2026 by Joe. **Built October 5, 2026: discovery, spotlights, thumbnails, MAGNet and MAGNet chat (below). Co-streams on MAGNet built October 6, 2026. Live acceptance with real streams is open.** MAGNet is how S.V.E.R moves viewers between live streams. It has three parts:
+Expanded October 3, 2026 by Joe. **Built October 5, 2026: discovery, spotlights, thumbnails, MAGNet and MAGNet chat (below). Co-streams on MAGNet built October 6, 2026.**
+
+**Closed October 15, 2026 by user acceptance** with three streams live at once in production: every stream reached the top of Live Now within one rotation cycle (3-minute slots), and a stream ending and restarting mid-cycle skipped no one; the watch page's Up next listed the other live streams, same genre first; ending a stream moved its open player to the next one; search found channels and categories, accents ignored; faction and genre filters returned the right streams; a signed-out visitor reached a live stream in one click; empty lanes show recent channels. MAGNet is how S.V.E.R moves viewers between live streams. It has three parts:
 
 1. **Discovery:** the homepage, browse, search, watch-page suggestions and the stream-end countdown, all in fair rotation.
 2. **MAGNet channels:** channels a viewer can sit on while MAGNet moves them to whichever stream is having a moment, and gives every stream its turn. It reinvents an idea from an earlier platform's auto-switching channel, with fairness built in.
