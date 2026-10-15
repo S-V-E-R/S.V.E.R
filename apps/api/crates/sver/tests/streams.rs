@@ -98,6 +98,8 @@ mod staff_window;
 mod subs;
 #[path = "streams/support.rs"]
 mod support;
+#[path = "streams/supporters.rs"]
+mod supporters;
 #[path = "streams/switches.rs"]
 mod switches;
 #[path = "streams/teams.rs"]
@@ -542,6 +544,7 @@ async fn exercise(e: &Env) {
     chat::exercise(e).await;
     support::exercise(e).await;
     wall_seats::exercise(e).await;
+    supporters::exercise(e).await;
     subs::exercise(e).await;
     engagement::exercise(e).await;
     boards::exercise(e).await;

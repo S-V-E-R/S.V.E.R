@@ -482,6 +482,9 @@ a.takedown-link:hover { color: var(--ink); }
 .founder-mark { gap: 5px; border-color: var(--wolf); color: var(--wolf); background: var(--wolf-deep); }
 .founder-number { font-variant-numeric: tabular-nums; color: var(--wolf-light); }
 .supporting-since { display: inline-flex; align-items: center; gap: 6px; color: var(--wolf); font-size: 13px; }
+.card-supporter, .supporter-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0 0; }
+.handle .supporter-badge, .handle .founder-mark { margin-left: 6px; }
+.player-card-founder { font-size: 11px; color: var(--wolf); font-variant-numeric: tabular-nums; }
 .faction-name.faction-name[data-supporter="greycloak"], .player-card[data-supporter="greycloak"] .player-card-name { color: var(--wolf); }
 .player-card[data-supporter] { border-color: color-mix(in srgb, var(--wolf) 40%, transparent); }
 .player-card[data-supporter]::before { --b: linear-gradient(var(--wolf), var(--wolf)); }

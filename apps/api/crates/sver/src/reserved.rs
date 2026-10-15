@@ -154,6 +154,7 @@ pub const RESERVED: &[&str] = &[
     "squad",
     "store",
     "storefronts",
+    "supporters",
     "surge",
     "team",
     "transparency",

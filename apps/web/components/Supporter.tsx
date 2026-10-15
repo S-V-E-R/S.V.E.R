@@ -5,6 +5,8 @@
  */
 
 export type SupporterTier = "wolfsworn" | "greycloak";
+/** What the server says about a person (null tier when not subscribed now; Founder kept for good). */
+export type SupporterMarks = { tier: SupporterTier | null; months?: number | null; since?: string | null; founder?: number | null };
 
 const TIER_NAMES: Record<SupporterTier, string> = { wolfsworn: "Wolfsworn", greycloak: "Greycloak" };
 

@@ -101,6 +101,9 @@ pub(crate) struct Row {
     earned: Option<i64>,
     /// A KLIPY GIF (docs/COMMUNITY.md "GIFs in chat"); the body then holds its alt text.
     gif: Option<Value>,
+    /// The author's platform supporter tier, months and Founder number, only while subscribed
+    /// (docs/SUPPORTERS.md). Decided here, never by the client.
+    supporter: Option<Value>,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -110,7 +113,7 @@ impl Row {
     }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier, "skill":self.skill, "gif":self.gif, "loyalty":crate::progression::loyalty(self.earned.unwrap_or(0))})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier, "skill":self.skill, "gif":self.gif, "supporter":self.supporter, "loyalty":crate::progression::loyalty(self.earned.unwrap_or(0))})
     }
 }
 pub(crate) fn select() -> String {
@@ -119,6 +122,7 @@ pub(crate) fn select() -> String {
         (SELECT t.tier FROM creator_tiers t WHERE t.user_id=m.author_id AND t.tier>0) AS creator_tier,
         (SELECT e.earned FROM engagement e WHERE e.channel_id=m.channel_id AND e.user_id=m.author_id) AS earned,
         (SELECT jsonb_build_object('tier',s.tier,'months',s.months) FROM channel_subs s WHERE s.channel_id=m.channel_id AND s.user_id=m.author_id AND s.paid_through>now()) AS sub,
+        {} AS supporter,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
         CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
             'author_id',r.author_id,'username',ra.username,
@@ -128,7 +132,7 @@ pub(crate) fn select() -> String {
             AND r.squad_id IS NOT DISTINCT FROM m.squad_id
             AND r.deleted_at IS NULL AND (r.expires_at>now() OR EXISTS(SELECT 1 FROM chat_pins WHERE message_id=r.id))
         LEFT JOIN channel_users ra ON ra.id=r.author_id",
-        profiles::chip_sql("a"), crate::guilds::badge_sql("a.id")
+        profiles::chip_sql("a"), crate::guilds::badge_sql("a.id"), crate::supporters::active_sql("m.author_id")
     )
 }
 

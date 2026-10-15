@@ -77,6 +77,7 @@ pub mod stripe;
 pub mod studio;
 pub mod subs;
 pub mod support;
+pub mod supporters;
 pub mod surge;
 pub mod switches;
 pub mod take_down;
@@ -503,6 +504,7 @@ pub fn router(app: App) -> Router {
         .merge(surge::routes())
         .merge(gateway::routes())
         .merge(seats::routes())
+        .merge(supporters::routes())
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), boundaries))
         .layer(middleware::from_fn(devapps::rate_headers))

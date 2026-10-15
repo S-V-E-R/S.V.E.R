@@ -650,5 +650,6 @@ pub async fn card(
         "title": crate::progression::title(level, faction.as_deref()),
         "frame": crate::achievements::frame(&mut db, &me.id, level).await?,
         "showcase": crate::achievements::showcase(&mut db, &me.id).await?,
+        "supporter": crate::supporters::marks(&mut db, &me.id).await?,
     })))
 }
