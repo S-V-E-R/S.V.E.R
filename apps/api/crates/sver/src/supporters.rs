@@ -298,7 +298,7 @@ async fn change(
     else {
         return Err(Fail::unavailable("Stripe sent an unexpected response."));
     };
-    stripe::post(
+    let changed = stripe::post(
         &app.http,
         &app.config.stripe,
         &format!("subscriptions/{subscription}"),
@@ -327,7 +327,18 @@ async fn change(
         ],
         Some(&format!("sver-{gate}-{tier}")),
     )
-    .await?;
+    .await;
+    if let Err(failed) = changed {
+        // Stripe keeps a declined call's answer under its key, so the next try needs a new one.
+        drop(tx);
+        sqlx::query(
+            "UPDATE platform_subscriptions SET updated_at=clock_timestamp() WHERE user_id=$1",
+        )
+        .bind(&user.id)
+        .execute(&app.db)
+        .await?;
+        return Err(failed);
+    }
     if up {
         sqlx::query("UPDATE platform_subscriptions SET tier=$2,pending_tier=NULL,updated_at=now() WHERE user_id=$1")
             .bind(&user.id).bind(tier).execute(&mut *tx).await?;

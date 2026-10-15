@@ -123,6 +123,9 @@ struct Media {
     account: Value,
     /// What GET /v1/checkout/sessions/{id} returns.
     session: Value,
+    /// POSTs to this path are declined (402), and every POST's idempotency key is kept.
+    decline: Option<String>,
+    keys: Vec<String>,
     /// Board webhooks received: (signature header, body); `hook_fail` answers 500.
     hooks: Vec<(String, String)>,
     hook_fail: bool,
@@ -183,9 +186,24 @@ async fn stripe(
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     body: String,
-) -> Json<Value> {
+) -> (StatusCode, Json<Value>) {
     let mut m = fake.lock().unwrap();
     let path = uri.path().to_string();
+    if method == axum::http::Method::POST {
+        let key = headers
+            .get("idempotency-key")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        m.keys.push(key.to_owned());
+        if m.decline.as_deref() == Some(path.as_str()) {
+            return (
+                StatusCode::PAYMENT_REQUIRED,
+                Json(
+                    json!({"error": {"type": "card_error", "message": "Your card was declined."}}),
+                ),
+            );
+        }
+    }
     // Only calls that create something are logged (and number the synthetic ids).
     if method == axum::http::Method::POST {
         // Calls made on behalf of a connected account carry it, for the assertions.
@@ -197,7 +215,7 @@ async fn stripe(
         m.stripe.push((path.clone(), format!("{body}{account}")));
     }
     let n = m.stripe.len();
-    Json(match path.as_str() {
+    let reply = Json(match path.as_str() {
         "/v1/checkout/sessions" => {
             json!({"id": format!("cs_test_{n}"), "url": format!("https://checkout.stripe.test/{n}")})
         }
@@ -218,7 +236,8 @@ async fn stripe(
         }
         p if p.starts_with("/v1/checkout/sessions/") => m.session.clone(),
         _ => m.account.clone(),
-    })
+    });
+    (StatusCode::OK, reply)
 }
 struct Env {
     app: App,
