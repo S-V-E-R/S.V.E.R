@@ -478,7 +478,7 @@ async fn search(
     let pattern = like(q);
     // ponytail: substring scan over channels; add a trigram index once the user table is large.
     let ids: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT c.id FROM channel_users c WHERE c.eligible AND (c.username ILIKE $1 OR c.display_name ILIKE $1)
+        "SELECT c.id FROM channel_users c WHERE c.eligible AND (c.username ILIKE $1 OR fold_accents(c.display_name) ILIKE fold_accents($1))
          AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=$2 AND k.blocked_id=c.id) OR (k.blocker_id=c.id AND k.blocked_id=$2))
          ORDER BY {} DESC, lower(c.username)=lower($3) DESC, length(c.username), lower(c.username) LIMIT 20",
         crate::playback::live_sql("c.id")
@@ -499,7 +499,7 @@ async fn search(
             channels.push(chip);
         }
     }
-    let categories: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name,'genre',genre) FROM stream_categories WHERE active AND name ILIKE $1 ORDER BY lower(name)=lower($2) DESC, lower(name) LIMIT 10")
+    let categories: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'name',name,'genre',genre) FROM stream_categories WHERE active AND fold_accents(name) ILIKE fold_accents($1) ORDER BY lower(name)=lower($2) DESC, lower(name) LIMIT 10")
         .bind(&pattern)
         .bind(q)
         .fetch_all(&mut *db)

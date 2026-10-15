@@ -255,6 +255,15 @@ pub async fn exercise(e: &Env) {
     assert!(channels.contains(&"DvOffline") && !channels.contains(&"DvHidden"));
     let (_, found) = get(e, "/api/search?q=valor", None).await;
     assert_eq!(found["categories"][0]["id"], "valorant");
+    sqlx::query("INSERT INTO stream_categories(id,name,genre) VALUES('dv-pokemon','Pokémon Dv','mmos_rpgs')")
+        .execute(&e.app.db).await.unwrap();
+    for q in ["pokemon%20dv", "POK%C3%89MON"] {
+        let (_, found) = get(e, &format!("/api/search?q={q}"), None).await;
+        assert_eq!(
+            found["categories"][0]["id"], "dv-pokemon",
+            "accents ignored: {q}"
+        );
+    }
     let (_, found) = get(e, "/api/search?q=d%25", None).await;
     assert_eq!(found["channels"], json!([]), "% is matched literally");
     assert_eq!(
