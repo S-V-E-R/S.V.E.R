@@ -1252,6 +1252,17 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
     .await
     .unwrap();
     assert_eq!(second, 0);
+    let magnet_chapters: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM video_chapters WHERE video_id=$1 AND source='MAGNET'",
+    )
+    .bind(video)
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        magnet_chapters, 1,
+        "one chapter for a moment featured by two lanes"
+    );
     while sver::videos::worker::run_one(&e.app, false).await.unwrap() {}
     // Count the approved cap before enqueueing any new media work.
     sqlx::query("UPDATE videos SET duration_ms=36000000 WHERE id=$1")
