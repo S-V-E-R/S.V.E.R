@@ -354,9 +354,13 @@ async fn cut(
     }
     let segments:Vec<CutSegment>=sqlx::query_as("SELECT s.id,s.start_ms,s.duration_ms FROM video_segments s JOIN video_objects o ON o.key=s.object_key WHERE s.video_id=$1 AND o.ready AND s.start_ms<$3 AND s.start_ms+s.duration_ms>$2 ORDER BY s.start_ms")
         .bind(&id).bind(start).bind(end).fetch_all(&mut *tx).await?;
+    // A live recording's newest segments are counted before their upload finishes, so a cut to
+    // the live edge (no end given) snaps back to the last ready segment. A chosen end is never
+    // silently shortened.
+    let to_live_edge = source.status == "RECORDING" && input.end_ms.is_none();
     if segments
         .last()
-        .is_none_or(|segment| segment.start_ms + segment.duration_ms < end)
+        .is_none_or(|segment| !to_live_edge && segment.start_ms + segment.duration_ms < end)
     {
         return Err(Fail::unavailable(
             "That section is still processing. Try again shortly.",
