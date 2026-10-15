@@ -17,7 +17,7 @@ export function VideoCut({ video, highlight = false, ageAck = false }: { video: 
     e.preventDefault(); if (busy || !valid) return;
     if (!request.current) request.current = crypto.randomUUID();
     setBusy(true);
-    const result = await send<{ id: string; start_ms: number; end_ms: number }>("POST", `/api/videos/${video.id}/cuts`, { kind: highlight ? "HIGHLIGHT" : "CLIP", title: new FormData(e.currentTarget).get("title"), start_ms: start, end_ms: end, request_id: request.current, age_ack: ageAck });
+    const result = await send<{ id: string; start_ms: number; end_ms: number }>("POST", `/api/videos/${video.id}/cuts`, { kind: highlight ? "HIGHLIGHT" : "CLIP", title: new FormData(e.currentTarget).get("title"), start_ms: start, end_ms: video.status === "RECORDING" && end === video.duration_ms ? undefined : end, request_id: request.current, age_ack: ageAck });
     setBusy(false);
     if (result.ok) { setSaved(result.data.id); setMessage("Saved. Your video is processing."); } else { setMessage(result.error); }
   }}>
