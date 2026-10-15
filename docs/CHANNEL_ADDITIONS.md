@@ -115,7 +115,7 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** an approved signature emote renders in other channels only in the `username/Code` form, the owner's opt-out works, and removal stops it everywhere.
 
-**Built October 9, 2026 (migration 0061).** `channel_emotes.signature` (one open emote per channel; Studio → Emotes → Make signature). It works elsewhere only once staff have reviewed it (`reviewed_at`, the existing emote review) and while it is visible. Chat resolves `username/Code` tokens through `GET /api/emotes/signatures` (looked up live, once per code per page, so removal or rejection stops it), and the dock has a Signature tab of followed channels' emotes. `chat_settings.allow_signatures` (Studio → Chat → Rules) turns others' off in a chat. The owner shows in the tooltip; a crest on hover is not built yet.
+**Built October 9, 2026 (migration 0061).** `channel_emotes.signature` (one open emote per channel; Studio → Emotes → Make signature). It works elsewhere only once staff have reviewed it (`reviewed_at`, the existing emote review) and while it is visible. Chat resolves `username/Code` tokens through `GET /api/emotes/signatures` (looked up live, once per code per page, so removal or rejection stops it), and the dock has a Signature tab of followed channels' emotes. `chat_settings.allow_signatures` (Studio → Chat → Rules) turns others' off in a chat. Hovering or focusing one in chat shows the owner's faction crest and name (`components/SignatureEmote.tsx`, October 15, 2026).
 
 ## Open data
 
@@ -143,7 +143,7 @@ A public page at `/open-data`, linked from About and the footer, showing how S.V
 
 **Done when:** the page shows the charts from real data, the thresholds hold, and the CSVs match the charts.
 
-**Built October 9, 2026 (migration 0062).** The jobs loop recomputes the last 12 weeks and 12 months once a day into `public_stats`; `GET /api/open-data` and `/api/open-data/{weekly,monthly}.csv` apply the thresholds (so the page and CSVs show the same numbers), and `/open-data` draws simple SVG bars in the theme colors. Fairness is measured by recording every broadcast the rotation pointer puts in first place (`rotation_firsts`) against streams live 10 minutes or more. Money counts card payments at their price and Valor at 1 cent, with the creators' share from earnings accounts; refunds aren't netted out yet. The page is rendered per request rather than cached; the figures are a small table read.
+**Built October 9, 2026 (migration 0062).** The jobs loop recomputes the last 12 weeks and 12 months once a day into `public_stats`; `GET /api/open-data` and `/api/open-data/{weekly,monthly}.csv` apply the thresholds (so the page and CSVs show the same numbers), and `/open-data` draws simple SVG bars in the theme colors. Fairness is measured by recording every broadcast the rotation pointer puts in first place (`rotation_firsts`) against streams live 10 minutes or more. Money counts card payments at their price and Valor at 1 cent, with the creators' share from earnings accounts. Refunds and chargebacks of card payments (and a won dispute coming back) are netted in the month they happen, in their own line: subscriptions and gift subs, Wall seats or platform supporters (October 13, 2026). The page is rendered per request rather than cached; the figures are a small table read.
 
 ## Credits
 
