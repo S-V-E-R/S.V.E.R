@@ -8,7 +8,12 @@ pub async fn spotlight(db: &mut PgConnection, owner: &str, feature: &str) -> Res
         .await?;
     let source:Option<Video>=sqlx::query_as("SELECT * FROM videos WHERE owner_id=$1 AND kind='VOD' AND status='RECORDING' AND ended_at IS NULL FOR UPDATE").bind(owner).fetch_optional(&mut *db).await?;
     let Some(source) = source else { return Ok(()) };
-    chapter(db, owner, "MAGNET", Some(feature), "MAGNet spotlight").await?;
+    // Several lanes can feature one stream at once; the moment gets one chapter.
+    let marked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM video_chapters WHERE video_id=$1 AND source='MAGNET' AND offset_ms>$2-60000)")
+        .bind(&source.id).bind(source.duration_ms).fetch_one(&mut *db).await?;
+    if !marked {
+        chapter(db, owner, "MAGNET", Some(feature), "MAGNet spotlight").await?;
+    }
     let settings = settings(db, owner).await?;
     if settings.copyright_restricted
         || settings.clip_permission == "OFF"
