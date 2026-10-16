@@ -871,6 +871,21 @@ async fn genre_lane(e: &Env) {
         !candidates.contains(&"mg-g-r".to_string()),
         "a restricted channel is never a candidate"
     );
+    // A category that just changed hasn't settled: the stream waits before joining a genre lane, so
+    // hopping categories can't collect a first-time turn on every lane.
+    e.sql("UPDATE stream_settings SET category_changed_at=now() WHERE owner_id='mg-gb'")
+        .await;
+    let mut db = e.app.db.acquire().await.unwrap();
+    let hopped: Vec<String> = sver::magnet::candidates(&mut db, "art", &e.app.config.magnet)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.1.broadcast)
+        .collect();
+    drop(db);
+    assert!(!hopped.contains(&"mg-g-b".to_string()), "{hopped:?}");
+    e.sql("UPDATE stream_settings SET category_changed_at=now()-interval '11 minutes' WHERE owner_id='mg-gb'")
+        .await;
     // Faction lanes: only that faction's members' streams, whatever their genre.
     e.sql("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES('mg-ga','glint',now(),now()) ON CONFLICT(user_id) DO UPDATE SET faction='glint'").await;
     let mut db = e.app.db.acquire().await.unwrap();

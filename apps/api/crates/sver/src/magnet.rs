@@ -48,6 +48,11 @@ pub struct Tuning {
     pub low_effort_weight: f64,
     /// A raid between two channels counts as a moment once in this many hours, either direction.
     pub raid_repeat_hours: i64,
+    /// Chat and follow moments wait until the broadcast (or merged co-stream) has this much history
+    /// to compare with: before that its "normal" is near zero, so the score would be a raw count.
+    pub baseline_min_seconds: i64,
+    /// A genre lane takes a stream once its category has been unchanged this long.
+    pub category_settle_seconds: i64,
 }
 impl Default for Tuning {
     fn default() -> Self {
@@ -70,6 +75,8 @@ impl Default for Tuning {
             new_account_weight: 0.5,
             low_effort_weight: 0.5,
             raid_repeat_hours: 24,
+            baseline_min_seconds: 600,
+            category_settle_seconds: 600,
         }
     }
 }
@@ -95,16 +102,18 @@ pub struct Signals {
     pub follow_base: f64,
     pub raided_by: Option<String>,
     pub flagged: bool,
+    /// Too little history for a baseline yet: chat and follows can't make a moment (a raid can).
+    pub unsettled: bool,
 }
 impl Signals {
     /// The moment score and its one-line reason (None when nothing is elevated).
     pub fn score(&self, t: &Tuning) -> (f64, Option<String>) {
-        let chat = if self.chatters >= t.min_chatters {
+        let chat = if self.chatters >= t.min_chatters && !self.unsettled {
             self.chatters / self.chat_base.max(1.0)
         } else {
             0.0
         };
-        let follow = if self.follows >= t.min_follows {
+        let follow = if self.follows >= t.min_follows && !self.unsettled {
             self.follows / self.follow_base.max(1.0)
         } else {
             0.0
@@ -139,8 +148,11 @@ pub struct Candidate {
     pub score: f64,
     pub moment: Option<String>,
     /// When it was last featured on this lane (still running counts as now). For a merged
-    /// co-stream, the longest wait among its members.
+    /// co-stream, the longest wait among its members. Orders fair turns.
     pub last_featured: Option<DateTime<Utc>>,
+    /// Its most recent feature on this lane, for the cooldown. For a merged co-stream, any member's
+    /// latest, so a squad can't take repeated turns through a member who hasn't been featured.
+    pub recent: Option<DateTime<Utc>>,
 }
 impl Candidate {
     fn has(&self, broadcast: &str) -> bool {
@@ -182,7 +194,7 @@ fn fair_pick<'a>(
         .filter(|c| current.is_none_or(|id| !c.has(id)))
         .collect();
     let cooled = |c: &&Candidate| {
-        c.last_featured
+        c.recent
             .is_none_or(|at| now - at >= Duration::seconds(t.cooldown_seconds))
     };
     let pool: Vec<&Candidate> = if others.iter().any(cooled) {
@@ -259,7 +271,7 @@ pub fn decide(lane: &LaneState, cands: &[Candidate], now: DateTime<Utc>, t: &Tun
             .is_none_or(|at| now - at >= Duration::seconds(t.moment_gap_seconds));
     if moment_due {
         let cooled = |c: &&Candidate| {
-            c.last_featured
+            c.recent
                 .is_none_or(|at| now - at >= Duration::seconds(t.cooldown_seconds))
         };
         let best = cands
@@ -303,6 +315,7 @@ type SignalRow = (
     bool,
     Option<DateTime<Utc>>,
     bool,
+    bool,
 );
 /// Eligible streams for a lane, with their signals. Eligible: live 60+ seconds and not
 /// reconnecting, an active category (the lane's genre for genre lanes), not opted out, an eligible
@@ -323,13 +336,13 @@ pub async fn candidates(
             AND NOT EXISTS(SELECT 1 FROM integrity_cases ic WHERE ic.owner_id=b.owner_id AND ic.status='OPEN')
             AND ($1='global'
               OR ($1 IN ('myria','aetheron','glint') AND EXISTS(SELECT 1 FROM faction_members fm WHERE fm.user_id=b.owner_id AND fm.faction=$1))
-              OR EXISTS(SELECT 1 FROM stream_settings s JOIN stream_categories c ON c.id=s.category_id WHERE s.owner_id=b.owner_id AND c.active AND c.genre=$1))
+              OR EXISTS(SELECT 1 FROM stream_settings s JOIN stream_categories c ON c.id=s.category_id WHERE s.owner_id=b.owner_id AND c.active AND c.genre=$1 AND coalesce(s.category_changed_at,'-infinity'::timestamptz)<=now()-make_interval(secs=>$7)))
             AND NOT EXISTS(SELECT 1 FROM stream_settings s JOIN stream_categories c ON c.id=s.category_id WHERE s.owner_id=b.owner_id AND NOT c.active),
           (SELECT coalesce(sum(a.w),0) FROM (SELECT CASE WHEN u.created_at>now()-interval '7 days' THEN $4::float8 ELSE 1.0::float8 END * CASE WHEN bool_and(magnet_low_effort(m.channel_id,m.squad_id,m.author_id,m.body,m.created_at)) THEN $5::float8 ELSE 1.0::float8 END AS w FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.channel_id=b.owner_id AND m.squad_id IS NULL AND m.author_id<>b.owner_id AND m.deleted_at IS NULL AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at>now()-interval '60 seconds' AND magnet_room_viewer(ARRAY[b.id],m.author_id) GROUP BY m.author_id,u.created_at) a)::float8,
           (SELECT count(DISTINCT (m.author_id, date_trunc('minute', m.created_at))) FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.channel_id=b.owner_id AND m.squad_id IS NULL AND m.author_id<>b.owner_id AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at<=now()-interval '60 seconds' AND m.created_at>greatest(b.started_at,now()-interval '31 minutes') AND magnet_room_viewer(ARRAY[b.id],m.author_id))::float8
             / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(b.started_at,now()-interval '31 minutes'))::float8/60.0),
-          (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=b.owner_id AND f.created_at>now()-interval '60 seconds' AND magnet_room_viewer(ARRAY[b.id],f.follower_id))::float8,
-          (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=b.owner_id AND f.created_at<=now()-interval '60 seconds' AND f.created_at>greatest(b.started_at,now()-interval '31 minutes') AND magnet_room_viewer(ARRAY[b.id],f.follower_id))::float8
+          (SELECT count(*) FROM follow_firsts f JOIN follows w ON w.follower_id=f.follower_id AND w.following_id=f.following_id JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=b.owner_id AND f.first_at>now()-interval '60 seconds' AND magnet_room_viewer(ARRAY[b.id],f.follower_id))::float8,
+          (SELECT count(*) FROM follow_firsts f JOIN follows w ON w.follower_id=f.follower_id AND w.following_id=f.following_id JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=b.owner_id AND f.first_at<=now()-interval '60 seconds' AND f.first_at>greatest(b.started_at,now()-interval '31 minutes') AND magnet_room_viewer(ARRAY[b.id],f.follower_id))::float8
             / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(b.started_at,now()-interval '31 minutes'))::float8/60.0),
           (SELECT c.display_name FROM raids r JOIN channel_users c ON c.id=r.raider_id WHERE r.target_broadcast_id=b.id AND r.status='moved' AND r.execute_at>now()-interval '2 minutes'
             AND EXISTS(SELECT 1 FROM playback_leases l WHERE l.raid_id=r.id AND l.broadcast_id=b.id AND l.level<>'excluded')
@@ -337,7 +350,8 @@ pub async fn candidates(
             ORDER BY r.execute_at DESC LIMIT 1),
           EXISTS(SELECT 1 FROM magnet_flags g WHERE g.broadcast_id=b.id AND g.at>now()-interval '2 minutes'),
           (SELECT max(coalesce(f.ended_at,now())) FROM magnet_features f WHERE f.lane=$1 AND f.owner_id=b.owner_id),
-          EXISTS(SELECT 1 FROM plays_runtime pr WHERE pr.enabled AND pr.channel_id=b.owner_id)
+          EXISTS(SELECT 1 FROM plays_runtime pr WHERE pr.enabled AND pr.channel_id=b.owner_id),
+          b.started_at>now()-make_interval(secs=>$8)
          FROM broadcasts b WHERE b.id=ANY($3)",
     )
     .bind(lane)
@@ -346,6 +360,8 @@ pub async fn candidates(
     .bind(t.new_account_weight)
     .bind(t.low_effort_weight)
     .bind(t.raid_repeat_hours)
+    .bind(t.category_settle_seconds as f64)
+    .bind(t.baseline_min_seconds as f64)
     .fetch_all(&mut *db)
     .await?;
     // S.V.E.R Plays and other system channels are featured only when nothing else is live.
@@ -362,6 +378,7 @@ pub async fn candidates(
         flagged,
         last,
         system,
+        unsettled,
     ) in rows
     {
         if !eligible || (system && others) {
@@ -377,6 +394,7 @@ pub async fn candidates(
             follow_base,
             raided_by,
             flagged,
+            unsettled,
         };
         let (score, moment) = signals.score(t);
         out.push((
@@ -387,6 +405,7 @@ pub async fn candidates(
                 score,
                 moment,
                 last_featured: last,
+                recent: last,
             },
             signals,
         ));
@@ -411,14 +430,16 @@ pub async fn candidates(
         let ids: Vec<String> = squad.members.iter().map(|m| m.0.clone()).collect();
         let watched: Vec<String> = squad.members.iter().map(|m| m.1.clone()).collect();
         // Real viewers of any member count, under the same rules as a single stream.
-        let (chatters, chat_base, follows, follow_base): (f64, f64, f64, f64) = sqlx::query_as(
+        let (chatters, chat_base, follows, follow_base, unsettled): (f64, f64, f64, f64, bool) =
+            sqlx::query_as(
             "SELECT
               (SELECT coalesce(sum(a.w),0) FROM (SELECT CASE WHEN u.created_at>now()-interval '7 days' THEN $4::float8 ELSE 1.0::float8 END * CASE WHEN bool_and(magnet_low_effort(m.channel_id,m.squad_id,m.author_id,m.body,m.created_at)) THEN $5::float8 ELSE 1.0::float8 END AS w FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.squad_id=s.id AND m.author_id<>ALL($2) AND m.deleted_at IS NULL AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at>now()-interval '60 seconds' AND magnet_room_viewer($3,m.author_id) GROUP BY m.author_id,u.created_at) a)::float8,
               (SELECT count(DISTINCT (m.author_id, date_trunc('minute', m.created_at))) FROM chat_messages m JOIN users u ON u.id=m.author_id AND u.email_verified WHERE m.squad_id=s.id AND m.author_id<>ALL($2) AND m.origin IS NULL AND m.tribute IS NULL AND m.skill IS NULL AND m.created_at<=now()-interval '60 seconds' AND m.created_at>greatest(s.created_at,now()-interval '31 minutes') AND magnet_room_viewer($3,m.author_id))::float8
                 / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(s.created_at,now()-interval '31 minutes'))::float8/60.0),
-              (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=ANY($2) AND f.created_at>now()-interval '60 seconds' AND magnet_room_viewer($3,f.follower_id))::float8,
-              (SELECT count(*) FROM follows f JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=ANY($2) AND f.created_at<=now()-interval '60 seconds' AND f.created_at>greatest(s.created_at,now()-interval '31 minutes') AND magnet_room_viewer($3,f.follower_id))::float8
-                / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(s.created_at,now()-interval '31 minutes'))::float8/60.0)
+              (SELECT count(*) FROM follow_firsts f JOIN follows w ON w.follower_id=f.follower_id AND w.following_id=f.following_id JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=ANY($2) AND f.first_at>now()-interval '60 seconds' AND magnet_room_viewer($3,f.follower_id))::float8,
+              (SELECT count(*) FROM follow_firsts f JOIN follows w ON w.follower_id=f.follower_id AND w.following_id=f.following_id JOIN users u ON u.id=f.follower_id AND u.email_verified WHERE f.following_id=ANY($2) AND f.first_at<=now()-interval '60 seconds' AND f.first_at>greatest(s.created_at,now()-interval '31 minutes') AND magnet_room_viewer($3,f.follower_id))::float8
+                / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(s.created_at,now()-interval '31 minutes'))::float8/60.0),
+              s.created_at>now()-make_interval(secs=>$6)
              FROM squads s WHERE s.id=$1",
         )
         .bind(&squad.id)
@@ -426,6 +447,7 @@ pub async fn candidates(
         .bind(&watched)
         .bind(t.new_account_weight)
         .bind(t.low_effort_weight)
+        .bind(t.baseline_min_seconds as f64)
         .fetch_one(&mut *db)
         .await?;
         let signals = Signals {
@@ -435,6 +457,7 @@ pub async fn candidates(
             follow_base,
             raided_by: unit.iter().find_map(|o| o.2.raided_by.clone()),
             flagged: unit.iter().any(|o| o.2.flagged),
+            unsettled,
         };
         let (score, moment) = signals.score(t);
         let last_featured = if unit.iter().any(|o| o.1.last_featured.is_none()) {
@@ -448,6 +471,7 @@ pub async fn candidates(
             score,
             moment,
             last_featured,
+            recent: unit.iter().filter_map(|o| o.1.recent).max(),
         };
         out.push((unit[0].0.clone(), candidate, signals));
     }
@@ -602,7 +626,7 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
     let log = |kind: &str, chosen: Option<&str>, reason: &str| {
         json!({"kind":kind,"chosen":chosen,"reason":reason,"candidates":found.iter().map(|(s,c,g)| json!({
             "broadcast":c.broadcast,"members":c.members,"username":s.username,"score":c.score,"moment":c.moment,"last_featured":c.last_featured,
-            "signals":{"chatters":g.chatters,"chat_base":g.chat_base,"follows":g.follows,"follow_base":g.follow_base,"raided_by":g.raided_by,"flagged":g.flagged}})).collect::<Vec<_>>()})
+            "signals":{"chatters":g.chatters,"chat_base":g.chat_base,"follows":g.follows,"follow_base":g.follow_base,"raided_by":g.raided_by,"flagged":g.flagged,"unsettled":g.unsettled}})).collect::<Vec<_>>()})
     };
     match &decision {
         Decision::Hold => {
@@ -697,8 +721,17 @@ async fn commit(
         let feature = profiles::new_id();
         let owner:Option<String>=sqlx::query_scalar("INSERT INTO magnet_features(id,lane,broadcast_id,owner_id,kind,reason) SELECT $1,$2,id,owner_id,$3,$4 FROM broadcasts WHERE id=$5 RETURNING owner_id")
             .bind(&feature).bind(lane).bind(kind).bind(reason).bind(member).fetch_optional(&mut *db).await?;
+        // Best effort: the spotlight chapter is a side feature and must never stop a lane from
+        // switching, so its failure rolls back only its own savepoint.
         if let Some(owner) = owner {
-            crate::videos::spotlight(db, &owner, &feature).await?;
+            let mut savepoint = sqlx::Connection::begin(&mut *db).await?;
+            match crate::videos::spotlight(&mut savepoint, &owner, &feature).await {
+                Ok(()) => savepoint.commit().await?,
+                Err(_) => {
+                    savepoint.rollback().await?;
+                    eprintln!("magnet_event=spotlight outcome=skipped");
+                }
+            }
         }
     }
     sqlx::query("UPDATE magnet_lanes SET current_broadcast=$2,current_kind=$3,current_reason=$4,current_since=now(),pending_broadcast=NULL,pending_kind=NULL,pending_reason=NULL,switch_at=NULL,
@@ -771,6 +804,11 @@ async fn lane(
     // Rotation is unchanged; an under-18 viewer just isn't shown a labeled stream.
     let mature =
         crate::streams::mature_hidden(&mut db, viewer.as_ref().map(|v| v.id.as_str())).await?;
+    // The countdown preview and the holding card's suggestions leave out what this viewer can't
+    // watch here: labeled streams for under-18 viewers, and channels either side has blocked.
+    let blocked = discovery::hidden(&mut db, viewer.as_ref().map(|v| v.id.as_str())).await?;
+    let visible =
+        |s: &&discovery::Stream| !mature.contains(&s.owner_id) && !blocked.contains(&s.owner_id);
     let mut featured = Value::Null;
     if let Some(s) = find(&current).filter(|s| !mature.contains(&s.owner_id)) {
         let mut card = discovery::card(&app, s, now);
@@ -831,7 +869,7 @@ async fn lane(
         featured = json!({"stream":card,"kind":kind,"reason":reason,"since":since,
             "moves_on_by":moves_on_by,"holding":holding,"squad":squad});
     }
-    let next = find(&pending).map(|s| {
+    let next = find(&pending).filter(visible).map(|s| {
         json!({"stream":discovery::card(&app, s, now),"reason":pending_reason,"switch_at":switch_at})
     });
     // "You just watched" (docs/MAGNET.md "After a switch"): the last feature on this lane that ended
@@ -879,6 +917,7 @@ async fn lane(
     let others: Vec<Value> = streams
         .iter()
         .filter(|s| Some(&s.broadcast_id) != current.as_ref())
+        .filter(visible)
         .filter(|s| {
             lane == "global"
                 || s.genre.as_deref() == Some(lane.as_str())
@@ -1059,6 +1098,18 @@ async fn force(
     if found == 0 {
         return Err(Fail::missing());
     }
+    // Only a stream this lane could show: otherwise the pick would sit "in effect" and never air.
+    if let Some(id) = &broadcast {
+        let eligible = candidates(&mut tx, &lane, &app.config.magnet)
+            .await?
+            .iter()
+            .any(|c| c.1.has(id));
+        if !eligible {
+            return Err(Fail::bad(
+                "That stream isn't eligible on this lane right now (opted out, under review, or not in this lane's genre or faction).",
+            ));
+        }
+    }
     let action = if broadcast.is_some() {
         "magnet_force"
     } else {
@@ -1121,6 +1172,7 @@ mod tests {
             score,
             moment: (score >= 3.0).then(|| "Chat is going off".to_string()),
             last_featured: last.map(|m| now - Duration::minutes(m)),
+            recent: last.map(|m| now - Duration::minutes(m)),
         }
     }
     fn lane(current: &str, held: i64, last_kind: &str, now: DateTime<Utc>) -> LaneState {
@@ -1181,6 +1233,34 @@ mod tests {
             ..Signals::default()
         };
         assert_eq!(raid.score(&t), (10.0, Some("Just raided by Raider".into())));
+        // A fresh or restarted broadcast has no normal yet, so a loud room isn't a moment until it
+        // does; a raid still is.
+        let restarted = Signals {
+            chatters: 60.0,
+            chat_base: 0.0,
+            follows: 5.0,
+            unsettled: true,
+            ..Signals::default()
+        };
+        assert_eq!(restarted.score(&t).0, 0.0);
+        let raided = Signals {
+            raided_by: Some("Raider".into()),
+            unsettled: true,
+            ..Signals::default()
+        };
+        assert_eq!(raided.score(&t).0, t.raid_score);
+        // Same ratio, different size, same score.
+        let tiny = Signals {
+            chatters: 3.0,
+            chat_base: 1.0,
+            ..Signals::default()
+        };
+        let huge = Signals {
+            chatters: 300.0,
+            chat_base: 100.0,
+            ..Signals::default()
+        };
+        assert_eq!(tiny.score(&t).0, huge.score(&t).0);
     }
 
     #[test]
@@ -1309,6 +1389,20 @@ mod tests {
         );
         forced.current = Some("host".into());
         assert_eq!(decide(&forced, &cands, now, &t), Decision::Hold);
+        // A squad with a never-featured member still waits out its cooldown if another member was
+        // just featured: the wait orders turns, the latest feature sets the cooldown.
+        let mut fresh = c("again", 0.0, None, now);
+        fresh.members = vec!["again".into(), "newbie".into()];
+        fresh.recent = Some(now - Duration::minutes(5));
+        let cands = [
+            fresh,
+            c("waiting", 0.0, Some(60), now),
+            c("showing", 0.0, Some(0), now),
+        ];
+        assert_eq!(
+            switched(&decide(&lane("showing", 480, "fair", now), &cands, now, &t)),
+            Some(("waiting", "fair"))
+        );
     }
 
     #[test]
@@ -1333,6 +1427,7 @@ mod tests {
                     score: if *id == "loud" { 50.0 } else { 0.0 },
                     moment: (*id == "loud").then(|| "Chat is going off".to_string()),
                     last_featured: last.get(*id).copied(),
+                    recent: last.get(*id).copied(),
                 })
                 .collect();
             if let Decision::Switch {

@@ -167,6 +167,18 @@ A review against the auto-switching channel MAGNet reinvents found that its mome
 
 Considered and not adopted: a split-screen of several moments at once breaks the one-player rule, and computer-vision detection stays a later add-on (game state read from pixels breaks whenever a game changes its interface; game APIs come first).
 
+### Fairness review (October 16, 2026)
+
+An outside review of the code found ways around the rules above; all are closed (migration 0114):
+- **No moments before there's a normal.** Chat and follow signals count only once a broadcast (or merged co-stream) has 10 minutes of history (`baseline_min_seconds`). Before that its baseline is near zero, so the score would be a raw count, which favors big rooms, and a restart would reset it. A raid still counts at once.
+- **Categories settle before genre lanes.** A stream joins a genre lane only once its category has been unchanged for 10 minutes (`category_settle_seconds`, `stream_settings.category_changed_at`), so hopping categories can't collect a first-time turn on every lane. Global and faction lanes don't depend on category.
+- **Only first follows count.** Follow signals use `follow_firsts`, so unfollowing and following again can't fake a burst.
+- **Squads share the cooldown, as specified.** A merged squad's wait is still its longest-waiting member's, but its cooldown runs from any member's latest feature.
+- **What a viewer can't watch stays hidden everywhere on the page.** The countdown preview and holding-card suggestions leave out labeled streams for under-18 viewers and blocked channels, as do staff spotlights and "recently live".
+- **A restart isn't "just went live".** A broadcast starting within 30 minutes of the owner's previous one ending is a restart.
+- **Side features can't stall a lane.** A failing spotlight chapter rolls back only itself.
+- Staff can force only a stream the lane could show; staff spotlights rotate at the front of the list; `language=mine` with no languages doesn't empty the list; rotation and thumbnails no longer hold extra database connections.
+
 ## Spotlights
 
 - **Automatic:** a stream gets a spotlight slot on the homepage the first time it ever goes live, and when it returns after 30 or more days away.
