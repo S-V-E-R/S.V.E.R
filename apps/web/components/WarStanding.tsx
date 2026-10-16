@@ -39,9 +39,12 @@ export function FrontLine({ war, faction, signedIn, replay }: { war: War | null;
   const lead = ranked.length > 1 && ranked[0].territories > ranked[1].territories ? ranked[0] : null;
   const contested = war ? war.genres.filter(g => contest(g).contested).length : 0;
   const finished = war?.season?.finished && war.season.winners.length ? war.season : null;
+  // Weeks run from the season start; the first may be partial.
+  const week = war?.season && war.week ? Math.max(1, Math.ceil((Date.parse(war.week.ends_at) - Date.parse(war.season.starts_at)) / (7 * 86_400_000))) : null;
   const headline = !war ? "Three factions. One war for every category."
     : !war.season ? "The first season hasn\u2019t started yet."
       : finished ? holdsTheLight(finished.winners)
+      : !faction && lead ? `Three factions fight over every category. ${factionInfo(lead.faction).name} leads, ${lead.territories} of ${war.genres.length}.`
       : lead ? `${factionInfo(lead.faction).name} leads with ${lead.territories} ${lead.territories === 1 ? "territory" : "territories"}.${contested ? ` ${contested} contested.` : ""}`
         : total ? `The war is level at ${ranked[0].territories} territories.${contested ? ` ${contested} contested.` : ""}` : "No territory has been taken yet.";
   const sub = finished ? `${seasonLine(finished.winners, faction)} Next season starts ${utcDate(finished.next_starts_at)}.`
@@ -51,12 +54,12 @@ export function FrontLine({ war, faction, signedIn, replay }: { war: War | null;
   return <section className="front-line frame" aria-labelledby="front-line-title">
     <div className="front-line-crests">{faction
       ? <Link href={`/factions/${faction}`} aria-label={`${factionInfo(faction).name} hub`}><Crest faction={faction} size={48} /></Link>
-      : factions.map(f => <Link key={f.slug} href={signedIn ? `/welcome?pick=${f.slug}` : `/signup?faction=${f.slug}`} aria-label={`Enlist in ${f.name}`}><Crest faction={f.slug} size={40} /></Link>)}</div>
-    <div className="front-line-status"><h2 id="front-line-title" tabIndex={-1}>{headline}</h2><p>{sub}{replay && <> {replay}</>}</p></div>
+      : <>{factions.map(f => <Link key={f.slug} className="pick-side" data-theme={f.slug} href={signedIn ? `/welcome?pick=${f.slug}` : `/signup?faction=${f.slug}`} aria-label={`Enlist in ${f.name}`} title={`Enlist in ${f.name}`}><Crest faction={f.slug} size={40} /></Link>)}<span className="pick-side-caption">Pick a side</span></>}</div>
+    <div className="front-line-status">{war?.season && <span className="eyebrow">Season {war.season.number}{week ? ` · Week ${week}` : ""}</span>}<h2 id="front-line-title" tabIndex={-1}>{headline}</h2><p>{sub}{replay && <> {replay}</>}</p></div>
     {total > 0 && <div className="front-line-bar" aria-label="Territories held this season">
       {board.map(s => <span key={s.faction} data-theme={s.faction} style={{ flexGrow: Math.max(s.territories, 0.0001) }}><i aria-hidden="true" /><small>{factionInfo(s.faction).name} {s.territories}</small></span>)}
     </div>}
-    {faction ? <Link className="button" href="/war-map">Hold the line</Link>
+    {faction ? <Link className="button" href="/war-map">Open the war map</Link>
       : <Link className="button" href={signedIn ? "/welcome" : "/signup"}>{signedIn ? "Pick a side" : "Enlist"}</Link>}
   </section>;
 }

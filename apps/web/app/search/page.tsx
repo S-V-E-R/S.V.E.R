@@ -17,8 +17,7 @@ export default async function Search({ searchParams }: { searchParams: Promise<{
   const result = q.length >= 2 ? await apiGet<Result>(`/api/search?q=${encodeURIComponent(q.slice(0, 50))}`) : null;
   return <div className="home search-page">
     <SectionHead id="search-h" title={q ? `Results for “${q}”` : "Search"} level={1} />
-    <form action="/search" className="search-form" role="search"><label htmlFor="search-q" className="sr-only">Search channels, categories and Beacons</label><input id="search-q" name="q" type="search" defaultValue={q} minLength={2} maxLength={50} required /><button type="submit">Search</button></form>
-    {q.length > 0 && q.length < 2 && <p className="muted">Type at least 2 characters.</p>}
+    {q.length < 2 && <div className="empty-live panel"><p><strong>{q ? "Type at least 2 characters." : "Search channels, categories and Beacons."}</strong> Use the search bar at the top of the page.</p><p><Link href="/browse" className="button quiet">Browse live streams</Link></p></div>}
     {result && !result.data && <p className="notice" role="alert">Search isn&apos;t available right now. Please try again.</p>}
     {result?.data && <>
       <section aria-labelledby="ch-h"><h2 id="ch-h">Channels</h2>

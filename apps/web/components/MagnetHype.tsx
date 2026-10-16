@@ -8,6 +8,8 @@ import { JustWatched, type Previous } from "./JustWatched";
 import { StreamCard } from "./home/StreamCard";
 import type { LiveCard } from "./home/types";
 import { LiveThumbnail } from "./LiveThumbnail";
+import { Crest } from "./Crest";
+import { factionOf } from "../lib/factions";
 
 type Featured = { stream: LiveCard; kind: string; reason: string | null; since: string; moves_on_by: string | null; holding: boolean; squad: { mode: "MERGED" | "SEPARATE"; members: LiveCard[] } | null };
 type Lane = { id: string; name: string; enabled: boolean; featured: Featured | null; next: { stream: LiveCard; reason: string | null; switch_at: string } | null; previous: Previous | null; others: LiveCard[] };
@@ -59,8 +61,16 @@ export function MagnetHype({ lane, account, viewerFaction }: { lane: string; acc
     && previous.members.some(m => seen.includes(m.username))
     && previous.members.every(m => m.username !== shown?.username) ? previous : null;
   const minutes = featured?.moves_on_by ? Math.max(1, Math.ceil((Date.parse(featured.moves_on_by) - now) / 60000)) : null;
+  // Lanes: the sides (Global and the three factions) and the genres.
+  const open = lanes.filter(l => l.enabled);
+  const sides = open.filter(l => l.id === "global" || factionOf(l.id));
+  const genres = open.filter(l => !sides.includes(l));
+  // How far through its turn the featured stream is (a turn lasts at most until moves_on_by).
+  const turn = featured?.moves_on_by ? Math.min(1, Math.max(0, (now - Date.parse(featured.since)) / Math.max(1, Date.parse(featured.moves_on_by) - Date.parse(featured.since)))) : null;
   return <div className="magnet-hype channel watch"><div className="watch-main">
-    <nav className="browse-genres" aria-label="MAGNet lanes">{lanes.filter(l => l.enabled).map(l => <Link key={l.id} href={l.id === "global" ? "/magnet" : `/magnet/${l.id}`} aria-current={l.id === lane ? "page" : undefined} className="chip">{l.name}</Link>)}</nav>
+    <nav className="magnet-lanes" aria-label="MAGNet lanes">
+      {([["Sides", sides], ["Genres", genres]] as const).map(([label, group]) => group.length > 0 && <div key={label} className="lane-group"><span className="eyebrow">{label}</span><div className="chips scroll">{group.map(l => { const f = factionOf(l.id); return <Link key={l.id} href={l.id === "global" ? "/magnet" : `/magnet/${l.id}`} aria-current={l.id === lane ? "page" : undefined} className="chip" data-theme={f?.slug}>{f && <Crest faction={f.slug} initial="" size={18} />}{l.name}</Link>; })}</div></div>)}
+    </nav>
     {error && <p className="notice" role="alert">{error}</p>}
     {state && !state.enabled && <p className="notice">This MAGNet lane is paused. Try another lane or <Link href="/browse">browse live streams</Link>.</p>}
     {state?.enabled && !featured && <div className="empty-live panel"><p><strong>Nothing is live in this lane right now.</strong> MAGNet starts the moment someone goes live.</p><p><Link href="/browse" className="button quiet">Browse</Link> <Link href="/war-map" className="button quiet">War map</Link></p></div>}
@@ -72,6 +82,7 @@ export function MagnetHype({ lane, account, viewerFaction }: { lane: string; acc
         </div>
         : <div className="watch-player"><LivePlayer key={shown!.broadcast_id} username={shown!.username} focused signedIn={signedIn} magnetLane={lane} /></div>}
       {merged.length > 1 && <div className="board-screens" role="tablist" aria-label="Co-stream members">{merged.map(m => <button key={m.username} type="button" role="tab" aria-selected={m.username === shown!.username} className={m.username === shown!.username ? "small" : "small quiet"} onClick={() => setTab({ of: featured.since, username: m.username })}>{m.display_name}</button>)}</div>}
+      {turn !== null && !featured.holding && <div className="magnet-turn" role="img" aria-label={`MAGNet moves on within ${minutes ?? 8} minute${minutes === 1 ? "" : "s"}`}><span style={{ width: `${Math.round(turn * 100)}%` }} /></div>}
       <p className="magnet-why"><span className="magnet-mark-inline" aria-hidden="true">MAGNet</span> <Link href={`/${shown!.username}/live`}><strong>{shown!.display_name}</strong></Link> · {shown!.title}{shown!.category && <span className="muted"> · {shown!.category}</span>}{shown!.label && <span className="tag-label">{shown!.label}</span>}<br /><span className="muted">{featured.reason}</span>
         {featured.squad?.mode === "SEPARATE" && featured.squad.members.length > 0 && <><br /><span className="muted">Co-streaming with {featured.squad.members.map((m, i) => <span key={m.username}>{i > 0 && ", "}<Link href={`/${m.username}/live`}>{m.display_name}</Link></span>)}</span></>}</p>
       {justWatched && <JustWatched key={justWatched.ended_at} previous={justWatched} signedIn={signedIn} onDismiss={() => setDismissed(justWatched.ended_at)} />}
@@ -80,6 +91,8 @@ export function MagnetHype({ lane, account, viewerFaction }: { lane: string; acc
         <p>Up next in <strong>{left}</strong>: <strong>{state!.next.stream.display_name}</strong> · {state!.next.reason}</p>
         <Link className="button small" href={`/${shown!.username}/live`}>Stay with {shown!.display_name}</Link>
       </div>}
+      {!featured.holding && <p className="magnet-actions"><Link className="button quiet small" href={`/${shown!.username}`}>Open channel</Link> <span className="muted small">Moves on within {minutes ?? 8} minute{minutes === 1 ? "" : "s"}, sooner if another stream has a moment.</span></p>}
+      {!featured.holding && state!.others.length > 0 && <section className="magnet-also" aria-labelledby="magnet-also-h"><h2 id="magnet-also-h" className="eyebrow">Also live in this lane</h2><div className="stream-grid shelf">{state!.others.map(s => <StreamCard key={s.username} s={s} viewerFaction={viewerFaction} />)}</div></section>}
     </>}
   </div>
   <HypeChat lane={lane} account={account} upNext={state?.next ? { name: state.next.stream.display_name, seconds: left } : null} />

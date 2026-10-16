@@ -17,7 +17,7 @@ export function StreamCard({ s, viewerFaction, fresh = false, languages }: { s: 
       <span className="stream-tags"><span className="tag-live">Live</span>{s.mature && <span className="tag-label mature-tag">Mature</span>}{ally && <span className="tag-ally">Ally</span>}{s.label && <span className="tag-label">{s.label}</span>}{foreign && <span className="tag-label">{languageName(s.language!)}</span>}</span>
       {fresh
         ? <span className="stream-started">Started {uptime(s.started_at)} ago</span>
-        : <><span className="stream-viewers">{s.viewers.toLocaleString()} watching</span><span className="stream-uptime">{uptime(s.started_at)}</span></>}
+        : <><span className="stream-uptime">{uptime(s.started_at)}</span><span className="stream-viewers">{s.viewers.toLocaleString()} watching</span></>}
     </span>
     <span className="stream-meta">
       <Crest faction={s.faction} initial={s.display_name.slice(0, 1).toUpperCase()} size={32} label={f?.name} />

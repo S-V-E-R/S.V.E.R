@@ -54,10 +54,18 @@ export default async function Browse({ searchParams }: { searchParams: Promise<{
   const viewerFaction = account?.faction ?? null;
   return <div className="home browse">
     <SectionHead id="browse-h" title={title} note={`${browse.data?.live ?? 0} live now · fair rotation, never by viewer count`} level={1} />
-    <nav className="genre-tabs" aria-label="Genres">
-      <Link href={link({ genre: null, category: null })} aria-current={!genre && !category ? "page" : undefined}>Everything</Link>
-      {genres.map(g => { const f = factionOf(held.get(g.id)); return <Link key={g.id} href={link({ genre: g.id, category: null })} aria-current={genre?.id === g.id && !category ? "page" : undefined}>
-        {f && <Crest faction={f.slug} initial="" size={20} label={`Held by ${f.name}`} />}{g.name} <span className="muted">{g.live}</span></Link>; })}
+    {/* Genres grouped by who holds them this week, so Browse reads as the war map's ground. */}
+    <nav className="genre-groups" aria-label="Genres">
+      <div className="genre-group"><span className="eyebrow">All ground</span><div className="genre-tabs"><Link href={link({ genre: null, category: null })} aria-current={!genre && !category ? "page" : undefined}>Everything</Link></div></div>
+      {[...FACTIONS.map(f => f.slug as string), null].map(holder => {
+        const group = genres.filter(g => (held.get(g.id) ?? null) === holder);
+        if (!group.length) return null;
+        const f = factionOf(holder);
+        return <div key={holder ?? "unclaimed"} className="genre-group" data-theme={f?.slug}>
+          <span className="eyebrow">{f ? <><Crest faction={f.slug} initial="" size={18} />{f.name} holds</> : "Unclaimed"}</span>
+          <div className="genre-tabs">{group.map(g => <Link key={g.id} href={link({ genre: g.id, category: null })} aria-current={genre?.id === g.id && !category ? "page" : undefined}>{g.name} <span className="muted">{g.live}</span></Link>)}</div>
+        </div>;
+      })}
     </nav>
     {!category && <TerritoryGrid genres={genre ? [genre] : genres} war={war} viewerFaction={viewerFaction} href={(g, c) => link({ genre: g.id, category: c.id })} />}
     <SectionHead id="browse-live-h" title={category ? "Live now" : genre ? `Live in ${genre.name}` : "Live now"} note="Ordered by MAGNet, not by viewer count" />
