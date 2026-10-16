@@ -1446,7 +1446,7 @@ Both are earned from records, like the rest of the catalog ([ACHIEVEMENTS.md](AC
   - **Links.**
   - **User card.**
   - **Username,** with "Claim an inactive username" as a disclosure.
-- **Preview and saving:** on desktop, a live preview of the header sits to the right and follows unsaved edits. Each section keeps its own Save and revision.
+- **Preview and saving:** a preview of the header as visitors see it sits to the right on desktop (above the sections on smaller screens) and refreshes each time a section saves. Each section keeps its own Save and revision.
 - **Old addresses:** `/settings/cosmetics`, `/studio/channel/header` and `/studio/channel/song` redirect to their sections. War Council, Wall settings, schedule, sponsors, setup, blocks and fan art stay in Studio, and the editor links to them.
 - **First-time setup** (`/settings/profile/setup`): four steps with the same live preview, and Skip on each step.
   1. Look: avatar, banner, theme variant.

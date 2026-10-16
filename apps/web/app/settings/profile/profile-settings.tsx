@@ -5,35 +5,79 @@ import { Avatar } from "../../../components/Avatar";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 import { linkUrl, platformNames, type Link as SocialLink, type Sizes } from "../../../lib/types";
+import { PersonaPreview } from "../../../components/persona/PersonaPreview";
+import { CosmeticsEditor } from "../../../components/persona/CosmeticsEditor";
+import { HeaderCopyEditor } from "../../../components/persona/HeaderCopyEditor";
+import { SongEditor } from "../../../components/persona/SongEditor";
+import { CurrentlyEditor, HomeEditor, SongWhyEditor, ThemeEditor } from "../../../components/persona/PersonaFields";
 
-type Me = { username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; links: SocialLink[]; platforms: string[]; revisions: { profile: number; links: number }; rename: { next_allowed_at: string | null; held_names: { name: string; released_at: string }[] }; mfa_enabled: boolean; restricted_until: string | null; internal: boolean; mood_presets: string[]; show_linked_accounts: boolean };
+export type Me = { username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; links: SocialLink[]; platforms: string[]; revisions: { profile: number; links: number }; rename: { next_allowed_at: string | null; held_names: { name: string; released_at: string }[] }; mfa_enabled: boolean; restricted_until: string | null; internal: boolean; mood_presets: string[]; show_linked_accounts: boolean };
 type Suggestions = { suggestions: { platform: string; url: string; label: string }[]; missing_handle: string[] };
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 const date = (iso: string) => new Date(iso).toLocaleDateString(undefined, { dateStyle: "long" });
 
-export default function ProfileSettings() {
+/** Your profile data, reloaded after each save, plus a version the preview follows. */
+export function useMe() {
   const [me, setMe] = useState<Me | null>(null);
-  const [load, setLoad] = useState("");
+  const [error, setError] = useState("");
+  const [version, setVersion] = useState(0);
   const refresh = useCallback(async () => {
     const result = await send<Me>("GET", "/api/me/profile");
-    if (result.ok) setMe(result.data); else setLoad(result.error);
+    if (result.ok) { setMe(result.data); setVersion(v => v + 1); } else setError(result.error);
   }, []);
   useLoad(refresh);
-  if (!me) return <p className="loading">{load || "Loading…"}</p>;
-  return <>
-    <h1>Profile</h1>
-    <p className="intro">Changes show on <Link href={`/${me.username}`}>your channel</Link> right away.</p>
-    {me.restricted_until && <p className="panel notice">Your channel is restricted. See <Link href="/settings/standing">Account standing</Link>.</p>}
-    <Username me={me} onSaved={refresh} />
-    <Identity me={me} onSaved={refresh} />
-    <Images me={me} onSaved={refresh} />
-    <Links me={me} onSaved={refresh} />
-    <Claim />
-    <Card me={me} onSaved={refresh} />
-  </>;
+  const bump = useCallback(() => setVersion(v => v + 1), []);
+  return { me, error, refresh, version, bump };
 }
 
-function Username({ me, onSaved }: { me: Me; onSaved: () => void }) {
+const PARTS: [string, string][] = [["look", "Look"], ["words", "Words"], ["sound", "Sound"], ["home", "Home"], ["links", "Links"], ["account", "Username"]];
+
+/**
+ * Your page (docs/PROFILES.md "Persona pass"): everything that makes your page yours, in one
+ * place, with a preview of your header that follows each save.
+ */
+export default function ProfileSettings() {
+  const { me, error, refresh, version, bump } = useMe();
+  if (!me) return <p className="loading">{error || "Loading…"}</p>;
+  return <div className="persona-editor">
+    <div className="persona-main">
+      <header className="page-head"><span className="eyebrow">Your page</span><h1>Make it yours</h1>
+        <p className="lead">Your look, your words, your song and your Home. Changes show on <Link href={`/${me.username}`}>your page</Link> as soon as you save. New here? <Link href="/settings/profile/setup">Set it up step by step</Link>.</p></header>
+      <nav className="persona-jump" aria-label="Sections">{PARTS.map(([id, label]) => <a key={id} href={`#${id}`}>{label}</a>)}</nav>
+      {me.restricted_until && <p className="panel notice">Your channel is restricted. See <Link href="/settings/standing">Account standing</Link>.</p>}
+      <div id="look" className="persona-part"><h2 className="part-title">Look</h2>
+        <Images me={me} onSaved={refresh} />
+        <ThemeEditor onSaved={bump} />
+        <CosmeticsEditor embedded onSaved={bump} />
+      </div>
+      <div id="words" className="persona-part"><h2 className="part-title">Words</h2>
+        <Identity me={me} onSaved={refresh} />
+        <CurrentlyEditor onSaved={bump} />
+        <HeaderCopyEditor embedded onSaved={bump} />
+        <p className="muted">Longer About me blocks and questions live in <Link href="/studio/channel/blocks">Creator Studio → About me</Link>.</p>
+      </div>
+      <div id="sound" className="persona-part"><h2 className="part-title">Sound</h2>
+        <SongEditor embedded onSaved={bump} />
+        <section className="panel section"><SongWhyEditor onSaved={bump} /></section>
+      </div>
+      <div id="home" className="persona-part"><h2 className="part-title">Home</h2>
+        <HomeEditor onSaved={bump} />
+        <p className="muted">Your War Council, Wall, schedule and sponsors are in <Link href="/studio/channel/war-council">Creator Studio</Link>.</p>
+      </div>
+      <div id="links" className="persona-part"><h2 className="part-title">Links</h2>
+        <Links me={me} onSaved={refresh} />
+        <Card me={me} onSaved={refresh} />
+      </div>
+      <div id="account" className="persona-part"><h2 className="part-title">Username</h2>
+        <Username me={me} onSaved={refresh} />
+        <details className="panel section claim-disclosure"><summary>Claim an inactive username</summary><Claim /></details>
+      </div>
+    </div>
+    <PersonaPreview username={me.username} version={version} />
+  </div>;
+}
+
+export function Username({ me, onSaved }: { me: Me; onSaved: () => void }) {
   const [state, setState] = useState<SaveState>({});
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -59,7 +103,7 @@ type ClaimRow = { id: string; username: string; status: "WAITING" | "KEPT" | "RE
 const claimStatus: Record<ClaimRow["status"], string> = { WAITING: "Waiting for the holder (30 days)", KEPT: "The holder kept it", READY: "Waiting for staff", RELEASED: "Yours", REJECTED: "Not released", WITHDRAWN: "Withdrawn" };
 
 /** Username claims: ask for a name held by an account inactive for 12 months. */
-function Claim() {
+export function Claim() {
   const [claims, setClaims] = useState<ClaimRow[]>([]);
   const [state, setState] = useState<SaveState>({});
   const load = useCallback(async () => {
@@ -90,7 +134,7 @@ function Claim() {
   </Section>;
 }
 
-function Identity({ me, onSaved }: { me: Me; onSaved: () => void }) {
+export function Identity({ me, onSaved }: { me: Me; onSaved: () => void }) {
   const [state, setState] = useState<SaveState>({});
   const [mood, setMood] = useState(me.mood_emoji);
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -114,7 +158,7 @@ function Identity({ me, onSaved }: { me: Me; onSaved: () => void }) {
   </Section>;
 }
 
-function Images({ me, onSaved }: { me: Me; onSaved: () => void }) {
+export function Images({ me, onSaved }: { me: Me; onSaved: () => void }) {
   const [state, setState] = useState<SaveState>({});
   async function upload(kind: "avatar" | "banner", file: File | undefined) {
     if (!file) return;
@@ -143,7 +187,7 @@ function Images({ me, onSaved }: { me: Me; onSaved: () => void }) {
   </Section>;
 }
 
-function Links({ me, onSaved }: { me: Me; onSaved: () => void }) {
+export function Links({ me, onSaved }: { me: Me; onSaved: () => void }) {
   const [links, setLinks] = useState<SocialLink[]>(me.links);
   const [state, setState] = useState<SaveState>({});
   const [hints, setHints] = useState<Suggestions | null>(null);
@@ -178,7 +222,7 @@ function Links({ me, onSaved }: { me: Me; onSaved: () => void }) {
   </Section>;
 }
 
-function Card({ me, onSaved }: { me: Me; onSaved: () => void }) {
+export function Card({ me, onSaved }: { me: Me; onSaved: () => void }) {
   const [state, setState] = useState<SaveState>({});
   async function toggle(value: boolean) {
     const result = await send("PUT", "/api/me/card-settings", { show_linked_accounts: value });

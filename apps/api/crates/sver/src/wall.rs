@@ -124,7 +124,7 @@ fn post_select() -> String {
          ($2::text IS NOT NULL AND EXISTS(SELECT 1 FROM wall_likes l WHERE l.post_id=p.id AND l.user_id=$2)) AS liked, \
          (SELECT count(*) FROM wall_replies r WHERE r.post_id=p.id AND {rv}) AS reply_count, \
          p.sticker, \
-         p.id=(SELECT f.id FROM wall_posts f WHERE f.wall_owner_id=p.wall_owner_id AND f.author_id<>f.wall_owner_id AND f.status='APPROVED' AND f.deleted_at IS NULL ORDER BY f.created_at,f.id LIMIT 1) AS first_to_sign \
+         coalesce(p.id=(SELECT f.id FROM wall_posts f WHERE f.wall_owner_id=p.wall_owner_id AND f.author_id<>f.wall_owner_id AND f.status='APPROVED' AND f.deleted_at IS NULL ORDER BY f.created_at,f.id LIMIT 1),false) AS first_to_sign \
          FROM wall_posts p JOIN channel_users a ON a.id=p.author_id WHERE p.wall_owner_id=$1 AND {pv}",
         chip = chip_sql("a"),
         rv = visible("r"),

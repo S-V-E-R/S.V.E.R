@@ -4659,6 +4659,11 @@ async fn persona_pass(env: &Env) {
             json!({"body": "Welcome!"}),
         )
         .await;
+    // Only the owner has posted: nobody is first to sign yet (and the page still loads).
+    let page = guest
+        .ok("GET", "/api/channels/PersonaHost", Value::Null)
+        .await;
+    assert_eq!(page["wall_preview"]["latest"][0]["first_to_sign"], false);
     guest
         .ok(
             "POST",
@@ -4688,7 +4693,10 @@ async fn persona_pass(env: &Env) {
         .await;
     let r = &page["viewer"]["relationship"];
     assert!(r["following_since"].is_string(), "{r}");
-    assert!(r["loyalty"].is_string(), "following earns the follow bonus, so a loyalty rank shows");
+    assert!(
+        r["loyalty"].is_string(),
+        "following earns the follow bonus, so a loyalty rank shows"
+    );
     assert_eq!(r["on_their_council"], false);
     assert!(
         owner
