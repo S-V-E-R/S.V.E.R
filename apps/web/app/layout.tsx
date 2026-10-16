@@ -95,7 +95,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         : <ul className="side-channels">{live.map(s => <li key={s.username}><Link href={`/${s.username}/live`}>
           <Crest faction={s.faction} initial={s.display_name.slice(0, 1).toUpperCase()} size={30} />
           <span className="side-channel-text"><span className="side-channel-name">{s.display_name}</span>{s.category && <span className="side-channel-category">{s.category}</span>}</span>
-          <span className="side-channel-count"><span className="live-dot" aria-hidden="true" />{s.viewers.toLocaleString()}<span className="sr-only"> watching</span></span>
+          <span className="side-channel-count"><span className="live-dot" aria-hidden="true" />{s.viewers > 0 ? <>{s.viewers.toLocaleString()}<span className="sr-only"> watching</span></> : "Live"}</span>
         </Link></li>)}</ul>}
     </section>}
   </>;

@@ -7,7 +7,7 @@ export function Uptime({ since }: { since: string }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(timer); }, []);
   const m = Math.max(0, Math.floor((now - Date.parse(since)) / 60_000));
-  return <span className="muted" title={`Started ${new Date(since).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}>Live {m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`}</span>;
+  return <span className="muted" title={`Started ${new Date(since).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}>Live {m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.floor(m / 1440)} d ${Math.floor(m / 60) % 24} h`}</span>;
 }
 
 type Transport = "webrtc" | "hls" | null;

@@ -60,7 +60,7 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
       </div>
     </section>
     <section className="channel-stream" aria-label="Stream"><LivePlayer username={c.username} /></section>
-    <Crowd username={c.username} />
+    <Crowd username={c.username} signedIn={!!data.viewer.signed_in} />
     {c.board && <Board username={c.username} />}
     {!!c.season_rewards?.length && <div className="season-banner" data-theme={c.season_rewards[0].faction}><FactionCrest faction={c.season_rewards[0].faction} size={44} /><div><strong>Season {c.season_rewards[0].season} champion</strong><p>{factionInfo(c.season_rewards[0].faction).name} · {c.season_rewards.map(r => `Season ${r.season}`).join(" · ")}</p></div><span className="badge">Season victor</span></div>}
     {c.song && <SongPlayer song={c.song} />}
