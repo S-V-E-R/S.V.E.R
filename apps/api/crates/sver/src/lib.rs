@@ -51,6 +51,7 @@ pub mod outside_emotes;
 pub mod overlays;
 pub mod parts;
 pub mod payouts;
+pub mod persona;
 pub mod playback;
 pub mod plays;
 pub mod probe;
@@ -622,6 +623,10 @@ fn profile_routes() -> Router<App> {
         )
         .route("/api/me/setup/photos/{id}", delete(st::delete_setup_photo))
         .route("/api/me/header", get(st::my_header).put(st::save_header))
+        .route(
+            "/api/me/persona",
+            get(crate::persona::mine).put(crate::persona::save),
+        )
         .route(
             "/api/me/readiness",
             get(st::my_readiness).put(st::save_readiness),

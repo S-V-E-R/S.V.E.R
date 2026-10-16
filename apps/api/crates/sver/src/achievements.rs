@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use sqlx::PgConnection;
 
 /// Key, name, what earns it.
-pub const CATALOG: [(&str, &str, &str); 19] = [
+pub const CATALOG: [(&str, &str, &str); 21] = [
     ("first_follow", "First Follow", "Followed a channel"),
     (
         "voice",
@@ -53,6 +53,12 @@ pub const CATALOG: [(&str, &str, &str); 19] = [
         "faithful",
         "Faithful",
         "Subscribed to a channel for 6 months",
+    ),
+    ("signatory", "Signatory", "Signed someone's Wall"),
+    (
+        "council_of_war",
+        "Council of War",
+        "Filled all 8 War Council seats",
     ),
 ];
 /// Chat name styles and the level each unlocks at (always in the faction's colors).
@@ -153,6 +159,16 @@ fn rules() -> Vec<(&'static str, &'static str, i64)> {
             "SELECT DISTINCT user_id FROM channel_subs WHERE months>=$1",
             6,
         ),
+        (
+            "signatory",
+            "SELECT DISTINCT author_id FROM wall_posts WHERE status='APPROVED' AND deleted_at IS NULL AND author_id<>wall_owner_id AND $1=$1",
+            0,
+        ),
+        (
+            "council_of_war",
+            "SELECT user_id FROM war_council GROUP BY user_id HAVING count(*)>=$1",
+            8,
+        ),
     ]
 }
 
@@ -202,16 +218,19 @@ pub async fn frame(db: &mut PgConnection, user: &str, level: i64) -> Res<i64> {
     let newest = progression::frame(level);
     Ok(chosen.map_or(newest, |f| i64::from(f).min(newest)))
 }
-/// Up to 3 showcased achievements, for the profile and user card.
+/// Up to 3 showcased achievements, for the profile and user card, with when each was earned.
 pub async fn showcase(db: &mut PgConnection, user: &str) -> Res<Vec<Value>> {
-    let keys: Vec<String> =
-        sqlx::query_scalar("SELECT unnest(showcase) FROM user_cosmetics WHERE user_id=$1")
-            .bind(user)
-            .fetch_all(db)
-            .await?;
-    Ok(keys
-        .iter()
-        .filter_map(|k| name(k).map(|(n, _)| json!({"key": k, "name": n})))
+    let rows: Vec<(String, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT s.key,a.earned_at FROM user_cosmetics c CROSS JOIN LATERAL unnest(c.showcase) WITH ORDINALITY s(key,n) LEFT JOIN user_achievements a ON a.user_id=c.user_id AND a.key=s.key WHERE c.user_id=$1 ORDER BY s.n",
+    )
+    .bind(user)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(k, at)| {
+            name(&k).map(|(n, d)| json!({"key": k, "name": n, "description": d, "earned_at": at}))
+        })
         .collect())
 }
 

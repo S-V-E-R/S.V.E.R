@@ -490,7 +490,7 @@ pub async fn channel(
         crate::social::war_council_read(&app, &mut db, &user.id, viewer_id, is_owner).await?;
     let wall_preview = crate::wall::preview(&app, &mut db, &user, viewer.as_ref()).await?;
     let schedule_next = crate::studio::next_occurrences(&mut db, &user.id, 3).await?;
-    let about_has_content: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile_blocks WHERE user_id=$1 AND enabled) OR EXISTS(SELECT 1 FROM sponsors WHERE user_id=$1 AND active) OR EXISTS(SELECT 1 FROM setup_items WHERE user_id=$1) OR EXISTS(SELECT 1 FROM setup_photos WHERE user_id=$1 AND status='VISIBLE') OR EXISTS(SELECT 1 FROM profiles WHERE user_id=$1 AND (setup_title<>'' OR setup_description<>''))")
+    let about_has_content: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sponsors WHERE user_id=$1 AND active) OR EXISTS(SELECT 1 FROM setup_items WHERE user_id=$1) OR EXISTS(SELECT 1 FROM setup_photos WHERE user_id=$1 AND status='VISIBLE') OR EXISTS(SELECT 1 FROM profiles WHERE user_id=$1 AND (setup_title<>'' OR setup_description<>''))")
         .bind(&user.id)
         .fetch_one(&mut *db)
         .await?;
@@ -499,8 +499,28 @@ pub async fn channel(
     } else {
         None
     };
-    Ok(Json(json!({
-        "channel": {
+    let persona =
+        crate::persona::channel_fields(&mut db, &user.id, user.faction.as_deref()).await?;
+    let streamed = persona["streamed"].as_bool().unwrap_or(false);
+    let has_schedule = !schedule_next["items"]
+        .as_array()
+        .is_none_or(|a| a.is_empty());
+    let tabs = json!({
+        "wall": true,
+        // Videos and Beacons only with content (the owner always sees them); Schedule for anyone
+        // who has streamed or set one (docs/PROFILES.md "Persona pass").
+        "videos": persona["has_videos"].as_bool().unwrap_or(false) || is_owner,
+        "beacons": persona["has_beacons"].as_bool().unwrap_or(false) || is_owner,
+        "schedule": streamed || has_schedule || is_owner,
+        "about": about_has_content || is_owner,
+        "fan_art": fan_art_enabled && (approved_fan_art || is_owner),
+    });
+    let blocks = crate::studio::blocks_json(&mut db, &user.id, true).await?;
+    let mut relation = relation;
+    if let (Some(v), false) = (viewer_id, is_owner) {
+        relation["relationship"] = crate::persona::relationship(&mut db, &user.id, v).await?;
+    }
+    let mut channel = json!({
             "username": user.username,
             "display_name": user.display_name,
             "bio": user.bio,
@@ -522,14 +542,14 @@ pub async fn channel(
             "creator_tier": crate::tiers::tier_of(&mut db, &user.id).await?,
             "shine": crate::shine::channel(&mut db, &user.id).await?,
             "supporter": crate::supporters::marks(&mut db, &user.id).await?,
-        },
-        "tabs": {
-            "wall": true,
-            // The Schedule tab always exists; an empty week renders an empty state.
-            "schedule": true,
-            "about": about_has_content || !user.bio.is_empty() || is_owner,
-            "fan_art": fan_art_enabled && (approved_fan_art || is_owner),
-        },
+    });
+    if let (Some(c), Some(p)) = (channel.as_object_mut(), persona.as_object()) {
+        c.extend(p.clone());
+    }
+    Ok(Json(json!({
+        "channel": channel,
+        "tabs": tabs,
+        "blocks": blocks,
         "fan_art_enabled": fan_art_enabled,
         "header": crate::studio::channel_header(&mut db, &user.id).await?,
         "war_council": war_council,

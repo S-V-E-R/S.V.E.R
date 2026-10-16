@@ -96,6 +96,8 @@ struct PostRow {
     likes: i64,
     liked: bool,
     reply_count: i64,
+    sticker: Option<String>,
+    first_to_sign: bool,
 }
 #[derive(FromRow)]
 struct ReplyRow {
@@ -120,7 +122,9 @@ fn post_select() -> String {
         "SELECT p.id,p.body,p.status,p.pinned_position,p.created_at,p.author_id,{chip} AS author,a.deleted_at IS NOT NULL AS author_deleted, \
          (SELECT count(*) FROM wall_likes l WHERE l.post_id=p.id) AS likes, \
          ($2::text IS NOT NULL AND EXISTS(SELECT 1 FROM wall_likes l WHERE l.post_id=p.id AND l.user_id=$2)) AS liked, \
-         (SELECT count(*) FROM wall_replies r WHERE r.post_id=p.id AND {rv}) AS reply_count \
+         (SELECT count(*) FROM wall_replies r WHERE r.post_id=p.id AND {rv}) AS reply_count, \
+         p.sticker, \
+         p.id=(SELECT f.id FROM wall_posts f WHERE f.wall_owner_id=p.wall_owner_id AND f.author_id<>f.wall_owner_id AND f.status='APPROVED' AND f.deleted_at IS NULL ORDER BY f.created_at,f.id LIMIT 1) AS first_to_sign \
          FROM wall_posts p JOIN channel_users a ON a.id=p.author_id WHERE p.wall_owner_id=$1 AND {pv}",
         chip = chip_sql("a"),
         rv = visible("r"),
@@ -221,6 +225,9 @@ async fn posts_json(
                 "like_count": row.likes,
                 "liked": row.liked,
                 "reply_count": row.reply_count,
+                "sticker": row.sticker,
+                // The oldest surviving signature by someone else (docs/PROFILES.md "The Wall, signed").
+                "first_to_sign": row.first_to_sign && row.status == "APPROVED",
                 "replies": first,
                 "more_replies": row.reply_count > first.len() as i64,
                 "can_delete": viewer.is_some_and(|v| v == row.author_id || v == owner_id) && row.status != "REMOVED",
@@ -388,7 +395,14 @@ fn review_status(
 #[derive(Deserialize)]
 pub struct Body {
     body: String,
+    /// One sticker from the fixed set, signatures only.
+    #[serde(default)]
+    sticker: Option<String>,
 }
+/// The fixed sticker set (docs/PROFILES.md "The Wall, signed").
+pub const STICKERS: [&str; 8] = [
+    "torch", "crown", "moon", "flame", "star", "heart", "gg", "wave",
+];
 /// POST /api/channels/{username}/wall
 pub async fn create_post(
     State(app): State<App>,
@@ -406,6 +420,10 @@ pub async fn create_post(
         return Err(deny(reason));
     }
     let body = text::plain(&input.body, "body", 1, 500, 8, true)?;
+    let sticker = input.sticker.as_deref().filter(|s| !s.is_empty());
+    if sticker.is_some_and(|s| !STICKERS.contains(&s)) {
+        return Err(Fail::field("sticker", "Choose one of the stickers."));
+    }
     rate(&app, format!("wall-post:min:{}", user.id), 10, 60).await?;
     rate(&app, format!("wall-post:day:{}", user.id), 50, 86400).await?;
     let author = crate::profiles::channel_user_by_id(&mut tx, &user.id)
@@ -415,13 +433,14 @@ pub async fn create_post(
     let id = new_id();
     ensure_profile(&mut tx, &owner.id).await?;
     sqlx::query(
-        "INSERT INTO wall_posts(id,wall_owner_id,author_id,body,status) VALUES($1,$2,$3,$4,$5)",
+        "INSERT INTO wall_posts(id,wall_owner_id,author_id,body,status,sticker) VALUES($1,$2,$3,$4,$5,$6)",
     )
     .bind(&id)
     .bind(&owner.id)
     .bind(&user.id)
     .bind(&body)
     .bind(status)
+    .bind(sticker)
     .execute(&mut *tx)
     .await?;
     if status == "APPROVED" {
