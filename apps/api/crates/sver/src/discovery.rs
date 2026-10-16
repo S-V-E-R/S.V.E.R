@@ -50,6 +50,9 @@ pub struct Stream {
     pub mature: bool,
     /// ISO 639-1 code or "other"; None until the streamer picks one.
     pub language: Option<String>,
+    /// Started within 30 minutes of the owner's previous broadcast ending: a restart, not a new
+    /// stream, so it doesn't count as "just went live".
+    pub restarted: bool,
 }
 
 /// Every public live stream: LIVE, or RECONNECTING inside its grace window, on an eligible channel.
@@ -62,7 +65,8 @@ pub async fn live_streams(db: &mut PgConnection) -> Res<Vec<Stream>> {
           NOT EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at) AS first_stream,
           coalesce((SELECT max(p.ended_at) FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at)<b.started_at-interval '30 days',false) AS returning,
           (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id) AS charity,
-          coalesce(s.mature,false) AS mature, s.language
+          coalesce(s.mature,false) AS mature, s.language,
+          EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.ended_at>b.started_at-interval '30 minutes' AND p.started_at<b.started_at) AS restarted
          FROM broadcasts b JOIN channel_users cu ON cu.id=b.owner_id AND cu.eligible
          LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id
          WHERE b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>now())",
@@ -115,13 +119,26 @@ pub fn rotate(
     streams
 }
 
+/// Channels the viewer has blocked or that blocked them (empty when signed out).
+pub async fn hidden(db: &mut PgConnection, viewer: Option<&str>) -> Res<Vec<String>> {
+    let Some(viewer) = viewer else {
+        return Ok(Vec::new());
+    };
+    Ok(sqlx::query_scalar("SELECT blocked_id FROM user_blocks WHERE blocker_id=$1 UNION SELECT blocker_id FROM user_blocks WHERE blocked_id=$1")
+        .bind(viewer)
+        .fetch_all(db)
+        .await?)
+}
+
 /// Moves the shared rotation pointer one place for every slot that has passed (at most once round)
 /// and returns it. It covers every live stream, not one viewer's view of them.
+/// It runs on the caller's connection, so a request never holds one connection while waiting for
+/// a second.
 /// ponytail: one locked row per discovery request; cache per slot if this ever gets hot.
-async fn leader(app: &App, streams: &[Stream], slot: i64) -> Res<Option<Place>> {
+async fn leader(db: &mut PgConnection, streams: &[Stream], slot: i64) -> Res<Option<Place>> {
     let mut places: Vec<Place> = streams.iter().map(place).collect();
     places.sort();
-    let mut tx = app.db.begin().await?;
+    let mut tx = sqlx::Connection::begin(&mut *db).await?;
     let row: Option<(i64, Option<DateTime<Utc>>, Option<String>)> = sqlx::query_as(
         "SELECT slot,leader_started_at,leader_id FROM discovery_rotation FOR UPDATE",
     )
@@ -178,7 +195,7 @@ pub fn card(app: &App, s: &Stream, now: DateTime<Utc>) -> Value {
         "avatar":profiles::avatar_json(app,s.avatar_key.as_deref()),"faction":s.faction,"title":s.title,
         "category":s.category,"category_id":s.category_id,"genre":s.genre,"started_at":s.started_at,"viewers":s.viewers,
         "thumbnail":format!("/api/discovery/thumbnails/{}",s.broadcast_id),"label":label,"charity":s.charity,
-        "fresh":now-s.started_at<Duration::minutes(FRESH_MINUTES),"mature":s.mature,"language":s.language})
+        "fresh":!s.restarted && now-s.started_at<Duration::minutes(FRESH_MINUTES),"mature":s.mature,"language":s.language})
 }
 
 /// Resolve at image-load time: a lazy card must not point at a still already replaced by capture.
@@ -196,8 +213,10 @@ async fn thumbnail(State(app): State<App>, Path(id): Path<String>) -> Res<Respon
     if crate::media::removal::held(&mut tx, &key).await? {
         return Ok(StatusCode::NOT_FOUND.into_response());
     }
-    let bytes = app.config.media.storage.get(&app.http, &key).await?;
+    // The lock and the connection are released before the storage read, so slow storage never
+    // pins database connections; a still swapped out meanwhile just reads as missing.
     tx.commit().await?;
+    let bytes = app.config.media.storage.get(&app.http, &key).await?;
     Ok(match bytes {
         Some(bytes) => ([(header::CONTENT_TYPE, "image/webp")], bytes).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
@@ -224,12 +243,9 @@ async fn rotation_for(
 ) -> Res<Vec<Stream>> {
     let mut db = app.db.acquire().await?;
     let mut streams = live_streams(&mut db).await?;
-    let lead = leader(app, &streams, slot(at)).await?;
-    if let Some(viewer) = viewer {
-        let hidden: Vec<String> = sqlx::query_scalar("SELECT blocked_id FROM user_blocks WHERE blocker_id=$1 UNION SELECT blocker_id FROM user_blocks WHERE blocked_id=$1")
-            .bind(viewer).fetch_all(&mut *db).await?;
-        streams.retain(|s| !hidden.contains(&s.owner_id));
-    }
+    let lead = leader(&mut db, &streams, slot(at)).await?;
+    let blocked = hidden(&mut db, viewer).await?;
+    streams.retain(|s| !blocked.contains(&s.owner_id));
     let home = home_genres(&mut db, faction).await?;
     let mut ordered = rotate(streams, &home, lead.as_ref());
     // Under-18 viewers: labeled streams leave the list after ordering, like blocks.
@@ -239,7 +255,7 @@ async fn rotation_for(
 }
 
 /// Channels that were live in the last 14 days (newest first), for empty states.
-async fn recently_live(app: &App, db: &mut PgConnection) -> Res<Vec<Value>> {
+async fn recently_live(app: &App, db: &mut PgConnection, blocked: &[String]) -> Res<Vec<Value>> {
     let rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as("SELECT owner_id,max(ended_at) FROM broadcasts b WHERE state='ENDED' AND end_reason IS DISTINCT FROM 'revoked' AND ended_at>now()-interval '14 days' GROUP BY owner_id ORDER BY max(ended_at) DESC LIMIT 12")
         .fetch_all(&mut *db)
         .await?;
@@ -247,6 +263,7 @@ async fn recently_live(app: &App, db: &mut PgConnection) -> Res<Vec<Value>> {
     let users = profiles::public_channels(db, &ids).await?;
     Ok(rows
         .into_iter()
+        .filter(|(id, _)| !blocked.contains(id))
         .filter_map(|(id, ended)| {
             let u = users.iter().find(|u| u.id == id)?;
             Some(json!({"user":profiles::chip(app,u),"ended_at":ended}))
@@ -302,11 +319,19 @@ async fn home(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     };
     let mut fresh: Vec<&Stream> = rotation
         .iter()
-        .filter(|s| now - s.started_at < Duration::minutes(FRESH_MINUTES))
+        .filter(|s| !s.restarted && now - s.started_at < Duration::minutes(FRESH_MINUTES))
         .collect();
     fresh.sort_by_key(|s| std::cmp::Reverse(s.started_at));
     // Spotlights: staff picks, then automatic first streams and returns (live ones only).
-    let staff = staff_spotlights(&app, &mut db).await?;
+    let blocked = hidden(&mut db, viewer.as_deref()).await?;
+    let mut staff = staff_spotlights(&app, &mut db).await?;
+    staff.retain(|(id, _)| !blocked.contains(id));
+    // Staff picks come first and rotate like everything else, so with more than six each gets its
+    // turn at the front.
+    if !staff.is_empty() {
+        let len = staff.len() as i64;
+        staff.rotate_left(slot(now).rem_euclid(len) as usize);
+    }
     let mut spotlights: Vec<Value> = staff
         .iter()
         .map(|(id, v)| {
@@ -326,7 +351,7 @@ async fn home(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     }
     spotlights.truncate(6);
     let recent = if rotation.is_empty() {
-        recently_live(&app, &mut db).await?
+        recently_live(&app, &mut db, &blocked).await?
     } else {
         Vec::new()
     };
@@ -402,7 +427,9 @@ async fn live(
             })
         }
         Some(list) => Some(codes(list)),
-    };
+    }
+    // Nothing to filter by (no languages saved and none sent) means no filter, not an empty list.
+    .filter(|l| !l.is_empty());
     let items: Vec<Value> = rotation
         .iter()
         .filter(|s| {
@@ -417,7 +444,8 @@ async fn live(
         .collect();
     let mut db = app.db.acquire().await?;
     let recent = if items.is_empty() {
-        recently_live(&app, &mut db).await?
+        let blocked = hidden(&mut db, viewer.as_deref()).await?;
+        recently_live(&app, &mut db, &blocked).await?
     } else {
         Vec::new()
     };
@@ -566,6 +594,7 @@ async fn suggestions(
         charity: None,
         mature: false,
         language: None,
+        restarted: false,
     };
     let items: Vec<Value> = suggest(&rotation, &current, 8)
         .iter()
@@ -706,6 +735,7 @@ mod tests {
             charity: None,
             mature: false,
             language: None,
+            restarted: false,
         }
     }
     fn ids(v: &[Stream]) -> Vec<String> {
