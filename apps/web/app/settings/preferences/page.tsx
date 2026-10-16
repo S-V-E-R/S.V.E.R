@@ -2,8 +2,9 @@
 import { useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
 import { LANGUAGES, fromBrowser } from "../../../lib/languages";
+import { ADS_OFF_WARNING } from "../../../components/Ads";
 
-type Preferences = { skip_mature_warning: boolean; adult: boolean; languages: string[]; only_my_languages: boolean };
+type Preferences = { skip_mature_warning: boolean; adult: boolean; languages: string[]; only_my_languages: boolean; ads_off: boolean };
 
 /** Settings -> Preferences (docs/CHANNEL_ADDITIONS.md "Mature label"). */
 export default function PreferencesPage() {
@@ -24,6 +25,12 @@ export default function PreferencesPage() {
       <p className="muted small">{prefs.adult ? "Streams labeled mature play without the warning screen first." : "Streams labeled mature aren't available on accounts under 18."}</p>
     </section>}
     {prefs && <LanguagePrefs prefs={prefs} save={save} />}
+    {prefs && <section className="panel">
+      <h2>Ads</h2>
+      <p className="muted small">Ads on S.V.E.R never come before a stream and never cover it: during a break the stream keeps playing beside the ad, muted with captions on. While they&apos;re on, you earn Ad Valor, a share of every ad you watch.</p>
+      <label className="checkbox"><input type="checkbox" checked={!prefs.ads_off} onChange={event => { if (event.target.checked || window.confirm(ADS_OFF_WARNING)) void save({ ads_off: !event.target.checked }); }} /> Show me ads</label>
+      {prefs.ads_off && <p className="muted small">Ads are off. You don&apos;t see any and don&apos;t earn Ad Valor.</p>}
+    </section>}
     {message && <p role="status" className="form-message">{message}</p>}
   </>;
 }

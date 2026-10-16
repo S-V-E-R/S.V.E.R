@@ -14,7 +14,8 @@ Joe approved this spec as written, including every **Proposed** default, on Octo
 **Build step 1 built October 16, 2026** (migration 0111, `adnet.rs`, `/advertise`, Staff → Ad network): the rate card, advertiser accounts, ad uploads (pictures through the image pipeline; videos probed and re-encoded to 720p H.264/AAC with a poster frame) and staff review, quotes with admission control (held checkouts count against inventory), Stripe checkout into each campaign's prepaid ledger account, late payments, cancellation, withdrawal after the end date, staff refunds, and a full refund when an ad is never approved within 30 days. **Ad sales stay off** behind the "Ad sales" switch. Uploads are limited to 11 MB (the server's 12 MB request limit), so a 30-second video should be exported at about 3 Mbps. Stripe Tax waits for the tax decision in step 4: with it off, the checkout total is the quoted price. 
 
 **Build step 2 built October 16, 2026** (migration 0112, `adserve.rs`, `components/Ads.tsx`):
-- **Serving:** in ad breaks (an overlay over the player, which keeps the stream running muted behind it), as a feed card after every 8th Beacon, and in a labelled slot on Home and Browse.
+- **Serving:** in ad breaks (in the corner of the player beside the stream, which keeps playing muted with captions; see [ADS.md](ADS.md) "Ad breaks never get in the way"), as a feed card after every 8th Beacon, and in a labelled slot on Home and Browse.
+- **Viewers who turned ads off** ([ADS.md](ADS.md) "Turning ads off") are never served, so they're not in the forecast either; inventory only counts people who see ads.
 - **Pacing:** the campaign furthest behind its even daily schedule is served first; a campaign at or ahead of today's target waits. One past its end date is served first until whole (the make-good).
 - **Tickets and verification:** every ad served gets a single-use ticket. It counts only when the session is still Counted or Trusted (breaks) or a signed-in account in good standing (feed and site), the ad was visible and advancing for 2 s of video or 1 s of a picture (checked against the server's clock), and it isn't a repeat: the same ad once per 10 minutes, a campaign 3 times a day. Otherwise it's rejected with its reason (expired, hidden, too_short, unverified_session, frequency_cap, campaign_full). The last impression marks a campaign delivered, and a campaign never counts more than it paid for.
 - **Clicks:** go through `/api/ads/click/{ticket}`.
@@ -55,7 +56,7 @@ An impression counts only when a real, watching person saw the ad. The checks re
 
 | Placement | Format | Where | Who earns |
 | --- | --- | --- | --- |
-| Streamer ad break | Video, 15 or 30 s, 16:9 | Plays in the player during a break the streamer starts; the stream keeps running behind it | Streamer, viewers' pool, S.V.E.R ([split](#the-split)) |
+| Streamer ad break | Video, 15 or 30 s, 16:9 | Plays in the corner of the player during a break the streamer starts; the stream keeps playing beside it, muted with captions | Streamer, viewers' pool, S.V.E.R ([split](#the-split)) |
 | Beacons feed card | Video or image, 9:16, up to 30 s | A card marked "Ad" every 8 Beacons in the feed (**Proposed**) | Viewers' pool, S.V.E.R |
 | Site placement | Image, 16:9 | One labelled slot on Home and Browse, outside every shelf | Viewers' pool, S.V.E.R |
 

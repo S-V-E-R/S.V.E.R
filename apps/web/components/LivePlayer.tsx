@@ -185,7 +185,8 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const preferred = live?.live ? live.playback?.preferred ?? null : null;
   const isOwner = live?.live ? live.is_owner : false;
   const captioned = !!(live?.live && live.captions);
-  const wantCaptions = captioned && captionsOn;
+  // Captions come on for an ad break, so muted viewers keep following along (docs/ADS.md).
+  const wantCaptions = captioned && (captionsOn || adOn);
   const accepted = useSyncExternalStore(onMature, () => matureAccepted(username, !!signedIn), () => false);
   // A labeled stream waits behind the warning: nothing plays until the viewer chooses Watch.
   const warning = !!(live?.live && live.mature && live.mature_warn !== false && !live.is_owner && !accepted);
@@ -313,11 +314,11 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   </div></div>;
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p>{meta}</div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
-  return <div className={focused ? "live-player focused" : "live-player"}>
+  return <div className={`live-player${focused ? " focused" : ""}${adOn ? " ad-on" : ""}`}>
     {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} onPause={() => setPaused(true)} onPlay={() => setPaused(false)} aria-label={`${live.title}, live`} />}
     {!rewind && <PlayerEffects username={username} video={video} transport={transport} />}
     {!rewind && status && <p className="player-status" role="status">{status}</p>}
-    {!rewind && live.ad_break && !live.is_owner && <AdBreak key={live.ad_break.id} username={username} endsAt={live.ad_break.ends_at} muted={!!muted || autoMuted} onActive={setAdOn} />}
+    {!rewind && live.ad_break && !live.is_owner && <AdBreak key={live.ad_break.id} username={username} endsAt={live.ad_break.ends_at} muted={!!muted || autoMuted} signedIn={!!signedIn} captioned={!!captioned} onActive={setAdOn} />}
     {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {!rewind && paused && phase === "playing" && <button type="button" className="player-action" onClick={() => {
       const element = video.current;
