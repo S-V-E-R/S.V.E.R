@@ -1,5 +1,7 @@
 # Module 7: CrowdSync
 
+**Closed October 15, 2026 by user acceptance.** Boards, polls, predictions, counters, Skills, rallies, emote combos, Surge, the OBS bridge and the JavaScript SDK were already built and tested; the last item, the engine SDKs, now compiles in Unity 6.6 and Unreal Engine 5.8, and both Crowd Runner example games ran end to end against the gateway.
+
 Scoped October 3, 2026 by Joe. Builds after Module 6 (Support), which brings the Engagement Valor that board presses spend. **Status: phases 1 to 3 built October 6, 2026 (boards; polls, predictions and counters; Skills, Faction Rally, emote combos and Surge), and part 2 (the integration gateway, OBS bridge and Game SDKs) built the same day; see "Implementation status". The Unity and Unreal SDKs were compiled (Unity 6.6, Unreal Engine 5.8) and their Crowd Runner example games run end to end against a local API, October 15, 2026.**
 
 CrowdSync is how viewers change what happens on stream. It brings back the idea of interactive boards and Skills from an earlier platform, rebuilt from the legacy CrowdSync design (whose in-page board worked) without its flaws: game and bridge access to server internals, no protection against bots, no account for video delay, and money that could buy attention.
