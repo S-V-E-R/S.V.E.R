@@ -740,6 +740,32 @@ async fn refund(State(app): State<App>, jar: CookieJar, Path(n): Path<i64>) -> R
     tx.commit().await?;
     Ok(Json(json!({"refunding": true})))
 }
+/// A full refund or a lost chargeback made outside the Wall's own flow (Stripe's dashboard,
+/// `/admin/money`, a dispute): the tile comes down and its spot is free, as for a refund. A tile
+/// removed for breaking the rules keeps its spot empty and sold. Called from support.rs.
+pub(crate) async fn taken_back(tx: &mut PgConnection, intent: &str) -> Res<()> {
+    sqlx::query("UPDATE wall_extra_payments SET refunded_at=coalesce(refunded_at,now()) WHERE payment_intent=$1")
+        .bind(intent)
+        .execute(&mut *tx)
+        .await?;
+    let n: Option<i64> = sqlx::query_scalar("SELECT n FROM wall_tiles WHERE payment_intent=$1 AND status IN ('in_review','live','rejected','refund_due') FOR UPDATE")
+        .bind(intent)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if let Some(n) = n {
+        sqlx::query("DELETE FROM wall_cells WHERE tile_n=$1")
+            .bind(n)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE wall_tiles SET status='refunded',pending=NULL,updated_at=now() WHERE n=$1",
+        )
+        .bind(n)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
 async fn owe_refund(db: &mut PgConnection, n: i64) -> Res<()> {
     sqlx::query("DELETE FROM wall_cells WHERE tile_n=$1")
         .bind(n)
@@ -781,15 +807,14 @@ pub async fn tick(app: &App) -> Res<()> {
         .await?;
     // Each refund stands alone: one Stripe refuses (or that is down) never holds up the rest.
     for intent in extra {
-        let refund = stripe::post(
+        let refunded = stripe::refund(
             &app.http,
             &app.config.stripe,
-            "refunds",
             &[("payment_intent", intent.clone())],
-            Some(&format!("wall-extra-refund-{intent}")),
+            &format!("wall-extra-refund-{intent}"),
         )
         .await;
-        if refund.is_err() {
+        if !refunded {
             eprintln!("wall_event=extra_refund outcome=retry");
             continue;
         }
@@ -801,15 +826,14 @@ pub async fn tick(app: &App) -> Res<()> {
     for (n, intent) in due {
         if let Some(intent) = &intent {
             // Idempotent by tile: a retry after a lost response never refunds twice.
-            let refund = stripe::post(
+            let refunded = stripe::refund(
                 &app.http,
                 &app.config.stripe,
-                "refunds",
                 &[("payment_intent", intent.clone())],
-                Some(&format!("wall-refund-{n}")),
+                &format!("wall-refund-{n}"),
             )
             .await;
-            if refund.is_err() {
+            if !refunded {
                 eprintln!("wall_event=refund outcome=retry");
                 continue;
             }
