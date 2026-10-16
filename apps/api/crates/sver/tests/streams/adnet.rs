@@ -670,6 +670,28 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert_eq!(code, StatusCode::OK, "{served}");
+    // A viewer who turns ads off gets none, in any placement (docs/ADS.md "Turning ads off").
+    let quiet = person(e, "an-quiet", "NetQuiet", true).await;
+    let (code, prefs) = call(
+        e,
+        "PUT",
+        "/api/me/preferences",
+        Some(&quiet),
+        json!({"ads_off": true}),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{prefs}");
+    assert_eq!(prefs["ads_off"], true);
+    assert!(
+        serve(
+            Some(quiet.clone()),
+            json!({"placement": "site", "browser_id": "quiet-browser-00000001"})
+        )
+        .await
+        .1["ad"]
+            .is_null(),
+        "ads off means no ads"
+    );
     let ticket = served["ad"]["ticket"].clone();
     assert_eq!(served["ad"]["kind"], "image");
     assert_eq!(served["ad"]["advertiser"], "Beta Games LLC");

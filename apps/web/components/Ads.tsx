@@ -7,7 +7,23 @@ import "../styles/ads.css";
 /** An ad handed over by /api/ads/serve, with its single-use impression ticket (docs/ADVERTISERS.md). */
 export type ServedAd = { ticket: string; kind: "video" | "image"; src: string; poster: string; title: string; advertiser: string | null; click: string; min_ms: number; duration_ms: number | null };
 
+/** Guests turn ads off per browser; accounts turn them off in Settings → Preferences (docs/ADS.md "Turning ads off"). */
+export function adsOffHere(): boolean {
+  try { return localStorage.getItem("sver-ads") === "off"; } catch { return false; }
+}
+/** Turns ads off for this viewer: on the account when signed in, otherwise in this browser. */
+export async function turnAdsOff(signedIn: boolean): Promise<string | null> {
+  if (signedIn) {
+    const r = await send("PUT", "/api/me/preferences", { ads_off: true });
+    return r.ok ? null : r.error;
+  }
+  try { localStorage.setItem("sver-ads", "off"); return null; } catch { return "Your browser blocked saving this. Sign in to turn ads off for your account."; }
+}
+/** What turning ads off costs, said before it happens. */
+export const ADS_OFF_WARNING = "You won't see ads anywhere on S.V.E.R, and you won't earn Ad Valor, your share of the ads you watch. Streamers still earn from everyone else.";
+
 export async function fetchAd(placement: "break" | "feed" | "site", channel?: string): Promise<ServedAd | null> {
+  if (adsOffHere()) return null;
   const r = await send<{ ad: ServedAd | null }>("POST", "/api/ads/serve", { placement, channel, browser_id: browserId() });
   return r.ok ? r.data.ad : null;
 }
@@ -56,11 +72,17 @@ export function AdFrame({ ad, className = "", muted = true, onEnd }: { ad: Serve
   </aside>;
 }
 
-/** A streamer's ad break over the player: the stream keeps running behind it (muted meanwhile). */
-export function AdBreak({ username, endsAt, muted, onActive }: { username: string; endsAt: string; muted: boolean; onActive: (on: boolean) => void }) {
+/**
+ * A streamer's ad break (docs/ADS.md "Ad breaks never get in the way"). The stream never stops or
+ * hides: it moves to the top-left of the player, muted with captions on, and the ad plays in the
+ * corner beside it. Chat, rallies and the board keep working; anyone can turn ads off from here.
+ */
+export function AdBreak({ username, endsAt, muted, signedIn, captioned, onActive }: { username: string; endsAt: string; muted: boolean; signedIn: boolean; captioned: boolean; onActive: (on: boolean) => void }) {
   const [ad, setAd] = useState<ServedAd | null>(null);
   const [left, setLeft] = useState(() => Math.max(0, Math.round((Date.parse(endsAt) - Date.now()) / 1000)));
   const [done, setDone] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [note, setNote] = useState("");
   useEffect(() => {
     let stopped = false;
     void fetchAd("break", username).then(served => {
@@ -78,11 +100,22 @@ export function AdBreak({ username, endsAt, muted, onActive }: { username: strin
     }, 1000);
     return () => clearInterval(timer);
   }, [endsAt, onActive]);
+  async function off() {
+    const error = await turnAdsOff(signedIn);
+    if (error) { setNote(error); return; }
+    setDone(true); onActive(false);
+  }
   if (!ad || done) return null;
-  return <div className="ad-break">
-    <AdFrame ad={ad} muted={muted} onEnd={() => { setDone(true); onActive(false); }} />
-    <span className="ad-countdown" role="status">Back to the stream in {left} s</span>
-  </div>;
+  return <>
+    <AdFrame ad={ad} className="ad-break" muted={muted} onEnd={() => { setDone(true); onActive(false); }} />
+    <div className="ad-break-note" role="status">
+      <p><strong>Ad break</strong> · back to full size in {left} s. {captioned ? "The stream keeps going, muted, with captions on." : "The stream keeps going, muted."}</p>
+      {asking
+        ? <p className="ad-off-ask">{ADS_OFF_WARNING} <button type="button" className="small" onClick={() => void off()}>Turn off ads</button> <button type="button" className="small quiet" onClick={() => setAsking(false)}>Keep them</button></p>
+        : <button type="button" className="link-button" onClick={() => setAsking(true)}>Turn off ads</button>}
+      {note && <p role="alert">{note}</p>}
+    </div>
+  </>;
 }
 
 /** The labelled site slot on Home and Browse (signed-in viewers only). */
@@ -119,6 +152,7 @@ export function StudioAds() {
   if (!view) return null;
   return <section className="panel section" aria-labelledby="ads-h">
     <h2 id="ads-h">Ads</h2>
+    <p className="muted small">During a break your stream keeps playing beside the ad, muted, so turn on captions in OBS and viewers can keep following along. Viewers can turn ads off.</p>
     <p className="muted small">Ads are off until you turn them on, and only play during breaks you start: never before your stream. Subscribers never see them. You earn your tier&apos;s share of each verified impression.</p>
     {!view.can_earn ? <p className="small">Set up payouts first: ad earnings go to your payout balance.</p>
       : <label className="check"><input type="checkbox" checked={view.enabled} onChange={e => void toggle(e.target.checked)} /> Run ads on my channel</label>}

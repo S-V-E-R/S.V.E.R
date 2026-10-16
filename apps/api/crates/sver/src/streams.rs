@@ -1027,17 +1027,20 @@ pub struct Preferences {
     /// Home shows only streams in those languages.
     #[serde(default)]
     only_my_languages: Option<bool>,
+    /// No ads anywhere, and no Ad Valor (docs/ADS.md "Turning ads off").
+    #[serde(default)]
+    ads_off: Option<bool>,
 }
 async fn preferences_json(db: &mut PgConnection, user: &str) -> Result<Value> {
     let adult = auth::is_adult(&mut *db, user).await?;
-    let (skip, languages, only): (bool, Vec<String>, bool) = sqlx::query_as(
-        "SELECT skip_mature_warning,languages,only_my_languages FROM users WHERE id=$1",
+    let (skip, languages, only, ads_off): (bool, Vec<String>, bool, bool) = sqlx::query_as(
+        "SELECT skip_mature_warning,languages,only_my_languages,ads_off FROM users WHERE id=$1",
     )
     .bind(user)
     .fetch_one(db)
     .await?;
     Ok(
-        json!({"skip_mature_warning": skip && adult, "adult": adult, "languages": languages, "only_my_languages": only}),
+        json!({"skip_mature_warning": skip && adult, "adult": adult, "languages": languages, "only_my_languages": only, "ads_off": ads_off}),
     )
 }
 /// GET and PUT /api/me/preferences: "Don't warn me about mature streams" (only adults can use it).
@@ -1064,11 +1067,12 @@ async fn save_preferences(
     {
         return Err(Error::bad("Choose up to 10 languages from the list."));
     }
-    sqlx::query("UPDATE users SET skip_mature_warning=coalesce($2,skip_mature_warning),languages=coalesce($3,languages),only_my_languages=coalesce($4,only_my_languages) WHERE id=$1")
+    sqlx::query("UPDATE users SET skip_mature_warning=coalesce($2,skip_mature_warning),languages=coalesce($3,languages),only_my_languages=coalesce($4,only_my_languages),ads_off=coalesce($5,ads_off) WHERE id=$1")
         .bind(&user.id)
         .bind(input.skip_mature_warning)
         .bind(&input.languages)
         .bind(input.only_my_languages)
+        .bind(input.ads_off)
         .execute(&mut *tx)
         .await?;
     let body = preferences_json(&mut tx, &user.id).await?;

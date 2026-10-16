@@ -78,9 +78,24 @@ async fn running_break(
     Ok(sqlx::query_as("SELECT a.id,a.broadcast_id,a.ends_at FROM ad_breaks a JOIN broadcasts b ON b.id=a.broadcast_id AND b.state IN ('LIVE','RECONNECTING') WHERE a.channel_id=$1 AND a.ends_at>now() ORDER BY a.starts_at DESC LIMIT 1")
         .bind(channel).fetch_optional(db).await?)
 }
-/// For /live: the running break, for anyone but the streamer and the channel's subscribers.
+/// Whether this account turned ads off (docs/ADS.md "Turning ads off").
+async fn ads_off(db: &mut PgConnection, user: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT ads_off FROM users WHERE id=$1")
+        .bind(user)
+        .fetch_optional(db)
+        .await?
+        .unwrap_or(false))
+}
+
+/// For /live: the running break, for anyone but the streamer, the channel's subscribers and
+/// viewers who turned ads off.
 pub async fn for_live(app: &App, channel: &str, viewer: Option<&str>) -> Res<Value> {
     if viewer == Some(channel) {
+        return Ok(Value::Null);
+    }
+    if let Some(v) = viewer
+        && ads_off(&mut *app.db.acquire().await?, v).await?
+    {
         return Ok(Value::Null);
     }
     if let Some(v) = viewer
@@ -143,6 +158,12 @@ async fn serve(
     sec::reserve(&app, vec![format!("ad-serve-viewer:{key}")], 20, 60).await?;
     let none = || Ok(Json(json!({"ad": null})));
     let mut db = app.db.acquire().await?;
+    // Turned off: no ad in any placement, so no impression and no Ad Valor either.
+    if let Some(u) = &user
+        && ads_off(&mut db, &u.id).await?
+    {
+        return none();
+    }
     // Context: who's watching, where, and what the place is about.
     type Context = (Option<String>, Option<String>, Vec<String>, Vec<String>);
     let (channel, break_id, genres, languages): Context = if input.placement == "break" {
