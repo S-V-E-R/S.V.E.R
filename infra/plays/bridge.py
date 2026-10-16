@@ -36,7 +36,8 @@ def deliver(bus, config, data):
     bus.set(config["viewers_key"], json.dumps({"authenticatedTrusted": viewers, "ts": int(time.time() * 1000)}), ex=30)
     if command:
         # At-most-once input: Core never reissues this round, even if delivery is interrupted.
-        subscribers = bus.publish(config["command_channel"], json.dumps({"command": command, "windowNumber": data["round"]}))
+        # ts lets the runner drop a command that waited too long (it was busy loading or saving).
+        subscribers = bus.publish(config["command_channel"], json.dumps({"command": command, "windowNumber": data["round"], "ts": int(time.time() * 1000)}))
         print(f"plays_command round={data['round']} command={command} listeners={subscribers}", flush=True)
 
 
