@@ -11,7 +11,7 @@ S.V.E.R is built one module at a time. Each module is fully specified, built, an
 | 4 | Factions | Myria, Aetheron, Glint; membership, weekly genre checkpoints, seasonal rewards, private councils and faction hubs | Done |
 | 5 | MAGNet | Fair-rotation discovery, recommendations, stream-to-stream handoff, including genre, faction and co-stream lanes and MAGNet chat. Closed October 15, 2026 after acceptance with three live streams: rotation, suggestions, stream-end handoff, search and empty states. | Done |
 | 6 | Support | Subscriptions, Valor and tributes, channel rewards, co-streams, payouts. Live on Stripe since October 6, 2026. | Done |
-| 7 | CrowdSync | Interactive boards, Skills, polls and predictions, faction rallies. Boards, polls, predictions, counters, Skills, rallies, emote combos, Surge, the OBS bridge and the JavaScript game SDK are built; the Unity and Unreal SDKs await engine testing. | In progress |
+| 7 | CrowdSync | Interactive boards, Skills, polls and predictions, faction rallies, emote combos, Surge, the OBS bridge and game SDKs for JavaScript, Unity and Unreal. Closed October 15, 2026 after the Unity and Unreal SDKs compiled and their example games ran end to end. | Done |
 | 8 | VODs and clips | Past broadcasts, permanent Highlights, clipping and chat replay. Closed October 15, 2026 after production acceptance: recording, rewind, expiry with files removed, chapters, Highlights, live and VOD clips, approval, deletion and chat replay. | Done |
 | 9 | Beacons | Short vertical videos that lead to live streams, with comments, faction tags and copyright notices. Closed October 15, 2026 after production acceptance of Beacons made from clips; video uploads stay closed for now. | Done |
 
