@@ -12,6 +12,19 @@ pub fn fingerprints(bytes: &[u8], image: &DynamicImage) -> Vec<String> {
     vec![hex(&Sha256::digest(bytes)), hex(&pixels.finalize())]
 }
 
+/// Fingerprints for any stored object: the byte hash always, plus the pixel hash and video-frame
+/// hash when it decodes as an image. A file that won't decode (corrupt, truncated, a format the
+/// decoder rejects) is still indexed and still hidden, so it can never stall indexing or removal.
+fn identify(bytes: &[u8]) -> (Vec<String>, Option<i64>) {
+    match decode(bytes, Kind::Banner) {
+        Ok(decoded) => (
+            fingerprints(bytes, &decoded),
+            super::frames::image_hash(&decoded),
+        ),
+        Err(_) => (vec![hex(&Sha256::digest(bytes))], None),
+    }
+}
+
 pub async fn upload_allowed(db: &mut PgConnection, processed: &Processed) -> Res<()> {
     // Serialize publication with quarantine registration. Record checks again in its transaction.
     sqlx::query("SELECT pg_advisory_xact_lock(1414087745)")
@@ -44,8 +57,7 @@ pub async fn index_existing(app: &App) -> Res<usize> {
                 .await?;
             continue;
         };
-        let decoded = decode(&bytes, Kind::Banner)?;
-        let hashes = fingerprints(&bytes, &decoded);
+        let hashes = identify(&bytes).0;
         sqlx::query("INSERT INTO media_fingerprints(root,hashes) VALUES($1,$2) ON CONFLICT(root) DO UPDATE SET hashes=(SELECT ARRAY(SELECT DISTINCT unnest(media_fingerprints.hashes || EXCLUDED.hashes)))")
             .bind(root).bind(hashes).execute(&app.db).await?;
         sqlx::query("UPDATE media_objects SET fingerprinted=true WHERE key=$1")
@@ -240,10 +252,10 @@ pub async fn quarantine(app: &App, root: &str) -> Res<()> {
         let mut frames = vec![];
         for key in &keys {
             if let Some(bytes) = app.config.media.storage.get(&app.http, key).await? {
-                let decoded = decode(&bytes, Kind::Banner)?;
+                let (hashes, frame) = identify(&bytes);
                 sqlx::query("INSERT INTO media_fingerprints(root,hashes) VALUES($1,$2) ON CONFLICT(root) DO UPDATE SET hashes=(SELECT ARRAY(SELECT DISTINCT unnest(media_fingerprints.hashes || EXCLUDED.hashes)))")
-                    .bind(root).bind(fingerprints(&bytes,&decoded)).execute(&mut *tx).await?;
-                frames.extend(super::frames::image_hash(&decoded));
+                    .bind(root).bind(hashes).execute(&mut *tx).await?;
+                frames.extend(frame);
                 originals.insert(key.clone(), json!(STANDARD.encode(bytes)));
             }
         }
