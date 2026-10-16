@@ -127,9 +127,12 @@ void USverBoardClient::Handle(const FString& Message)
 		FString Control;
 		if (Event->TryGetStringField(TEXT("control"), Control))
 		{
-			FString Text;
+			FString Text, PressId;
+			bool bConfirm = false;
 			Event->TryGetStringField(TEXT("text"), Text);
-			OnPress.Broadcast(Control, Username, Text);
+			Event->TryGetStringField(TEXT("id"), PressId);
+			Event->TryGetBoolField(TEXT("confirm"), bConfirm);
+			OnPress.Broadcast(Control, Username, Text, PressId, bConfirm);
 		}
 		else
 		{
@@ -148,6 +151,10 @@ void USverBoardClient::Handle(const FString& Message)
 			LastBoardJson = Message;
 		}
 		OnBoardChanged.Broadcast(Message);
+	}
+	else if (Type == TEXT("board_result"))
+	{
+		OnResult.Broadcast(Event->GetStringField(TEXT("id")), Event->GetStringField(TEXT("control")), Event->GetStringField(TEXT("outcome")));
 	}
 	else if (Type == TEXT("error"))
 	{

@@ -7,8 +7,10 @@ Connect your stream's board ([docs/CROWDSYNC.md](../docs/CROWDSYNC.md)) to OBS a
 | [`bridge/`](bridge) | The S.V.E.R bridge: board presses switch OBS scenes, sources and filters | Tested (`node bridge/test.mjs`) |
 | [`sdk-js/`](sdk-js) | JavaScript/TypeScript SDK for browser and Node games | Tested (`node sdk-js/test.mjs`) |
 | [`example-game/`](example-game) | Crowd Runner, a small browser game built on the JS SDK | Runs in any browser |
-| [`sdk-unity/`](sdk-unity) | Unity package (`tv.sver.board`) | Written against Unity 2021.3+ APIs; not yet compiled in CI |
-| [`sdk-unreal/`](sdk-unreal) | Unreal Engine 5 plugin (`SverBoard`) | Written against UE 5.x APIs; not yet compiled in CI |
+| [`sdk-unity/`](sdk-unity) | Unity package (`tv.sver.board`) | Compiled in Unity 6.6; run end to end against a local API (October 15, 2026) |
+| [`example-unity/`](example-unity) | Crowd Runner for Unity, on the Unity package | Builds a Windows player: `Unity -batchmode -quit -projectPath integrations/example-unity -executeMethod Build.Windows`; run with `-sverToken <token> [-sverGateway <url>]` |
+| [`sdk-unreal/`](sdk-unreal) | Unreal Engine 5 plugin (`SverBoard`) | Compiled with UE 5.8; run end to end against a local API (October 15, 2026) |
+| [`example-unreal/`](example-unreal) | Crowd Runner for Unreal, on the plugin: an actor for levels and a headless commandlet | `UnrealEditor-Cmd CrowdRunner.uproject -run=CrowdRunner -token=<token> [-gateway=<url>] [-seconds=60]` |
 | [`streamdeck/`](streamdeck) | Stream Deck plugin: title, raid, polls and predictions, highlight markers, board pause | Tested against fakes (`node streamdeck/test.mjs`); not yet run on a real Stream Deck |
 | [`automation/`](automation) | Automation bridge: S.V.E.R events into Streamer.bot (DoAction) and SAMMI (webhook triggers) | Tested against fakes (`node automation/test.mjs`); not yet run against real Streamer.bot or SAMMI |
 

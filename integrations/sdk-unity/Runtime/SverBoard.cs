@@ -24,6 +24,10 @@ namespace Sver.Board
     /// <summary>A viewer pressed a control (a button, a goal or a text input).</summary>
     public sealed class Press
     {
+        /// <summary>The press, for Capture and Release.</summary>
+        public string Id;
+        /// <summary>A "Game confirms" control: call Capture(Id) once it happened, or Release(Id).</summary>
+        public bool Confirm;
         public string Control;
         public string Label;
         public string Username;
@@ -58,6 +62,8 @@ namespace Sver.Board
         public event Action<JObject> BoardChanged;
         /// <summary>Labels, availability or goal progress changed.</summary>
         public event Action<JObject> StateChanged;
+        /// <summary>A "Game confirms" press was captured or released ("id", "control", "outcome").</summary>
+        public event Action<JObject> Result;
         public event Action<string> Error;
 
         /// <summary>The latest snapshot of the published board.</summary>
@@ -150,6 +156,8 @@ namespace Sver.Board
                     if (message["control"] == null) { Effect?.Invoke(message); break; }
                     Pressed?.Invoke(new Press
                     {
+                        Id = (string)message["id"],
+                        Confirm = (bool?)message["confirm"] ?? false,
                         Control = (string)message["control"],
                         Label = (string)message["label"],
                         Username = (string)message["user"]?["username"],
@@ -177,6 +185,9 @@ namespace Sver.Board
                         Current["goals"] = message["goals"];
                     }
                     StateChanged?.Invoke(message);
+                    break;
+                case "board_result":
+                    Result?.Invoke(message);
                     break;
                 case "error":
                     Error?.Invoke((string)message["message"]);
