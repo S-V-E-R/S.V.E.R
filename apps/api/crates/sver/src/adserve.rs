@@ -32,6 +32,10 @@ const TICKET_MINUTES: i64 = 10;
 /// Per person: the same ad at most once per 10 minutes, one campaign at most 3 times a day.
 const REPEAT_MINUTES: i64 = 10;
 const DAILY_CAP: i64 = 3;
+/// Per person, across every campaign: verified impressions a day.
+const DAILY_TOTAL: i64 = 20;
+/// Feed and site ads need real watching on S.V.E.R within this many days.
+const RECENT_DAYS: i64 = 7;
 
 fn browser_ok(id: &str) -> bool {
     (16..=64).contains(&id.len()) && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
@@ -129,12 +133,30 @@ struct Candidate {
     audience: String,
     teen_safe: bool,
 }
-/// A signed-in account in good standing (feed and site impressions need one).
+/// Feed and site impressions need a signed-in account in good standing that watched for real
+/// recently: a Counted or Trusted live session, or a counted Beacon view, within RECENT_DAYS. Those
+/// passed viewer integrity's heartbeat, visibility and Turnstile checks, which an ad request alone
+/// can't show.
 async fn standing(db: &mut PgConnection, user: &auth::User) -> Res<bool> {
-    Ok(user.email_verified
-        && profiles::channel_user_by_id(db, &user.id)
+    if !user.email_verified
+        || !profiles::channel_user_by_id(db, &user.id)
             .await?
-            .is_some_and(|c| c.eligible))
+            .is_some_and(|c| c.eligible)
+    {
+        return Ok(false);
+    }
+    // RECENT_DAYS is a constant; values are bound.
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM playback_leases WHERE viewer_key=$1 AND level IN ('counted','trusted') AND last_beat_at>now()-interval '{RECENT_DAYS} days') OR EXISTS(SELECT 1 FROM beacon_playback WHERE viewer_key=$1 AND counted AND day>=current_date-{RECENT_DAYS})")))
+        .bind(format!("u:{}", user.id)).fetch_one(db).await?)
+}
+/// One person's serves and reports run one at a time, so parallel tabs or scripts can't slip past
+/// the frequency caps between a check and its write.
+async fn lock_viewer(tx: &mut PgConnection, key: &str) -> Res<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('ad-viewer:'||$1,0))")
+        .bind(key)
+        .execute(tx)
+        .await?;
+    Ok(())
 }
 
 /// POST /api/ads/serve: picks the approved ad most behind its schedule that fits this viewer and
@@ -217,12 +239,24 @@ async fn serve(
         None => None,
     };
     let adult = age.is_some_and(|a| a >= 18);
-    sqlx::query("INSERT INTO ad_opportunities(day,placement,count) VALUES(current_date,$1,1) ON CONFLICT(day,placement) DO UPDATE SET count=ad_opportunities.count+1")
-        .bind(&input.placement).execute(&mut *db).await?;
+    drop(db);
+    let mut tx = app.db.begin().await?;
+    lock_viewer(&mut tx, &key).await?;
+    // The forecast counts eligible viewers a day, each once per placement.
+    let first = sqlx::query("INSERT INTO ad_reach(day,placement,viewer_key) VALUES(current_date,$1,$2) ON CONFLICT DO NOTHING")
+        .bind(&input.placement).bind(&key).execute(&mut *tx).await?.rows_affected() == 1;
+    if first {
+        sqlx::query("INSERT INTO ad_opportunities(day,placement,count) VALUES(current_date,$1,1) ON CONFLICT(day,placement) DO UPDATE SET count=ad_opportunities.count+1")
+            .bind(&input.placement).execute(&mut *tx).await?;
+    }
+    if today_total(&mut tx, &key).await? >= DAILY_TOTAL {
+        tx.commit().await?;
+        return none();
+    }
     // REPEAT_MINUTES and DAILY_CAP are constants; values are bound.
     let candidates: Vec<Candidate> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT c.id,c.creative_id,c.impressions::bigint AS impressions,c.delivered::bigint AS delivered,c.starts_on,c.ends_on,c.audience,a.teen_safe FROM ad_campaigns c JOIN ad_creatives a ON a.id=c.creative_id AND a.status='approved' WHERE c.status='running' AND c.placement=$1 AND c.delivered<c.impressions AND (cardinality(c.genres)=0 OR c.genres && $2) AND (cardinality(c.languages)=0 OR c.languages && $3) AND NOT EXISTS(SELECT 1 FROM ad_serves s WHERE s.viewer_key=$4 AND s.creative_id=c.creative_id AND s.served_at>now()-interval '{REPEAT_MINUTES} minutes' AND s.outcome IS DISTINCT FROM 'rejected') AND (SELECT count(*) FROM ad_serves s WHERE s.viewer_key=$4 AND s.campaign_id=c.id AND s.served_at>now()-interval '1 day' AND s.outcome IS DISTINCT FROM 'rejected')<{DAILY_CAP}")))
         .bind(&input.placement).bind(&genres).bind(&languages).bind(&key)
-        .fetch_all(&mut *db).await?;
+        .fetch_all(&mut *tx).await?;
     let today = Utc::now().date_naive();
     // Adults see any approved ad their targeting allows; anyone else only teen-safe, all-ages ads.
     let chosen = candidates
@@ -233,14 +267,18 @@ async fn serve(
         })
         .max_by(|a, b| a.0.total_cmp(&b.0));
     let Some((_, campaign)) = chosen else {
+        tx.commit().await?;
         return none();
     };
     let id = profiles::new_id();
     sqlx::query("INSERT INTO ad_serves(id,campaign_id,creative_id,placement,viewer_key,user_id,channel_id,break_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
         .bind(&id).bind(&campaign.id).bind(&campaign.creative_id).bind(&input.placement).bind(&key)
         .bind(user.as_ref().map(|u| &u.id)).bind(&channel).bind(&break_id)
-        .execute(&mut *db).await?;
-    let ad = crate::adnet::creative_media(&app, &mut db, &campaign.creative_id).await?;
+        .execute(&mut *tx).await?;
+    tx.commit().await?;
+    let ad =
+        crate::adnet::creative_media(&app, &mut *app.db.acquire().await?, &campaign.creative_id)
+            .await?;
     let video = ad["video"].is_string();
     Ok(Json(json!({"ad": {
         "ticket": id, "kind": if video { "video" } else { "image" },
@@ -319,6 +357,8 @@ async fn impression(
             None => false,
         },
     };
+    lock_viewer(&mut tx, &key).await?;
+    let total = today_total(&mut tx, &key).await?;
     // REPEAT_MINUTES is a constant; values are bound.
     let repeats: (i64, i64) = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT count(*) FILTER (WHERE creative_id=$2 AND decided_at>now()-interval '{REPEAT_MINUTES} minutes'),count(*) FILTER (WHERE campaign_id=$3 AND decided_at>now()-interval '1 day') FROM ad_serves WHERE viewer_key=$1 AND outcome='verified'")))
         .bind(&key).bind(&creative).bind(&campaign).fetch_one(&mut *tx).await?;
@@ -330,7 +370,7 @@ async fn impression(
         Some("too_short")
     } else if !session {
         Some("unverified_session")
-    } else if repeats.0 > 0 || repeats.1 >= DAILY_CAP {
+    } else if repeats.0 > 0 || repeats.1 >= DAILY_CAP || total >= DAILY_TOTAL {
         Some("frequency_cap")
     } else {
         None
@@ -359,7 +399,19 @@ async fn impression(
                 )
                 .await?;
             }
-            None => reason = Some("campaign_full"),
+            None => {
+                let full: bool = sqlx::query_scalar(
+                    "SELECT delivered>=impressions FROM ad_campaigns WHERE id=$1",
+                )
+                .bind(&campaign)
+                .fetch_one(&mut *tx)
+                .await?;
+                reason = Some(if full {
+                    "campaign_full"
+                } else {
+                    "campaign_stopped"
+                });
+            }
         }
     }
     sqlx::query("UPDATE ad_serves SET outcome=$2,reason=$3,decided_at=now() WHERE id=$1")
@@ -376,16 +428,32 @@ async fn impression(
     Ok(Json(json!({"counted": reason.is_none(), "reason": reason})))
 }
 
+/// Verified impressions for this person in the last day, across every campaign.
+async fn today_total(db: &mut PgConnection, key: &str) -> Res<i64> {
+    Ok(sqlx::query_scalar("SELECT count(*) FROM ad_serves WHERE viewer_key=$1 AND outcome='verified' AND decided_at>now()-interval '1 day'")
+        .bind(key).fetch_one(db).await?)
+}
+
 /// The k-th impression's value in tenths of a cent: the running total's step, so a fully delivered
 /// campaign moves exactly what was paid.
 pub fn impression_value(amount_cents: i64, impressions: i64, k: i64) -> i64 {
     let total = |n: i64| amount_cents * 10 * n / impressions.max(1);
     total(k) - total(k - 1)
 }
+/// An account's share of one impression, `value` × `percent` ÷ 100. It accumulates in
+/// `ad_share_carry`, so the fractions add up across impressions; this pays the whole tenths of a
+/// cent it completes.
+async fn share(db: &mut PgConnection, account: &str, value: i64, percent: i64) -> Res<i64> {
+    let added = value * percent;
+    let total: i64 = sqlx::query_scalar("INSERT INTO ad_share_carry(account,hundredths) VALUES($1,$2) ON CONFLICT(account) DO UPDATE SET hundredths=ad_share_carry.hundredths+$2 RETURNING hundredths")
+        .bind(account).bind(added).fetch_one(db).await?;
+    Ok(total / 100 - (total - added) / 100)
+}
 /// Splits one verified impression (docs/ADVERTISERS.md "The split"): its value leaves the
 /// campaign's prepaid account as ad revenue; the streamer's tier share (breaks, when they can earn)
-/// and the viewer's 5% (signed in, 13 or older, and Trusted for breaks) move out of the platform's
-/// share as for subscriptions; rounding stays with S.V.E.R.
+/// and the viewer's 5% (signed in, 13 or older, Trusted) move out of the platform's share as for
+/// subscriptions. Shares accumulate per account, so they never round to nothing and never exceed
+/// their percentage; the rest stays with S.V.E.R.
 #[allow(clippy::too_many_arguments)]
 async fn settle(
     db: &mut PgConnection,
@@ -406,22 +474,27 @@ async fn settle(
         && crate::support::can_earn(db, channel).await?
     {
         let percent = crate::tiers::split(db, channel).await?;
-        streamer_share = value * percent / 100;
-        entries.push((format!("usd:earnings:{channel}"), streamer_share));
+        let account = format!("usd:earnings:{channel}");
+        streamer_share = share(db, &account, value, percent).await?;
+        entries.push((account, streamer_share));
     }
     let mut viewer_share = 0;
     if let Some(user) = viewer {
         let teen_or_older = crate::support::age(db, user)
             .await?
             .is_some_and(|a| a >= 13);
-        let trusted = match break_id {
+        // Breaks: Trusted on this broadcast. Feed and site: Trusted on a live session recently.
+        let trusted: bool = match break_id {
             Some(id) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM playback_leases l JOIN ad_breaks b ON b.broadcast_id=l.broadcast_id WHERE b.id=$1 AND l.viewer_key=$2 AND l.level='trusted' AND l.expires_at>now())")
                 .bind(id).bind(key).fetch_one(&mut *db).await?,
-            None => true,
+            // RECENT_DAYS is a constant; values are bound.
+            None => sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM playback_leases WHERE viewer_key=$1 AND level='trusted' AND last_beat_at>now()-interval '{RECENT_DAYS} days')")))
+                .bind(key).fetch_one(&mut *db).await?,
         };
         if teen_or_older && trusted {
-            viewer_share = value * 5 / 100;
-            entries.push((format!("usd:adv:{user}"), viewer_share));
+            let account = format!("usd:adv:{user}");
+            viewer_share = share(db, &account, value, 5).await?;
+            entries.push((account, viewer_share));
         }
     }
     entries.push(("usd:platform".into(), -(streamer_share + viewer_share)));
@@ -441,10 +514,21 @@ async fn settle(
     Ok(())
 }
 
-/// GET /api/ads/click/{ticket}: counts the click once, then goes to the advertiser's page.
-async fn click(State(app): State<App>, Path(ticket): Path<String>) -> Res<Redirect> {
-    let link: Option<String> = sqlx::query_scalar("UPDATE ad_serves s SET clicked_at=coalesce(s.clicked_at,now()) FROM ad_creatives a WHERE s.id=$1 AND a.id=s.creative_id RETURNING a.link")
-        .bind(&ticket).fetch_optional(&app.db).await?;
+/// GET /api/ads/click/{ticket}: records the click once, then goes to the advertiser's page.
+/// Dashboards count clicks on verified impressions only; past the rate limit a click still goes
+/// through, unrecorded.
+async fn click(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(ticket): Path<String>,
+) -> Res<Redirect> {
+    let ip = sec::client_ip(&app, peer, &headers);
+    let record = sec::reserve(&app, vec![format!("ad-click:{ip}")], 30, 60)
+        .await
+        .is_ok();
+    let link: Option<String> = sqlx::query_scalar("UPDATE ad_serves s SET clicked_at=CASE WHEN $2 THEN coalesce(s.clicked_at,now()) ELSE s.clicked_at END FROM ad_creatives a WHERE s.id=$1 AND a.id=s.creative_id RETURNING a.link")
+        .bind(&ticket).bind(record).fetch_optional(&app.db).await?;
     link.map(|l| Redirect::to(&l)).ok_or_else(Fail::missing)
 }
 
@@ -585,6 +669,10 @@ pub async fn tick(app: &App) -> Res<()> {
     // TICKET_MINUTES is a constant.
     sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE ad_serves SET outcome='rejected',reason='expired',decided_at=now() WHERE outcome IS NULL AND served_at<now()-interval '{TICKET_MINUTES} minutes'")))
         .execute(&app.db).await?;
+    // The forecast reads the last 14 days of reach.
+    sqlx::query("DELETE FROM ad_reach WHERE day<current_date-15")
+        .execute(&app.db)
+        .await?;
     Ok(())
 }
 

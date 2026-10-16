@@ -7,7 +7,7 @@ import { send, useLoad } from "../../../../lib/client-api";
 type Rate = { placement: string; cpm_cents: number | null; min_spend_cents: number; daily_estimate: number };
 type Day = { day: string; forecast: number; promised: number; sellable: number };
 type Creative = { id: string; format: string; title: string; link: string; picture: string; video: string | null; advertiser: { name: string; website: string; username: string } | null };
-type Campaign = { id: string; name: string; advertiser: string | null; placement: string; impressions: number; delivered: number; amount_cents: number; refund_cents: number; starts_on: string; ends_on: string; status: string };
+type Campaign = { id: string; name: string; advertiser: string | null; placement: string; impressions: number; delivered: number; amount_cents: number; refund_cents: number; starts_on: string; ends_on: string; status: string; refund_error: string | null };
 type Revenue = { placements: { placement: string; impressions: number; gross: number; streamers: number; viewers: number }[]; rejected: { reason: string; count: number }[] };
 type View = { revenue: Revenue; rate_card: Rate[]; inventory: { placement: string; days: Day[] }[]; review: Creative[]; campaigns: Campaign[]; sales_open: boolean };
 
@@ -51,7 +51,7 @@ export default function AdNetwork() {
   }
   if (!view) return state.error ? <p role="alert" className="form-message error">{state.error}</p> : <p className="loading">Loading…</p>;
   return <><h1>Ad network</h1>
-    <p>S.V.E.R&apos;s own approved ads (docs/ADVERTISERS.md). Ad sales are <strong>{view.sales_open ? "open" : "off"}</strong>; turn them on in <Link href="/admin/switches">Switches</Link> only after the advertiser terms, privacy policy, legal review and tax decision. <Link href="/admin/ads">Test book</Link></p>
+    <p>S.V.E.R&apos;s own approved ads (docs/ADVERTISERS.md). Ad sales are <strong>{view.sales_open ? "open" : "off"}</strong> (the switch stops new sales; campaigns already paid keep running); turn them on in <Link href="/admin/switches">Switches</Link> only after the advertiser terms, privacy policy, legal review and tax decision. <Link href="/admin/ads">Test book</Link></p>
     <Section title="Rate card" intro="Price per 1,000 verified impressions; leave it empty to keep a placement off sale. The daily estimate is the starting forecast of verified impressions a day, until delivery history exists. Only 70% of the forecast is sold. Existing campaigns keep their price.">
       <form onSubmit={saveRates}>
         <div className="table-scroll"><table className="table"><thead><tr><th scope="col">Placement</th><th scope="col">CPM ($)</th><th scope="col">Minimum spend ($)</th><th scope="col">Daily estimate</th></tr></thead>
@@ -87,8 +87,8 @@ export default function AdNetwork() {
     </Section>
     <Section title="Campaigns">
       {view.campaigns.length === 0 ? <p className="muted">None yet.</p> : <div className="table-scroll"><table className="table"><thead><tr><th scope="col">Campaign</th><th scope="col">Advertiser</th><th scope="col">Placement</th><th scope="col">Delivered</th><th scope="col">Dates</th><th scope="col">Paid</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
-        <tbody>{view.campaigns.map(c => <tr key={c.id}><th scope="row">{c.name}</th><td>{c.advertiser ?? "(deleted)"}</td><td>{placements[c.placement]}</td><td>{c.delivered.toLocaleString()} / {c.impressions.toLocaleString()}</td><td>{c.starts_on} to {c.ends_on}</td><td>{dollars(c.amount_cents)}{c.refund_cents > 0 ? ` (refunded ${dollars(c.refund_cents)})` : ""}</td><td>{c.status}</td>
-          <td>{(c.status === "paid" || c.status === "running") && <button type="button" className="small quiet" onClick={() => refund(c)}>Refund undelivered</button>}</td></tr>)}</tbody></table></div>}
+        <tbody>{view.campaigns.map(c => <tr key={c.id}><th scope="row">{c.name}</th><td>{c.advertiser ?? "(deleted)"}</td><td>{placements[c.placement]}</td><td>{c.delivered.toLocaleString()} / {c.impressions.toLocaleString()}</td><td>{c.starts_on} to {c.ends_on}</td><td>{dollars(c.amount_cents)}{c.refund_cents > 0 ? ` (refunded ${dollars(c.refund_cents)})` : ""}</td><td>{c.status}{c.refund_error ? <><br /><span className="small" role="alert">Stripe declined the refund ({c.refund_error}). Fix the cause, then retry.</span></> : null}</td>
+          <td>{(c.status === "paid" || c.status === "running") && <button type="button" className="small quiet" onClick={() => refund(c)}>Refund undelivered</button>}{c.refund_error && <button type="button" className="small quiet" onClick={() => refund(c)}>Retry refund</button>}</td></tr>)}</tbody></table></div>}
     </Section>
     <Status state={state} />
   </>;

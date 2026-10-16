@@ -28,6 +28,17 @@ Joe approved this spec as written, including every **Proposed** default, on Octo
 - **Dashboards:** advertisers see served, verified, rejected by reason, clicks and verified per day for each campaign; streamers see ad earnings in Creator Studio (they join the payout balance); viewers see Ad Valor in Wallet; staff see ad revenue by placement and split, and rejected-impression reasons, on Staff → Ad network.
 - **Reporting:** Raven's Eye money by kind shows `ad_purchase`, `ad_impression`, `ad_unused` and `ad_taken_back`; open data has an "Ad revenue" line (`ads_cents`, gross before the shares).
 
+**Review fixes, October 16, 2026** (migration 0116, from an independent review of steps 1 to 3):
+- One person's serves and reports now run one at a time, so parallel tabs or scripts can't slip past the frequency caps.
+- Feed and site ads need an account that watched for real within 7 days (a Counted or Trusted live session, or a counted Beacon view). On top of the per-campaign caps, a person counts for at most 20 verified impressions a day.
+- The measured forecast counts each eligible viewer once a day per placement, not each request.
+- A refund made outside the campaign's own flow stops the campaign, and the job refunds the rest of the undelivered part. An open chargeback pauses the campaign; winning resumes it and losing ends it.
+- A refund Stripe definitely declines waits on Staff → Ad network with Stripe's reason, and staff retry it.
+- A payment that lands after its hold lapsed is re-checked against inventory. A campaign accepted late keeps its length from the day it's accepted.
+- Clicks count on verified impressions only, rate-limited per network.
+- Streamers' and viewers' shares accumulate per account, so a share under a tenth of a cent per impression is still paid as it adds up.
+- Ad-break videos are 15 to 30 seconds long.
+
 Next: step 4, the terms, privacy and tax work before sales open.
 
 ## How the guarantee works
@@ -35,7 +46,7 @@ Next: step 4, the terms, privacy and tax work before sales open.
 S.V.E.R can only promise impressions it can actually serve. Three rules keep the promise.
 
 1. **Sell only what exists (admission control).** When an advertiser picks impressions, dates and targeting, the checkout quotes them only if the forecast covers it:
-   - **Forecast:** verified impressions per placement, genre and day, from the last 14 days of real delivery. **Proposed:** before there's history, staff set a starting estimate.
+   - **Forecast:** verified impressions per placement, genre and day, from the last 14 days of real delivery: eligible viewers a day (each counted once per placement) times the share of served ads that verified. **Proposed:** before there's history, staff set a starting estimate.
    - **Safety margin:** sellable = forecast × 70% (**Proposed**), minus impressions already promised to running and accepted campaigns in the same window.
    - If the request doesn't fit, the advertiser sees the most that fits and the soonest dates that would fit the full amount. They can't buy more than that.
 2. **Pace delivery.** Each campaign aims for an even daily share between its start and end. When choosing which ad to serve, campaigns furthest behind schedule go first; a campaign ahead of schedule waits.
@@ -47,16 +58,16 @@ The forecast, committed and sellable numbers are on the staff page, so staff can
 
 An impression counts only when a real, watching person saw the ad. The checks reuse viewer integrity ([LIVE_STREAMS.md](LIVE_STREAMS.md) "Viewer integrity") and Beacons view counting ([BEACONS.md](BEACONS.md)):
 
-- **Who:** a playback session at the Counted or Trusted level, or a signed-in session that passed the same checks for the feed and site. Sessions marked Pending, Excluded or flagged as automation never count.
-- **Seen:** the page is visible and the ad is on screen. A video ad counts after 2 seconds of advancing playback with at least half of it in view; an image counts after 1 second with half in view (**Proposed**, following the common industry measures). The player reports this with signed, single-use impression tickets, so a replayed or forged report is rejected.
-- **Once:** at most one impression per person per ad per 10 minutes, and a frequency cap per person per campaign per day (**Proposed: 3**). Duplicates from the same browser or account across tabs count once.
+- **Who:** a playback session at the Counted or Trusted level, or, for the feed and site, a signed-in account in good standing that had a Counted or Trusted live session or a counted Beacon view in the last 7 days. Sessions marked Pending, Excluded or flagged as automation never count.
+- **Seen:** the page is visible and the ad is on screen. A video ad counts after 2 seconds of advancing playback with at least half of it in view; an image counts after 1 second with half in view (**Proposed**, following the common industry measures). The player reports this with signed, single-use impression tickets, so a replayed or forged report is rejected. Visibility itself is reported by the viewer's browser; the server checks the time against its own clock, and the session checks above are what keep scripts out.
+- **Once:** at most one impression per person per ad per 10 minutes, and a frequency cap per person per campaign per day (**Proposed: 3**). Duplicates from the same browser or account across tabs count once. Across all campaigns, a person counts for at most 20 verified impressions a day.
 - **Proof for advertisers:** the dashboard shows impressions served, impressions verified and impressions rejected, with the reason (hidden tab, too short, session not verified, frequency cap, automation). Only verified impressions are billed.
 
 ## Placements
 
 | Placement | Format | Where | Who earns |
 | --- | --- | --- | --- |
-| Streamer ad break | Video, 15 or 30 s, 16:9 | Plays in the corner of the player during a break the streamer starts; the stream keeps playing beside it, muted with captions | Streamer, viewers' pool, S.V.E.R ([split](#the-split)) |
+| Streamer ad break | Video, 15 to 30 s, 16:9 | Plays in the corner of the player during a break the streamer starts; the stream keeps playing beside it, muted with captions | Streamer, viewers' pool, S.V.E.R ([split](#the-split)) |
 | Beacons feed card | Video or image, 9:16, up to 30 s | A card marked "Ad" every 8 Beacons in the feed (**Proposed**) | Viewers' pool, S.V.E.R |
 | Site placement | Image, 16:9 | One labelled slot on Home and Browse, outside every shelf | Viewers' pool, S.V.E.R |
 
@@ -85,7 +96,7 @@ Each verified impression's price (the campaign's CPM ÷ 1,000) is split when it'
 | Beacons feed card | none | 5% | 95% |
 | Site placement | none | 5% | 95% |
 
-- **Viewers' 5%:** goes to the viewer who saw the ad, as Ad Valor, when they're signed in, Trusted and 13 or older; otherwise S.V.E.R keeps it ([ADS.md](ADS.md) "Ad Valor").
+- **Viewers' 5%:** goes to the viewer who saw the ad, as Ad Valor, when they're signed in, Trusted (on the broadcast for a break, on any live session in the last 7 days for the feed and site) and 13 or older; otherwise S.V.E.R keeps it. Shares accumulate per account in fractions of a tenth of a cent, so a 5% share smaller than the ledger's unit is still paid as it adds up ([ADS.md](ADS.md) "Ad Valor").
 - **Streamers** must be able to earn ([SUPPORT.md](SUPPORT.md) "Who can earn"); otherwise the streamer's share goes to S.V.E.R. Earnings join the streamer's existing payout balance (Stripe Connect).
 - **The streamer's own views** of their own break never count.
 
