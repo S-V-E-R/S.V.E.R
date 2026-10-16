@@ -1019,9 +1019,8 @@ async fn press(
         "label": control.label, "effect": played, "image": image, "audio": audio, "user": author, "text": text, "goal": goal,
         "stream_ms": stream_ms, "at": at, "overlay": row.overlay}));
     // Live events never name under-18 accounts.
-    let minor = crate::support::age(&mut *app.db.acquire().await?, &user.id)
-        .await?
-        .is_some_and(|a| a < 18);
+    // A missing date of birth counts as under 18, as everywhere else.
+    let minor = !crate::auth::is_adult(&mut *app.db.acquire().await?, &user.id).await?;
     crate::events::emit_after(&app, &channel, "board", json!({"type": "press", "id": input.id, "control": control.id,
         "label": control.label, "effect": control.effect, "user": if minor { Value::Null } else { json!(user.username) },
         "text": text, "goal": goal, "held": control.confirm})).await?;

@@ -49,10 +49,19 @@ pub async fn can_earn(db: &mut PgConnection, owner: &str) -> Res<bool> {
 
 // ---- Wallet and Valor packs ----
 
+/// What an account spends by card this calendar month (UTC), for the under-18 cap: checkouts
+/// (open ones too, since they expire after 30 minutes, so two tabs can't pass the cap), renewals
+/// already charged, and renewals of card subscriptions still due before the month ends, so a
+/// purchase can't leave a later renewal over the cap.
 async fn month_cents(db: &mut PgConnection, user: &str) -> Res<i64> {
-    // Open sessions count too (they expire after 30 minutes), so two tabs can't pass the cap.
-    Ok(sqlx::query_scalar("SELECT COALESCE(sum(amount_cents),0)::bigint FROM checkout_sessions WHERE user_id=$1 AND status IN ('open','paid') AND created_at>=date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'")
-        .bind(user).fetch_one(db).await?)
+    Ok(sqlx::query_scalar("WITH m AS (SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS start) SELECT ( \
+        (SELECT COALESCE(sum(amount_cents),0) FROM checkout_sessions, m WHERE user_id=$1 AND status IN ('open','paid') AND created_at>=m.start) \
+        + (SELECT COALESCE(sum(amount_cents),0) FROM sub_invoices, m WHERE user_id=$1 AND renewal AND created_at>=m.start) \
+        + (SELECT COALESCE(sum(amount_cents),0) FROM platform_invoices, m WHERE user_id=$1 AND renewal AND created_at>=m.start) \
+        + (SELECT COALESCE(sum(($2::bigint[])[tier]),0) FROM channel_subs, m WHERE user_id=$1 AND stripe_subscription IS NOT NULL AND NOT cancel_at_period_end AND paid_through>=now() AND paid_through<m.start+interval '1 month') \
+        + (SELECT COALESCE(sum(($3::bigint[])[coalesce(pending_tier,tier)]),0) FROM platform_subscriptions, m WHERE user_id=$1 AND stripe_subscription IS NOT NULL AND NOT cancel_at_period_end AND paid_through>=now() AND paid_through<m.start+interval '1 month') \
+        )::bigint")
+        .bind(user).bind(&crate::subs::PRICES[..]).bind(&crate::supporters::PRICES[..]).fetch_one(db).await?)
 }
 
 /// Credits the buyer's paid checkouts by asking Stripe directly, so a late or failed webhook
@@ -120,7 +129,6 @@ pub async fn wallet(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
 /// under the monthly cap. An account with no date of birth on file (some imported accounts) is
 /// treated the same way, as everywhere else on the site where age matters. The caller holds the
 /// buyer's checkout lock.
-// ponytail: monthly renewals and upgrade prorations aren't counted toward the cap.
 pub(crate) async fn card_gate(
     tx: &mut PgConnection,
     user: &str,

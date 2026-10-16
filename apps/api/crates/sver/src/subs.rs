@@ -723,8 +723,8 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
     let shares = card_shares(tx, &pooled, cents).await?;
     let share: i64 = shares.iter().map(|s| s.1).sum();
     let stored = (pooled.len() > 1).then(|| shares_json(&shares));
-    let inserted = sqlx::query("INSERT INTO sub_invoices(id,channel_id,user_id,tier,payment_intent,amount_cents,share_tenths,shares) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING")
-        .bind(id).bind(channel).bind(user).bind(tier).bind(&intent).bind(cents as i32).bind(share).bind(&stored)
+    let inserted = sqlx::query("INSERT INTO sub_invoices(id,channel_id,user_id,tier,payment_intent,amount_cents,share_tenths,shares,renewal) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO NOTHING")
+        .bind(id).bind(channel).bind(user).bind(tier).bind(&intent).bind(cents as i32).bind(share).bind(&stored).bind(reason == "subscription_cycle")
         .execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Ok(());
