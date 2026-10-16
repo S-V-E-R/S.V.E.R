@@ -742,11 +742,12 @@ async fn refunded(app: &App, tx: &mut PgConnection, object: &Value) -> Res<()> {
         |amount| -(amount * refunded / cents - amount * before / cents),
     )
     .await?;
+    // An ad campaign reacts to partial refunds too (adnet.rs tells its own refunds apart).
+    crate::adnet::refunded(tx, &intent, refunded).await?;
     if refunded == cents {
         crate::subs::refunded_in_full(app, tx, &intent).await?;
         crate::supporters::reversed(app, tx, &intent, "Payment refunded in full").await?;
         crate::seats::taken_back(tx, &intent).await?;
-        crate::adnet::taken_back(tx, &intent).await?;
     }
     Ok(())
 }
@@ -789,6 +790,7 @@ async fn disputed(app: &App, tx: &mut PgConnection, object: &Value, won: bool) -
         |value| sign * (value * amount / cents),
     )
     .await?;
+    crate::adnet::disputed(tx, &intent, won).await?;
     Ok(())
 }
 

@@ -13,8 +13,8 @@ type Genre = { id: string; name: string };
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 const placements: Record<string, string> = { break: "Streamer ad breaks", feed: "Beacons feed cards", site: "Site placement (Home and Browse)" };
 const formats: Record<string, string> = { video_landscape: "Video, 16:9 (ad breaks)", video_portrait: "Video, 9:16 (feed)", image_portrait: "Picture, 9:16 (feed)", image_landscape: "Picture, 16:9 (site)" };
-const statuses: Record<string, string> = { checkout: "Waiting for payment", paid: "Paid, waiting to start", running: "Running", delivered: "Delivered", refund_due: "Refunding", cancelled: "Cancelled", withdrawn: "Withdrawn" };
-const reasons: Record<string, string> = { hidden: "page hidden or ad off screen", too_short: "seen too briefly", unverified_session: "session not verified", frequency_cap: "frequency cap", expired: "never reported", campaign_full: "campaign already complete", duplicate: "duplicate report" };
+const statuses: Record<string, string> = { checkout: "Waiting for payment", paid: "Paid, waiting to start", running: "Running", disputed: "Paused: payment disputed", delivered: "Delivered", refund_due: "Refunding", cancelled: "Cancelled", withdrawn: "Withdrawn" };
+const reasons: Record<string, string> = { hidden: "page hidden or ad off screen", too_short: "seen too briefly", unverified_session: "session not verified", frequency_cap: "frequency cap", expired: "never reported", campaign_full: "campaign already complete", campaign_stopped: "campaign stopped", duplicate: "duplicate report" };
 const day = (offset: number) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
 
 function Account({ view, reload }: { view: View; reload: () => void }) {
@@ -49,7 +49,7 @@ function Ads({ view, reload }: { view: View; reload: () => void }) {
     setState(r.ok ? { saved: "Uploaded. Staff review every ad before it runs." } : r);
     if (r.ok) { form.reset(); reload(); }
   }
-  return <Section title="Your ads" intro="Pictures are 16:9 (at least 1280×720) or 9:16 (at least 720×1280), up to 5 MB. Videos are 5 to 30 seconds in the same shapes, up to 11 MB. Ads follow the ad rules: no gambling, crypto, adult content, politics, weapons, tobacco or vaping, or misleading claims.">
+  return <Section title="Your ads" intro="Pictures are 16:9 (at least 1280×720) or 9:16 (at least 720×1280), up to 5 MB. Videos are 15 to 30 seconds at 16:9 (ad breaks) or 5 to 30 seconds at 9:16 (the feed), up to 11 MB. Ads follow the ad rules: no gambling, crypto, adult content, politics, weapons, tobacco or vaping, or misleading claims.">
     <form onSubmit={upload}>
       <label className="field"><span>Kind of ad</span><select name="format" required>{Object.entries(formats).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
       <label className="field"><span>Title</span><input name="title" required maxLength={60} /></label>

@@ -664,6 +664,22 @@ pub async fn exercise(e: &Env) {
             .is_null(),
         "guests get no site ads"
     );
+    assert!(
+        serve(
+            Some(viewer.clone()),
+            json!({"placement": "site", "browser_id": browser})
+        )
+        .await
+        .1["ad"]
+            .is_null(),
+        "an account that hasn't watched anything recently gets no feed or site ads"
+    );
+    for statement in [
+        "INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,alert_state,ended_at,end_reason) VALUES('an-w','an-streamer','an-w',1,'ENDED','s','v','c',now()-interval '1 hour',now()-interval '1 hour',now(),'skipped',now(),'test')",
+        "INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level,last_beat_at) VALUES('an-w','u:an-viewer',now()-interval '1 minute','counted',now()-interval '1 minute'),('an-w','u:an-streamer',now()-interval '1 minute','counted',now()-interval '1 minute')",
+    ] {
+        e.sql(statement).await;
+    }
     let (code, served) = serve(
         Some(viewer.clone()),
         json!({"placement": "site", "browser_id": browser}),
@@ -929,13 +945,124 @@ pub async fn exercise(e: &Env) {
     .await
     .0;
     assert_eq!(clicked, StatusCode::SEE_OTHER);
-    // A full refund from Stripe's dashboard after delivery began: the campaign stops and the
-    // settled revenue is taken back, so its prepaid account ends at zero.
+    // Parallel reports from one guest browser count once: the caps hold under concurrency.
+    let guest = format!("b:{}", sver::security::digest(guest_browser));
+    let break_id: String = sqlx::query_scalar(
+        "SELECT id FROM ad_breaks WHERE channel_id='an-streamer' ORDER BY starts_at DESC LIMIT 1",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    for statement in [
+        "INSERT INTO ad_campaigns(id,advertiser_id,creative_id,name,placement,impressions,delivered,cpm_cents,amount_cents,starts_on,ends_on,status) VALUES('an-race','an-buyer','an-video','Race','break',1000,0,500,500,current_date,current_date+9,'running')".to_string(),
+        format!("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level) VALUES('an-b','{guest}',now()+interval '1 hour','counted')"),
+        format!("INSERT INTO ad_serves(id,campaign_id,creative_id,placement,viewer_key,channel_id,break_id,served_at) SELECT 'an-p'||n,'an-race','an-video','break','{guest}','an-streamer','{break_id}',now()-interval '3 seconds' FROM generate_series(1,3) n"),
+    ] {
+        e.sql(sqlx::AssertSqlSafe(statement)).await;
+    }
+    // Holding the campaign row makes all three reach their cap checks before any of them counts.
+    let mut blocker = e.app.db.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM ad_campaigns WHERE id='an-race' FOR UPDATE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let (a, b, c, _) = tokio::join!(
+        report(None, json!("an-p1"), guest_browser, 2100, true),
+        report(None, json!("an-p2"), guest_browser, 2100, true),
+        report(None, json!("an-p3"), guest_browser, 2100, true),
+        async move {
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            blocker.commit().await.unwrap();
+        },
+    );
+    assert_eq!(
+        [&a, &b, &c].iter().filter(|r| r["counted"] == true).count(),
+        1,
+        "the same ad once per 10 minutes, however the reports race: {a} {b} {c}"
+    );
+    let posted: i64 = sqlx::query_scalar("SELECT count(*) FROM ledger_transactions WHERE kind='ad_impression' AND reference LIKE 'ad:an-p%'").fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(posted, 1);
+
+    // A partial refund from Stripe's dashboard: the campaign stops, the job refunds the rest of
+    // the undelivered part, and the prepaid account ends at zero.
+    let undelivered = sver::adnet::undelivered_refund(site_cents, 2000, 1);
+    let half = site_cents / 2;
     let refund = json!({"id": "evt_ad_site_refund", "type": "charge.refunded", "data": {"object": {
-        "payment_intent": "pi_ad_site", "amount": site_cents, "amount_refunded": site_cents}}});
+        "payment_intent": "pi_ad_site", "amount": site_cents, "amount_refunded": half}}});
     assert_eq!(stripe_event(e, refund).await, StatusCode::OK);
+    assert_eq!(
+        status(e, &site).await,
+        (
+            "refund_due".into(),
+            undelivered as i32,
+            Some("cancelled".into())
+        )
+    );
+    sver::adnet::tick(&e.app).await.unwrap();
+    assert_eq!(status(e, &site).await.0, "cancelled");
+    let sent = e
+        .fake
+        .lock()
+        .unwrap()
+        .stripe
+        .iter()
+        .rev()
+        .find(|(p, _)| p == "/v1/refunds")
+        .unwrap()
+        .1
+        .clone();
+    assert!(
+        sent.contains(&format!("amount={}", undelivered - half)),
+        "only the rest: {sent}"
+    );
+    let ours = json!({"id": "evt_ad_site_refund_2", "type": "charge.refunded", "data": {"object": {
+        "payment_intent": "pi_ad_site", "amount": site_cents, "amount_refunded": undelivered}}});
+    assert_eq!(stripe_event(e, ours).await, StatusCode::OK);
     assert_eq!(status(e, &site).await.0, "cancelled");
     assert_eq!(balance(e, &format!("usd:ads:prepaid:{site}")).await, 0);
+
+    // A chargeback pauses the campaign; winning it resumes; losing ends it and zeroes prepaid.
+    let (disp, disp_cents) = buy(e, &buyer, &creative, want(2000, 0, 9), "disp").await;
+    sver::adserve::tick(&e.app).await.unwrap();
+    let dispute = |evt: &str, kind: &str, id: &str, status: &str| {
+        json!({"id": evt, "type": kind, "data": {"object": {
+            "id": id, "payment_intent": "pi_ad_disp", "amount": disp_cents, "status": status}}})
+    };
+    assert_eq!(
+        stripe_event(
+            e,
+            dispute(
+                "evt_ad_d1",
+                "charge.dispute.created",
+                "dp_ad_1",
+                "needs_response"
+            )
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(status(e, &disp).await.0, "disputed");
+    assert_eq!(
+        stripe_event(
+            e,
+            dispute("evt_ad_d2", "charge.dispute.closed", "dp_ad_1", "won")
+        )
+        .await,
+        StatusCode::OK
+    );
+    sver::adserve::tick(&e.app).await.unwrap();
+    assert_eq!(status(e, &disp).await.0, "running", "won: back on");
+    for (evt, kind, s) in [
+        ("evt_ad_d3", "charge.dispute.created", "needs_response"),
+        ("evt_ad_d4", "charge.dispute.closed", "lost"),
+    ] {
+        assert_eq!(
+            stripe_event(e, dispute(evt, kind, "dp_ad_2", s)).await,
+            StatusCode::OK
+        );
+    }
+    assert_eq!(status(e, &disp).await.0, "cancelled", "lost: ended");
+    assert_eq!(balance(e, &format!("usd:ads:prepaid:{disp}")).await, 0);
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test' WHERE id='an-b'")
         .await;
     e.sql("UPDATE feature_switches SET off=true WHERE name='ad_sales'")

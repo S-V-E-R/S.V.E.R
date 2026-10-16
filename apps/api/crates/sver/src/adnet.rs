@@ -32,7 +32,9 @@ const LEAD_DAYS: i64 = 180;
 const CHECKOUT_MINUTES: i64 = 31;
 /// A paid campaign whose ad is never approved is refunded in full after this many days.
 const UNAPPROVED_DAYS: i64 = 30;
+/// Feed videos run 5 to 30 seconds; ad-break videos 15 to 30 (docs/ADVERTISERS.md "Placements").
 const VIDEO_MIN_MS: i64 = 5000;
+const BREAK_MIN_MS: i64 = 14_500;
 const VIDEO_MAX_MS: i64 = 30_500;
 /// Under nginx's 12 MB request limit with room for the form fields.
 const UPLOAD_LIMIT: usize = 11 * 1024 * 1024;
@@ -209,8 +211,16 @@ async fn video(bytes: Vec<u8>, portrait: bool) -> Res<(media::Processed, i64)> {
     let probe = crate::beacons::worker::probe(&source)
         .await
         .map_err(|m| Fail::field("file", m))?;
-    if !(VIDEO_MIN_MS..=VIDEO_MAX_MS).contains(&probe.duration_ms) {
-        return Err(Fail::field("file", "Video ads are 5 to 30 seconds long."));
+    let shortest = if portrait { VIDEO_MIN_MS } else { BREAK_MIN_MS };
+    if !(shortest..=VIDEO_MAX_MS).contains(&probe.duration_ms) {
+        return Err(Fail::field(
+            "file",
+            if portrait {
+                "Feed video ads are 5 to 30 seconds long."
+            } else {
+                "Ad-break videos are 15 to 30 seconds long."
+            },
+        ));
     }
     let (across, down, w, h) = if portrait {
         (9, 16, 720, 1280)
@@ -486,6 +496,8 @@ async fn check(db: &mut PgConnection, want: &mut Want) -> Res<Card> {
 // ponytail: genre, language and age shares are treated as independent and use each channel's
 // current category; replace with measured per-targeting delivery once impressions are recorded.
 async fn forecast(db: &mut PgConnection, card: &Card, want: &Want) -> Res<f64> {
+    // ponytail: one verified impression per eligible viewer a day is conservative (a viewer can
+    // see several ads); measure impressions per viewer once real campaigns run.
     // With a week or more of history, the forecast is measured: eligible viewers a day (whether
     // or not an ad filled), times the share of served ads that verified.
     let (days, opportunities): (i64, Option<f64>) = sqlx::query_as("SELECT count(*),(sum(count)::float8/nullif(count(*),0))::float8 FROM ad_opportunities WHERE placement=$1 AND day>=current_date-14 AND day<current_date")
@@ -539,7 +551,7 @@ async fn commitments(
     placement: &str,
     except: Option<&str>,
 ) -> Res<Vec<(i64, NaiveDate, NaiveDate)>> {
-    let rows: Vec<(i64, NaiveDate, NaiveDate)> = sqlx::query_as("SELECT (impressions-delivered)::bigint,starts_on,ends_on FROM ad_campaigns WHERE placement=$1 AND (status IN ('paid','running') OR (status='checkout' AND hold_until>now())) AND id IS DISTINCT FROM $2")
+    let rows: Vec<(i64, NaiveDate, NaiveDate)> = sqlx::query_as("SELECT (impressions-delivered)::bigint,starts_on,ends_on FROM ad_campaigns WHERE placement=$1 AND (status IN ('paid','running','disputed') OR (status='checkout' AND hold_until>now())) AND id IS DISTINCT FROM $2")
         .bind(placement)
         .bind(except)
         .fetch_all(db)
@@ -644,9 +656,10 @@ struct Campaign {
     payment_intent: Option<String>,
     hold_until: Option<chrono::DateTime<Utc>>,
     paid_at: Option<chrono::DateTime<Utc>>,
+    refund_error: Option<String>,
     created_at: chrono::DateTime<Utc>,
 }
-const CAMPAIGN: &str = "SELECT id,advertiser_id,creative_id,name,placement,genres,languages,audience,impressions,delivered,cpm_cents,amount_cents,starts_on,ends_on,status,ending,refund_cents,checkout_id,payment_intent,hold_until,paid_at,created_at FROM ad_campaigns";
+const CAMPAIGN: &str = "SELECT id,advertiser_id,creative_id,name,placement,genres,languages,audience,impressions,delivered,cpm_cents,amount_cents,starts_on,ends_on,status,ending,refund_cents,checkout_id,payment_intent,hold_until,paid_at,refund_error,created_at FROM ad_campaigns";
 async fn load(db: &mut PgConnection, id: &str, lock: bool) -> Res<Campaign> {
     let sql = format!(
         "{CAMPAIGN} WHERE id=$1{}",
@@ -720,6 +733,8 @@ async fn create(
     switches::guard(&mut tx, "ad_sales").await?;
     let creative = own_creative(&mut tx, &user.id, &input.creative_id, &want.placement).await?;
     // One sale at a time per placement, so two checkouts can't both take the last impressions.
+    // ponytail: the lock is held across the Stripe call (one checkout per placement at a time for
+    // Stripe's latency); hold inventory first and call Stripe after commit if sales get busy.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('ad_inventory:'||$1,0))")
         .bind(&want.placement)
         .execute(&mut *tx)
@@ -799,18 +814,27 @@ pub(crate) async fn paid(
     if campaign.checkout_id.as_deref() != Some(session) {
         return Ok(());
     }
+    // A checkout whose hold has lapsed no longer counts against inventory, even before the job
+    // marks it expired, so it's re-checked like an expired one.
+    let lapsed = campaign.hold_until.is_none_or(|h| h <= Utc::now());
+    let (mut starts, mut ends) = (campaign.starts_on, campaign.ends_on);
     let status = match campaign.status.as_str() {
-        "checkout" => "paid",
-        "expired" | "cancelled" => {
+        "checkout" if !lapsed => "paid",
+        "checkout" | "expired" | "cancelled" => {
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('ad_inventory:'||$1,0))")
                 .bind(&campaign.placement)
                 .execute(&mut *tx)
                 .await?;
-            let mut want = Want {
+            // Accepted late, it keeps its length from today rather than starting overdue.
+            if starts < today() {
+                ends += today() - starts;
+                starts = today();
+            }
+            let want = Want {
                 placement: campaign.placement.clone(),
                 impressions: campaign.impressions.into(),
-                starts_on: campaign.starts_on.max(today()),
-                ends_on: campaign.ends_on.max(today()),
+                starts_on: starts,
+                ends_on: ends,
                 genres: campaign.genres.clone(),
                 languages: campaign.languages.clone(),
                 audience: campaign.audience.clone(),
@@ -818,9 +842,8 @@ pub(crate) async fn paid(
             let card = card(tx, &want.placement).await?;
             let daily = forecast(tx, &card, &want).await?;
             let promises = commitments(tx, &want.placement, Some(id)).await?;
-            want.ends_on = want.ends_on.max(want.starts_on);
-            if campaign.status == "expired"
-                && sellable(daily, &promises, want.starts_on, want.ends_on) >= want.impressions
+            if campaign.status != "cancelled"
+                && sellable(daily, &promises, starts, ends) >= want.impressions
             {
                 "paid"
             } else {
@@ -829,10 +852,12 @@ pub(crate) async fn paid(
         }
         _ => return Ok(()),
     };
-    sqlx::query("UPDATE ad_campaigns SET status=$2,ending=CASE WHEN $2='refund_due' THEN 'cancelled' END,refund_cents=CASE WHEN $2='refund_due' THEN amount_cents ELSE 0 END,paid_at=now(),payment_intent=$3,updated_at=now() WHERE id=$1")
+    sqlx::query("UPDATE ad_campaigns SET status=$2,ending=CASE WHEN $2='refund_due' THEN 'cancelled' END,refund_cents=CASE WHEN $2='refund_due' THEN amount_cents ELSE 0 END,paid_at=now(),payment_intent=$3,starts_on=$4,ends_on=$5,updated_at=now() WHERE id=$1")
         .bind(id)
         .bind(status)
         .bind(intent)
+        .bind(starts)
+        .bind(ends)
         .execute(tx)
         .await?;
     Ok(())
@@ -862,7 +887,7 @@ async fn mine(
 /// Ad revenue already settled from the returned money is taken back from `usd:ads` so the prepaid
 /// account ends at zero; streamers' and viewers' shares stay paid, at S.V.E.R's cost.
 pub(crate) async fn taken_back(tx: &mut PgConnection, intent: &str) -> Res<()> {
-    sqlx::query("UPDATE ad_campaigns SET status=CASE WHEN status='refund_due' THEN coalesce(ending,'cancelled') ELSE 'cancelled' END,ending=coalesce(ending,'cancelled'),refund_cents=amount_cents,updated_at=now() WHERE payment_intent=$1 AND status IN ('paid','running','refund_due')")
+    sqlx::query("UPDATE ad_campaigns SET status=CASE WHEN status='refund_due' THEN coalesce(ending,'cancelled') ELSE 'cancelled' END,ending=coalesce(ending,'cancelled'),refund_cents=amount_cents,updated_at=now() WHERE payment_intent=$1 AND status IN ('paid','running','disputed','refund_due')")
         .bind(intent)
         .execute(&mut *tx)
         .await?;
@@ -871,9 +896,14 @@ pub(crate) async fn taken_back(tx: &mut PgConnection, intent: &str) -> Res<()> {
             .bind(intent)
             .fetch_optional(&mut *tx)
             .await?;
-    let Some(campaign) = campaign else {
-        return Ok(());
-    };
+    match campaign {
+        Some(campaign) => claw_back(tx, &campaign, intent).await,
+        None => Ok(()),
+    }
+}
+/// Any of the campaign's prepaid money that was returned after it was settled is taken back from
+/// ad revenue, so the prepaid account ends at zero.
+async fn claw_back(tx: &mut PgConnection, campaign: &str, intent: &str) -> Res<()> {
     let prepaid = format!("usd:ads:prepaid:{campaign}");
     crate::ledger::lock(tx, &prepaid).await?;
     let owed = crate::ledger::balance(tx, &prepaid, "usd").await?;
@@ -887,6 +917,60 @@ pub(crate) async fn taken_back(tx: &mut PgConnection, intent: &str) -> Res<()> {
         )
         .await?;
     }
+    Ok(())
+}
+/// Every refund on an ad payment (from the webhook; `refunded` is Stripe's running total in cents).
+/// The campaign's own refunds pass through. One made outside its flow (Stripe's dashboard,
+/// `/admin/money`) stops the campaign, and the job refunds whatever more the undelivered part is
+/// worth, so the advertiser never pays for impressions they didn't get and S.V.E.R never keeps
+/// money for them.
+pub(crate) async fn refunded(tx: &mut PgConnection, intent: &str, refunded: i64) -> Res<()> {
+    let id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM ad_campaigns WHERE payment_intent=$1")
+            .bind(intent)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(id) = id else {
+        return Ok(());
+    };
+    let c = load(tx, &id, true).await?;
+    if c.ending.is_some() && refunded <= i64::from(c.refund_cents) {
+        return Ok(());
+    }
+    if !matches!(c.status.as_str(), "paid" | "running" | "disputed") {
+        return taken_back(tx, intent).await;
+    }
+    let total = undelivered_refund(
+        c.amount_cents.into(),
+        c.impressions.into(),
+        c.delivered.into(),
+    )
+    .max(refunded);
+    let more = total - refunded;
+    sqlx::query("UPDATE ad_campaigns SET status=$2,ending='cancelled',refund_cents=$3,outside_cents=$4,updated_at=now() WHERE id=$1")
+        .bind(&id)
+        .bind(if more > 0 { "refund_due" } else { "cancelled" })
+        .bind(total as i32)
+        .bind(refunded as i32)
+        .execute(&mut *tx)
+        .await?;
+    sweep(tx, &c, total).await?;
+    claw_back(tx, &id, intent).await
+}
+/// A chargeback opened on the payment pauses the campaign while the dispute holds its money;
+/// winning puts it back (the job restarts it), losing ends it (`taken_back`).
+pub(crate) async fn disputed(tx: &mut PgConnection, intent: &str, won: bool) -> Res<()> {
+    let (to, from) = if won {
+        ("paid", "{disputed}")
+    } else {
+        ("disputed", "{paid,running}")
+    };
+    sqlx::query("UPDATE ad_campaigns SET status=$2,updated_at=now() WHERE payment_intent=$1 AND status=ANY($3::text[])")
+        .bind(intent)
+        .bind(to)
+        .bind(from)
+        .execute(tx)
+        .await?;
     Ok(())
 }
 /// When a campaign stops early, the fraction of a cent between what was delivered and what is
@@ -1062,7 +1146,7 @@ async fn overview(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         .collect();
     let mut campaigns = campaigns;
     for c in &mut campaigns {
-        c["stats"] = sqlx::query_scalar("SELECT jsonb_build_object('served',count(*),'verified',count(*) FILTER (WHERE outcome='verified'),'clicks',count(clicked_at),'rejected',coalesce((SELECT jsonb_object_agg(reason,n) FROM (SELECT reason,count(*) n FROM ad_serves WHERE campaign_id=$1 AND outcome='rejected' GROUP BY reason) r),'{}'),'days',coalesce((SELECT jsonb_agg(jsonb_build_object('day',d,'verified',n) ORDER BY d DESC) FROM (SELECT decided_at::date d,count(*) n FROM ad_serves WHERE campaign_id=$1 AND outcome='verified' GROUP BY 1 ORDER BY 1 DESC LIMIT 30) x),'[]')) FROM ad_serves WHERE campaign_id=$1")
+        c["stats"] = sqlx::query_scalar("SELECT jsonb_build_object('served',count(*),'verified',count(*) FILTER (WHERE outcome='verified'),'clicks',count(clicked_at) FILTER (WHERE outcome='verified'),'rejected',coalesce((SELECT jsonb_object_agg(reason,n) FROM (SELECT reason,count(*) n FROM ad_serves WHERE campaign_id=$1 AND outcome='rejected' GROUP BY reason) r),'{}'),'days',coalesce((SELECT jsonb_agg(jsonb_build_object('day',d,'verified',n) ORDER BY d DESC) FROM (SELECT decided_at::date d,count(*) n FROM ad_serves WHERE campaign_id=$1 AND outcome='verified' GROUP BY 1 ORDER BY 1 DESC LIMIT 30) x),'[]')) FROM ad_serves WHERE campaign_id=$1")
             .bind(c["id"].as_str().unwrap_or_default())
             .fetch_one(&mut *db)
             .await?;
@@ -1095,7 +1179,9 @@ pub async fn tick(app: &App) -> Res<()> {
             safety::queue_notice(app, &mut db, &user, "Your S.V.E.R ad campaign was refunded", &format!("Your campaign {id} had no approved ad {UNAPPROVED_DAYS} days after payment, so it was cancelled and refunded in full.")).await?;
         }
     }
-    let due: Vec<(String, i32, Option<String>, Option<String>)> = sqlx::query_as("SELECT id,refund_cents,payment_intent,ending FROM ad_campaigns WHERE status='refund_due' ORDER BY updated_at LIMIT 20")
+    // Money already refunded outside the campaign's flow isn't sent again. A refund Stripe
+    // definitely declined waits for staff (Staff → Ad network shows why) instead of retrying.
+    let due: Vec<(String, i32, Option<String>, Option<String>)> = sqlx::query_as("SELECT id,refund_cents-outside_cents,payment_intent,ending FROM ad_campaigns WHERE status='refund_due' AND refund_error IS NULL ORDER BY updated_at LIMIT 20")
         .fetch_all(&app.db)
         .await?;
     // Each refund stands alone: one Stripe refuses (or that is down) never holds up the rest.
@@ -1103,19 +1189,39 @@ pub async fn tick(app: &App) -> Res<()> {
         if cents > 0
             && let Some(intent) = &intent
         {
-            let refunded = stripe::refund(
+            let form = [
+                ("payment_intent", intent.clone()),
+                ("amount", cents.to_string()),
+            ];
+            let key = format!("ad-refund-{id}");
+            match stripe::send(
                 &app.http,
                 &app.config.stripe,
-                &[
-                    ("payment_intent", intent.clone()),
-                    ("amount", cents.to_string()),
-                ],
-                &format!("ad-refund-{id}"),
+                None,
+                "refunds",
+                &form,
+                Some(&key),
             )
-            .await;
-            if !refunded {
-                eprintln!("adnet_event=refund outcome=retry");
-                continue;
+            .await
+            {
+                stripe::Outcome::Done(_) => {}
+                stripe::Outcome::Declined { code, .. } if code == "charge_already_refunded" => {}
+                stripe::Outcome::Declined { code, .. } if !code.is_empty() => {
+                    eprintln!("adnet_event=refund outcome=declined code={code}");
+                    sqlx::query(
+                        "UPDATE ad_campaigns SET refund_error=$2,updated_at=now() WHERE id=$1",
+                    )
+                    .bind(&id)
+                    .bind(code)
+                    .execute(&app.db)
+                    .await?;
+                    continue;
+                }
+                // No code: Stripe isn't configured here, or the answer was unclear. Retry.
+                stripe::Outcome::Declined { .. } | stripe::Outcome::Unknown(_) => {
+                    eprintln!("adnet_event=refund outcome=retry");
+                    continue;
+                }
             }
         }
         sqlx::query("UPDATE ad_campaigns SET status=$2,updated_at=now() WHERE id=$1 AND status='refund_due'")
@@ -1142,12 +1248,23 @@ async fn admin(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let mut inventory = Vec::new();
     for card in &cards {
         let promises = commitments(&mut db, &card.placement, None).await?;
+        // The same forecast quotes use (measured after 7 days), for all targeting.
+        let everyone = Want {
+            placement: card.placement.clone(),
+            impressions: 0,
+            starts_on: today(),
+            ends_on: today(),
+            genres: vec![],
+            languages: vec![],
+            audience: all(),
+        };
+        let daily = forecast(&mut db, card, &everyone).await?;
         let days: Vec<Value> = (0..30)
             .map(|d| {
                 let day = today() + Duration::days(d);
-                json!({"day": day, "forecast": card.daily_estimate,
+                json!({"day": day, "forecast": daily.round() as i64,
                     "promised": committed(&promises, day, day).round() as i64,
-                    "sellable": sellable(card.daily_estimate.into(), &promises, day, day)})
+                    "sellable": sellable(daily, &promises, day, day)})
             })
             .collect();
         inventory.push(json!({"placement": card.placement, "days": days}));
@@ -1184,6 +1301,7 @@ async fn admin(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
             None => None,
         });
         row["payment_intent"] = json!(c.payment_intent);
+        row["refund_error"] = json!(c.refund_error);
         rows.push(row);
     }
     Ok(Json(json!({
@@ -1324,6 +1442,32 @@ async fn staff_refund(
     let note = safety::note(input.note.as_deref(), "note", true)?;
     let mut tx = app.db.begin().await?;
     let campaign = load(&mut tx, &id, true).await?;
+    // A refund Stripe declined is retried once staff have dealt with the reason.
+    if campaign.status == "refund_due" {
+        let cleared = sqlx::query("UPDATE ad_campaigns SET refund_error=NULL,updated_at=now() WHERE id=$1 AND refund_error IS NOT NULL")
+            .bind(&id).execute(&mut *tx).await?.rows_affected() == 1;
+        if !cleared {
+            return Err(Fail::conflict(
+                "This campaign's refund is already on its way.",
+            ));
+        }
+        safety::audit(
+            &mut tx,
+            Some(&staff.id),
+            "ad_campaign_refund_retry",
+            "ad_campaign",
+            &id,
+            &[],
+            &note,
+            json!({}),
+            false,
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(Json(
+            json!({"saved": true, "refund_cents": campaign.refund_cents}),
+        ));
+    }
     if !matches!(campaign.status.as_str(), "paid" | "running") {
         return Err(Fail::conflict("This campaign has no payment to refund."));
     }
