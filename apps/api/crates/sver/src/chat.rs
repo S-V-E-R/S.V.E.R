@@ -483,6 +483,11 @@ pub(crate) async fn send_from(
     } else {
         channel.into_iter().map(str::to_owned).collect()
     };
+    // Every chat the message reaches (a co-stream's members, a MAGNet Hype merge's channel):
+    // closed to under-18 accounts where it's labeled mature.
+    for member in &members {
+        mature_gate(app, member, Some(&user.id)).await?;
+    }
     if uuid::Uuid::parse_str(&input.id).is_err() {
         return Err(Fail::bad("Invalid message ID."));
     }

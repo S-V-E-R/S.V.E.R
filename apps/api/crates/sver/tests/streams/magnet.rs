@@ -601,6 +601,23 @@ pub async fn exercise(e: &Env) {
             .iter()
             .any(|m| m["body"] == "hello co-stream")
     );
+    // A co-stream member labeled mature closes the shared chat to under-18 accounts, whichever
+    // member's page they post from.
+    let young = person(e, "mg-young", "MgYoung", true).await;
+    e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='mg-young'")
+        .await;
+    e.sql("INSERT INTO stream_settings(owner_id,title,mature) VALUES('mg-sq-guest','Guest stream',true) ON CONFLICT(owner_id) DO UPDATE SET mature=true").await;
+    let (status, refused) = call(
+        e,
+        "POST",
+        "/api/squads/mg-squad/chat",
+        Some(&young),
+        json!({"id": id(), "body": "hi all"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    e.sql("UPDATE stream_settings SET mature=false WHERE owner_id='mg-sq-guest'")
+        .await;
     let (_, room) = get(e, "/api/magnet/global/chat", Some(&banned)).await;
     assert_eq!(
         (&room["co_stream"], &room["can_send"]),

@@ -470,13 +470,13 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
     } else {
         None
     };
-    let inserted = sqlx::query("INSERT INTO platform_invoices(id,user_id,tier,payment_intent,amount_cents) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING")
-        .bind(id).bind(user).bind(tier).bind(&intent).bind(cents as i32)
+    let reason = invoice["billing_reason"].as_str().unwrap_or_default();
+    let inserted = sqlx::query("INSERT INTO platform_invoices(id,user_id,tier,payment_intent,amount_cents,renewal) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING")
+        .bind(id).bind(user).bind(tier).bind(&intent).bind(cents as i32).bind(reason == "subscription_cycle")
         .execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Ok(());
     }
-    let reason = invoice["billing_reason"].as_str().unwrap_or_default();
     let renewal = matches!(reason, "subscription_create" | "subscription_cycle");
     let month = i32::from(renewal && cents > 0);
     sqlx::query("INSERT INTO platform_subscriptions(user_id,tier,stripe_subscription,paid_through,months) VALUES($1,$2,$3,to_timestamp($4),$5)
