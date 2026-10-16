@@ -20,6 +20,8 @@ use tower::ServiceExt;
 
 #[path = "streams/achievements.rs"]
 mod achievements;
+#[path = "streams/adnet.rs"]
+mod adnet;
 #[path = "streams/ads.rs"]
 mod ads;
 #[path = "streams/alerts.rs"]
@@ -544,6 +546,7 @@ async fn exercise(e: &Env) {
     chat::exercise(e).await;
     support::exercise(e).await;
     wall_seats::exercise(e).await;
+    adnet::exercise(e).await;
     supporters::exercise(e).await;
     subs::exercise(e).await;
     engagement::exercise(e).await;

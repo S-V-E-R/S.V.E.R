@@ -1,5 +1,7 @@
 # Ads, ad revenue sharing and Ad Valor (Phase 4)
 
+**October 16, 2026: until a third-party provider is worth it, S.V.E.R runs its own network of approved ads with guaranteed delivery; see [ADVERTISERS.md](ADVERTISERS.md).** The split and Ad Valor below carry over to it.
+
 Decided by Joe on October 10, 2026: **design first, no ads yet.** This spec, the split and a test-data ledger are built; no ad provider is chosen, no ad is shown and no ad money moves. Joe picks the provider, and approves going live, before any of the "Before ads go live" list starts.
 
 ## What ads are on S.V.E.R
