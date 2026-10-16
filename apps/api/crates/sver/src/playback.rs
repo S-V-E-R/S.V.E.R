@@ -341,6 +341,7 @@ pub async fn live(
         "captions": b.captions && hls.is_some(),
         "caption_style": {"size": b.caption_size.as_deref().unwrap_or("m"), "x": b.caption_x.unwrap_or(0.5), "y": b.caption_y.unwrap_or(0.85)},
         "raid": crate::raids::for_viewers(&app, &b.id, viewer.as_ref().map(|v| v.id.as_str())).await?,
+        "ad_break": crate::adserve::for_live(&app, &owner, viewer.as_ref().map(|v| v.id.as_str())).await?,
     })))
 }
 

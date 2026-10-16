@@ -8,6 +8,7 @@ import { Crest } from "../../components/Crest";
 import { holders, TerritoryGrid, type BrowseGenre } from "../../components/Territories";
 import type { War } from "../../lib/war";
 import { currentAccount } from "../session";
+import { AdSlot } from "../../components/Ads";
 import "../../styles/home.css";
 
 
@@ -72,5 +73,6 @@ export default async function Browse({ searchParams }: { searchParams: Promise<{
     {!list.data ? <p className="notice" role="alert">Live channels couldn&apos;t be loaded. Please refresh.</p>
       : list.data.items.length ? <StreamGrid streams={list.data.items} viewerFaction={viewerFaction} languages={languages} />
         : <div className="empty-live panel"><p><strong>Nothing live here right now.</strong> These channels were live recently.</p><RecentChannels recent={list.data.recent} /><p><Link href="/war-map" className="button quiet">See the war map</Link></p></div>}
+    <AdSlot signedIn={!!account} />
   </div>;
 }

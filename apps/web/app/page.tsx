@@ -5,6 +5,7 @@ import type { LiveCard, Recent } from "../components/home/types";
 import { apiGet, viewerLanguages } from "../lib/server-api";
 import { factionOf, isFaction } from "../lib/factions";
 import { currentAccount } from "./session";
+import { AdSlot } from "../components/Ads";
 import "../styles/home.css";
 import { VideoGrid } from "../components/VideoGrid";
 import type { VideoCard } from "../lib/videos";
@@ -76,6 +77,7 @@ export default async function Home() {
       <StreamGrid streams={home!.faction!} viewerFaction={viewerFaction} languages={languages} />
     </section>}
 
+    <AdSlot signedIn={!!account} />
     {beacons.length > 0 && <section aria-labelledby="bea-h" className="home-section frame beacon-shelf">
       <SectionHead id="bea-h" title="Beacons" note="Short videos that lead to the stream" href="/beacons" link="Open the feed" />
       <BeaconGrid items={beacons} />

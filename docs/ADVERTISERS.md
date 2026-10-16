@@ -11,7 +11,18 @@ Joe's decisions:
 
 Joe approved this spec as written, including every **Proposed** default, on October 16, 2026.
 
-**Build step 1 built October 16, 2026** (migration 0111, `adnet.rs`, `/advertise`, Staff → Ad network): the rate card, advertiser accounts, ad uploads (pictures through the image pipeline; videos probed and re-encoded to 720p H.264/AAC with a poster frame) and staff review, quotes with admission control (held checkouts count against inventory), Stripe checkout into each campaign's prepaid ledger account, late payments, cancellation, withdrawal after the end date, staff refunds, and a full refund when an ad is never approved within 30 days. **Ad sales stay off** behind the "Ad sales" switch. Uploads are limited to 11 MB (the server's 12 MB request limit), so a 30-second video should be exported at about 3 Mbps. Stripe Tax waits for the tax decision in step 4: with it off, the checkout total is the quoted price. Next: step 2, serving and impression verification.
+**Build step 1 built October 16, 2026** (migration 0111, `adnet.rs`, `/advertise`, Staff → Ad network): the rate card, advertiser accounts, ad uploads (pictures through the image pipeline; videos probed and re-encoded to 720p H.264/AAC with a poster frame) and staff review, quotes with admission control (held checkouts count against inventory), Stripe checkout into each campaign's prepaid ledger account, late payments, cancellation, withdrawal after the end date, staff refunds, and a full refund when an ad is never approved within 30 days. **Ad sales stay off** behind the "Ad sales" switch. Uploads are limited to 11 MB (the server's 12 MB request limit), so a 30-second video should be exported at about 3 Mbps. Stripe Tax waits for the tax decision in step 4: with it off, the checkout total is the quoted price. 
+
+**Build step 2 built October 16, 2026** (migration 0112, `adserve.rs`, `components/Ads.tsx`):
+- **Serving:** in ad breaks (an overlay over the player, which keeps the stream running muted behind it), as a feed card after every 8th Beacon, and in a labelled slot on Home and Browse.
+- **Pacing:** the campaign furthest behind its even daily schedule is served first; a campaign at or ahead of today's target waits. One past its end date is served first until whole (the make-good).
+- **Tickets and verification:** every ad served gets a single-use ticket. It counts only when the session is still Counted or Trusted (breaks) or a signed-in account in good standing (feed and site), the ad was visible and advancing for 2 s of video or 1 s of a picture (checked against the server's clock), and it isn't a repeat: the same ad once per 10 minutes, a campaign 3 times a day. Otherwise it's rejected with its reason (expired, hidden, too_short, unverified_session, frequency_cap, campaign_full). The last impression marks a campaign delivered, and a campaign never counts more than it paid for.
+- **Clicks:** go through `/api/ads/click/{ticket}`.
+- **Streamers:** turn ads on in Creator Studio (only channels that can earn) and start 30, 60 or 90-second breaks, at least 10 minutes apart.
+- **Forecast:** after 7 days of data it becomes measured (eligible viewers a day times the verified rate) instead of staff's estimate.
+- **Known limits:** players find a new break at their next `/live` poll (up to 15 seconds), and feed and site genre targeting reads the channels a viewer follows.
+
+Next: step 3, settlement and the revenue dashboards.
 
 ## How the guarantee works
 

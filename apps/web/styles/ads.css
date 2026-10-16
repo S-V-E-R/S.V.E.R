@@ -1,0 +1,12 @@
+/* Ads (docs/ADVERTISERS.md): always labelled, framed like the rest of the site, light on the page. */
+.ad { position: relative; display: grid; gap: .5rem; padding: .75rem; border: 1px solid var(--line, #333); background: var(--panel, #111); }
+.ad img, .ad video { width: 100%; height: auto; display: block; }
+.ad-label { font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted, #aaa); }
+.ad-link { justify-self: start; }
+.ad-site { max-width: 960px; margin: 1.5rem auto; }
+.ad-site img { aspect-ratio: 16 / 9; object-fit: cover; }
+.ad-break { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: rgba(0, 0, 0, .92); padding: 1rem; }
+.ad-break .ad { width: min(100%, 960px); background: transparent; border: 0; }
+.ad-countdown { position: absolute; right: 1rem; bottom: 1rem; font-size: .85rem; color: #fff; }
+.ad-feed-card { height: 100%; align-content: center; }
+.ad-feed-card video, .ad-feed-card img { max-height: 70vh; width: auto; margin: 0 auto; aspect-ratio: 9 / 16; }

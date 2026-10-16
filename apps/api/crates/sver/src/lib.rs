@@ -15,6 +15,7 @@ pub mod achievements;
 pub mod activity;
 pub mod adnet;
 pub mod ads;
+pub mod adserve;
 pub mod alerts;
 pub mod auth;
 pub mod bans;
@@ -406,6 +407,7 @@ pub fn router(app: App) -> Router {
         .merge(videos::routes())
         .merge(beacons::routes())
         .merge(adnet::routes())
+        .merge(adserve::routes())
         .route(
             "/api/health",
             get(|| async { Json(json!({"status":"ok"})) }),

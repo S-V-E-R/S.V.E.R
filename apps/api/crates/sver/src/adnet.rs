@@ -154,6 +154,22 @@ fn creative_json(app: &App, c: &Creative) -> Value {
         "picture": picture, "video": video, "created_at": c.created_at})
 }
 
+/// An ad's media and labels for serving (adserve.rs): pictures, video, title and advertiser.
+pub(crate) async fn creative_media(app: &App, db: &mut PgConnection, id: &str) -> Res<Value> {
+    let creative: Creative = sqlx::query_as(sqlx::AssertSqlSafe(format!("{CREATIVE} WHERE id=$1")))
+        .bind(id)
+        .fetch_one(&mut *db)
+        .await?;
+    let mut value = creative_json(app, &creative);
+    value["advertiser"] = json!(
+        sqlx::query_scalar::<_, String>("SELECT name FROM advertisers WHERE user_id=$1")
+            .bind(&creative.advertiser_id)
+            .fetch_optional(&mut *db)
+            .await?
+    );
+    Ok(value)
+}
+
 /// Removes the scratch directory however processing ends.
 struct Scratch(std::path::PathBuf);
 impl Drop for Scratch {
@@ -470,7 +486,22 @@ async fn check(db: &mut PgConnection, want: &mut Want) -> Res<Card> {
 // ponytail: genre, language and age shares are treated as independent and use each channel's
 // current category; replace with measured per-targeting delivery once impressions are recorded.
 async fn forecast(db: &mut PgConnection, card: &Card, want: &Want) -> Res<f64> {
-    let mut daily = f64::from(card.daily_estimate);
+    // With a week or more of history, the forecast is measured: eligible viewers a day (whether
+    // or not an ad filled), times the share of served ads that verified.
+    let (days, opportunities): (i64, Option<f64>) = sqlx::query_as("SELECT count(*),(sum(count)::float8/nullif(count(*),0))::float8 FROM ad_opportunities WHERE placement=$1 AND day>=current_date-14 AND day<current_date")
+        .bind(&card.placement)
+        .fetch_one(&mut *db)
+        .await?;
+    let mut daily = match opportunities.filter(|_| days >= 7) {
+        Some(per_day) => {
+            let rate: Option<f64> = sqlx::query_scalar("SELECT (count(*) FILTER (WHERE outcome='verified')::float8/nullif(count(*),0))::float8 FROM ad_serves WHERE placement=$1 AND outcome IS NOT NULL AND decided_at>now()-interval '14 days'")
+                .bind(&card.placement)
+                .fetch_one(&mut *db)
+                .await?;
+            per_day * rate.unwrap_or(1.0)
+        }
+        None => f64::from(card.daily_estimate),
+    };
     let share = |matched: Option<f64>| matched.unwrap_or(0.0).clamp(0.0, 1.0);
     const MINUTES: &str = "extract(epoch FROM least(coalesce(b.ended_at,now()),now())-greatest(b.started_at,now()-interval '14 days'))";
     if !want.genres.is_empty() {

@@ -10,6 +10,7 @@ import { BeaconComments } from "./BeaconComments";
 import { Crest } from "./Crest";
 import { ReportForm, TakeDownLink } from "./Report";
 import { ShareButton } from "./ShareButton";
+import { AdFrame, fetchAd, type ServedAd } from "./Ads";
 import { Turnstile } from "./Turnstile";
 import "../styles/beacons.css";
 
@@ -87,7 +88,19 @@ export function BeaconFeed({ initial, start = null, signedIn, gateId = null, fac
   }, [gateId]);
   useEffect(() => { if (more && items.length - index <= 3) void loadMore(); }, [index, items.length, more, loadMore]);
 
-  const move = useCallback((step: number) => setIndex(i => Math.max(0, Math.min(items.length - 1, i + step))), [items.length]);
+  // An ad card after every 8th Beacon for signed-in viewers; the next swipe goes on (docs/ADVERTISERS.md).
+  const [ad, setAd] = useState<ServedAd | null>(null);
+  const adAt = useRef(-1);
+  const move = useCallback((step: number) => {
+    const go = () => setIndex(i => Math.max(0, Math.min(items.length - 1, i + step)));
+    if (ad) { setAd(null); if (step > 0) go(); return; }
+    if (step > 0 && signedIn && (index + 1) % 8 === 0 && adAt.current !== index) {
+      adAt.current = index;
+      void fetchAd("feed").then(served => { if (served) setAd(served); else go(); });
+      return;
+    }
+    go();
+  }, [items.length, ad, signedIn, index]);
   useEffect(() => {
     function key(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
@@ -123,7 +136,7 @@ export function BeaconFeed({ initial, start = null, signedIn, gateId = null, fac
       onTouchStart={e => { touch.current = e.touches[0]?.clientY ?? null; }}
       onTouchEnd={e => { const from = touch.current; touch.current = null; const to = e.changedTouches[0]?.clientY; if (from === null || to === undefined) return; if (from - to > 50) move(1); else if (to - from > 50) move(-1); }}
       onWheel={e => { const now = Date.now(); if (Math.abs(e.deltaY) < 30 || now - wheel.current < 600) return; wheel.current = now; move(e.deltaY > 0 ? 1 : -1); }}>
-      {current
+      {ad ? <AdFrame ad={ad} className="ad-feed-card" muted={!(sound || soundHere)} /> : current
         && !(gateId && !ageAck)
         ? <BeaconPlayer key={current.beacon.id} item={current} sound={sound || soundHere} onUnmute={unmute} ageAck={ageAck} signedIn={signedIn} />
         : gateId && !ageAck
