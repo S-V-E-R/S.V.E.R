@@ -83,7 +83,7 @@ export function WallPost({ post, viewer }: { post: Post; viewer: WallViewer }) {
       {viewer.can_post && post.status === "APPROVED" && <button type="button" className="link-button" onClick={() => setReplying(!replying)}>Reply</button>}
       {post.can_delete && <button type="button" className="link-button" onClick={remove}>Delete</button>}
       {post.can_report && <ReportButton target={{ target_type: "wall_post", target_id: post.id }} />}
-      {!post.can_report && <TakeDownLink target={{ target_type: "wall_post", target_id: post.id }} />}
+      {!post.can_report && !post.can_delete && <TakeDownLink target={{ target_type: "wall_post", target_id: post.id }} />}
       {post.can_pin && <button type="button" className="link-button" onClick={pin}>{post.pinned_position ? "Unpin" : "Pin"}</button>}
     </div>
     {notice && <p role="alert" className="form-message">{notice}</p>}

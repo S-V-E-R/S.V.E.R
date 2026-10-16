@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { ChannelFrame } from "../../../components/ChannelFrame";
 import { CopyButton } from "../../../components/CopyButton";
 import { Markdown } from "../../../components/Markdown";
@@ -20,7 +20,8 @@ export async function generateMetadata({ params }: { params: ChannelParams }) {
 }
 export default async function AboutTab({ params }: { params: ChannelParams }) {
   const data = await loadChannel((await params).username);
-  if (!data.tabs.about) notFound();
+  // No About content yet: Home, not a "channel doesn't exist" page (it exists).
+  if (!data.tabs.about) redirect(`/${data.channel.username}`);
   const name = data.channel.username;
   const about = (await apiGet<About>(`/api/channels/${encodeURIComponent(name)}/about`)).data;
   const owner = data.viewer.is_owner;
@@ -39,8 +40,7 @@ export default async function AboutTab({ params }: { params: ChannelParams }) {
         <div><a href={s.link} rel="sponsored nofollow noopener noreferrer" target="_blank"><strong>{s.name}</strong></a><small className="muted">{label(s.category)}</small>{s.description && <p>{s.description}</p>}{s.discount_code && <p className="row tight">Code: <code>{s.discount_code}</code><CopyButton value={s.discount_code} label={`${s.name} discount code`} /></p>}</div>
       </li>)}</ul> : <p className="muted">Add sponsors in <Link href="/studio/channel/sponsors">Creator Studio</Link>.</p>}
     </section>}
-    {(about?.setup.length || about?.setup_photos?.length || about?.setup_title || about?.setup_description || owner) && <section className="panel section setup-section"><h2>{about?.setup_title || "Streaming setup"}</h2>
-      {about?.setup_title && <p className="eyebrow">STREAMING SETUP</p>}
+    {(about?.setup.length || about?.setup_photos?.length || about?.setup_title || about?.setup_description || owner) && <section className="panel section setup-section">{about?.setup_title && <p className="eyebrow">Streaming setup</p>}<h2>{about?.setup_title || "Streaming setup"}</h2>
       {about?.setup_description && <p className="setup-description">{about.setup_description}</p>}
       {!!about?.setup_photos?.length && <ul className="setup-photos">{about.setup_photos.map((p, i) => <li key={p.id}>
         {/* eslint-disable-next-line @next/next/no-img-element */}

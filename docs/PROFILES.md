@@ -584,13 +584,8 @@ All profile text is NFC-normalized and trimmed. Control characters, bidi overrid
 
 ## Visual direction
 - The game-client look from the homepage concept PDFs (see `AGENTS.md`): framed panels with code-drawn corner brackets, beveled buttons, Cinzel headings (self-hosted, no third-party font requests) and steel neutrals. **No glows, no gradients, no image frames.**
-- Theme colors follow the **viewer's** faction:
-  - Myria: ember
-  - Aetheron: violet
-  - Glint: gold on navy
-  - Neutral steel when signed out or when the viewer has no faction
-- Until Module 4, every viewer gets neutral steel. Channel owners' factions never recolor their page, and their imported legacy faction is ignored until Module 4.
-- Theme tokens are CSS variables set once at the layout level from the viewer's session, so profile components never hard-code faction colors.
+- **The channel area wears the owner's faction colors** (decided October 3, 2026), within the variant the owner picks (see "Persona pass"). Neutral steel when the owner has no faction. The rest of the site keeps the viewer's colors.
+- Theme tokens are CSS variables (`data-theme` on the channel wrapper), so profile components never hard-code faction colors.
 - Legacy elements are restyled, not copied. The War Council grid, wall cards, the song card and the sponsor and setup lists all use the frame style. The legacy `ProfileFrame` tier rings, animated borders and radial glows are ARCHIVE.
 - **Accessibility:**
   - Every control is keyboard operable with visible focus.

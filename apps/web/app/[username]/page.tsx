@@ -42,10 +42,10 @@ export default async function ChannelHome({ params }: { params: ChannelParams })
       {council.length ? <ol className="council">{council.map(m => <li key={m.position} className={m.crown ? "crowned" : undefined}><CouncilTile user={m.user} crown={m.crown} /></li>)}</ol> : <p className="muted">Pick up to 8 channels for your War Council. <Link href="/studio/channel/war-council">Add members</Link></p>}
       {viewer.is_owner && data.war_council.unavailable_count > 0 && <p className="muted">{data.war_council.unavailable_count} member(s) are no longer available and are hidden. <Link href="/studio/channel/war-council">Review</Link></p>}
     </section>}
-    <section className="panel section">
+    {(posts.length > 0 || viewer.is_owner) && <section className="panel section">
       <div className="row between"><h2>Wall</h2><Link href={`/${c.username}/wall`} className="button small">Sign the Wall</Link></div>
-      {posts.length ? posts.map(p => <WallPost key={p.id} post={p} viewer={data.wall_preview.viewer} />) : <p className="muted">No posts yet.</p>}
-    </section>
+      {posts.length ? posts.map(p => <WallPost key={p.id} post={p} viewer={data.wall_preview.viewer} />) : <p className="muted">No posts yet. Share your page so people can sign it.</p>}
+    </section>}
     <Achievements username={c.username} />
     <Shine username={c.username} isOwner={viewer.is_owner} signedIn={!!viewer.signed_in} />
     {(schedule.length > 0 || viewer.is_owner) && <section className="panel section">

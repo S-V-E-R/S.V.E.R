@@ -19,7 +19,7 @@ export default async function FanArtTab({ params, searchParams }: { params: Chan
     <section className="section">
       <h2>Fan Art</h2>
       {!page.enabled && <p className="panel muted">Fan art is turned off. <Link href="/studio/channel/fan-art">Turn it on in Creator Studio</Link>.</p>}
-      <FanArtGallery username={name} page={page} />
+      {page.enabled && <FanArtGallery username={name} page={page} />}
       <nav className="pager">{cursor && <Link href={`/${name}/fan-art`}>Newest</Link>}{page.next_cursor && <Link href={`/${name}/fan-art?cursor=${encodeURIComponent(page.next_cursor)}`}>More</Link>}</nav>
     </section>
   </ChannelFrame>;

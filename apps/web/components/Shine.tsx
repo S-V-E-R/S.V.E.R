@@ -32,6 +32,7 @@ export function Shine({ username, isOwner, signedIn }: { username: string; isOwn
   return <section className="panel section shine" aria-labelledby="shine-title">
     <div className="row between"><h2 id="shine-title">Shine</h2>{!!lights?.count && <span className="muted small">{lights.count.toLocaleString()} {lights.count === 1 ? "light" : "lights"}</span>}</div>
     {!!moments.length && <ol className="moment-list">{moments.map(m => <li key={m.video_id}><Link href={`/${m.kind === "CLIP" ? "clips" : "videos"}/${m.video_id}`}><strong>{m.title}</strong></Link>{m.description && <p className="muted small">{m.description}</p>}</li>)}</ol>}
+    {signedIn && !isOwner && <p className="muted small">Send a light to say this channel did something good. It's free: 3 a day, one per channel.</p>}
     {signedIn && !isOwner && <form onSubmit={give} className="row wrap">
       <label className="field"><span className="sr-only">Message (optional)</span><input name="message" maxLength={200} placeholder="Add a few words (optional)" /></label>
       <button type="submit" className="small">Light it up</button>
