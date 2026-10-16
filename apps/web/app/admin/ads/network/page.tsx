@@ -8,8 +8,10 @@ type Rate = { placement: string; cpm_cents: number | null; min_spend_cents: numb
 type Day = { day: string; forecast: number; promised: number; sellable: number };
 type Creative = { id: string; format: string; title: string; link: string; picture: string; video: string | null; advertiser: { name: string; website: string; username: string } | null };
 type Campaign = { id: string; name: string; advertiser: string | null; placement: string; impressions: number; delivered: number; amount_cents: number; refund_cents: number; starts_on: string; ends_on: string; status: string };
-type View = { rate_card: Rate[]; inventory: { placement: string; days: Day[] }[]; review: Creative[]; campaigns: Campaign[]; sales_open: boolean };
+type Revenue = { placements: { placement: string; impressions: number; gross: number; streamers: number; viewers: number }[]; rejected: { reason: string; count: number }[] };
+type View = { revenue: Revenue; rate_card: Rate[]; inventory: { placement: string; days: Day[] }[]; review: Creative[]; campaigns: Campaign[]; sales_open: boolean };
 
+const tenths = (t: number) => `$${(t / 1000).toFixed(3)}`;
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 const placements: Record<string, string> = { break: "Ad breaks", feed: "Beacons feed", site: "Site placement" };
 
@@ -77,6 +79,11 @@ export default function AdNetwork() {
           <button type="button" className="small danger" onClick={() => review(c, "reject")}>Reject</button>
         </span>
       </li>)}</ul>}
+    </Section>
+    <Section title="Ad revenue" intro="Settled verified impressions: gross, what streamers and viewers earned, and what S.V.E.R keeps. Rejections are from the last 30 days.">
+      {view.revenue.placements.length === 0 ? <p className="muted">No verified impressions yet.</p> : <div className="table-scroll"><table className="table"><thead><tr><th scope="col">Placement</th><th scope="col">Impressions</th><th scope="col">Gross</th><th scope="col">Streamers</th><th scope="col">Viewers</th><th scope="col">S.V.E.R</th></tr></thead>
+        <tbody>{view.revenue.placements.map(p => <tr key={p.placement}><th scope="row">{placements[p.placement] ?? p.placement}</th><td>{p.impressions.toLocaleString()}</td><td>{tenths(p.gross)}</td><td>{tenths(p.streamers)}</td><td>{tenths(p.viewers)}</td><td>{tenths(p.gross - p.streamers - p.viewers)}</td></tr>)}</tbody></table></div>}
+      {view.revenue.rejected.length > 0 && <p className="small">Not counted: {view.revenue.rejected.map(r => `${r.count.toLocaleString()} ${r.reason.replace(/_/g, " ")}`).join(" · ")}</p>}
     </Section>
     <Section title="Campaigns">
       {view.campaigns.length === 0 ? <p className="muted">None yet.</p> : <div className="table-scroll"><table className="table"><thead><tr><th scope="col">Campaign</th><th scope="col">Advertiser</th><th scope="col">Placement</th><th scope="col">Delivered</th><th scope="col">Dates</th><th scope="col">Paid</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>

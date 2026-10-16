@@ -859,11 +859,56 @@ async fn mine(
 /// A full refund or a lost chargeback made outside the campaign's own flow (Stripe's dashboard,
 /// `/admin/money`, a dispute): the campaign stops, and a refund it still owed isn't sent again.
 /// Called from support.rs.
+/// Ad revenue already settled from the returned money is taken back from `usd:ads` so the prepaid
+/// account ends at zero; streamers' and viewers' shares stay paid, at S.V.E.R's cost.
 pub(crate) async fn taken_back(tx: &mut PgConnection, intent: &str) -> Res<()> {
     sqlx::query("UPDATE ad_campaigns SET status=CASE WHEN status='refund_due' THEN coalesce(ending,'cancelled') ELSE 'cancelled' END,ending=coalesce(ending,'cancelled'),refund_cents=amount_cents,updated_at=now() WHERE payment_intent=$1 AND status IN ('paid','running','refund_due')")
         .bind(intent)
-        .execute(tx)
+        .execute(&mut *tx)
         .await?;
+    let campaign: Option<String> =
+        sqlx::query_scalar("SELECT id FROM ad_campaigns WHERE payment_intent=$1")
+            .bind(intent)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(campaign) = campaign else {
+        return Ok(());
+    };
+    let prepaid = format!("usd:ads:prepaid:{campaign}");
+    crate::ledger::lock(tx, &prepaid).await?;
+    let owed = crate::ledger::balance(tx, &prepaid, "usd").await?;
+    if owed > 0 {
+        crate::ledger::post(
+            tx,
+            "ad_taken_back",
+            &format!("ad-taken-back:{campaign}:{owed}"),
+            json!({"campaign": campaign, "payment_intent": intent}),
+            &[(prepaid.as_str(), "usd", -owed), ("usd:ads", "usd", owed)],
+        )
+        .await?;
+    }
+    Ok(())
+}
+/// When a campaign stops early, the fraction of a cent between what was delivered and what is
+/// refunded moves to ad revenue, so the prepaid account ends at zero once Stripe's refund posts.
+async fn sweep(db: &mut PgConnection, c: &Campaign, refund_cents: i64) -> Res<()> {
+    let amount = i64::from(c.amount_cents) * 10;
+    let delivered = amount * i64::from(c.delivered) / i64::from(c.impressions).max(1);
+    let leftover = amount - delivered - refund_cents * 10;
+    if leftover > 0 {
+        let prepaid = format!("usd:ads:prepaid:{}", c.id);
+        crate::ledger::post(
+            db,
+            "ad_unused",
+            &format!("ad-unused:{}", c.id),
+            json!({"campaign": c.id}),
+            &[
+                (prepaid.as_str(), "usd", leftover),
+                ("usd:ads", "usd", -leftover),
+            ],
+        )
+        .await?;
+    }
     Ok(())
 }
 async fn owe(db: &mut PgConnection, id: &str, cents: i64, ending: &str) -> Res<()> {
@@ -943,6 +988,7 @@ async fn withdraw(
         campaign.delivered.into(),
     );
     owe(&mut tx, &id, refund, "withdrawn").await?;
+    sweep(&mut tx, &campaign, refund).await?;
     safety::audit(&mut tx, Some(&user.id), "ad_campaign_withdraw", "ad_campaign", &id, &[], "Advertiser withdrew after the end date", json!({"delivered": campaign.delivered, "impressions": campaign.impressions, "refund_cents": refund}), false).await?;
     tx.commit().await?;
     Ok(Json(json!({"withdrawn": true, "refund_cents": refund})))
@@ -1014,6 +1060,13 @@ async fn overview(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
             campaign_json(c, creative)
         })
         .collect();
+    let mut campaigns = campaigns;
+    for c in &mut campaigns {
+        c["stats"] = sqlx::query_scalar("SELECT jsonb_build_object('served',count(*),'verified',count(*) FILTER (WHERE outcome='verified'),'clicks',count(clicked_at),'rejected',coalesce((SELECT jsonb_object_agg(reason,n) FROM (SELECT reason,count(*) n FROM ad_serves WHERE campaign_id=$1 AND outcome='rejected' GROUP BY reason) r),'{}'),'days',coalesce((SELECT jsonb_agg(jsonb_build_object('day',d,'verified',n) ORDER BY d DESC) FROM (SELECT decided_at::date d,count(*) n FROM ad_serves WHERE campaign_id=$1 AND outcome='verified' GROUP BY 1 ORDER BY 1 DESC LIMIT 30) x),'[]')) FROM ad_serves WHERE campaign_id=$1")
+            .bind(c["id"].as_str().unwrap_or_default())
+            .fetch_one(&mut *db)
+            .await?;
+    }
     Ok(Json(json!({
         "blocked": blocked,
         "account": account.map(|(name, website, country)| json!({"name": name, "website": website, "country": country})),
@@ -1136,6 +1189,7 @@ async fn admin(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     Ok(Json(json!({
         "rate_card": cards.iter().map(|c| json!({"placement": c.placement, "cpm_cents": c.cpm_cents, "min_spend_cents": c.min_spend_cents, "daily_estimate": c.daily_estimate})).collect::<Vec<_>>(),
         "inventory": inventory, "review": review, "campaigns": rows,
+        "revenue": crate::adserve::revenue(&mut db).await?,
         "sales_open": !switches::off(&mut db, "ad_sales").await?,
     })))
 }
@@ -1279,6 +1333,7 @@ async fn staff_refund(
         campaign.delivered.into(),
     );
     owe(&mut tx, &id, refund, "cancelled").await?;
+    sweep(&mut tx, &campaign, refund).await?;
     safety::audit(
         &mut tx,
         Some(&staff.id),

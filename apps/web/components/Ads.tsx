@@ -97,7 +97,9 @@ export function AdSlot({ signedIn }: { signedIn: boolean }) {
   return ad ? <AdFrame ad={ad} className="ad-site" /> : null;
 }
 
-type StudioAdsView = { enabled: boolean; can_earn: boolean; live: boolean; running: { id: string; ends_at: string } | null; next_break_at: string | null; lengths: number[]; breaks: { id: string; starts_at: string; impressions: number }[] };
+type StudioAdsView = { enabled: boolean; can_earn: boolean; live: boolean; running: { id: string; ends_at: string } | null; next_break_at: string | null; lengths: number[]; breaks: { id: string; starts_at: string; impressions: number }[]; earnings: Earned };
+type Earned = { total_tenths: number; days: { day: string; tenths: number; impressions: number }[] };
+const money = (tenths: number) => `$${(tenths / 1000).toFixed(3)}`;
 /** Creator Studio: the ads switch and Run ad break. Never automatic, never a pre-roll. */
 export function StudioAds() {
   const [view, setView] = useState<StudioAdsView | null>(null);
@@ -125,7 +127,21 @@ export function StudioAds() {
     </div>}
     {view.enabled && !view.live && <p className="muted small">Go live to start a break.</p>}
     {view.next_break_at && !view.running && <p className="muted small">Next break available at {new Date(view.next_break_at).toLocaleTimeString()}.</p>}
+    {view.earnings.total_tenths > 0 && <p className="small">Ad earnings: <strong>{money(view.earnings.total_tenths)}</strong> in all{view.earnings.days.length > 0 ? `, ${money(view.earnings.days[0]!.tenths)} on ${view.earnings.days[0]!.day}` : ""}. They join your payout balance.</p>}
     {view.breaks.length > 0 && <ul className="list small">{view.breaks.map(b => <li key={b.id}>{new Date(b.starts_at).toLocaleString()} · {b.impressions} verified impressions</li>)}</ul>}
     {message && <p role="status" className="form-message">{message}</p>}
+  </section>;
+}
+
+/** Wallet: the viewer's Ad Valor, their 5% of the ads they watched (docs/ADS.md "Ad Valor"). */
+export function AdValorWallet() {
+  const [view, setView] = useState<{ balance_tenths: number; earned: Earned } | null>(null);
+  const load = useCallback(async () => { const r = await send<{ balance_tenths: number; earned: Earned }>("GET", "/api/me/ad-valor"); if (r.ok) setView(r.data); }, []);
+  useLoad(load);
+  if (!view || (view.balance_tenths === 0 && view.earned.days.length === 0)) return null;
+  return <section className="panel section" aria-labelledby="adv-h">
+    <h2 id="adv-h">Ad Valor</h2>
+    <p>You have <strong>{money(view.balance_tenths)}</strong> from the ads you watched. It will pay for subscriptions, and cash out once you&apos;re 18.</p>
+    {view.earned.days.length > 0 && <ul className="list small">{view.earned.days.map(d => <li key={d.day}>{d.day} · {d.impressions} ads · {money(d.tenths)}</li>)}</ul>}
   </section>;
 }

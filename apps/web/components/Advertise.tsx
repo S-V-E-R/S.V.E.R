@@ -4,7 +4,7 @@ import { Section, Status, type SaveState } from "./Form";
 import { send, useLoad } from "../lib/client-api";
 
 type Creative = { id: string; format: string; title: string; link: string; status: string; teen_safe: boolean; review_note: string; picture: string; video: string | null };
-type Campaign = { id: string; name: string; placement: string; impressions: number; delivered: number; amount_cents: number; refund_cents: number; starts_on: string; ends_on: string; status: string; ending: string | null; creative_id: string | null; can_cancel: boolean; can_withdraw: boolean };
+type Campaign = { id: string; name: string; placement: string; impressions: number; delivered: number; amount_cents: number; refund_cents: number; starts_on: string; ends_on: string; status: string; ending: string | null; creative_id: string | null; can_cancel: boolean; can_withdraw: boolean; stats?: { served: number; verified: number; clicks: number; rejected: Record<string, number>; days: { day: string; verified: number }[] } };
 type Rate = { placement: string; cpm_cents: number | null; min_spend_cents: number; formats: string[] };
 type View = { blocked: string | null; account: { name: string; website: string; country: string } | null; rate_card: Rate[]; creatives: Creative[]; campaigns: Campaign[]; sales_open: boolean };
 type Quote = { amount_cents: number; cpm_cents: number; available: number; fits: boolean; soonest_start: string | null; below_minimum: boolean; min_spend_cents: number };
@@ -14,6 +14,7 @@ const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 const placements: Record<string, string> = { break: "Streamer ad breaks", feed: "Beacons feed cards", site: "Site placement (Home and Browse)" };
 const formats: Record<string, string> = { video_landscape: "Video, 16:9 (ad breaks)", video_portrait: "Video, 9:16 (feed)", image_portrait: "Picture, 9:16 (feed)", image_landscape: "Picture, 16:9 (site)" };
 const statuses: Record<string, string> = { checkout: "Waiting for payment", paid: "Paid, waiting to start", running: "Running", delivered: "Delivered", refund_due: "Refunding", cancelled: "Cancelled", withdrawn: "Withdrawn" };
+const reasons: Record<string, string> = { hidden: "page hidden or ad off screen", too_short: "seen too briefly", unverified_session: "session not verified", frequency_cap: "frequency cap", expired: "never reported", campaign_full: "campaign already complete", duplicate: "duplicate report" };
 const day = (offset: number) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
 
 function Account({ view, reload }: { view: View; reload: () => void }) {
@@ -140,6 +141,10 @@ function Campaigns({ view, reload }: { view: View; reload: () => void }) {
       return <li key={c.id}>
         <p><strong>{c.name}</strong> · {placements[c.placement]} · <span className="badge">{statuses[c.status] ?? c.status}</span></p>
         <p className="muted small">{c.delivered.toLocaleString()} of {c.impressions.toLocaleString()} verified impressions · {c.starts_on} to {c.ends_on} · paid {dollars(c.amount_cents)}{c.refund_cents > 0 ? ` · refunded ${dollars(c.refund_cents)}` : ""}</p>
+        {c.stats && c.stats.served > 0 && <details className="small"><summary>{c.stats.verified.toLocaleString()} verified of {c.stats.served.toLocaleString()} served · {c.stats.clicks.toLocaleString()} clicks</summary>
+          {Object.keys(c.stats.rejected).length > 0 && <p>Not counted: {Object.entries(c.stats.rejected).map(([r, n]) => `${n.toLocaleString()} ${reasons[r] ?? r}`).join(" · ")}. You&apos;re only billed for verified impressions.</p>}
+          {c.stats.days.length > 0 && <table className="table"><thead><tr><th scope="col">Day</th><th scope="col">Verified impressions</th></tr></thead><tbody>{c.stats.days.map(d => <tr key={d.day}><th scope="row">{d.day}</th><td>{d.verified.toLocaleString()}</td></tr>)}</tbody></table>}
+        </details>}
         {c.status === "paid" && ad?.status !== "approved" && <p className="small">Waiting for the ad to be approved{ad?.status === "rejected" ? `: it wasn't approved (${ad.review_note}). Choose another ad or cancel.` : "."}</p>}
         <div className="row wrap">
           {(c.status === "paid" || c.status === "checkout") && options.length > 1 && <label className="field narrow"><span>Ad</span><select defaultValue={c.creative_id ?? ""} onChange={e => swap(c, e.target.value)}>{options.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}</select></label>}

@@ -22,7 +22,12 @@ Joe approved this spec as written, including every **Proposed** default, on Octo
 - **Forecast:** after 7 days of data it becomes measured (eligible viewers a day times the verified rate) instead of staff's estimate.
 - **Known limits:** players find a new break at their next `/live` poll (up to 15 seconds), and feed and site genre targeting reads the channels a viewer follows.
 
-Next: step 3, settlement and the revenue dashboards.
+**Build step 3 built October 16, 2026** (`adserve.rs` settlement, no migration):
+- **Settlement:** each verified impression posts one balanced `ad_impression` transaction. Its value is the step of the campaign's running total (paid × delivered ÷ ordered), so a finished campaign moves exactly what was paid, to the tenth of a cent. The prepaid account → `usd:ads` (ad revenue). The streamer's tier share (breaks only, when the channel can earn) and the viewer's 5% (signed in, 13 or older, Trusted) are paid out of `usd:platform`; S.V.E.R keeps the rest and every rounding. A campaign stopped early by withdrawal or a staff refund sweeps its unused prepaid balance (`ad_unused`). A full refund or lost chargeback made outside the campaign's flow takes the settled revenue back from `usd:ads` (`ad_taken_back`); shares already paid to streamers and viewers stay paid, at S.V.E.R's cost.
+- **Dashboards:** advertisers see served, verified, rejected by reason, clicks and verified per day for each campaign; streamers see ad earnings in Creator Studio (they join the payout balance); viewers see Ad Valor in Wallet; staff see ad revenue by placement and split, and rejected-impression reasons, on Staff → Ad network.
+- **Reporting:** Raven's Eye money by kind shows `ad_purchase`, `ad_impression`, `ad_unused` and `ad_taken_back`; open data has an "Ad revenue" line (`ads_cents`, gross before the shares).
+
+Next: step 4, the terms, privacy and tax work before sales open.
 
 ## How the guarantee works
 
@@ -88,7 +93,7 @@ Each verified impression's price (the campaign's CPM ÷ 1,000) is split when it'
 - **Upfront payment:** the advertiser pays the quoted total with Stripe Checkout (one-time payment, card). **Proposed:** Stripe Tax on, since digital advertising is taxable in some US states.
 - **Ledger** (double-entry, like Support):
   - On payment: `usd:stripe` → `usd:ads:prepaid:<campaign>`.
-  - On each verified impression: prepaid → `usd:earnings:<streamer>`, `usd:adv:<viewer>` and `usd:platform:ads`.
+  - On each verified impression: prepaid → `usd:ads` (revenue), and `usd:platform` pays `usd:earnings:<streamer>` and `usd:adv:<viewer>` their shares.
   - On withdrawal or rejection: prepaid remainder → refund through Stripe.
 - **Rejected ads** (never approved) are refunded in full. Each campaign shows its invoice and refunds.
 - **Minimum order (Proposed):** 1,000 impressions; the rate card has a minimum spend per campaign.

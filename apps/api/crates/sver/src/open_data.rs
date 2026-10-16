@@ -52,6 +52,10 @@ const MONTHLY: &[(&str, &str)] = &[
         "supporters_cents",
         "Platform supporter subscriptions, in cents (all of it goes to S.V.E.R)",
     ),
+    (
+        "ads_cents",
+        "Ad revenue from verified impressions, in cents (before streamers' and viewers' shares)",
+    ),
 ];
 
 /// Recomputes the last 12 weeks and 12 months, at most once a day (the jobs loop calls it).
@@ -97,6 +101,7 @@ pub async fn compute(app: &App) -> Res<()> {
           ('payouts_cents',(SELECT coalesce(sum(amount_cents),0) FROM payout_runs WHERE status='paid' AND completed_at>=m AND completed_at<m+interval '1 month')::float8),
           ('creators_paid',(SELECT count(DISTINCT user_id) FROM payout_runs WHERE status='paid' AND completed_at>=m AND completed_at<m+interval '1 month')::float8),
           ('supporters_cents',(SELECT coalesce(sum((detail->>'cents')::bigint),0) FROM ledger_transactions WHERE kind='platform_sub' AND created_at>=m AND created_at<m+interval '1 month')::float8),
+          ('ads_cents',(SELECT coalesce(sum((detail->>'value')::bigint),0)/10 FROM ledger_transactions WHERE kind='ad_impression' AND created_at>=m AND created_at<m+interval '1 month')::float8),
           ('wall_cents',(SELECT coalesce(sum((detail->>'cents')::bigint),0) FROM ledger_transactions WHERE kind='wall_purchase' AND created_at>=m AND created_at<m+interval '1 month')::float8)
         ) x(metric,value)
         ON CONFLICT(period,metric) DO UPDATE SET value=EXCLUDED.value,computed_at=now()")

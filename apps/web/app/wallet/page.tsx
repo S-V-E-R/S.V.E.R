@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Wallet } from "../../components/Wallet";
 import { MySubscriptions } from "../../components/MySubscriptions";
 import { SupporterWallet } from "../../components/SupporterWallet";
+import { AdValorWallet } from "../../components/Ads";
 import { currentAccount } from "../session";
 import "../../styles/profiles.css";
 import "../../styles/supporters.css";
@@ -15,5 +16,6 @@ export default async function WalletPage({ searchParams }: { searchParams: Promi
     <Wallet returned={returned} />
     <MySubscriptions />
     <SupporterWallet />
+    <AdValorWallet />
   </div></div>;
 }

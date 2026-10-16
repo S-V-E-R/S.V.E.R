@@ -315,10 +315,30 @@ async fn impression(
         None
     };
     if reason.is_none() {
-        let counted: Option<i32> = sqlx::query_scalar("UPDATE ad_campaigns SET delivered=delivered+1,status=CASE WHEN delivered+1>=impressions THEN 'delivered' ELSE status END,updated_at=now() WHERE id=$1 AND status='running' AND delivered<impressions RETURNING delivered")
+        let counted: Option<(i32, i32, i32)> = sqlx::query_as("UPDATE ad_campaigns SET delivered=delivered+1,status=CASE WHEN delivered+1>=impressions THEN 'delivered' ELSE status END,updated_at=now() WHERE id=$1 AND status='running' AND delivered<impressions RETURNING delivered,impressions,amount_cents")
             .bind(&campaign).fetch_optional(&mut *tx).await?;
-        if counted.is_none() {
-            reason = Some("campaign_full");
+        match counted {
+            Some((k, impressions, amount)) => {
+                let (channel, user_id): (Option<String>, Option<String>) =
+                    sqlx::query_as("SELECT channel_id,user_id FROM ad_serves WHERE id=$1")
+                        .bind(&input.ticket)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                let value = impression_value(amount.into(), impressions.into(), k.into());
+                settle(
+                    &mut tx,
+                    &input.ticket,
+                    &campaign,
+                    &placement,
+                    value,
+                    channel.as_deref(),
+                    user_id.as_deref(),
+                    break_id.as_deref(),
+                    &key,
+                )
+                .await?;
+            }
+            None => reason = Some("campaign_full"),
         }
     }
     sqlx::query("UPDATE ad_serves SET outcome=$2,reason=$3,decided_at=now() WHERE id=$1")
@@ -335,6 +355,71 @@ async fn impression(
     Ok(Json(json!({"counted": reason.is_none(), "reason": reason})))
 }
 
+/// The k-th impression's value in tenths of a cent: the running total's step, so a fully delivered
+/// campaign moves exactly what was paid.
+pub fn impression_value(amount_cents: i64, impressions: i64, k: i64) -> i64 {
+    let total = |n: i64| amount_cents * 10 * n / impressions.max(1);
+    total(k) - total(k - 1)
+}
+/// Splits one verified impression (docs/ADVERTISERS.md "The split"): its value leaves the
+/// campaign's prepaid account as ad revenue; the streamer's tier share (breaks, when they can earn)
+/// and the viewer's 5% (signed in, 13 or older, and Trusted for breaks) move out of the platform's
+/// share as for subscriptions; rounding stays with S.V.E.R.
+#[allow(clippy::too_many_arguments)]
+async fn settle(
+    db: &mut PgConnection,
+    serve: &str,
+    campaign: &str,
+    placement: &str,
+    value: i64,
+    channel: Option<&str>,
+    viewer: Option<&str>,
+    break_id: Option<&str>,
+    key: &str,
+) -> Res<()> {
+    let prepaid = format!("usd:ads:prepaid:{campaign}");
+    let mut entries: Vec<(String, i64)> = vec![(prepaid, value), ("usd:ads".into(), -value)];
+    let mut streamer_share = 0;
+    if placement == "break"
+        && let Some(channel) = channel
+        && crate::support::can_earn(db, channel).await?
+    {
+        let percent = crate::tiers::split(db, channel).await?;
+        streamer_share = value * percent / 100;
+        entries.push((format!("usd:earnings:{channel}"), streamer_share));
+    }
+    let mut viewer_share = 0;
+    if let Some(user) = viewer {
+        let teen_or_older = crate::support::age(db, user)
+            .await?
+            .is_some_and(|a| a >= 13);
+        let trusted = match break_id {
+            Some(id) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM playback_leases l JOIN ad_breaks b ON b.broadcast_id=l.broadcast_id WHERE b.id=$1 AND l.viewer_key=$2 AND l.level='trusted' AND l.expires_at>now())")
+                .bind(id).bind(key).fetch_one(&mut *db).await?,
+            None => true,
+        };
+        if teen_or_older && trusted {
+            viewer_share = value * 5 / 100;
+            entries.push((format!("usd:adv:{user}"), viewer_share));
+        }
+    }
+    entries.push(("usd:platform".into(), -(streamer_share + viewer_share)));
+    let borrowed: Vec<(&str, &str, i64)> = entries
+        .iter()
+        .map(|(a, n)| (a.as_str(), "usd", *n))
+        .collect();
+    crate::ledger::post(
+        db,
+        "ad_impression",
+        &format!("ad:{serve}"),
+        json!({"campaign": campaign, "placement": placement, "channel": channel, "viewer": viewer,
+            "value": value, "streamer": streamer_share, "viewers": viewer_share}),
+        &borrowed,
+    )
+    .await?;
+    Ok(())
+}
+
 /// GET /api/ads/click/{ticket}: counts the click once, then goes to the advertiser's page.
 async fn click(State(app): State<App>, Path(ticket): Path<String>) -> Res<Redirect> {
     let link: Option<String> = sqlx::query_scalar("UPDATE ad_serves s SET clicked_at=coalesce(s.clicked_at,now()) FROM ad_creatives a WHERE s.id=$1 AND a.id=s.creative_id RETURNING a.link")
@@ -343,6 +428,34 @@ async fn click(State(app): State<App>, Path(ticket): Path<String>) -> Res<Redire
 }
 
 // ---- Streamers ----
+
+/// An account's ad money: the total and the last 30 days, in tenths of a cent.
+async fn earnings(db: &mut PgConnection, account: &str) -> Res<Value> {
+    let total: i64 = sqlx::query_scalar("SELECT coalesce(sum(e.amount),0)::bigint FROM ledger_entries e JOIN ledger_transactions t ON t.id=e.transaction_id WHERE e.account=$1 AND e.unit='usd' AND t.kind='ad_impression'")
+        .bind(account).fetch_one(&mut *db).await?;
+    let days: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('day',d,'tenths',tenths,'impressions',n) FROM (SELECT t.created_at::date d,sum(e.amount)::bigint tenths,count(*) n FROM ledger_entries e JOIN ledger_transactions t ON t.id=e.transaction_id WHERE e.account=$1 AND e.unit='usd' AND t.kind='ad_impression' AND t.created_at>now()-interval '30 days' GROUP BY 1 ORDER BY 1 DESC) x")
+        .bind(account).fetch_all(&mut *db).await?;
+    Ok(json!({"total_tenths": total, "days": days}))
+}
+/// GET /api/me/ad-valor: the viewer's Ad Valor (their 5% of the ads they saw).
+async fn ad_valor(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let mut db = app.db.acquire().await?;
+    let account = format!("usd:adv:{}", user.id);
+    Ok(Json(json!({
+        "balance_tenths": crate::ledger::balance(&mut db, &account, "usd").await?,
+        "earned": earnings(&mut db, &account).await?,
+    })))
+}
+/// The staff view of ad money: gross, streamers, viewers and S.V.E.R by placement, and why
+/// impressions were rejected. For /api/admin/adnet.
+pub(crate) async fn revenue(db: &mut PgConnection) -> Res<Value> {
+    let placements: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('placement',t.detail->>'placement','impressions',count(*),'gross',sum((t.detail->>'value')::bigint),'streamers',sum((t.detail->>'streamer')::bigint),'viewers',sum((t.detail->>'viewers')::bigint)) FROM ledger_transactions t WHERE t.kind='ad_impression' GROUP BY t.detail->>'placement' ORDER BY 1")
+        .fetch_all(&mut *db).await?;
+    let rejected: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('reason',reason,'count',count(*)) FROM ad_serves WHERE outcome='rejected' AND decided_at>now()-interval '30 days' GROUP BY reason ORDER BY count(*) DESC")
+        .fetch_all(&mut *db).await?;
+    Ok(json!({"placements": placements, "rejected": rejected}))
+}
 
 /// GET /api/me/ads: the ads switch, whether the channel can earn, and recent breaks.
 async fn studio(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
@@ -368,6 +481,7 @@ async fn studio(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         "live": crate::streams::live_broadcast(&mut db, &user.id).await?.is_some(),
         "running": running_break(&mut db, &user.id).await?.map(|(id, _, ends)| json!({"id": id, "ends_at": ends})),
         "next_break_at": next.filter(|n| *n > Utc::now()), "lengths": BREAK_SECONDS, "breaks": breaks,
+        "earnings": earnings(&mut db, &format!("usd:earnings:{}", user.id)).await?,
     })))
 }
 #[derive(Deserialize)]
@@ -460,6 +574,7 @@ pub fn routes() -> Router<App> {
         .route("/api/ads/click/{ticket}", get(click))
         .route("/api/me/ads", get(studio).put(switch))
         .route("/api/me/ads/breaks", post(start_break))
+        .route("/api/me/ad-valor", get(ad_valor))
 }
 
 #[cfg(test)]
@@ -483,5 +598,14 @@ mod tests {
         );
         assert_eq!(behind(1000, 1000, d(0), d(9), d(12)), None, "finished");
         assert_eq!(behind(1000, 0, d(3), d(9), d(0)), None, "not started");
+    }
+    #[test]
+    fn impressions_move_exactly_what_was_paid() {
+        for (amount, impressions) in [(1000, 2000), (1001, 3000), (500, 1000), (777_777, 123_457)] {
+            let total: i64 = (1..=impressions)
+                .map(|k| impression_value(amount, impressions, k))
+                .sum();
+            assert_eq!(total, amount * 10, "{amount} cents over {impressions}");
+        }
     }
 }

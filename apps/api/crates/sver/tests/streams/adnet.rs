@@ -62,9 +62,12 @@ async fn upload(e: &Env, token: &str, format: &str, file: Vec<u8>) -> (StatusCod
     (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 async fn webhook(e: &Env, id: &str, session: &str, cents: i64, intent: &str) -> StatusCode {
-    let body = json!({"id": id, "type": "checkout.session.completed", "data": {"object": {
-        "id": session, "payment_status": "paid", "amount_total": cents, "payment_intent": intent}}})
-    .to_string();
+    stripe_event(e, json!({"id": id, "type": "checkout.session.completed", "data": {"object": {
+        "id": session, "payment_status": "paid", "amount_total": cents, "payment_intent": intent}}}))
+    .await
+}
+async fn stripe_event(e: &Env, body: Value) -> StatusCode {
+    let body = body.to_string();
     let signature = sver::stripe::sign("whsec_synthetic", body.as_bytes(), Utc::now().timestamp());
     let request = Request::builder()
         .method("POST")
@@ -648,7 +651,7 @@ pub async fn exercise(e: &Env) {
         .1
     };
     // A site campaign starts once paid, approved and its start date has come.
-    let (site, _) = buy(e, &buyer, &creative, want(2000, 0, 9), "site").await;
+    let (site, site_cents) = buy(e, &buyer, &creative, want(2000, 0, 9), "site").await;
     sver::adserve::tick(&e.app).await.unwrap();
     assert_eq!(status(e, &site).await.0, "running");
     assert!(
@@ -724,6 +727,10 @@ pub async fn exercise(e: &Env) {
         .await
         .unwrap();
     assert_eq!(delivered, 1);
+    let posted: i64 = sqlx::query_scalar("SELECT count(*) FROM ledger_transactions WHERE kind='ad_impression' AND detail->>'campaign'=$1").bind(&site).fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(posted, 1, "each verified impression settles once");
+    let unbalanced: i64 = sqlx::query_scalar("SELECT count(*) FROM (SELECT t.id FROM ledger_transactions t JOIN ledger_entries x ON x.transaction_id=t.id WHERE t.kind='ad_impression' GROUP BY t.id HAVING sum(x.amount)<>0) u").fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(unbalanced, 0);
 
     // Breaks: only a streamer who can earn and turned ads on, at most one per 10 minutes.
     assert_eq!(
@@ -865,6 +872,28 @@ pub async fn exercise(e: &Env) {
     );
     let (_, studio) = call(e, "GET", "/api/me/ads", Some(&streamer), Value::Null).await;
     assert_eq!(studio["breaks"][0]["impressions"], 1);
+    // A Scout streamer earns 65% of the break impression (5 tenths of a cent: 3); the viewer's
+    // lease is Counted, not Trusted, so no Ad Valor; the rest stays with S.V.E.R.
+    assert_eq!(balance(e, "usd:earnings:an-streamer").await, 3);
+    assert_eq!(studio["earnings"]["total_tenths"], 3);
+    assert_eq!(balance(e, "usd:adv:an-viewer").await, 0);
+    let (_, valor) = call(e, "GET", "/api/me/ad-valor", Some(&viewer), Value::Null).await;
+    assert_eq!(valor["balance_tenths"], 0);
+    let (_, admin) = call(e, "GET", "/api/admin/adnet", Some(&staff), Value::Null).await;
+    let placements = admin["revenue"]["placements"].as_array().unwrap();
+    assert!(
+        placements
+            .iter()
+            .any(|p| p["placement"] == "break" && p["streamers"] == 3),
+        "{placements:?}"
+    );
+    assert!(
+        admin["revenue"]["rejected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["reason"] == "hidden")
+    );
     let clicked = call(
         e,
         "GET",
@@ -878,6 +907,13 @@ pub async fn exercise(e: &Env) {
     .await
     .0;
     assert_eq!(clicked, StatusCode::SEE_OTHER);
+    // A full refund from Stripe's dashboard after delivery began: the campaign stops and the
+    // settled revenue is taken back, so its prepaid account ends at zero.
+    let refund = json!({"id": "evt_ad_site_refund", "type": "charge.refunded", "data": {"object": {
+        "payment_intent": "pi_ad_site", "amount": site_cents, "amount_refunded": site_cents}}});
+    assert_eq!(stripe_event(e, refund).await, StatusCode::OK);
+    assert_eq!(status(e, &site).await.0, "cancelled");
+    assert_eq!(balance(e, &format!("usd:ads:prepaid:{site}")).await, 0);
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test' WHERE id='an-b'")
         .await;
     e.sql("UPDATE feature_switches SET off=true WHERE name='ad_sales'")
