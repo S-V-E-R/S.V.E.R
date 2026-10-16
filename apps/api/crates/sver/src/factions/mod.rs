@@ -92,10 +92,9 @@ pub(super) async fn status(db: &mut PgConnection, user: &str, at: DateTime<Utc>)
 }
 async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
+    engine::catch_up(&app).await?;
     let mut tx = app.db.begin().await?;
-    engine::lock(&mut tx).await?;
     let at = engine::now(&mut tx).await?;
-    engine::advance(&mut tx, &app.config.factions, at).await?;
     let value = status(&mut tx, &user.id, at).await?;
     tx.commit().await?;
     Ok(Json(value))
@@ -128,12 +127,13 @@ async fn choose(
             "Your faction is locked until the break between seasons.",
         ));
     }
+    // The break is open to everyone, so switching then never uses up the free switch.
     let reason = if state["faction"].is_null() {
         "join"
-    } else if state["free_switch_available"] == true {
-        "free_switch"
-    } else {
+    } else if state["between_seasons"] == true {
         "season_break"
+    } else {
+        "free_switch"
     };
     sqlx::query("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at,free_switch_used) VALUES($1,$2,$3,$3,false) ON CONFLICT(user_id) DO UPDATE SET faction=$2,joined_at=$3,free_switch_used=faction_members.free_switch_used OR $4,moderator_candidate=false")
         .bind(&user.id).bind(&input.faction).bind(at).bind(reason=="free_switch").execute(&mut *tx).await?;

@@ -34,6 +34,20 @@ pub(crate) async fn lock(db: &mut PgConnection) -> Res<()> {
         .await?;
     Ok(())
 }
+/// Runs a due checkpoint if no one else is, without waiting: read endpoints call this, then read
+/// without the war lock, so page loads never queue influence awards behind them.
+pub(super) async fn catch_up(app: &App) -> Res<()> {
+    let mut tx = app.db.begin().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(1398162770)")
+        .fetch_one(&mut *tx)
+        .await?;
+    if locked {
+        let at = now(&mut tx).await?;
+        advance(&mut tx, &app.config.factions, at).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
 pub(super) async fn now(db: &mut PgConnection) -> Res<DateTime<Utc>> {
     Ok(sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(db)
@@ -125,7 +139,7 @@ pub(super) async fn standings(
     week: &Week,
     at: DateTime<Utc>,
 ) -> Res<Value> {
-    let active: Vec<(String,i64)> = sqlx::query_as("SELECT faction,count(DISTINCT user_id) FROM faction_influence WHERE happened_at >= $1-interval '14 days' AND happened_at<$1 GROUP BY faction")
+    let active: Vec<(String,i64)> = sqlx::query_as("SELECT i.faction,count(DISTINCT i.user_id) FROM faction_influence i JOIN faction_members m ON m.user_id=i.user_id AND m.faction=i.faction WHERE i.points>0 AND i.happened_at >= $1-interval '14 days' AND i.happened_at<$1 GROUP BY i.faction")
         .bind(at).fetch_all(&mut *db).await?;
     let totals: Vec<(String,String,i64)> = sqlx::query_as("SELECT genre,faction,sum(points)::bigint FROM faction_influence WHERE week_id=$1 GROUP BY genre,faction")
         .bind(week.id).fetch_all(&mut *db).await?;
@@ -166,7 +180,7 @@ async fn checkpoint(
     week: &Week,
     at: DateTime<Utc>,
 ) -> Res<()> {
-    let active: Vec<(String,i64)> = sqlx::query_as("SELECT faction,count(DISTINCT user_id) FROM faction_influence WHERE happened_at >= $1-interval '14 days' AND happened_at<$1 GROUP BY faction")
+    let active: Vec<(String,i64)> = sqlx::query_as("SELECT i.faction,count(DISTINCT i.user_id) FROM faction_influence i JOIN faction_members m ON m.user_id=i.user_id AND m.faction=i.faction WHERE i.points>0 AND i.happened_at >= $1-interval '14 days' AND i.happened_at<$1 GROUP BY i.faction")
         .bind(week.ends_at).fetch_all(&mut *db).await?;
     let totals: Vec<(String,String,i64)> = sqlx::query_as("SELECT genre,faction,sum(points)::bigint FROM faction_influence WHERE week_id=$1 GROUP BY genre,faction")
         .bind(week.id).fetch_all(&mut *db).await?;
@@ -277,7 +291,7 @@ async fn elect(db: &mut PgConnection, previous: i64, next: i64) -> Res<()> {
 async fn finish(db: &mut PgConnection, season: &Season, at: DateTime<Utc>) -> Res<()> {
     let counts: Vec<(String,i64)> = sqlx::query_as("SELECT holder,count(*) FROM faction_territories WHERE season_id=$1 AND holder IS NOT NULL GROUP BY holder")
         .bind(season.id).fetch_all(&mut *db).await?;
-    let history: Vec<(String,i64)> = sqlx::query_as("SELECT g->>'holder',count(*) FROM faction_weeks w CROSS JOIN LATERAL jsonb_array_elements(w.result->'genres') g WHERE w.season_id=$1 AND g->>'holder' IS NOT NULL GROUP BY 1")
+    let history: Vec<(String,i64)> = sqlx::query_as("SELECT h,count(*) FROM faction_weeks w CROSS JOIN LATERAL jsonb_array_elements(w.result->'genres') g CROSS JOIN LATERAL (SELECT CASE WHEN g ? 'previous_holder' THEN g->>'previous_holder' ELSE g->>'holder' END AS h) x WHERE w.season_id=$1 AND h IS NOT NULL GROUP BY 1")
         .bind(season.id).fetch_all(&mut *db).await?;
     // King of the Hill: whoever holds the Hill when the season ends gets it as extra territories.
     let hill_holder: Option<String> = sqlx::query_scalar("SELECT t.holder FROM faction_territories t JOIN faction_seasons s ON s.id=t.season_id AND s.hill=t.genre WHERE t.season_id=$1")
@@ -308,7 +322,9 @@ async fn finish(db: &mut PgConnection, season: &Season, at: DateTime<Utc>) -> Re
     .bind(&winners)
     .execute(&mut *db)
     .await?;
-    sqlx::query("INSERT INTO faction_rewards(season_id,user_id,faction,awarded_at) SELECT $1,user_id,faction,$2 FROM faction_members WHERE faction=ANY($3) ON CONFLICT DO NOTHING")
+    // Rewards go to real members who fought for the winning side this season: verified, eligible,
+    // and with influence earned for that faction. Joining the winner at the end earns nothing.
+    sqlx::query("INSERT INTO faction_rewards(season_id,user_id,faction,awarded_at) SELECT $1,m.user_id,m.faction,$2 FROM faction_members m JOIN channel_users c ON c.id=m.user_id AND c.eligible JOIN users u ON u.id=m.user_id AND u.email_verified WHERE m.faction=ANY($3) AND EXISTS(SELECT 1 FROM faction_influence i JOIN faction_weeks w ON w.id=i.week_id WHERE w.season_id=$1 AND i.user_id=m.user_id AND i.faction=m.faction AND i.points>0) ON CONFLICT DO NOTHING")
         .bind(season.id).bind(at).bind(winners).execute(db).await?;
     Ok(())
 }

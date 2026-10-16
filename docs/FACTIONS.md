@@ -50,7 +50,7 @@ Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page; the
 ## Weekly checkpoints
 
 - Each week (Monday 00:00 UTC) is its own battle. Standings show live all week; genres only change hands at the checkpoint.
-- **Size balancing:** a faction's score in a genre is its influence there divided by its number of **active members** (made a trusted contribution in the last 14 days), with a minimum divisor in private tuning so a tiny faction can't win a genre with one person.
+- **Size balancing:** a faction's score in a genre is its influence there divided by its number of **active members** (made a trusted contribution in the last 14 days, counted only for the faction they're in now, so one person never counts for two), with a minimum divisor in private tuning so a tiny faction can't win a genre with one person.
 - **Flipping:** a challenger takes a held genre when its balanced score beats the holder's by more than the privately configured margin. Ties and narrow leads go to the holder.
 - **Neutral genres** are claimed by the first faction to reach a minimum influence there (tuning) and lead by the margin.
 - Weekly influence resets after each checkpoint; the week's results are kept for history and the hub.
@@ -58,8 +58,8 @@ Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page; the
 ## Seasons
 
 - Three calendar months, with a seven-day break between seasons (when switching is open; Joe, October 4, 2026).
-- **Winner:** the faction holding the most genres at the final checkpoint. Ties go to the faction with the most genre-weeks held during the season.
-- **Rewards:** members of the winning faction get a season badge and profile banner; the faction is featured on the homepage for the next season; bonus Valor once Valor exists (Module 6), credited then if earned earlier. Amounts live in tuning.
+- **Winner:** the faction holding the most genres at the final checkpoint. Ties go to the faction with the most genre-weeks held during the season: each week counts whoever held a genre during that week, so week 1 counts and a flip at the final checkpoint doesn't.
+- **Rewards:** members of the winning faction who earned influence for it during the season (verified, eligible accounts) get a season badge and profile banner; the faction is featured on the homepage for the next season; bonus Valor once Valor exists (Module 6), credited then if earned earlier. Amounts live in tuning.
 - **Rollover:** every genre returns to its faction's **home turf** for the new season; neutral genres return to neutral. All influence starts at zero.
 - **Season 1** starts on deployment (Joe, October 4, 2026). The 7-day free switch applies from each person's own choice. Joe authorized conservative starting influence weights and caps in private server tuning.
 - Season jobs are durable and replayable: a missed checkpoint or rollover runs once when the worker recovers, never twice.
@@ -130,3 +130,15 @@ The first and final weeks may be partial weeks. The final checkpoint runs at the
 The board uses the existing staff reports and appeals workflow. Weekly moderators can remove posts from their own faction with a reason. Genre creation, renames, category moves and merges require staff step-up and an audit note. Across-genre moves and merges are blocked during a season.
 
 For preserved account imports, run `scripts/export-legacy-factions.sql` against an isolated restore of the legacy backup and save its ID-to-slug JSON outside the repository. `sver-import-check factions EXTERNAL_MAPPING --check-live` validates all preserved IDs and rolls back; `--apply-live` applies the same atomic import to the dedicated rebuild database. Local equivalents are `--check` and `--apply`. Existing new-stack choices are kept, so replay is harmless. The import uses preserved account metadata, never the live legacy database.
+
+## Review fixes (October 16, 2026)
+
+An outside review of the war code led to these changes (migration 0115):
+- Season rewards need influence earned for the winning faction that season, from a verified, eligible account, so joining the winner at the end, or with alt accounts, earns nothing.
+- The genre-weeks tie-break counts who held each genre during each week (`previous_holder`), and the hub scoreboard includes the Hill bonus, so it matches the real result.
+- Watching or chatting in your own channel never earns influence; chat influence is keyed to the sender and the message's id.
+- A raid or chat that earned nothing because of a cap is recorded at 0 points, so retrying it later can't earn.
+- Switching during the season break never uses up the free switch.
+- The war map, hubs and "my faction" no longer take the war lock: they run a due checkpoint only if nobody else is, then read without blocking influence awards.
+- **Open for Joe:** "active" still means any trusted contribution. A minimum (for example a streaming or watching contribution, not one chat message) would make diluting a rival's divisor with verified alts harder; the same question applies to the three votes that elect a board moderator.
+
