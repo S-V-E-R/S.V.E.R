@@ -917,6 +917,11 @@ async fn exercise(app: App) {
         .await
         .unwrap();
     assert_eq!(n, 1);
+    // Someone who joins the winning side at the very end, without fighting, gets no reward.
+    sqlx::query("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES('faction-late','faction-late@example.test','FactionLate',true,'1990-01-01')")
+        .execute(&app.db).await.unwrap();
+    sqlx::query("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES('faction-late','myria',$1,$1)")
+        .bind(season.ends_at - chrono::Duration::hours(1)).execute(&app.db).await.unwrap();
     advance(&app, season.ends_at).await;
     let mut db = app.db.acquire().await.unwrap();
     let ended = engine::latest(&mut db).await.unwrap().unwrap();
@@ -937,6 +942,16 @@ async fn exercise(app: App) {
         .await
         .unwrap();
     assert!(reward_count > 0);
+    let late: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM faction_rewards WHERE user_id='faction-late')",
+    )
+    .fetch_one(&mut *db)
+    .await
+    .unwrap();
+    assert!(
+        !late,
+        "rewards go to members who earned influence this season"
+    );
     drop(db);
     advance(&app, season.ends_at).await;
     assert_eq!(
