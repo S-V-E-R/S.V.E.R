@@ -13,6 +13,7 @@ use std::{sync::Arc, time::Duration};
 pub mod account;
 pub mod achievements;
 pub mod activity;
+pub mod adnet;
 pub mod ads;
 pub mod alerts;
 pub mod auth;
@@ -404,6 +405,7 @@ pub fn router(app: App) -> Router {
     Router::new()
         .merge(videos::routes())
         .merge(beacons::routes())
+        .merge(adnet::routes())
         .route(
             "/api/health",
             get(|| async { Json(json!({"status":"ok"})) }),

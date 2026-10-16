@@ -527,6 +527,16 @@ fn checkout_pairs(
         },
         // A Wall seat is S.V.E.R's own sale; no creator share (docs/WALL.md).
         "wall" => vec![("usd:stripe".into(), "usd:wall".into(), "usd", cents * 10)],
+        // An ad campaign is prepaid; verified impressions move it on (docs/ADVERTISERS.md).
+        "ad" => vec![(
+            "usd:stripe".into(),
+            format!(
+                "usd:ads:prepaid:{}",
+                detail["campaign"].as_str().unwrap_or_default()
+            ),
+            "usd",
+            cents * 10,
+        )],
         _ => vec![
             (
                 format!("valor:{}", user.unwrap_or("unclaimed")),
@@ -597,6 +607,9 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
     if kind == "wall" {
         crate::seats::paid(tx, id, &detail, intent).await?;
     }
+    if kind == "ad" {
+        crate::adnet::paid(tx, id, &detail, intent).await?;
+    }
     let cents = i64::from(cents);
     let pairs = checkout_pairs(
         &kind,
@@ -610,6 +623,7 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
         match kind.as_str() {
             "gift" => "gift_purchase",
             "wall" => "wall_purchase",
+            "ad" => "ad_purchase",
             _ => "valor_purchase",
         },
         &format!("checkout:{id}"),

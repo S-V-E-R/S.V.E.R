@@ -81,6 +81,9 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::seats::tick(app).await.is_err() {
         eprintln!("wall_event=maintenance outcome=retry");
     }
+    if crate::adnet::tick(app).await.is_err() {
+        eprintln!("adnet_event=maintenance outcome=retry");
+    }
     if crate::open_data::tick(app).await.is_err() {
         eprintln!("open_data_event=compute outcome=retry");
     }
