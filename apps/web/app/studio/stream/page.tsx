@@ -5,6 +5,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 import { GamePicker } from "../../../components/GamePicker";
+import { StudioAds } from "../../../components/Ads";
 
 /** A new channel's language defaults to the browser's (then "other"). */
 const defaultLanguage = () => fromBrowser(typeof navigator === "undefined" ? [] : navigator.languages)[0] ?? "other";
@@ -138,6 +139,7 @@ export default function StreamStudio() {
       {broadcast?.end_reason === "startup_timeout" && <p role="alert">Compatible media was not confirmed within 15 seconds. Check your OBS encoder settings and connection before trying again.</p>}
       {data.credential && !data.credential.revoked && <button type="button" className="quiet danger-text" disabled={busy} onClick={stop}>Stop stream and revoke key</button>}
     </Section>
+    <StudioAds />
     <Section title="Stream details" intro="Choose a title and category before connecting OBS. You can change them while live.">
       <form onSubmit={save}>
         <label className="field"><span>Title</span><input required maxLength={280} value={form.title} disabled={busy || !data.eligible} aria-describedby="stream-title-count" onChange={event => setForm({ ...form, title: event.target.value })} /><small id="stream-title-count">{count}/140 characters</small></label>

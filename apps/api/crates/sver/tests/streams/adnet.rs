@@ -623,6 +623,263 @@ pub async fn exercise(e: &Env) {
     assert_eq!(mine["account"]["name"], "Beta Games LLC");
     assert_eq!(mine["campaigns"].as_array().unwrap().len(), 2);
     assert_eq!(mine["creatives"].as_array().unwrap().len(), 2);
+
+    // ==== Step 2: serving, verification, pacing and the make-good ====
+    let viewer = person(e, "an-viewer", "NetViewer", true).await;
+    let streamer = person(e, "an-streamer", "NetStreamer", true).await;
+    let guest_browser = "guest-browser-0000000001";
+    let browser = "viewer-browser-000000001";
+    let serve = |token: Option<String>, body: Value| async move {
+        call(e, "POST", "/api/ads/serve", token.as_deref(), body).await
+    };
+    let report = |token: Option<String>,
+                  ticket: Value,
+                  browser: &'static str,
+                  ms: i64,
+                  visible: bool| async move {
+        call(
+            e,
+            "POST",
+            "/api/ads/impressions",
+            token.as_deref(),
+            json!({"ticket": ticket, "browser_id": browser, "visible_ms": ms, "visible": visible}),
+        )
+        .await
+        .1
+    };
+    // A site campaign starts once paid, approved and its start date has come.
+    let (site, _) = buy(e, &buyer, &creative, want(2000, 0, 9), "site").await;
+    sver::adserve::tick(&e.app).await.unwrap();
+    assert_eq!(status(e, &site).await.0, "running");
+    assert!(
+        serve(
+            None,
+            json!({"placement": "site", "browser_id": guest_browser})
+        )
+        .await
+        .1["ad"]
+            .is_null(),
+        "guests get no site ads"
+    );
+    let (code, served) = serve(
+        Some(viewer.clone()),
+        json!({"placement": "site", "browser_id": browser}),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{served}");
+    let ticket = served["ad"]["ticket"].clone();
+    assert_eq!(served["ad"]["kind"], "image");
+    assert_eq!(served["ad"]["advertiser"], "Beta Games LLC");
+    let (_, again) = serve(
+        Some(viewer.clone()),
+        json!({"placement": "site", "browser_id": browser}),
+    )
+    .await;
+    assert!(
+        again["ad"].is_null(),
+        "the same ad at most once per 10 minutes"
+    );
+    assert_eq!(
+        report(Some(viewer.clone()), ticket.clone(), browser, 1500, true).await["reason"],
+        "too_short",
+        "the time has to really pass"
+    );
+    let (_, hidden) = serve(
+        Some(streamer.clone()),
+        json!({"placement": "site", "browser_id": browser}),
+    )
+    .await;
+    let hidden_ticket = hidden["ad"]["ticket"].clone();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    assert_eq!(
+        report(Some(streamer.clone()), hidden_ticket, browser, 1500, false).await["reason"],
+        "hidden"
+    );
+    // A fresh ticket, really seen: counted once.
+    e.sql("DELETE FROM ad_serves WHERE viewer_key='u:an-viewer'")
+        .await;
+    let (_, served) = serve(
+        Some(viewer.clone()),
+        json!({"placement": "site", "browser_id": browser}),
+    )
+    .await;
+    let ticket = served["ad"]["ticket"].clone();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    assert_eq!(
+        report(None, ticket.clone(), browser, 1500, true).await,
+        json!({"error": "Not found."}),
+        "someone else\'s ticket is unknown"
+    );
+    assert_eq!(
+        report(Some(viewer.clone()), ticket.clone(), browser, 1500, true).await["counted"],
+        true
+    );
+    assert_eq!(
+        report(Some(viewer.clone()), ticket.clone(), browser, 1500, true).await["reason"],
+        "duplicate"
+    );
+    let delivered: i32 = sqlx::query_scalar("SELECT delivered FROM ad_campaigns WHERE id=$1")
+        .bind(&site)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(delivered, 1);
+
+    // Breaks: only a streamer who can earn and turned ads on, at most one per 10 minutes.
+    assert_eq!(
+        call(
+            e,
+            "PUT",
+            "/api/me/ads",
+            Some(&streamer),
+            json!({"enabled": true})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN,
+        "payouts first"
+    );
+    for statement in [
+        "UPDATE users SET mfa_enabled=true,mfa_secret='synthetic' WHERE id='an-streamer'",
+        "UPDATE sessions SET mfa_verified=true WHERE user_id='an-streamer'",
+        "INSERT INTO payout_accounts(user_id,stripe_account,details_submitted) VALUES('an-streamer','acct_test_an',true)",
+        "INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,alert_state) VALUES('an-b','an-streamer','an-b',1,'LIVE','s','v','c',now()-interval '3 minutes',now(),now(),'skipped')",
+        "INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level) VALUES('an-b','u:an-viewer',now()+interval '1 hour','counted')",
+        "INSERT INTO ad_creatives(id,advertiser_id,format,stored,duration_ms,title,link,status,teen_safe) VALUES('an-video','an-buyer','video_landscape','ads/synthetic',15000,'Trailer','https://example.com/trailer','approved',true)",
+    ] {
+        e.sql(statement).await;
+    }
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/ads/breaks",
+            Some(&streamer),
+            json!({"seconds": 30})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN,
+        "ads are off until turned on"
+    );
+    assert_eq!(
+        call(
+            e,
+            "PUT",
+            "/api/me/ads",
+            Some(&streamer),
+            json!({"enabled": true})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/ads/breaks",
+            Some(&streamer),
+            json!({"seconds": 45})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/ads/breaks",
+            Some(&streamer),
+            json!({"seconds": 30})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/ads/breaks",
+            Some(&streamer),
+            json!({"seconds": 30})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT,
+        "10 minutes between breaks"
+    );
+    let (_, live) = call(
+        e,
+        "GET",
+        "/api/channels/NetStreamer/live",
+        Some(&viewer),
+        Value::Null,
+    )
+    .await;
+    assert!(live["ad_break"]["ends_at"].is_string(), "{live}");
+    let (_, own) = call(
+        e,
+        "GET",
+        "/api/channels/NetStreamer/live",
+        Some(&streamer),
+        Value::Null,
+    )
+    .await;
+    assert!(
+        own["ad_break"].is_null(),
+        "the streamer never sees their own ads"
+    );
+    e.sql("INSERT INTO ad_campaigns(id,advertiser_id,creative_id,name,placement,impressions,delivered,cpm_cents,amount_cents,starts_on,ends_on,status) VALUES('an-break','an-buyer','an-video','Break','break',1000,999,500,500,current_date-9,current_date-1,'running')").await;
+    assert!(
+        serve(
+            None,
+            json!({"placement": "break", "channel": "NetStreamer", "browser_id": guest_browser})
+        )
+        .await
+        .1["ad"]
+            .is_null(),
+        "no counted session, no ad"
+    );
+    let (_, served) = serve(
+        Some(viewer.clone()),
+        json!({"placement": "break", "channel": "NetStreamer", "browser_id": browser}),
+    )
+    .await;
+    assert_eq!(
+        served["ad"]["kind"], "video",
+        "past its end date and unfinished, it still runs (the make-good)"
+    );
+    let ticket = served["ad"]["ticket"].clone();
+    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+    assert_eq!(
+        report(Some(viewer.clone()), ticket, browser, 2100, true).await["counted"],
+        true
+    );
+    assert_eq!(
+        status(e, "an-break").await.0,
+        "delivered",
+        "the last impression completes it"
+    );
+    let (_, studio) = call(e, "GET", "/api/me/ads", Some(&streamer), Value::Null).await;
+    assert_eq!(studio["breaks"][0]["impressions"], 1);
+    let clicked = call(
+        e,
+        "GET",
+        &format!(
+            "/api/ads/click/{}",
+            served["ad"]["ticket"].as_str().unwrap()
+        ),
+        None,
+        Value::Null,
+    )
+    .await
+    .0;
+    assert_eq!(clicked, StatusCode::SEE_OTHER);
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test' WHERE id='an-b'")
+        .await;
     e.sql("UPDATE feature_switches SET off=true WHERE name='ad_sales'")
         .await;
 }

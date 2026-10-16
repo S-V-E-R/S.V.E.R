@@ -10,12 +10,13 @@ import { RecordedPlayer } from "./RecordedPlayer";
 import { LiveVideoTools } from "./LiveVideoTools";
 import { PlayerSettings, Uptime } from "./PlayerSettings";
 import { CaptionOverlay, type CaptionStyle } from "./CaptionOverlay";
+import { AdBreak } from "./Ads";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string; mature?: boolean } };
 type Live =
   | { live: false; hosting?: { username: string; display_name: string } }
-  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; started_at: string; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean; caption_style?: CaptionStyle };
+  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; started_at: string; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean; caption_style?: CaptionStyle; ad_break?: { id: string; ends_at: string } | null };
 type Phase = "loading" | "playing" | "reconnecting" | "blocked" | "failed";
 
 let cachedBrowserId = "";
@@ -130,6 +131,15 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   // turning them on plays the stream over HLS, a few seconds further behind live.
   const captionsOn = useSyncExternalStore(onCaptions, captionsPreferred, () => false);
   const video = useRef<HTMLVideoElement>(null);
+  // During a streamer's ad break the stream keeps playing behind the ad, muted (docs/ADVERTISERS.md).
+  const [adOn, setAdOn] = useState(false);
+  useEffect(() => {
+    const element = video.current;
+    if (!element || !adOn) return;
+    const was = element.muted;
+    element.muted = true;
+    return () => { element.muted = was; };
+  }, [adOn]);
   // Guests pass a security check once per session before they count (viewer integrity).
   const [sitekey, setSitekey] = useState<string | null>(null);
   const token = useRef("");
@@ -305,6 +315,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} onPause={() => setPaused(true)} onPlay={() => setPaused(false)} aria-label={`${live.title}, live`} />}
     {!rewind && <PlayerEffects username={username} video={video} transport={transport} />}
     {!rewind && status && <p className="player-status" role="status">{status}</p>}
+    {!rewind && live.ad_break && !live.is_owner && <AdBreak key={live.ad_break.id} username={username} endsAt={live.ad_break.ends_at} muted={!!muted || autoMuted} onActive={setAdOn} />}
     {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {!rewind && paused && phase === "playing" && <button type="button" className="player-action" onClick={() => {
       const element = video.current;
