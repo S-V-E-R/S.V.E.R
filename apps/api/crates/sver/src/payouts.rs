@@ -98,7 +98,10 @@ async fn reserve(
     Ok(id)
 }
 /// Moves the money: a transfer to the Express account (idempotent by run), then for instant
-/// Early Pay an instant payout from it. Ledger entries post only after Stripe accepts.
+/// Early Pay an instant payout from it. Ledger entries post only after Stripe accepts. A definite
+/// refusal fails the run; an unknown result (a lost response, a timeout, a Stripe error) leaves it
+/// pending, still counted against the balance and the limits, and `resume` finishes it. A run is
+/// never failed while Stripe might have made its transfer, so it can never be paid twice.
 async fn execute(
     app: &App,
     id: &str,
@@ -108,9 +111,10 @@ async fn execute(
     cents: i64,
     fee: i64,
 ) -> Res<()> {
-    let transfer = stripe::post(
+    let sent = stripe::send(
         &app.http,
         &app.config.stripe,
+        None,
         "transfers",
         &[
             ("amount", cents.to_string()),
@@ -122,20 +126,45 @@ async fn execute(
         Some(&format!("sver-payout-{id}")),
     )
     .await;
-    let transfer = match transfer {
-        Ok(t) => t,
-        Err(error) => {
+    match sent {
+        stripe::Outcome::Done(transfer) => {
+            finish(app, id, user, account, kind, cents, fee, &transfer).await
+        }
+        stripe::Outcome::Declined { fail, .. } => {
             sqlx::query(
                 "UPDATE payout_runs SET status='failed',error=$2,completed_at=now() WHERE id=$1",
             )
             .bind(id)
-            .bind(error.message.as_ref())
+            .bind(fail.message.as_ref())
             .execute(&app.db)
             .await?;
             eprintln!("payout_event=transfer outcome=failed kind={kind}");
-            return Err(error);
+            Err(fail)
         }
-    };
+        stripe::Outcome::Unknown(_) => {
+            sqlx::query("UPDATE payout_runs SET error=$2 WHERE id=$1 AND status='pending'")
+                .bind(id)
+                .bind("Waiting for Stripe to confirm. This finishes automatically.")
+                .execute(&app.db)
+                .await?;
+            eprintln!("payout_event=transfer outcome=unknown kind={kind}");
+            Ok(())
+        }
+    }
+}
+/// After the transfer exists: the instant payout for instant Early Pay, then the run and the
+/// ledger in one transaction (idempotent by run, so finishing twice posts once).
+#[allow(clippy::too_many_arguments)]
+async fn finish(
+    app: &App,
+    id: &str,
+    user: &str,
+    account: &str,
+    kind: &str,
+    cents: i64,
+    fee: i64,
+    transfer: &Value,
+) -> Res<()> {
     let (mut fee, mut payout, mut note) = (fee, None, None);
     if kind == "early_instant" {
         match stripe::post_as(
@@ -163,9 +192,12 @@ async fn execute(
         }
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("UPDATE payout_runs SET status='paid',transfer_id=$2,payout_id=$3,fee_cents=$4,error=$5,completed_at=now() WHERE id=$1")
+    let updated = sqlx::query("UPDATE payout_runs SET status='paid',transfer_id=$2,payout_id=$3,fee_cents=$4,error=$5,completed_at=now() WHERE id=$1 AND status='pending'")
         .bind(id).bind(transfer["id"].as_str()).bind(&payout).bind(fee).bind(note)
-        .execute(&mut *tx).await?;
+        .execute(&mut *tx).await?.rows_affected();
+    if updated == 0 {
+        return Ok(());
+    }
     ledger::post(
         &mut tx,
         "payout",
@@ -182,6 +214,56 @@ async fn execute(
     Ok(())
 }
 
+/// Finishes runs left pending for over 5 minutes: a lost Stripe response, or a crash between the
+/// transfer and the ledger. Stripe is asked first whether the run's transfer exists (by its
+/// `sver_payout` metadata), so a retry after the idempotency key's 24 hours still can't pay
+/// twice; only when it doesn't exist is the transfer sent again, with the same key.
+pub async fn resume(app: &App) -> Res<()> {
+    type Run = (
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        DateTime<Utc>,
+        Option<String>,
+    );
+    let runs: Vec<Run> = sqlx::query_as("UPDATE payout_runs r SET attempted_at=now() FROM (SELECT id FROM payout_runs WHERE status='pending' AND created_at<now()-interval '5 minutes' AND (attempted_at IS NULL OR attempted_at<now()-interval '5 minutes') ORDER BY created_at LIMIT 20 FOR UPDATE SKIP LOCKED) p WHERE r.id=p.id RETURNING r.id,r.user_id,r.kind,r.amount_cents,r.fee_cents,r.created_at,(SELECT stripe_account FROM payout_accounts a WHERE a.user_id=r.user_id)")
+        .fetch_all(&app.db)
+        .await?;
+    for (id, user, kind, cents, fee, created, account) in runs {
+        let Some(account) = account else {
+            continue;
+        };
+        let found = stripe::get(
+            &app.http,
+            &app.config.stripe,
+            &format!(
+                "transfers?destination={account}&created[gte]={}&limit=100",
+                created.timestamp() - 3600
+            ),
+        )
+        .await;
+        let Ok(list) = found else {
+            eprintln!("payout_event=resume outcome=retry");
+            continue;
+        };
+        let existing = list["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|t| t["metadata"]["sver_payout"].as_str() == Some(id.as_str()));
+        let result = match existing {
+            Some(transfer) => finish(app, &id, &user, &account, &kind, cents, fee, transfer).await,
+            None => execute(app, &id, &user, &account, &kind, cents, fee).await,
+        };
+        if result.is_err() {
+            eprintln!("payout_event=resume outcome=failed kind={kind}");
+        }
+    }
+    Ok(())
+}
+
 static LAST_MINUTE: AtomicI64 = AtomicI64::new(0);
 /// From the media loop: starts the payday run once its period begins.
 pub async fn tick(app: &App) -> Res<()> {
@@ -194,6 +276,7 @@ pub async fn tick(app: &App) -> Res<()> {
     if crate::switches::off(&mut *app.db.acquire().await?, "payouts").await? {
         return Ok(());
     }
+    resume(app).await?;
     match last_payday(Utc::now()) {
         Some(period) => payday(app, period).await,
         None => Ok(()),

@@ -856,6 +856,16 @@ async fn mine(
     }
     Ok((user, tx, campaign))
 }
+/// A full refund or a lost chargeback made outside the campaign's own flow (Stripe's dashboard,
+/// `/admin/money`, a dispute): the campaign stops, and a refund it still owed isn't sent again.
+/// Called from support.rs.
+pub(crate) async fn taken_back(tx: &mut PgConnection, intent: &str) -> Res<()> {
+    sqlx::query("UPDATE ad_campaigns SET status=CASE WHEN status='refund_due' THEN coalesce(ending,'cancelled') ELSE 'cancelled' END,ending=coalesce(ending,'cancelled'),refund_cents=amount_cents,updated_at=now() WHERE payment_intent=$1 AND status IN ('paid','running','refund_due')")
+        .bind(intent)
+        .execute(tx)
+        .await?;
+    Ok(())
+}
 async fn owe(db: &mut PgConnection, id: &str, cents: i64, ending: &str) -> Res<()> {
     sqlx::query("UPDATE ad_campaigns SET status='refund_due',refund_cents=$2,ending=$3,updated_at=now() WHERE id=$1")
         .bind(id)
@@ -1040,18 +1050,17 @@ pub async fn tick(app: &App) -> Res<()> {
         if cents > 0
             && let Some(intent) = &intent
         {
-            let refund = stripe::post(
+            let refunded = stripe::refund(
                 &app.http,
                 &app.config.stripe,
-                "refunds",
                 &[
                     ("payment_intent", intent.clone()),
                     ("amount", cents.to_string()),
                 ],
-                Some(&format!("ad-refund-{id}")),
+                &format!("ad-refund-{id}"),
             )
             .await;
-            if refund.is_err() {
+            if !refunded {
                 eprintln!("adnet_event=refund outcome=retry");
                 continue;
             }

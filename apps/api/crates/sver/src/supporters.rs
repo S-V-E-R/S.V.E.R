@@ -484,14 +484,16 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
             pending_tier=CASE WHEN $6 THEN NULL ELSE platform_subscriptions.pending_tier END,
             paid_through=greatest(platform_subscriptions.paid_through,EXCLUDED.paid_through),
             months=platform_subscriptions.months+EXCLUDED.months,
-            stripe_subscription=coalesce(EXCLUDED.stripe_subscription,platform_subscriptions.stripe_subscription),
+            stripe_subscription=CASE WHEN $7 THEN EXCLUDED.stripe_subscription ELSE platform_subscriptions.stripe_subscription END,
             cancel_at_period_end=CASE WHEN $7 THEN false ELSE platform_subscriptions.cancel_at_period_end END,
             since=CASE WHEN platform_subscriptions.months=0 THEN now() ELSE platform_subscriptions.since END,
             updated_at=now()")
         .bind(user).bind(tier).bind(details["subscription"].as_str()).bind(end as f64).bind(month)
         .bind(renewal).bind(reason == "subscription_create")
         .execute(&mut *tx).await?;
-    if tier == 2 && cents > 0 {
+    // A Founder spot takes a paid Greycloak month (a new subscription or a renewal); an upgrade's
+    // prorated charge waits for the first full Greycloak renewal.
+    if tier == 2 && cents > 0 && renewal {
         claim_founder(tx, user, id).await?;
     }
     if reason == "subscription_create" {

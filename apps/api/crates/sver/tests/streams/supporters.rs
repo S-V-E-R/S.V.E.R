@@ -266,7 +266,8 @@ pub async fn exercise(e: &Env) {
         "no duplicates, no gaps"
     );
 
-    // Wolfsworn gets the badge but no Founder spot; an upgrade is prorated and claims one.
+    // Wolfsworn gets the badge but no Founder spot; an upgrade is prorated, and its partial charge
+    // doesn't claim one: the first full Greycloak month does.
     assert_eq!(
         event(
             e,
@@ -306,7 +307,11 @@ pub async fn exercise(e: &Env) {
         .await,
         StatusCode::OK
     );
-    assert_eq!(founder(e, "su-wolf").await, Some(14));
+    assert_eq!(
+        founder(e, "su-wolf").await,
+        None,
+        "a prorated upgrade charge isn't a Greycloak month"
+    );
     assert_eq!(
         plan(e, "su-wolf").await.2,
         1,
@@ -429,7 +434,7 @@ pub async fn exercise(e: &Env) {
     assert_eq!(event(e, lost).await, StatusCode::OK);
     assert_eq!(founder(e, "su-f5").await, None);
     let freed: i32 = sqlx::query_scalar("SELECT n FROM generate_series(1,500) n WHERE NOT EXISTS(SELECT 1 FROM founders WHERE number=n) LIMIT 1").fetch_one(&e.app.db).await.unwrap();
-    person(e, "su-late", "SuLate", true).await;
+    let late = person(e, "su-late", "SuLate", true).await;
     assert_eq!(
         event(
             e,
@@ -446,8 +451,8 @@ pub async fn exercise(e: &Env) {
     let (_, page) = call(e, "GET", "/api/supporters", None, Value::Null).await;
     assert_eq!(
         page["founders_claimed"].as_i64(),
-        Some(13),
-        "the public count is real"
+        Some(12),
+        "the public count is real (su-wolf's upgrade hasn't claimed one)"
     );
     let audited: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM moderation_actions WHERE action='founder_revoked'",
@@ -463,7 +468,7 @@ pub async fn exercise(e: &Env) {
             e,
             "PUT",
             "/api/supporters/founder",
-            Some(&wolf),
+            Some(&late),
             json!({"hidden": true})
         )
         .await
@@ -475,7 +480,7 @@ pub async fn exercise(e: &Env) {
         .as_array()
         .unwrap()
         .iter()
-        .find(|f| f["number"] == 14)
+        .find(|f| f["number"] == freed)
         .unwrap()
         .clone();
     assert!(spot["username"].is_null(), "{spot}");
@@ -625,6 +630,11 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK,
         "renewals keep running"
     );
+    let wolf_number = founder(e, "su-wolf").await;
+    assert!(
+        wolf_number.is_some(),
+        "the first full Greycloak month claims a spot"
+    );
     e.sql("DELETE FROM feature_switches WHERE name='supporter_sales'")
         .await;
 
@@ -661,18 +671,14 @@ pub async fn exercise(e: &Env) {
         plan(e, "su-wolf").await.3,
         "refunding an older month leaves the later paid month"
     );
-    let latest = json!({"id": "evt_su_refund_w3", "type": "charge.refunded", "data": {"object": {
-        "payment_intent": "pi_in_su_w3", "amount": 2500, "amount_refunded": 2500}}});
-    assert_eq!(event(e, latest).await, StatusCode::OK);
-    assert!(
-        !plan(e, "su-wolf").await.3,
-        "refunding the current month ends it"
-    );
     assert_eq!(
         call(
             e,
             "POST",
-            "/api/admin/supporters/founders/14/revoke",
+            &format!(
+                "/api/admin/supporters/founders/{}/revoke",
+                wolf_number.unwrap()
+            ),
             Some(&staff),
             json!({"note": "Chargeback outside Stripe"})
         )
@@ -681,6 +687,13 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK
     );
     assert_eq!(founder(e, "su-wolf").await, None);
+    let latest = json!({"id": "evt_su_refund_w3", "type": "charge.refunded", "data": {"object": {
+        "payment_intent": "pi_in_su_w3", "amount": 2500, "amount_refunded": 2500}}});
+    assert_eq!(event(e, latest).await, StatusCode::OK);
+    assert!(
+        !plan(e, "su-wolf").await.3,
+        "refunding the current month ends it"
+    );
 
     // Supporting changes nothing else, and its money goes to the platform alone.
     let mut card_after = call(e, "GET", "/api/users/SuGrey/card", Some(&wolf), Value::Null)

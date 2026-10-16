@@ -128,6 +128,11 @@ struct Media {
     /// Board webhooks received: (signature header, body); `hook_fail` answers 500.
     hooks: Vec<(String, String)>,
     hook_fail: bool,
+    /// Transfers Stripe made (GET /v1/transfers lists them). `lost_transfers`: the next transfers
+    /// are made but their response is lost (500); `down_transfers`: Stripe is down and makes none.
+    transfers: Vec<Value>,
+    lost_transfers: usize,
+    down_transfers: usize,
 }
 async fn board_hook(
     State(fake): State<Fake>,
@@ -185,9 +190,24 @@ async fn stripe(
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     body: String,
-) -> Json<Value> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     let mut m = fake.lock().unwrap();
     let path = uri.path().to_string();
+    let stripe_error = || {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"type": "api_error"}})),
+        )
+            .into_response()
+    };
+    if path == "/v1/transfers" && method == axum::http::Method::GET {
+        return Json(json!({"data": m.transfers.clone()})).into_response();
+    }
+    if path == "/v1/transfers" && m.down_transfers > 0 {
+        m.down_transfers -= 1;
+        return stripe_error();
+    }
     // Only calls that create something are logged (and number the synthetic ids).
     if method == axum::http::Method::POST {
         // Calls made on behalf of a connected account carry it, for the assertions.
@@ -204,7 +224,18 @@ async fn stripe(
             json!({"id": format!("cs_test_{n}"), "url": format!("https://checkout.stripe.test/{n}")})
         }
         "/v1/accounts" => json!({"id": "acct_test_owner"}),
-        "/v1/transfers" => json!({"id": format!("tr_test_{n}")}),
+        "/v1/transfers" => {
+            let run = url::form_urlencoded::parse(body.as_bytes())
+                .find(|(k, _)| k == "metadata[sver_payout]")
+                .map(|(_, v)| v.into_owned());
+            let transfer = json!({"id": format!("tr_test_{n}"), "metadata": {"sver_payout": run}});
+            m.transfers.push(transfer.clone());
+            if m.lost_transfers > 0 {
+                m.lost_transfers -= 1;
+                return stripe_error();
+            }
+            transfer
+        }
         "/v1/payouts" => json!({"id": format!("po_test_{n}")}),
         "/v1/account_links" => json!({"url": "https://connect.stripe.test/onboarding"}),
         p if p.ends_with("/login_links") => json!({"url": "https://connect.stripe.test/express"}),
@@ -221,6 +252,7 @@ async fn stripe(
         p if p.starts_with("/v1/checkout/sessions/") => m.session.clone(),
         _ => m.account.clone(),
     })
+    .into_response()
 }
 struct Env {
     app: App,
@@ -419,7 +451,7 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/checkout/sessions/{id}", get(stripe))
         .route("/v1/checkout/sessions/{id}/expire", post(stripe))
         .route("/v1/invoice_payments", get(stripe))
-        .route("/v1/transfers", post(stripe))
+        .route("/v1/transfers", get(stripe).post(stripe))
         .route("/v1/payouts", post(stripe))
         .route("/v1/refunds", post(stripe))
         .route("/v1/subscriptions/{id}", get(stripe).post(stripe))

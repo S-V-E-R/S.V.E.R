@@ -90,6 +90,28 @@ async fn webhook(e: &Env, id: &str, session: &str, cents: i64, intent: &str) -> 
         .unwrap()
         .status()
 }
+/// Any signed Stripe event.
+async fn signed(e: &Env, event: Value) -> StatusCode {
+    let body = event.to_string();
+    let signature = sver::stripe::sign(
+        "whsec_synthetic",
+        body.as_bytes(),
+        chrono::Utc::now().timestamp(),
+    );
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/stripe/webhook")
+        .header("content-type", "application/json")
+        .header("stripe-signature", signature)
+        .extension(ConnectInfo("127.0.0.1:1".parse::<SocketAddr>().unwrap()))
+        .body(Body::from(body))
+        .unwrap();
+    sver::router(e.app.clone())
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status()
+}
 async fn hold(e: &Env, token: &str, x: i32, y: i32, size: &str) -> (StatusCode, Value) {
     call(
         e,
@@ -714,4 +736,47 @@ pub async fn exercise(e: &Env) {
         admin["sales_cents"].as_i64().unwrap() >= 2500 + 30000,
         "{admin}"
     );
+
+    // A refund made outside the Wall's own flow (Stripe's dashboard, staff money tools) takes the
+    // tile down and frees its spot; the Wall's own refund job then has nothing left to send.
+    let cents: i64 = sqlx::query_scalar("SELECT price_cents::bigint FROM wall_tiles WHERE n=$1")
+        .bind(n1)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        signed(
+            e,
+            json!({"id": format!("evt_refund_{n1}"), "type": "charge.refunded", "data": {"object": {
+            "id": format!("ch_wall_{n1}"), "payment_intent": format!("pi_wall_{n1}"),
+            "amount": cents, "amount_refunded": cents}}})
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(status(e, n1).await, "refunded");
+    let cells: i64 = sqlx::query_scalar("SELECT count(*) FROM wall_cells WHERE tile_n=$1")
+        .bind(n1)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(cells, 0, "the spot is free again");
+    let refunds_before = e
+        .fake
+        .lock()
+        .unwrap()
+        .stripe
+        .iter()
+        .filter(|c| c.0 == "/v1/refunds")
+        .count();
+    sver::seats::tick(&e.app).await.unwrap();
+    let refunds_after = e
+        .fake
+        .lock()
+        .unwrap()
+        .stripe
+        .iter()
+        .filter(|c| c.0 == "/v1/refunds")
+        .count();
+    assert_eq!(refunds_before, refunds_after, "nothing is refunded twice");
 }

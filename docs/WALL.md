@@ -62,6 +62,8 @@ The limits keep at least 440 cells for single seats, so the Wall stays mostly pe
 4. **Pay:** a one-time Stripe Checkout payment, not a subscription. It reuses Support's signed, idempotent webhook processing. The buyer gets a receipt email.
 5. **Review:** the tile shows as "taken · in review" until staff approve it in `/admin/media`. Approved tiles go live at once.
 
+**Refunds from anywhere:** a full refund made outside the Wall's own flow (Stripe's dashboard, `/admin/money`) or a lost chargeback takes the tile down and frees its spot, the same as a refund here. A tile removed for breaking the rules keeps its spot empty and sold.
+
 **If a tile is rejected:** the buyer gets the reason and can resubmit for 30 days. They can also ask for a full refund at any point before approval, which frees the spot. After 30 days with no approved tile, the refund is automatic.
 
 **Changing a tile later:** the owner can change the picture, name, link, message and crest from `/wall/{n}`. Each change is reviewed, and the approved version stays up until the change is approved. The spot and size never change.

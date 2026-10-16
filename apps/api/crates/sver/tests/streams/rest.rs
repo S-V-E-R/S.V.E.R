@@ -215,6 +215,85 @@ pub async fn exercise(e: &Env) {
     assert_eq!(s["history"].as_array().unwrap().len(), 3);
     assert_eq!(s["available_cents"], 0);
 
+    // ---- A transfer whose answer is lost is never paid twice ----
+    // $10.00 earned; Early Pay standard is 75% = $7.50.
+    let transfers_for = |run: &str| {
+        e.fake
+            .lock()
+            .unwrap()
+            .transfers
+            .iter()
+            .filter(|t| t["metadata"]["sver_payout"].as_str() == Some(run))
+            .count()
+    };
+    // rt-lost: Stripe makes the transfer but its answer is lost. rt-down: Stripe is down and makes none.
+    for (who, name, made) in [("rt-lost", "RtLost", true), ("rt-down", "RtDown", false)] {
+        let token = creator(e, who, name).await;
+        sqlx::query("INSERT INTO ledger_transactions(id,kind,reference) VALUES('fund-'||$1,'test','fund-'||$1)")
+            .bind(who)
+            .execute(&e.app.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO ledger_entries(transaction_id,account,unit,amount) VALUES('fund-'||$1,'usd:earnings:'||$1,'usd',10000),('fund-'||$1,'usd:stripe','usd',-10000)")
+            .bind(who)
+            .execute(&e.app.db)
+            .await
+            .unwrap();
+        {
+            let mut fake = e.fake.lock().unwrap();
+            if made {
+                fake.lost_transfers = 1;
+            } else {
+                fake.down_transfers = 1;
+            }
+        }
+        let (status, paid) = call(
+            e,
+            "POST",
+            "/api/me/payouts/early",
+            Some(&token),
+            json!({"method": "standard"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{paid}");
+        let run = paid["history"][0]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            paid["history"][0]["status"], "pending",
+            "unknown result stays pending"
+        );
+        assert_eq!(earnings(e, who).await, 10_000, "nothing posted yet");
+        assert_eq!(transfers_for(&run), usize::from(made));
+        // The pending run still counts: no second Early Pay today, and payday leaves it alone.
+        assert_eq!(
+            call(
+                e,
+                "POST",
+                "/api/me/payouts/early",
+                Some(&token),
+                json!({"method": "standard"})
+            )
+            .await
+            .0,
+            StatusCode::CONFLICT
+        );
+        // Five minutes on, the jobs loop finishes it: the made transfer is found, the missing one sent.
+        sqlx::query("UPDATE payout_runs SET created_at=now()-interval '10 minutes' WHERE id=$1")
+            .bind(&run)
+            .execute(&e.app.db)
+            .await
+            .unwrap();
+        sver::payouts::resume(&e.app).await.unwrap();
+        sver::payouts::resume(&e.app).await.unwrap();
+        let status: String = sqlx::query_scalar("SELECT status FROM payout_runs WHERE id=$1")
+            .bind(&run)
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "paid");
+        assert_eq!(transfers_for(&run), 1, "exactly one transfer for the run");
+        assert_eq!(earnings(e, who).await, 10_000 - 7_500, "posted once");
+    }
+
     // ---- A merged co-stream pools money among its live members ----
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,alert_state)
         VALUES('rt-l1','rt-owner','rt-l1',1,'LIVE','s','v','c',now()-interval '5 minutes',now(),now(),'skipped'),('rt-l2','rt-mate','rt-l2',1,'LIVE','s','v','c',now()-interval '5 minutes',now(),now(),'skipped')").await;

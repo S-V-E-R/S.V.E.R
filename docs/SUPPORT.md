@@ -65,7 +65,7 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - Paid by card (auto-renews monthly) or by Purchased Valor (one month at a time).
 - Cancel anytime; benefits run to the end of the paid month. Upgrading tiers takes effect immediately with Stripe's proration.
 - **Renewal terms** (California's automatic renewal law; added October 7, 2026): the Subscribe panel states the monthly price and that card subscriptions renew until cancelled right beside each card button, the same terms sit above Stripe Checkout's pay button (`custom_text`), and a new card subscription gets an acknowledgment email with the terms, the next charge date and how to cancel. Renewals don't send it again. The "keep a gifted subscription" step ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)) must show the same terms when it's built.
-- Buyers aged 13 to 17: before their first purchase a parent or guardian confirms, at checkout, that they are the cardholder and consent to the purchase. Purchases by an account under 18 are capped at $50 a month. A parent can report an unauthorized purchase through support for a refund, which reverses the Valor or subscription.
+- Buyers aged 13 to 17, and accounts with no date of birth on file (some imported accounts): before their first purchase a parent or guardian confirms, at checkout, that they are the cardholder and consent to the purchase. Purchases by an account under 18 are capped at $50 a month. A parent can report an unauthorized purchase through support for a refund, which reverses the Valor or subscription.
 
 ## Purchased Valor
 
@@ -128,6 +128,7 @@ Decided by Joe on October 3, 2026.
   - **Standard** (about 2 business days): free to the streamer.
   - **Instant** (minutes, to an eligible debit card): Stripe's 1% fee is paid by the streamer and shown before they confirm.
 - **The 25% that stays until payday** covers refunds and disputes that arrive during the period. Whatever is left is paid on payday.
+- **When Stripe's answer is unclear** (no response, a timeout, a Stripe-side error), a payout is never marked failed: it stays pending, still counted against the balance and the Early Pay limits, and the jobs loop finishes it after 5 minutes. It first asks Stripe whether the run's transfer exists (by its `sver_payout` metadata) and sends it again, with the same idempotency key, only if it doesn't. Only a definite refusal fails a run (October 16, 2026, after the money review).
 - **Taxes:** S.V.E.R doesn't withhold taxes; streamers are independent creators and Stripe handles tax forms. Creator Studio shows a reminder and an optional estimate of how much to set aside.
 - S.V.E.R pays Stripe's standard payout fees (currently $2 per paid account per month plus 0.25% + 25¢ per payout).
 - Stripe Chargeback Protection is turned on for Checkout payments (S.V.E.R pays its 0.4% fee). It reimburses fraud disputes only, up to its annual cap, and doesn't cover "cancelled subscription" or "not received" disputes or renewals outside Checkout.
