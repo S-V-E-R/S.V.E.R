@@ -1285,6 +1285,24 @@ struct ShelfConfig {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PromptConfig {
+    question: String,
+    answer: String,
+    /// Sent back by editors that loaded the saved block; the title always comes from the question.
+    #[serde(default, rename = "title")]
+    _title: Option<String>,
+}
+/// The fixed questions a PROMPT block can answer (docs/PROFILES.md "Persona pass").
+pub const PROMPTS: [(&str, &str); 6] = [
+    ("meet", "Who I'd like to meet"),
+    ("made_me", "Games that made me"),
+    ("hot_take", "My hot take"),
+    ("obsessed", "Currently obsessed with"),
+    ("moment", "Best stream moment"),
+    ("chat_calls_me", "What my chat calls me"),
+];
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BlockItem {
     #[serde(rename = "type")]
     kind: String,
@@ -1324,10 +1342,24 @@ pub fn validate_block(kind: &str, config: &Value) -> Res<Value> {
             }
             json!({"games": c.games.iter().map(|g| text::plain(g, "games", 1, 80, 0, true)).collect::<Res<Vec<_>>>()?})
         }
+        "PROMPT" => {
+            let c: PromptConfig = serde_json::from_value(config.clone()).map_err(|_| invalid())?;
+            let Some((key, question)) = PROMPTS.iter().find(|(k, _)| *k == c.question) else {
+                return Err(Fail::field(
+                    "question",
+                    "Choose one of the listed questions.",
+                ));
+            };
+            json!({"question": key, "title": question, "answer": text::plain(&c.answer, "answer", 1, 500, 4, true)?})
+        }
         _ => return Err(Fail::field("type", "Choose a block type.")),
     })
 }
-async fn blocks_json(db: &mut PgConnection, user_id: &str, enabled_only: bool) -> Res<Vec<Value>> {
+pub async fn blocks_json(
+    db: &mut PgConnection,
+    user_id: &str,
+    enabled_only: bool,
+) -> Res<Vec<Value>> {
     Ok(sqlx::query_scalar("SELECT jsonb_build_object('type',type,'enabled',enabled,'config',config) FROM profile_blocks WHERE user_id=$1 AND (enabled OR NOT $2) ORDER BY position").bind(user_id).bind(enabled_only).fetch_all(&mut *db).await?)
 }
 /// GET /api/me/blocks
@@ -1347,6 +1379,17 @@ pub async fn save_blocks(
     let user = signed_in(&app, &jar).await?;
     if input.items.len() > 10 {
         return Err(Fail::field("items", "Add up to 10 blocks."));
+    }
+    let mut asked: Vec<&str> = Vec::new();
+    for b in input.items.iter().filter(|b| b.kind == "PROMPT") {
+        let q = b.config["question"].as_str().unwrap_or_default();
+        if asked.contains(&q) {
+            return Err(Fail::field(
+                "question",
+                "Each question can be answered once.",
+            ));
+        }
+        asked.push(q);
     }
     let rows = input
         .items

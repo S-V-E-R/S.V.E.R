@@ -49,6 +49,14 @@
   --line: rgba(233, 195, 90, 0.32); --tint: rgba(233, 195, 90, 0.07);
 }
 
+/* Theme variants a channel owner picks for their own page (docs/PROFILES.md "Theme variants"). Each passes AA on the shared surfaces. */
+[data-theme="myria"][data-variant="forge"] { --accent: #FF6A3D; --accent-light: #FFB199; --accent-dark: #7A2410; --accent-deep: #2A0D06; --line: rgba(255, 106, 61, 0.32); --tint: rgba(255, 106, 61, 0.07); }
+[data-theme="myria"][data-variant="ash"] { --accent: #C8A27A; --accent-light: #E8D3BC; --accent-dark: #6B4F33; --accent-deep: #1E1610; --line: rgba(200, 162, 122, 0.32); --tint: rgba(200, 162, 122, 0.07); }
+[data-theme="aetheron"][data-variant="moon"] { --accent: #9DB8FF; --accent-light: #D6E2FF; --accent-dark: #34478A; --accent-deep: #0E1530; --line: rgba(157, 184, 255, 0.32); --tint: rgba(157, 184, 255, 0.07); }
+[data-theme="aetheron"][data-variant="deep"] { --accent: #C77DFF; --accent-light: #E6C6FF; --accent-dark: #5E1F8F; --accent-deep: #220A33; --line: rgba(199, 125, 255, 0.32); --tint: rgba(199, 125, 255, 0.07); }
+[data-theme="glint"][data-variant="crown"] { --accent: #FFB938; --accent-light: #FFE0A0; --accent-dark: #855A08; --accent-deep: #1F1404; --line: rgba(255, 185, 56, 0.32); --tint: rgba(255, 185, 56, 0.07); }
+[data-theme="glint"][data-variant="dawn"] { --accent: #F2A98A; --accent-light: #FAD7C8; --accent-dark: #8A4B33; --accent-deep: #2A140E; --line: rgba(242, 169, 138, 0.32); --tint: rgba(242, 169, 138, 0.07); }
+
 /* ---------- Base ---------- */
 * { box-sizing: border-box; }
 html { background: var(--bg); }

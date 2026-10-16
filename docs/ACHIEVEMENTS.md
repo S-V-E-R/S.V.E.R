@@ -20,6 +20,10 @@ Earned automatically from records S.V.E.R already keeps, checked every 10 minute
 | `followers_100`, `followers_1000` | Gathering, Host of a Thousand | Reached that many followers |
 | `raider` | Raider | You led a raid that moved |
 | `supported` | Supported | Your first subscriber |
+| `first_tribute` | Patron | You paid a first tribute |
+| `faithful` | Faithful | You subscribed to a channel for 6 months |
+| `signatory` | Signatory | You signed someone's Wall (approved) |
+| `council_of_war` | Council of War | You filled all 8 War Council seats |
 
 ## Cosmetics (Settings → Cosmetics)
 

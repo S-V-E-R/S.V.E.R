@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ChannelFrame } from "../../../components/ChannelFrame";
 import { CopyButton } from "../../../components/CopyButton";
-import { Markdown } from "../../../components/Markdown";
 import { ReportButton } from "../../../components/Report";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../../lib/channel";
 import { apiGet } from "../../../lib/server-api";
@@ -26,13 +25,6 @@ export default async function AboutTab({ params }: { params: ChannelParams }) {
   const about = (await apiGet<About>(`/api/channels/${encodeURIComponent(name)}/about`)).data;
   const owner = data.viewer.is_owner;
   return <ChannelFrame data={data} path={`/${name}/about`}>
-    {about?.blocks.map((b, i) => <section key={i} className="panel section block">
-      {b.type === "ABOUT" && <><h2>About</h2><Markdown text={b.config.body || ""} /></>}
-      {b.type === "PANEL" && <><h2>{b.config.title}</h2><Markdown text={b.config.body || ""} /></>}
-      {b.type === "QUOTES" && <><h2>Quotes</h2>{b.config.quotes?.map((q, j) => <blockquote key={j}><p>{q.text}</p>{q.attribution && <cite>— {q.attribution}</cite>}</blockquote>)}</>}
-      {b.type === "GAME_SHELF" && <><h2>Game shelf</h2><ul className="tags">{b.config.games?.map(g => <li key={g}>{g}</li>)}</ul></>}
-    </section>)}
-    {owner && !about?.blocks.length && <p className="panel section muted">Add About blocks in <Link href="/studio/channel/blocks">Creator Studio</Link>.</p>}
     {(about?.sponsors.length || owner) && <section className="panel section"><h2>Sponsors</h2>
       {about?.sponsors.length ? <ul className="cards">{about.sponsors.map(s => <li key={s.id} className="panel">
         {/* eslint-disable-next-line @next/next/no-img-element */}
