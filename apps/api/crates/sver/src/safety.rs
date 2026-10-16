@@ -749,7 +749,8 @@ pub async fn issue_strike(
             Duration::days(90)
         };
     let id = new_id();
-    sqlx::query("INSERT INTO strikes(id,user_id,reason,severity,content_snapshot,report_ids,removed_refs,penalty,interim_restriction_id,penalty_starts_at,penalty_until,level,message_to_user,staff_note,issued_by,issued_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)")
+    // A level-3 strike opens an account-ban review (docs/PROFILES.md "Strikes").
+    sqlx::query("INSERT INTO strikes(id,user_id,reason,severity,content_snapshot,report_ids,removed_refs,penalty,interim_restriction_id,penalty_starts_at,penalty_until,level,message_to_user,staff_note,issued_by,issued_at,expires_at,ban_review_open) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$12=3)")
         .bind(&id)
         .bind(user_id)
         .bind(&input.reason)
@@ -769,6 +770,20 @@ pub async fn issue_strike(
         .bind(expires)
         .execute(&mut *db)
         .await?;
+    if reached == 3 {
+        audit(
+            db,
+            Some(&actor.id),
+            "account_ban_review_opened",
+            "user",
+            user_id,
+            report_ids,
+            "A level-3 strike opens an account-ban review.",
+            json!({"strike_id": id}),
+            false,
+        )
+        .await?;
+    }
     recompute(db, user_id).await?;
     audit(db, Some(&actor.id), "strike_issued", "user", user_id, report_ids, staff_note, json!({"strike_id": id, "level": reached, "penalty": penalty, "severity": input.severity, "converted_interim": input.interim_restriction_id}), false).await?;
     if input.interim_restriction_id.is_some() {
@@ -1242,7 +1257,23 @@ pub async fn admin_action(
     let note = note(input.note.as_deref(), "note", true)?;
     let mut tx = app.db.begin().await?;
     let reports: Vec<(String, Value)> = sqlx::query_as("SELECT id,snapshot FROM reports WHERE target_type=$1 AND target_id=$2 AND status='OPEN' ORDER BY created_at FOR UPDATE").bind(&kind).bind(&id).fetch_all(&mut *tx).await?;
+    // Another staff member (or a double click) already handled these reports: striking again would
+    // be a second strike for one violation. Strikes without a report go through the user page;
+    // other actions (a field reset, say) can still be taken without one.
+    if reports.is_empty() && input.strike.is_some() {
+        return Err(Fail::conflict(
+            "These reports were already handled. Refresh the queue; to strike without a report, use the user's page.",
+        ));
+    }
     let report_ids: Vec<String> = reports.iter().map(|r| r.0.clone()).collect();
+    // A likely copy of media removed under Take It Down is removed the legal way: files deleted,
+    // frames added to the removed set, and never restored by an appeal.
+    let copy_of_removed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM reports WHERE id=ANY($1) AND reason='removal_match')",
+    )
+    .bind(&report_ids)
+    .fetch_one(&mut *tx)
+    .await?;
     let owner = owner_of(&mut tx, &kind, &id).await?;
     let snapshot = match reports.first() {
         Some((_, snap)) => snap.clone(),
@@ -1258,6 +1289,12 @@ pub async fn admin_action(
             if input.strike.is_some() {
                 return Err(Fail::bad("Dismissing a report never issues a strike."));
             }
+        }
+        "remove_content" if copy_of_removed && kind == "beacon" => {
+            crate::beacons::review::remove_legal(&mut tx, &id).await?;
+        }
+        "remove_content" if copy_of_removed && crate::videos::review::is_video(&kind) => {
+            crate::videos::review::remove(&mut tx, &id, true, true).await?;
         }
         "remove_content" => removed = json!([remove_content(&mut tx, &kind, &id).await?]),
         "reset_field" => {

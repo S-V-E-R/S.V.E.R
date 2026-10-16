@@ -21,7 +21,10 @@ pub async fn locate(
         let Some(user) = profiles::eligible_by_name(db, id).await? else {
             return Ok(None);
         };
-        let roots: Vec<String> = sqlx::query_scalar("SELECT key FROM (SELECT avatar_key AS key,'avatar' AS field FROM profiles WHERE user_id=$1 UNION ALL SELECT banner_key,'banner' FROM profiles WHERE user_id=$1 UNION ALL SELECT song_thumb_key,'song' FROM profiles WHERE user_id=$1 UNION ALL SELECT logo_key,'sponsors' FROM sponsors WHERE user_id=$1 UNION ALL SELECT image_key,'setup' FROM setup_photos WHERE user_id=$1) m WHERE key IS NOT NULL AND ($2::text IS NULL OR field=$2)")
+        // A bare channel link holds only the avatar and banner, the images it most likely means;
+        // anything else on the channel needs a link to that item (`?field=` or staff locating it),
+        // so one link can't take down a whole channel.
+        let roots: Vec<String> = sqlx::query_scalar("SELECT key FROM (SELECT avatar_key AS key,'avatar' AS field FROM profiles WHERE user_id=$1 UNION ALL SELECT banner_key,'banner' FROM profiles WHERE user_id=$1 UNION ALL SELECT song_thumb_key,'song' FROM profiles WHERE user_id=$1 UNION ALL SELECT logo_key,'sponsors' FROM sponsors WHERE user_id=$1 UNION ALL SELECT image_key,'setup' FROM setup_photos WHERE user_id=$1) m WHERE key IS NOT NULL AND CASE WHEN $2::text IS NULL THEN field IN ('avatar','banner') ELSE field=$2 END")
             .bind(&user.id).bind(field).fetch_all(db).await?;
         return Ok(Some(Located {
             kind: kind.into(),
@@ -164,7 +167,7 @@ pub async fn remove_media(db: &mut PgConnection, root: &str) -> Res<Vec<String>>
     owners.extend(crate::guilds::remove_media(db, root).await?);
     owners.sort();
     owners.dedup();
-    sqlx::query("UPDATE profiles SET avatar_key=CASE WHEN avatar_key=$1 THEN NULL ELSE avatar_key END,banner_key=CASE WHEN split_part(banner_key,'@',1)=$1 THEN NULL ELSE banner_key END,song_thumb_key=CASE WHEN song_thumb_key=$1 THEN NULL ELSE song_thumb_key END WHERE avatar_key=$1 OR split_part(banner_key,'@',1)=$1 OR song_thumb_key=$1")
+    sqlx::query("UPDATE profiles SET avatar_key=CASE WHEN split_part(avatar_key,'@',1)=$1 THEN NULL ELSE avatar_key END,banner_key=CASE WHEN split_part(banner_key,'@',1)=$1 THEN NULL ELSE banner_key END,song_thumb_key=CASE WHEN song_thumb_key=$1 THEN NULL ELSE song_thumb_key END WHERE split_part(avatar_key,'@',1)=$1 OR split_part(banner_key,'@',1)=$1 OR song_thumb_key=$1")
         .bind(root).execute(&mut *db).await?;
     sqlx::query("UPDATE sponsors SET logo_key=NULL WHERE logo_key=$1")
         .bind(root)
@@ -221,10 +224,7 @@ pub async fn sanction(
         "Validated Take It Down removal",
     )
     .await?;
-    sqlx::query("UPDATE strikes SET ban_review_open=true WHERE id=$1")
-        .bind(strike)
-        .execute(db)
-        .await?;
+    let _ = strike;
     Ok(notice)
 }
 

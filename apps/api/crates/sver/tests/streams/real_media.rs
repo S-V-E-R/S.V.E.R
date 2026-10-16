@@ -537,6 +537,9 @@ async fn exercise_real(db: sqlx::PgPool) -> Value {
         assert_eq!(e.app.http.get(&segment_url).send().await.unwrap().status(),StatusCode::OK);
         let (status,receipt)=chat::call(&e,"POST","/api/take-it-down",None,json!({"name":"Synthetic Requester","email":"requester@example.invalid","capacity":"shown","locations":[format!("{}/Streamer/live?report=live_stream&id={}",e.app.config.origin,removal_broadcast["id"].as_str().unwrap())],"description":"Synthetic color-bar broadcast only","good_faith":true,"signature":"Synthetic Requester","signed_on":chrono::Utc::now().date_naive(),"turnstile_token":"synthetic"})).await;
         assert_eq!(status,StatusCode::OK,"{receipt}");
+        let recording_held:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM videos WHERE broadcast_id=$1 AND kind='VOD') OR EXISTS(SELECT 1 FROM video_holds h JOIN videos v ON v.id=h.video_id WHERE v.broadcast_id=$1 AND v.kind='VOD' AND h.kind='TAKE_DOWN')")
+            .bind(removal_broadcast["id"].as_str().unwrap()).fetch_one(&e.app.db).await.unwrap();
+        assert!(recording_held,"A reported live stream's recording is held with it, so it can't publish as a VOD");
         assert_eq!(e.app.http.get(&segment_url).send().await.unwrap().status(),StatusCode::OK,"A live report waits for staff review before stopping media");
         let staff=chat::person(&e,"removal-staff","RemovalStaff",true).await;
         e.sql("UPDATE users SET mfa_enabled=true,mfa_secret='synthetic' WHERE id='removal-staff'").await;
