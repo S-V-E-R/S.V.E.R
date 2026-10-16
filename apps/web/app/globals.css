@@ -505,3 +505,24 @@ a.takedown-link:hover { color: var(--ink); }
 .chat-form textarea { background: rgba(0, 0, 0, .5); border: 1px solid var(--line); color: var(--ink); padding: 8px 10px; resize: none; }
 .chat-form textarea:focus { outline: none; border-color: var(--accent); }
 
+
+/* Studio: "Go live in three steps" (docs/DESIGN.md "Studio"). */
+.go-live h2 { margin: 0 0 var(--space-3, 12px); font-size: 1.1rem; }
+.go-live ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.go-live li { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-left: 3px solid var(--line); min-height: 44px; }
+.go-live li[data-done="yes"] { border-left-color: var(--accent); }
+.go-live li span { color: var(--ink-muted); font-size: 0.9rem; }
+@media (max-width: 720px) { .go-live ol { grid-template-columns: 1fr; } }
+
+/* Sign-up step 1: the three crests, so the first screen already says what S.V.E.R is. */
+.enlist-sides { display: flex; align-items: center; gap: 14px; margin: 0 0 18px; padding: 12px; border: 1px solid var(--line); }
+.enlist-sides p { margin: 0; color: var(--ink-muted); }
+.enlist-sides strong { color: var(--ink); }
+.enlist-crests { display: flex; gap: 6px; flex: none; }
+/* The stepper stays on one line: on phones only the current step keeps its label. */
+.signup-steps { flex-wrap: nowrap; }
+@media (max-width: 600px) {
+  .signup-steps { gap: 10px; }
+  .signup-steps li:not(.on) .step-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .enlist-sides { flex-direction: column; align-items: flex-start; }
+}

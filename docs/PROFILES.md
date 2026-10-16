@@ -1274,7 +1274,7 @@ Acceptance:
 Rules:
 - The owner edits it in Studio → **Page header** (`/studio/channel/header`), saved with `GET`/`PUT /api/me/header` under the section revision "header":
   - Page label pill: 0–24 characters, one line. Default "Creator Page".
-  - Welcome line: 0–80 characters, one line. Default "Welcome to my page".
+  - Welcome line: 0–80 characters, one line. No default: an empty welcome line shows nothing (UI review, October 2026).
   - Intro card: a title (0–60, one line) and a body (0–500, up to 6 line breaks, plain text). Shown only when the body isn't empty; with no title, the heading is "About this page".
   - Page vibe: 0–24 characters, one line, shown as "Vibe: {text}" in the counts row. No default.
   - "Show the label and welcome line" toggle, default on.

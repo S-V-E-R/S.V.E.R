@@ -2,7 +2,8 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Turnstile } from "../components/Turnstile";
-import { isFaction } from "../lib/factions";
+import { isFaction, FACTIONS } from "../lib/factions";
+import { Crest } from "../components/Crest";
 import { Avatar } from "../components/Avatar";
 import type { Sizes } from "../lib/types";
 
@@ -48,7 +49,7 @@ function UsernameField({ initialUsername = "" }: { initialUsername?: string }) {
     }, 350);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [username]);
-  return <label className="field" htmlFor="username"><span>Username</span><input ref={input} id="username" name="username" autoComplete="username" required minLength={3} maxLength={25} pattern="[A-Za-z0-9_]{3,25}" value={username} aria-describedby="username-hint username-status" aria-invalid={feedback?.available === false || undefined} onChange={event => { setUsername(event.target.value); setFeedback(event.target.value ? { message: "Checking availability…" } : undefined); event.target.setCustomValidity(""); }} /><small id="username-hint">3–25 letters, numbers or underscores. Availability is confirmed when your account is created.</small><small id="username-status" className={`username-status ${feedback?.available === true ? "available" : feedback?.available === false ? "unavailable" : ""}`} role="status" aria-live="polite" aria-atomic="true">{feedback?.message}</small></label>;
+  return <label className="field" htmlFor="username"><span>Username</span><input ref={input} id="username" name="username" autoComplete="username" required minLength={3} maxLength={25} pattern="[A-Za-z0-9_]{3,25}" value={username} aria-describedby="username-hint username-status" aria-invalid={feedback?.available === false || undefined} onChange={event => { setUsername(event.target.value); setFeedback(event.target.value ? { message: "Checking availability…" } : undefined); event.target.setCustomValidity(""); }} /><small id="username-hint">3–25 letters, numbers or underscores. Availability is confirmed when your account is created.</small><small id="username-status" className={`username-status ${feedback?.available === true ? "available" : feedback?.available === false ? "unavailable" : ""}`} role="status" aria-live="polite" aria-atomic="true">{feedback?.available === true ? <>Available. Your channel: <strong>sver.tv/{username}</strong></> : feedback?.message}</small></label>;
 }
 const providerNames: Record<string, string> = { google: "Google", twitch: "Twitch", discord: "Discord" };
 function ProviderIcon({ name }: { name: string }) {
@@ -201,11 +202,14 @@ export default function AuthScreen({ screen }: { screen: string }) {
   const isSignup = screen === "signup" || screen === "oauth-signup";
   const botRequired = isSignup || screen === "forgot";
   const withProviders = screen === "login" || screen === "signup";
-  const providerButtons = withProviders && <div className="providers">{Object.entries(providerNames).map(([p, name]) => <button type="button" className="provider" key={p} disabled={busy || !config?.providers.includes(p)} title={!config?.providers.includes(p) ? `${name} sign-in is not configured yet` : undefined} onClick={() => oauth(p, screen === "signup" ? "signup" : "login")}><ProviderIcon name={p} /><span>Continue with {name}</span></button>)}{config && !config.providers.length && <p className="provider-note">Google, Twitch and Discord sign-in arrive once those connections are configured.</p>}</div>;
+  const configured = Object.entries(providerNames).filter(([p]) => config?.providers.includes(p));
+  // Only providers that are set up are offered; with none, the email form stands alone.
+  const providerButtons = withProviders && configured.length > 0 && <div className="providers">{configured.map(([p, name]) => <button type="button" className="provider" key={p} disabled={busy} onClick={() => oauth(p, screen === "signup" ? "signup" : "login")}><ProviderIcon name={p} /><span>Continue with {name}</span></button>)}</div>;
   return <div className="entry-page">
     {isSignup && <SignupSteps current={1} />}
     <section className="auth-panel frame" aria-labelledby="auth-title"><h1 id="auth-title" className="auth-title">{titles[screen][0]}</h1><p className="intro">{titles[screen][1]}</p>{notice}
-      {screen === "signup" && <>{providerButtons}<div className="divider"><span>or with email</span></div></>}
+      {screen === "signup" && <div className="enlist-sides"><div className="enlist-crests">{FACTIONS.map(f => <Crest key={f.slug} faction={f.slug} initial="" size={44} label={f.name} />)}</div><p>Three factions fight over every category. <strong>You&apos;ll pick your side next.</strong></p></div>}
+      {screen === "signup" && providerButtons && <>{providerButtons}<div className="divider"><span>or with email</span></div></>}
       {screen === "oauth-signup" && !pendingSignup && <p className="small-text">{error ? <Link href="/signup">Start signup again</Link> : "Checking your provider sign-in…"}</p>}
       {(screen !== "oauth-signup" || pendingSignup) && <form ref={form} onSubmit={submit}>
         {pendingSignup && <p className="small-text">Connected with {providerNames[pendingSignup.provider]}. Confirm your username and age to finish.</p>}
@@ -222,7 +226,7 @@ export default function AuthScreen({ screen }: { screen: string }) {
         <button className="primary" disabled={busy || (botRequired && !botToken) || ((screen === "reset" || screen === "verify") && !linkToken)}>{busy ? "Please wait…" : ({ login: "Log in", signup: "Continue", "oauth-signup": "Continue", forgot: "Send recovery link", reset: "Set new password", verify: "Verify email", mfa: "Confirm code" })[screen]}</button>
       </form>}
       {isSignup && <p className="signup-policy">By continuing you agree to the <Link href="/terms">Terms</Link> and <Link href="/guidelines">Community Guidelines</Link>, and you&apos;ve read the <Link href="/privacy">Privacy Policy</Link>.</p>}
-      {screen === "login" && <><div className="divider"><span>or</span></div>{providerButtons}</>}
+      {screen === "login" && providerButtons && <><div className="divider"><span>or</span></div>{providerButtons}</>}
       <div className="form-footer">{screen === "login" ? <>New here? <Link href="/signup">Enlist</Link></> : isSignup ? <>Already enlisted? <Link href="/login">Log in</Link></> : <Link href="/login">Back to log in</Link>}</div>
     </section></div>;
 }
@@ -231,5 +235,5 @@ export default function AuthScreen({ screen }: { screen: string }) {
 export const SIGNUP_STEPS = ["Account", "Your side", "Profile", "Follow", "Ready"] as const;
 export function SignupSteps({ current }: { current: 1 | 2 | 3 | 4 | 5 }) {
   return <ol className="signup-steps" aria-label={`Step ${current} of ${SIGNUP_STEPS.length}`}>{SIGNUP_STEPS.map((label, i) =>
-    <li key={label} className={i + 1 === current ? "on" : i + 1 < current ? "done" : undefined} aria-current={i + 1 === current ? "step" : undefined}><span className="hex">{i + 1}</span>{label}</li>)}</ol>;
+    <li key={label} className={i + 1 === current ? "on" : i + 1 < current ? "done" : undefined} aria-current={i + 1 === current ? "step" : undefined}><span className="hex">{i + 1}</span><span className="step-label">{label}</span></li>)}</ol>;
 }

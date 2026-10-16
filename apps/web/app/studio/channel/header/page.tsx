@@ -25,7 +25,7 @@ export default function HeaderStudio() {
       <Section title="Label and welcome" intro="Shown above and below your name. Leave a field empty to use the default.">
         <label className="checkbox"><input type="checkbox" name="enabled" defaultChecked={data.enabled} /> Show the label and welcome line</label>
         <label className="field"><span>Page label</span><input name="page_label" defaultValue={data.page_label} maxLength={24} placeholder={data.defaults.page_label} aria-invalid={!!err("page_label")} /><small>Up to 24 characters. Default: {data.defaults.page_label}.</small></label>
-        <label className="field"><span>Welcome line</span><input name="welcome_line" defaultValue={data.welcome_line} maxLength={80} placeholder={data.defaults.welcome_line} aria-invalid={!!err("welcome_line")} /><small>Up to 80 characters. Default: {data.defaults.welcome_line}.</small></label>
+        <label className="field"><span>Welcome line</span><input name="welcome_line" defaultValue={data.welcome_line} maxLength={80} aria-invalid={!!err("welcome_line")} /><small>Up to 80 characters. Optional: leave it empty and nothing shows.</small></label>
       </Section>
       <Section title="Intro card" intro="A short card at the top of your Home tab. It shows only when the text isn't empty.">
         <label className="field"><span>Title</span><input name="intro_title" defaultValue={data.intro_title} maxLength={60} placeholder="About this page" aria-invalid={!!err("intro_title")} /><small>Up to 60 characters.</small></label>

@@ -95,3 +95,4 @@
 .ceremony-corner.bl { bottom: -1px; left: -1px; transform-origin: bottom left; background: var(--b) bottom left / 16px 2px no-repeat, var(--b) bottom left / 2px 16px no-repeat; }
 .ceremony-corner.br { bottom: -1px; right: -1px; transform-origin: bottom right; background: var(--b) bottom right / 16px 2px no-repeat, var(--b) bottom right / 2px 16px no-repeat; }
 .ceremony-skip { position: absolute; top: 8px; right: 12px; }
+

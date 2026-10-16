@@ -1801,7 +1801,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         .clone();
     assert_eq!(
         header,
-        json!({"label": "Creator Page", "welcome": "Welcome to my page", "intro_title": "", "intro_body": "", "vibe": ""})
+        json!({"label": "Creator Page", "welcome": null, "intro_title": "", "intro_body": "", "vibe": ""})
     );
     let mine = owner.ok("GET", "/api/me/header", Value::Null).await;
     let rev = mine["revision"].as_i64().unwrap();

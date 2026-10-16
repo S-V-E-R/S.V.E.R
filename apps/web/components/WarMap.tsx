@@ -24,13 +24,17 @@ export default function WarMap({ initial }: { initial: War }) {
     return () => { active = false; clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);
   const sorted = [...war.genres].sort((a, b) => (a.home ?? "z").localeCompare(b.home ?? "z") || a.position - b.position);
-  return <div className="war-page"><header><p className="eyebrow">The seasonal war</p><h1>War map</h1><p>Play, build and make. Help your faction take ground.</p></header><WarStanding war={war} />
-    <div className="war-rules panel"><h2>How ground is taken</h2><ol><li>Verified members earn influence from real streams and Trusted playback. Chat counts too, within limits.</li><li>Influence is balanced by active faction size. Enemy turf and your private council’s target earn bonuses.</li><li>Ownership changes at Monday’s checkpoint, 00:00 UTC. A tie or a narrow lead keeps the holder.</li></ol><p>{war.week && !war.week.completed ? `Next checkpoint: ${utcDate(war.week.ends_at)}.` : "The season is on break."} Borders show neighboring genres; they do not restrict attacks.</p></div>
+  // How ground is taken sits beside the Accord on the map, and stands alone on the genre board.
+  const rules = <><h2>How ground is taken</h2><ol><li>Verified members earn influence from real streams and Trusted playback. Chat counts too, within limits.</li><li>Influence is balanced by active faction size. Enemy turf and your private council’s target earn bonuses.</li><li>Ownership changes at Monday’s checkpoint, 00:00 UTC. A tie or a narrow lead keeps the holder.</li></ol><p>{war.week && !war.week.completed ? `Next checkpoint: ${utcDate(war.week.ends_at)}.` : "The season is on break."} Borders show neighboring genres; they do not restrict attacks.</p></>;
+  return <div className="war-page"><header><p className="eyebrow">The seasonal war</p><h1>War map</h1><p>Play, build and make. Help your faction take ground.</p></header>
     {error && <p role="status" className="notice">{error}</p>}<div className="row war-view"><button className="quiet" aria-pressed={view === "map"} onClick={() => setView("map")}>Map</button><button className="quiet" aria-pressed={view === "board"} onClick={() => setView("board")}>Genre board</button></div>
     {war.genres.length === 0 ? <p className="notice">Territories will appear when the first season begins.</p> : <>
-      <div className={`war-map-view ${view === "board" ? "hidden" : ""}`}><TerritoryMap genres={sorted} selected={selected} onSelect={setSelected} season={war.season?.number} /></div>
+      <div className={`war-map-view ${view === "board" ? "hidden" : ""}`}><TerritoryMap genres={sorted} selected={selected} onSelect={setSelected} season={war.season?.number} rules={rules} /></div>
+      {view === "board" && <div className="war-rules panel">{rules}</div>}
       <div className={view === "map" ? "map-board" : ""}><GenreBoard genres={war.genres} /></div>
     </>}
+    {war.genres.length === 0 && <div className="war-rules panel">{rules}</div>}
+    <WarStanding war={war} />
     {!!war.history.length && <details className="panel"><summary>Checkpoint history</summary>{war.history.map(h => <section key={h.ends_at}><h3>{utcDate(h.ends_at)}</h3><ul>{h.genres.map(g => <li key={g.id}>{g.name}: {g.holder ? factionInfo(g.holder).name : "Neutral"}</li>)}</ul></section>)}</details>}
   </div>;
 }

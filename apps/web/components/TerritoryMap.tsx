@@ -11,7 +11,7 @@ const nameLines = (name: string) => name.includes(" & ") ? name.split(" & ") : n
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 /** The RISK-style war map: hex-tiled territories, hover to lift and read standings, select to zoom in. */
-export function TerritoryMap({ genres, selected, onSelect, season }: { genres: Genre[]; selected: string | null; onSelect: (id: string | null) => void; season?: number | null }) {
+export function TerritoryMap({ genres, selected, onSelect, season, rules }: { genres: Genre[]; selected: string | null; onSelect: (id: string | null) => void; season?: number | null; rules?: React.ReactNode }) {
   const layoutKey = genres.map(g => `${g.id}:${g.home}:${g.map?.q},${g.map?.r}`).join("|");
   // Geometry depends only on the layout, not on live scores, so the 30-second refresh never redraws tiles.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,7 +95,7 @@ export function TerritoryMap({ genres, selected, onSelect, season }: { genres: G
     </svg>
     <div className="war-controls"><button type="button" className="quiet" onClick={() => zoom(1.4)} aria-label="Zoom in">+</button><button type="button" className="quiet" onClick={() => zoom(1 / 1.4)} aria-label="Zoom out" disabled={camera.s <= 1}>−</button><button type="button" className="quiet" onClick={() => { onSelect(null); setCamera(FULL); }} disabled={camera.s <= 1 && !selected}>Full map</button></div>
     <ul className="war-legend" aria-label="Map key">{(["myria", "aetheron", "glint"] as const).map(f => <li key={f} data-theme={f}><span className="swatch" />{factionInfo(f).name}</li>)}<li data-theme="neutral"><span className="swatch" />Unclaimed</li><li><span className="swatch hatched" />Contested</li><li><span className="swatch capital-key" />Capital</li><li><span className="swatch static-key" />The Static</li></ul></div>
-    <aside className="war-plate" data-theme={shown?.holder ?? "neutral"}>{shown ? <TerritoryPlate genre={shown} /> : <AccordPlate />}</aside>
+    <aside className="war-plate" data-theme={shown?.holder ?? "neutral"}>{shown ? <TerritoryPlate genre={shown} /> : <AccordPlate rules={rules} />}</aside>
   </div>;
 }
 
@@ -116,11 +116,12 @@ function TerritoryPlate({ genre: g }: { genre: Genre }) {
 }
 
 /** Shown before anything is hovered: the terms the war is fought under. */
-function AccordPlate() {
+function AccordPlate({ rules }: { rules?: React.ReactNode }) {
   return <>
     <p className="eyebrow">Sworn in 41 AF</p>
     <h3>The Accord</h3>
     <ol className="accord-terms">{accord.map(term => <li key={term}>{term}</li>)}</ol>
-    <p className="muted">Hover a territory for this week’s standings. Select one to zoom in.</p>
+    <p className="muted"><span className="on-hover">Hover a territory for this week’s standings. Select one to zoom in.</span><span className="on-touch">Tap a territory for this week’s standings and to zoom in.</span></p>
+    {rules && <div className="plate-rules">{rules}</div>}
   </>;
 }
