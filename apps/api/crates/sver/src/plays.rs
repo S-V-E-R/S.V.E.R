@@ -1,6 +1,6 @@
 //! Dedicated Plays voting. The separate game project consumes short-lived commands over HTTP.
 use crate::{
-    App, auth, integrity, moderation,
+    App, auth, moderation,
     profiles::{self, Fail, Res},
     security, streams,
 };
@@ -60,30 +60,84 @@ async fn channel(app: &App, name: &str) -> Res<String> {
     }
     Ok(user.id)
 }
-async fn state(
-    State(app): State<App>,
-    jar: CookieJar,
-    Path(name): Path<String>,
-) -> Res<Json<Value>> {
-    let channel = channel(&app, &name).await?;
-    let viewer = profiles::viewer(&app, &jar).await?;
+/// Whether `user` is watching: a Counted or Trusted, signed-in and verified session on the Plays
+/// broadcast (docs/PLAYS.md "Who controls the game"). Bots and chat-only accounts have none.
+async fn watching(db: &mut PgConnection, broadcast: &str, user: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM playback_leases WHERE broadcast_id=$1 AND viewer_key='u:'||$2 AND level IN ('counted','trusted') AND signed_in AND verified AND expires_at>clock_timestamp())")
+        .bind(broadcast).bind(user).fetch_one(db).await?)
+}
+/// The part of GET /plays that's the same for everyone, per channel name: (when, channel,
+/// live broadcast, body). Every viewer polls once a second, so it's built at most once a second
+/// and again after each bridge beat.
+type Shared = (std::time::Instant, String, Option<String>, Value);
+static SHARED: std::sync::Mutex<Option<std::collections::HashMap<String, Shared>>> =
+    std::sync::Mutex::new(None);
+fn forget_shared() {
+    if let Ok(mut cache) = SHARED.lock() {
+        *cache = None;
+    }
+}
+async fn shared(app: &App, name: &str) -> Res<(String, Option<String>, Value)> {
+    if let Ok(cache) = SHARED.lock()
+        && let Some((at, channel, live, body)) = cache.as_ref().and_then(|c| c.get(name))
+        && at.elapsed() < std::time::Duration::from_secs(1)
+    {
+        return Ok((channel.clone(), live.clone(), body.clone()));
+    }
+    let channel = channel(app, name).await?;
     let mut db = app.db.acquire().await?;
     let r: Runtime = sqlx::query_as("SELECT * FROM plays_runtime WHERE enabled AND channel_id=$1")
         .bind(&channel)
         .fetch_one(&mut *db)
         .await?;
     let (now, round) = clock(&mut db).await?;
-    let live = streams::live_broadcast(&mut db, &channel).await?.is_some();
+    let live = streams::live_broadcast(&mut db, &channel).await?;
     let votes:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('command',command,'votes',count(*)) FROM plays_votes WHERE round=$1 GROUP BY command ORDER BY command").bind(round).fetch_all(&mut *db).await?;
-    let my_vote: Option<String> =
-        sqlx::query_scalar("SELECT command FROM plays_votes WHERE round=$1 AND user_id=$2")
-            .bind(round)
-            .bind(viewer.as_ref().map(|u| &u.id))
-            .fetch_optional(&mut *db)
-            .await?;
-    Ok(Json(
-        json!({"game":r.game,"round":round,"closes_at":DateTime::from_timestamp((round+1)*5,0),"server_time":now,"connected":r.connected(now)&&live,"input_mode":r.input_mode,"votes":votes,"my_vote":my_vote,"can_vote":viewer.as_ref().is_some_and(|u|u.email_verified),"last_command":r.last_command,"last_chosen_at":r.last_chosen_at}),
-    ))
+    let body = json!({"game":r.game,"round":round,"closes_at":DateTime::from_timestamp((round+1)*5,0),"server_time":now,"connected":r.connected(now)&&live.is_some(),"input_mode":r.input_mode,"votes":votes,"last_command":r.last_command,"last_chosen_at":r.last_chosen_at});
+    if let Ok(mut cache) = SHARED.lock() {
+        cache.get_or_insert_with(Default::default).insert(
+            name.to_string(),
+            (
+                std::time::Instant::now(),
+                channel.clone(),
+                live.clone(),
+                body.clone(),
+            ),
+        );
+    }
+    Ok((channel, live, body))
+}
+async fn state(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+) -> Res<Json<Value>> {
+    let (_, live, mut body) = shared(&app, &name).await?;
+    let viewer = profiles::viewer(&app, &jar).await?;
+    let (mut my_vote, mut can_vote, mut why) = (None::<String>, false, None);
+    if let Some(u) = &viewer {
+        let mut db = app.db.acquire().await?;
+        my_vote =
+            sqlx::query_scalar("SELECT command FROM plays_votes WHERE round=$1 AND user_id=$2")
+                .bind(body["round"].as_i64())
+                .bind(&u.id)
+                .fetch_optional(&mut *db)
+                .await?;
+        can_vote = u.email_verified
+            && match &live {
+                Some(b) => watching(&mut db, b, &u.id).await?,
+                None => false,
+            };
+        why = (!can_vote).then_some(if u.email_verified {
+            "Your vote counts once you've been watching the stream for a moment."
+        } else {
+            "Verify your email to vote."
+        });
+    }
+    body["my_vote"] = json!(my_vote);
+    body["can_vote"] = json!(can_vote);
+    body["why"] = json!(why);
+    Ok(Json(body))
 }
 #[derive(Deserialize)]
 struct Vote {
@@ -110,8 +164,16 @@ async fn vote(
     {
         return Err(Fail::denied("You can't control this channel."));
     }
+    if let Some(broadcast) = streams::live_broadcast(&mut db, &channel).await?
+        && !watching(&mut db, &broadcast, &user.id).await?
+    {
+        return Err(Fail::denied(
+            "Your vote counts once you've been watching the stream for a moment.",
+        ));
+    }
     drop(db);
-    moderation::check_send(&app, &channel, &user, &input.command).await?;
+    // A button press isn't a chat message: bans and timeouts apply, AutoMod and slow mode don't.
+    moderation::check_restriction(&app, &channel, &user.id).await?;
     profiles::rate(&app, format!("plays-vote:{}", user.id), 20, 10).await?;
     let mut tx = app.db.begin().await?;
     if !record(
@@ -145,11 +207,13 @@ async fn record(
             .await?;
     let Some(r) = r else { return Ok(false) };
     let (now, round) = clock(db).await?;
-    if !r.connected(now)
-        || expected.is_some_and(|v| v != round)
-        || streams::live_broadcast(db, channel).await?.is_none()
-    {
+    if !r.connected(now) || expected.is_some_and(|v| v != round) {
         return Ok(false);
+    }
+    // Buttons and chat alike: only someone watching the broadcast votes.
+    match streams::live_broadcast(db, channel).await? {
+        Some(broadcast) if watching(db, &broadcast, user).await? => {}
+        _ => return Ok(false),
     }
     Ok(sqlx::query(
         "INSERT INTO plays_votes(round,user_id,command) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
@@ -220,14 +284,17 @@ async fn bridge(
         .await?
         .filter(|_| eligible);
     let ready = input.ready && live.is_some();
-    let viewers = match live {
-        Some(id) => integrity::counts(&mut tx, &id).await?.2,
+    // Viewers who keep the AI off: signed-in, verified and Counted or Trusted (guests don't).
+    let viewers: i64 = match &live {
+        Some(id) => sqlx::query_scalar("SELECT count(*) FROM playback_leases WHERE broadcast_id=$1 AND level IN ('counted','trusted') AND signed_in AND verified AND expires_at>clock_timestamp()")
+            .bind(id).fetch_one(&mut *tx).await?,
         None => 0,
     };
     // At most once: expired/missed rounds are skipped, never replayed into a later game state.
     // A failed HTTP delivery can lose one input; retrying it could press a destructive button twice.
+    // Ties are random, so nobody can predict which tied command wins.
     let command: Option<String> = if ready && r.last_round < round - 1 {
-        sqlx::query_scalar("SELECT command FROM plays_votes WHERE round=$1 GROUP BY command ORDER BY count(*) DESC,md5(command||$1::text) LIMIT 1").bind(round-1).fetch_optional(&mut *tx).await?
+        sqlx::query_scalar("SELECT command FROM plays_votes WHERE round=$1 GROUP BY command ORDER BY count(*) DESC,random() LIMIT 1").bind(round-1).fetch_optional(&mut *tx).await?
     } else {
         None
     };
@@ -240,6 +307,7 @@ async fn bridge(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    forget_shared();
     Ok(Json(
         json!({"round":round-1,"command":command,"viewers":viewers,"live":ready}),
     ))

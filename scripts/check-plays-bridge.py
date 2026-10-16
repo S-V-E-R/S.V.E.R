@@ -3,6 +3,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import time
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("bridge", Path(__file__).resolve().parents[1] / "infra/plays/bridge.py")
@@ -23,7 +24,9 @@ config = {"viewers_key": "test:presence", "command_channel": "test:command"}
 with contextlib.redirect_stdout(io.StringIO()):
     bridge.deliver(bus, config, {"viewers": 2, "round": 1, "command": "up"})
 assert bus.values["test:presence"]["authenticatedTrusted"] == 2
-assert bus.commands == [("test:command", {"command": "up", "windowNumber": 1})]
+sent = bus.commands[0][1]
+assert bus.commands[0][0] == "test:command" and (sent["command"], sent["windowNumber"]) == ("up", 1)
+assert abs(sent["ts"] / 1000 - time.time()) < 5, "commands carry when they were sent"
 bridge.deliver(bus, config, {"viewers": 0, "round": 2, "command": None})
 assert len(bus.commands) == 1
 for bad in [{"viewers": 1, "command": "reset"}, {"viewers": -1, "command": "a"}]:
