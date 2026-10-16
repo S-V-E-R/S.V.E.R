@@ -152,6 +152,24 @@ The discovery modules have shipped, so the earlier interim rules are retired. Wh
 - **Watch page:** grid areas player, streamer, interact (Plays, CrowdSync and board panels, plain panels), Up next, with chat in its own column. The title and category chip sit under the player with the LIVE tag; the streamer bar carries the faction tag.
 - **Take It Down:** every content surface keeps its "Report an intimate image" link, in small dim text so it never competes with the actions beside it. The footer link stays as it is.
 
+### UI review decisions (October 16, 2026)
+
+Approved by Joe after the Fable UI review. These hold for every page from now on.
+
+- **Page heads.** Every top-level page opens with `.page-head`: an eyebrow, the Cinzel h1 and one lead line. The diamond-and-rule pattern is only for sections inside a page.
+- **Spacing.** Gaps and padding use the `--space-1` to `--space-7` scale (4, 8, 12, 16, 24, 32 and 48 px).
+- **Chips.** One `.chip` style. Tags are small; chips you can press are 44 px tall. Chip and tab rows scroll sideways on phones instead of wrapping.
+- **Empty states.** `.empty-state`: framed, with a next step ("No channels match." plus a link to Browse).
+- **Side menus.** Creator Studio and Settings share `SideMenu`: framed, the current page marked, and on phones folded behind one button that names the current page. The Studio menu starts with Stream, then Channel page, Earnings, Teams and Recordings.
+- **Studio live stream.** "Go live in three steps" comes first (title and category, stream key, start in OBS), then Stream details, the OBS connection, the status in plain words ("OBS isn't connected yet"), OBS setup, editors and ads last.
+- **Sign-up.** Step 1 shows the three crests with "You'll pick your side next". The username field shows "Your channel: sver.tv/{name}" once it's free. The stepper stays on one line; on phones only the current step keeps its label. Only configured sign-in providers are shown, never disabled placeholders.
+- **Channel page.** No banner means the owner's crest and home city (The Kiln, Selenne, Aurel) on the faction tint. There's no stock page label or welcome line. Owners don't see the take-down link on their own page.
+- **War map.** The map comes first, with "How ground is taken" under the Accord. Touch screens get "tap" copy instead of "hover". The standing and season notices follow the map.
+- **Faction hub.** "Live with {faction}" comes before the story. Season dates show the day only. The scoreboard says "6 territories" and "weeks of ground held".
+- **Watch page.** The turf strip above the player says whose ground the stream is on. Only the stage wears the streamer's theme. The chat sign-in prompt sits where the message box would be.
+- **Shell.** The top bar is solid and the sidebar is sticky. Sidebar live rows say "Live" instead of a 0 count. The info-page menu includes Browse, and its Enlist button is 44 px tall.
+- **Plain words.** No internals in copy: "Engagement Valor", not "EV", in daily orders; orders say what to do ("Press a button on a channel's board"). Reroll is a small text action.
+
 ## Copy
 
 - Short, direct, specific. Say what something does ("Every live stream gets a turn here, whether it has 3 viewers or 3,000"), not slogans.

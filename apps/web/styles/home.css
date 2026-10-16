@@ -40,7 +40,10 @@
 .rotation-faction { font-size: 12px; }
 .rotation-title { margin: 0; font-size: 17px; font-weight: 500; line-height: 1.35; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { font-size: 12px; padding: 2px 8px; border: 1px solid var(--line); color: var(--ink); }
+/* One chip style everywhere: tags are small, chips you can press are 44 px tall. */
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 10px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+a.chip, button.chip { min-height: 44px; padding: 0 12px; }
+a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .rotation-actions { display: flex; gap: 8px; margin-top: auto; }
 .rotation-actions .button { flex: 1 1 auto; min-height: 46px; font-size: 16px; }
 .rotation-next { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-dim); }
@@ -109,7 +112,6 @@
 .recent-channels a { display: flex; gap: 10px; align-items: center; }
 .recent-channels span span { display: block; }
 .browse-filters, .browse-genres, .browse-categories { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-.chip { padding: 4px 10px; border: 1px solid var(--line); text-decoration: none; }
 .chip[aria-current="page"] { border-color: var(--accent); color: var(--accent-light); }
 .search-form { display: flex; gap: 8px; margin: 8px 0 16px; max-width: 560px; }
 .search-form input { flex: 1; }
@@ -203,13 +205,9 @@
   .genre-tabs > *, .chips.scroll > * { flex: none; }
 }
 /* Page titles: eyebrow, Cinzel title, optional lead (the war map's pattern). */
-.page-head { margin: 0 0 22px; }
-.page-head h1 { margin: 4px 0 6px; }
-.page-head .lead { margin: 0; color: var(--ink-muted); max-width: 70ch; }
 /* MAGNet: lanes in two labelled groups, and the featured stream's turn. */
 .magnet-lanes { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 0 0 16px; }
 .lane-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.lane-group .chip { display: inline-flex; align-items: center; gap: 6px; }
 .magnet-turn { height: 3px; margin: 8px 0 0; background: var(--line); }
 .magnet-turn span { display: block; height: 100%; background: var(--accent); transition: width .25s linear; }
 .magnet-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 8px 0 0; }

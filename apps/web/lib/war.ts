@@ -11,6 +11,8 @@ export type War = {
   previous_winners: Faction[];
   history: { ends_at: string; genres: Genre[] }[];
 };
+/** A day, for season dates: seasons end on a day, and the minute they were created means nothing to a reader. */
+export const utcDay = (iso: string) => new Date(iso).toLocaleDateString("en-US", { dateStyle: "medium", timeZone: "UTC" });
 export const utcDate = (iso: string) => new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC";
 export function contest(genre: Genre) {
   const scores = [...genre.scores].sort((a, b) => b.score - a.score);

@@ -305,7 +305,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .settings-nav a{min-height:44px;display:flex;align-items:center}
 @media(min-width:901px){.settings-nav a{min-height:0}}
 @media(max-width:900px){
-  .settings-nav,.studio-nav{flex-direction:column;flex-wrap:nowrap;gap:8px;border:1px solid var(--line);margin:12px 18px 0}
+  .settings-nav,.studio-nav{flex:none;flex-direction:column;flex-wrap:nowrap;gap:8px;border:1px solid var(--line);margin:12px 18px 0}
   .settings-nav .eyebrow{padding:0}
   .side-menu-toggle{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:44px;font-weight:700}
   .side-menu-links{display:none}

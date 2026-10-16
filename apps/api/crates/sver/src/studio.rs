@@ -1698,7 +1698,6 @@ pub async fn review_fan_art(
 
 // ---------------------------------------------------------------- Page header copy (P9)
 
-pub const DEFAULT_PAGE_LABEL: &str = "Creator Page";
 type HeaderRow = (String, String, String, String, String, bool);
 async fn header_row(db: &mut PgConnection, user_id: &str) -> Res<HeaderRow> {
     Ok(sqlx::query_as("SELECT page_label,welcome_line,intro_title,intro_body,page_vibe,header_copy_enabled FROM profiles WHERE user_id=$1")
@@ -1707,14 +1706,13 @@ async fn header_row(db: &mut PgConnection, user_id: &str) -> Res<HeaderRow> {
         .await?
         .unwrap_or_else(|| (String::new(), String::new(), String::new(), String::new(), String::new(), true)))
 }
-/// The header copy as rendered on the channel: the label default resolved, label and welcome null
-/// when the owner turned them off, welcome null until the owner writes one (a stock "Welcome to my
-/// page" said nothing; UI review, October 2026), intro fields empty when there is no intro body.
+/// The header copy as rendered on the channel: label and welcome null when the owner turned them
+/// off or hasn't written them (stock "Creator Page" and "Welcome to my page" said nothing to a
+/// reader; UI review, October 2026), intro fields empty when there is no intro body.
 pub async fn channel_header(db: &mut PgConnection, user_id: &str) -> Res<Value> {
     let (label, welcome, intro_title, intro_body, vibe, enabled) = header_row(db, user_id).await?;
-    let or = |v: String, d: &str| if v.is_empty() { d.to_string() } else { v };
     Ok(json!({
-        "label": enabled.then(|| or(label, DEFAULT_PAGE_LABEL)),
+        "label": (enabled && !label.is_empty()).then_some(label),
         "welcome": (enabled && !welcome.is_empty()).then_some(welcome),
         "intro_title": if intro_body.is_empty() { String::new() } else { intro_title },
         "intro_body": intro_body,
@@ -1734,7 +1732,7 @@ pub async fn my_header(State(app): State<App>, jar: CookieJar) -> Res<Json<Value
         "intro_body": intro_body,
         "page_vibe": vibe,
         "enabled": enabled,
-        "defaults": {"page_label": DEFAULT_PAGE_LABEL, "welcome_line": ""},
+        "defaults": {"page_label": "", "welcome_line": ""},
         "revision": section_revision(&mut db, &user.id, "header").await?,
     })))
 }

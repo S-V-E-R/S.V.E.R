@@ -178,10 +178,18 @@ const KINDS: [(&str, &str, [i32; 5]); 10] = [
     ),
     ("chat", "Chat in {n} different channels", [1, 2, 3, 4, 5]),
     ("follow", "Follow {n} new channels", [1, 1, 2, 2, 3]),
-    ("surge", "Take part in {n} Surges", [1, 1, 2, 2, 3]),
+    (
+        "surge",
+        "Join {n} Surges (a chat rallying together)",
+        [1, 1, 2, 2, 3],
+    ),
     ("rally", "Rally your faction {n} times", [1, 3, 5, 8, 12]),
     ("poll", "Vote in {n} polls", [1, 2, 3, 4, 5]),
-    ("board", "Press a board control {n} times", [1, 3, 5, 8, 12]),
+    (
+        "board",
+        "Press a button on a channel's board {n} times",
+        [1, 3, 5, 8, 12],
+    ),
     ("beacon", "Watch {n} Beacons to the end", [1, 2, 3, 4, 5]),
     ("raid", "Join {n} raids", [1, 1, 1, 2, 2]),
     (
