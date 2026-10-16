@@ -2,13 +2,13 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Crest } from "./FactionIdentity";
 import { factions, factionInfo, type Faction } from "../lib/factions";
-import { type War, contest, utcDate } from "../lib/war";
+import { type War, contest, utcDay } from "../lib/war";
 
 const utcTime = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso)) + " UTC";
 
 export function WarStanding({ war }: { war: War }) {
   const skirmish = war.season && !war.season.finished ? war.skirmish : undefined;
-  return <div className="war-standing">{war.season ? <p className="eyebrow">Season {war.season.number} · {war.season.finished ? `Break · next season ${utcDate(war.season.next_starts_at)}` : `Ends ${utcDate(war.season.ends_at)}`}</p> : <p>The first season has not started.</p>}
+  return <div className="war-standing">{war.season ? <p className="eyebrow">Season {war.season.number} · {war.season.finished ? `Break · next season ${utcDay(war.season.next_starts_at)}` : `Ends ${utcDay(war.season.ends_at)}`}</p> : <p>The first season has not started.</p>}
     {skirmish?.active ? <p className="notice skirmish-notice"><strong>Skirmish Hour is on</strong> until {utcTime(skirmish.active.ends_at)}: influence counts {skirmish.multiplier}× (the usual per-person limits still apply).</p>
       : skirmish?.next && <p className="notice skirmish-notice"><strong>Next Skirmish Hour:</strong> {utcTime(skirmish.next.starts_at)}. For one hour, influence counts {skirmish.multiplier}×.</p>}
     {skirmish?.raid_night?.active ? <p className="notice skirmish-notice"><strong>Raid Night is on</strong> until {utcTime(skirmish.raid_night.active.ends_at)}: viewers who arrive by a raid from another faction earn {skirmish.multiplier}× watch influence.</p>
@@ -16,7 +16,7 @@ export function WarStanding({ war }: { war: War }) {
     {skirmish?.hill && <p className="notice skirmish-notice"><strong>King of the Hill: {skirmish.hill.name}.</strong> Influence there counts {skirmish.multiplier}× all season, and whoever holds it when the season ends gets {skirmish.hill.bonus} extra territories. {skirmish.hill.holder ? `${factionInfo(skirmish.hill.holder).name} holds it now.` : "Nobody holds it yet."}</p>}
     {skirmish?.spotlight && <p className="notice skirmish-notice"><strong>Territory Spotlight today:</strong> {skirmish.spotlight.name ?? skirmish.spotlight.genre}. Influence earned there counts {skirmish.multiplier}× until midnight UTC.</p>}
     <div className="war-bar" aria-label="Territories held">{war.scoreboard.filter(s => s.territories > 0).map(s => <span key={s.faction} data-theme={s.faction} style={{ flex: s.territories }} title={`${factionInfo(s.faction).name}: ${s.territories} territories`} />)}</div>
-    <ul className="war-scoreboard">{war.scoreboard.map(s => <li key={s.faction}><Link href={`/factions/${s.faction}`}><Crest faction={s.faction} size={24} />{factionInfo(s.faction).name}</Link><strong>{s.territories}</strong><span className="muted">{s.genre_weeks} genre-weeks</span></li>)}</ul>
+    <ul className="war-scoreboard">{war.scoreboard.map(s => <li key={s.faction}><Link href={`/factions/${s.faction}`}><Crest faction={s.faction} size={24} />{factionInfo(s.faction).name}</Link><strong>{s.territories} {s.territories === 1 ? "territory" : "territories"}</strong><span className="muted" title="Weeks each category was held this season, added up. It breaks ties at the end of the season.">{s.genre_weeks} weeks of ground held</span></li>)}</ul>
   </div>;
 }
 /** "Myria holds the light." or, for joint winners, "Myria and Glint share the light." (docs/MOTION.md §2). */
@@ -39,24 +39,27 @@ export function FrontLine({ war, faction, signedIn, replay }: { war: War | null;
   const lead = ranked.length > 1 && ranked[0].territories > ranked[1].territories ? ranked[0] : null;
   const contested = war ? war.genres.filter(g => contest(g).contested).length : 0;
   const finished = war?.season?.finished && war.season.winners.length ? war.season : null;
+  // Weeks run from the season start; the first may be partial.
+  const week = war?.season && war.week ? Math.max(1, Math.ceil((Date.parse(war.week.ends_at) - Date.parse(war.season.starts_at)) / (7 * 86_400_000))) : null;
   const headline = !war ? "Three factions. One war for every category."
     : !war.season ? "The first season hasn\u2019t started yet."
       : finished ? holdsTheLight(finished.winners)
+      : !faction && lead ? `Three factions fight over every category. ${factionInfo(lead.faction).name} leads, ${lead.territories} of ${war.genres.length}.`
       : lead ? `${factionInfo(lead.faction).name} leads with ${lead.territories} ${lead.territories === 1 ? "territory" : "territories"}.${contested ? ` ${contested} contested.` : ""}`
         : total ? `The war is level at ${ranked[0].territories} territories.${contested ? ` ${contested} contested.` : ""}` : "No territory has been taken yet.";
-  const sub = finished ? `${seasonLine(finished.winners, faction)} Next season starts ${utcDate(finished.next_starts_at)}.`
+  const sub = finished ? `${seasonLine(finished.winners, faction)} Next season starts ${utcDay(finished.next_starts_at)}.`
     : faction ? `Every stream, watch and chat takes ground for ${factionInfo(faction).name}. Territory changes at weekly checkpoints.`
     : signedIn ? "You haven\u2019t picked a side yet. Choose the faction that sounds like you."
       : "Pick a side, and everything you stream, watch and chat takes ground for it.";
   return <section className="front-line frame" aria-labelledby="front-line-title">
     <div className="front-line-crests">{faction
       ? <Link href={`/factions/${faction}`} aria-label={`${factionInfo(faction).name} hub`}><Crest faction={faction} size={48} /></Link>
-      : factions.map(f => <Link key={f.slug} href={signedIn ? `/welcome?pick=${f.slug}` : `/signup?faction=${f.slug}`} aria-label={`Enlist in ${f.name}`}><Crest faction={f.slug} size={40} /></Link>)}</div>
-    <div className="front-line-status"><h2 id="front-line-title" tabIndex={-1}>{headline}</h2><p>{sub}{replay && <> {replay}</>}</p></div>
+      : <>{factions.map(f => <Link key={f.slug} className="pick-side" data-theme={f.slug} href={signedIn ? `/welcome?pick=${f.slug}` : `/signup?faction=${f.slug}`} aria-label={`Enlist in ${f.name}`} title={`Enlist in ${f.name}`}><Crest faction={f.slug} size={40} /></Link>)}<span className="pick-side-caption">Pick a side</span></>}</div>
+    <div className="front-line-status">{war?.season && <span className="eyebrow">Season {war.season.number}{week ? ` · Week ${week}` : ""}</span>}<h2 id="front-line-title" tabIndex={-1}>{headline}</h2><p>{sub}{replay && <> {replay}</>}</p></div>
     {total > 0 && <div className="front-line-bar" aria-label="Territories held this season">
       {board.map(s => <span key={s.faction} data-theme={s.faction} style={{ flexGrow: Math.max(s.territories, 0.0001) }}><i aria-hidden="true" /><small>{factionInfo(s.faction).name} {s.territories}</small></span>)}
     </div>}
-    {faction ? <Link className="button" href="/war-map">Hold the line</Link>
+    {faction ? <Link className="button" href="/war-map">Open the war map</Link>
       : <Link className="button" href={signedIn ? "/welcome" : "/signup"}>{signedIn ? "Pick a side" : "Enlist"}</Link>}
   </section>;
 }

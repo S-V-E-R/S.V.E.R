@@ -14,6 +14,8 @@ import { ChannelActions } from "../../../components/ChannelActions";
 import { EffortLeaders, StandingPill } from "../../../components/Loyalty";
 import { SectionHead, StreamGrid } from "../../../components/home/Shelves";
 import type { LiveCard } from "../../../components/home/types";
+import { TurfStrip } from "../../../components/TurfStrip";
+import type { War } from "../../../lib/war";
 import { apiGet } from "../../../lib/server-api";
 import { CoStreamPlayers, type Squad } from "../../../components/Squads";
 import "../../../styles/profiles.css";
@@ -31,12 +33,20 @@ export async function generateMetadata({ params }: { params: ChannelParams }) {
 export default async function Live({ params }: { params: ChannelParams }) {
   const data = await loadChannel((await params).username);
   const c = data.channel;
-  const [account, suggestions, costream] = await Promise.all([currentAccount(), apiGet<{ items: LiveCard[] }>(`/api/channels/${encodeURIComponent(c.username)}/suggestions`), apiGet<{ squad: Squad | null }>(`/api/channels/${encodeURIComponent(c.username)}/squad`)]);
+  const [account, suggestions, costream, war, listing] = await Promise.all([currentAccount(), apiGet<{ items: LiveCard[] }>(`/api/channels/${encodeURIComponent(c.username)}/suggestions`), apiGet<{ squad: Squad | null }>(`/api/channels/${encodeURIComponent(c.username)}/squad`), apiGet<War>("/api/factions/war"), apiGet<{ items: LiveCard[] }>("/api/discovery/live")]);
+  // Whose ground this stream is on: its genre's holder this week (docs/FACTIONS.md).
+  const genreId = listing.data?.items.find(s => s.username === c.username)?.genre ?? null;
+  const ground = genreId ? war.data?.genres.find(g => g.id === genreId) ?? null : null;
   const squad = costream.data?.squad ?? null;
   const squadHost = squad?.members.find(m => m.host)?.username;
   const next = suggestions.data?.items.slice(0, 4) ?? [];
-  return <div className="channel watch" data-theme={c.faction ?? "neutral"}>
+  // The streamer's colors frame their stream (player and streamer bar); everything that belongs to
+  // the viewer (Up next, rally, chat) stays in the viewer's own colors, so ALLY and "Rally for
+  // Myria" always mean the viewer's side.
+  return <div className="channel watch">
     <div className="watch-main">
+    {ground && <TurfStrip genre={{ id: ground.id, name: ground.name }} holder={ground.holder} viewer={account?.faction ?? null} />}
+    <div className="watch-stage" data-theme={c.faction ?? "neutral"}>
     {squad ? <CoStreamPlayers initial={squad} focus={c.username} account={account?.username ?? null} /> : <div className="watch-player">
     <LivePlayer username={c.username} focused signedIn={!!account}>
       <section className="watch-offline" aria-label="Stream">
@@ -52,9 +62,10 @@ export default async function Live({ params }: { params: ChannelParams }) {
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
       {account && <EditStreamInfo username={c.username} />}
     </section>
+    </div>
     <div className="watch-interact">
       {c.plays && <PlaysControls username={c.username} />}
-      <Crowd username={c.username} />
+      <Crowd username={c.username} signedIn={!!account} />
       {c.board && <Board username={c.username} />}
     </div>
     <section className="watch-next" aria-labelledby="up-next"><SectionHead id="up-next" title="Up next" note="Same genre first, then same faction" href="/browse" link="Browse" />{next.length ? <StreamGrid streams={next} viewerFaction={account?.faction ?? null} /> : <p className="shelf-empty panel">{suggestions.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>

@@ -98,3 +98,10 @@
 .lore-facts strong { color: var(--ink); }
 .lore-founders { margin: 0; padding-left: 1.1rem; display: grid; gap: .5rem; color: var(--ink-muted); }
 .lore-founders strong { color: var(--ink); }
+/* War map: "How ground is taken" under the Accord; touch screens get "tap" copy (UI review, October 2026). */
+.plate-rules { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.plate-rules h2 { font-size: 1rem; margin: 0 0 6px; }
+.plate-rules ol { margin: 0 0 6px; padding-left: 1.2em; font-size: .85rem; }
+.plate-rules li { margin: 4px 0; }
+.on-touch { display: none; }
+@media (hover: none) { .on-hover { display: none; } .on-touch { display: inline; } }

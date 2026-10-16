@@ -5,6 +5,8 @@
 :root {
   color-scheme: dark;
   /* Shared, the same in every theme */
+  /* Spacing scale: every gap and padding is one of these (docs/DESIGN.md "Spacing"). */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
   --bg: #07080B;
   --surface: rgba(8, 9, 13, 0.85);
   --ink: #F2F0EA;
@@ -25,6 +27,7 @@
   /* Form status text (not theme colors; used only for success and error messages) */
   --green: #8FCFA4;
   --red: #F2A3A6;
+  --topbar-height: 61px;
   /* The Wolf's silver: platform supporters only (docs/SUPPORTERS.md). The same on every theme. */
   --wolf: #D8DEE6; --wolf-light: #F4F7FA; --wolf-mid: #9AA2AE; --wolf-deep: #2A2F38;
 }
@@ -152,7 +155,7 @@ a.logo:hover { color: var(--accent-light); text-decoration: none; }
 
 .topbar {
   position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 10px 18px; min-height: 60px; padding: 8px 20px;
-  border-bottom: 1px solid var(--line); background: var(--scrim);
+  border-bottom: 1px solid var(--line); background: var(--bg);
 }
 .topbar-space { flex: 1 1 24px; }
 .topbar-note { font-size: 14px; color: var(--ink-muted); }
@@ -209,6 +212,8 @@ main { flex: 1 1 auto; min-width: 0; }
 .sidebar {
   width: 268px; flex: none; display: flex; flex-direction: column; gap: 22px; padding: 16px 8px 24px;
   border-right: 1px solid var(--line); background: var(--surface);
+  /* Stays in view while the page scrolls; its own list scrolls if it's taller than the screen. */
+  position: sticky; top: var(--topbar-height); align-self: flex-start; height: calc(100vh - var(--topbar-height)); overflow-y: auto; scrollbar-width: thin;
 }
 .player-card { display: flex; align-items: center; gap: 12px; min-height: 104px; padding: 16px 12px; color: var(--ink); }
 .player-card:hover { text-decoration: none; color: var(--ink); border-color: var(--accent); }
@@ -348,7 +353,7 @@ img.crest { flex: none; display: block; }
   .menu-toggle { display: inline-flex; }
   .sidebar { display: none; }
   .sidebar.open {
-    display: flex; position: fixed; z-index: 50; top: 0; bottom: 0; left: 0; width: min(300px, 86vw);
+    display: flex; position: fixed; z-index: 50; top: 0; bottom: 0; left: 0; width: min(300px, 86vw); height: auto;
     overflow-y: auto; background: var(--bg); border-right: 1px solid var(--line);
   }
   .drawer-backdrop { display: block; position: fixed; inset: 0; z-index: 45; min-height: 0; padding: 0; border: 0; background: rgba(0, 0, 0, .6); box-shadow: none; }
@@ -431,7 +436,7 @@ a.takedown-link:hover { color: var(--ink); }
 .messages-body li.mine { align-self: flex-end; align-items: flex-end; }
 .messages-body li.run-end { margin-bottom: 10px; }
 .messages-start { align-self: center; max-width: none; margin: auto 0 12px; }
-.messages-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 14px; background: var(--panel-hi, var(--surface)); border: 1px solid var(--line); }
+.messages-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; background: var(--panel-hi, var(--surface)); border: 1px solid var(--line); }
 .messages-body li.mine .messages-text { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .messages-body li.mine .messages-text .muted { color: var(--on-accent); opacity: .75; }
 .messages-meta { margin-top: 3px; padding: 0 4px; font-size: 11px; }
@@ -457,7 +462,7 @@ a.takedown-link:hover { color: var(--ink); }
 .player-title { font-size: .8em; color: var(--ink-muted); margin-left: 4px; }
 /* Raven's Eye (admin analytics): metric tiles with small trend lines. */
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin: 14px 0; }
-.stat-tile { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; }
+.stat-tile { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); }
 .stat-tile strong { font-size: 1.5rem; font-family: var(--font-display); }
 .spark { width: 100%; height: 30px; color: var(--accent, currentColor); }
 .top-lists > section { flex: 1 1 220px; }
@@ -493,3 +498,45 @@ a.takedown-link:hover { color: var(--ink); }
 .supporter-watch rect { fill: none; stroke: var(--wolf-light); stroke-width: 2; stroke-dasharray: 6 94; animation: wolf-patrol 8s linear infinite; }
 @keyframes wolf-patrol { to { stroke-dashoffset: -100; } }
 @media (prefers-reduced-motion: reduce) { .wolf-mark .wolf-eyes { opacity: 0; } .supporter-watch rect { stroke-dasharray: none; stroke: color-mix(in srgb, var(--wolf) 55%, transparent); stroke-width: 1; } }
+/* Watch page: whose ground the stream is on (docs/DESIGN.md "Watch page"). */
+.turf-strip { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 7px 12px; border: 1px solid var(--line); border-left: 3px solid var(--accent); background: var(--tint); font-size: 14px; color: var(--ink-muted); }
+.turf-strip a { color: var(--accent-light); font-weight: 600; }
+.turf-strip strong { color: var(--ink); }
+.rally-note { margin: 4px 0 8px; }
+.chat-signin { margin: 0; padding: 14px; text-align: center; font-size: 14px; }
+.chat-form textarea { background: rgba(0, 0, 0, .5); border: 1px solid var(--line); color: var(--ink); padding: 8px 10px; resize: none; }
+.chat-form textarea:focus { outline: none; border-color: var(--accent); }
+
+
+/* Studio: "Go live in three steps" (docs/DESIGN.md "Studio"). */
+.go-live h2 { margin: 0 0 var(--space-3); font-size: 1.1rem; }
+.go-live ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.go-live li { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-left: 3px solid var(--line); min-height: 44px; }
+.go-live li[data-done="yes"] { border-left-color: var(--accent); }
+.go-live li span { color: var(--ink-muted); font-size: 0.9rem; }
+@media (max-width: 720px) { .go-live ol { grid-template-columns: 1fr; } }
+
+/* Sign-up step 1: the three crests, so the first screen already says what S.V.E.R is. */
+.enlist-sides { display: flex; align-items: center; gap: 14px; margin: 0 0 18px; padding: 12px; border: 1px solid var(--line); }
+.enlist-sides p { margin: 0; color: var(--ink-muted); }
+.enlist-sides strong { color: var(--ink); }
+.enlist-crests { display: flex; gap: 6px; flex: none; }
+/* The stepper stays on one line: on phones only the current step keeps its label. */
+.signup-steps { flex-wrap: nowrap; }
+.signup-steps li { white-space: nowrap; }
+@media (max-width: 600px) {
+  .signup-steps { gap: 10px; }
+  .signup-steps li:not(.on) .step-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .enlist-sides { flex-direction: column; align-items: flex-start; }
+}
+
+/* Page titles: eyebrow, h1 and one lead line on every top-level page (docs/DESIGN.md "Page heads"). */
+.page-head { margin: 0 0 22px; }
+.page-head h1 { margin: 4px 0 6px; }
+.page-head .lead { margin: 0; color: var(--ink-muted); max-width: 70ch; }
+/* Empty states: framed, with a next step (docs/DESIGN.md "Empty states"). */
+.empty-state { padding: 20px; border: 1px dashed var(--line); background: var(--tint); }
+.empty-state p { margin: 0 0 10px; color: var(--ink-muted); }
+.empty-state p:last-child { margin-bottom: 0; }
+.order-list .order-reroll { justify-self: start; padding: 2px 0; min-height: 24px; background: none; border: 0; box-shadow: none; font-family: var(--font-body); font-weight: 500; font-size: 12px; letter-spacing: 0; text-transform: none; color: var(--ink-muted); text-decoration: underline; cursor: pointer; }
+.order-list .order-reroll:hover { color: var(--ink); filter: none; background: none; }

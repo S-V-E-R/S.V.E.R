@@ -10,7 +10,7 @@ export default async function Notifications() {
   if (!(await currentAccount())) redirect("/login");
   const alerts = (await apiGet<{ unread_reports?: number; new_strikes?: number }>("/api/me/alerts")).data;
   return <div className="settings-page single"><div className="settings-body">
-    <div className="row between"><h1>Notifications</h1><Link href="/settings/notifications">Settings</Link></div>
+    <header className="page-head row between"><div><span className="eyebrow">Your account</span><h1>Notifications</h1><p className="lead">Go-lives from people you follow, replies, reports and account news.</p></div><Link className="button small quiet" href="/settings/notifications">Notification settings</Link></header>
     <section className="panel section"><NotificationList reports={alerts?.unread_reports ?? 0} strikes={alerts?.new_strikes ?? 0} /></section>
   </div></div>;
 }

@@ -304,12 +304,14 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     </div>;
     return <>{counting ? raidBar : ended && !nested && <UpNext username={username} focused={focused} />}{children}</>;
   }
-  if (live.mature_blocked) return <div className="live-player"><p className="panel" role="status">This stream is labeled mature, so it isn&apos;t available on your account.</p>{!nested && <UpNext username={username} focused={focused} />}</div>;
+  // What's on shows whatever the player can do: title, category, LIVE and uptime.
+  const meta = <div className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching · <Uptime since={live.started_at} /></span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>}</div>;
+  if (live.mature_blocked) return <div className="live-player"><p className="panel" role="status">This stream is labeled mature, so it isn&apos;t available on your account.</p>{meta}{!nested && <UpNext username={username} focused={focused} />}</div>;
   if (warning) return <div className="live-player"><div className="panel mature-warning" role="dialog" aria-label="Mature stream">
     <p><span className="chip mature-tag">Mature</span> <strong>{live.title}</strong> is labeled mature: it may include violent or horror games, strong language or mature themes.</p>
     <div className="row"><button type="button" onClick={() => acceptMature(username, !!signedIn)}>Watch</button><button type="button" className="quiet" onClick={() => history.back()}>Go back</button></div>
   </div></div>;
-  if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
+  if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p>{meta}</div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
   return <div className={focused ? "live-player focused" : "live-player"}>
     {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} onPause={() => setPaused(true)} onPlay={() => setPaused(false)} aria-label={`${live.title}, live`} />}
@@ -331,7 +333,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} size={nested ? "compact" : "normal"} />}
     {raidBar}
-    <div className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching</span> <Uptime since={live.started_at} /> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>}
+    <div className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching · <Uptime since={live.started_at} /></span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>}
       {!rewind && <PlayerSettings username={username} broadcast={live.broadcast_id} video={video} transport={transport} browserId={browserId} />}
       {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</div>
   </div>;

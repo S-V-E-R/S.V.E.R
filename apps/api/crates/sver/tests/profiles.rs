@@ -1801,7 +1801,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         .clone();
     assert_eq!(
         header,
-        json!({"label": "Creator Page", "welcome": "Welcome to my page", "intro_title": "", "intro_body": "", "vibe": ""})
+        json!({"label": null, "welcome": null, "intro_title": "", "intro_body": "", "vibe": ""})
     );
     let mine = owner.ok("GET", "/api/me/header", Value::Null).await;
     let rev = mine["revision"].as_i64().unwrap();
@@ -1865,7 +1865,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         .ok("GET", "/api/channels/ParityHost", Value::Null)
         .await["header"]
         .clone();
-    assert_eq!(header["label"], "Creator Page", "blank means the default");
+    assert_eq!(header["label"], Value::Null, "blank shows no label");
     assert_eq!(header["intro_body"], "Kept");
 
     // P3: readiness steps, dismiss and restore, owner only.

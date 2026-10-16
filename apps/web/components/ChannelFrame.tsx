@@ -38,6 +38,8 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
       <div className={banner.length ? "channel-banner" : "channel-banner none"}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {banner.length > 0 && <img className="banner" src={banner[0][1]} srcSet={banner.map(([w, u]) => `${u} ${w}w`).join(", ")} sizes="(max-width: 900px) 100vw, 1100px" alt="" />}
+        {/* No banner yet: the owner's crest and home city instead of an empty strip (UI review, October 2026). */}
+        {!banner.length && faction && <div className="banner-default" aria-hidden="true"><Crest faction={faction.slug} initial="" size={56} /><span><strong>{factionInfo(faction.slug).homeland.replace(/^the /, "The ")}</strong><small>{faction.name} · {faction.title}</small></span></div>}
         {!c.live && <p className="banner-status"><span className="badge">Offline</span>{next && <span>{next}</span>}</p>}
       </div>
       <div className="identity">
@@ -60,7 +62,7 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
       </div>
     </section>
     <section className="channel-stream" aria-label="Stream"><LivePlayer username={c.username} /></section>
-    <Crowd username={c.username} />
+    <Crowd username={c.username} signedIn={!!data.viewer.signed_in} />
     {c.board && <Board username={c.username} />}
     {!!c.season_rewards?.length && <div className="season-banner" data-theme={c.season_rewards[0].faction}><FactionCrest faction={c.season_rewards[0].faction} size={44} /><div><strong>Season {c.season_rewards[0].season} champion</strong><p>{factionInfo(c.season_rewards[0].faction).name} · {c.season_rewards.map(r => `Season ${r.season}`).join(" · ")}</p></div><span className="badge">Season victor</span></div>}
     {c.song && <SongPlayer song={c.song} />}

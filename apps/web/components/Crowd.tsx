@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { StatusMark } from "./shell/Icons";
 import { useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
@@ -113,7 +114,7 @@ function StartForm({ path, onChange }: { path: string; onChange: () => void }) {
  * Polls, predictions and counters under the player (docs/CROWDSYNC.md). Live updates arrive over
  * the chat socket (Chat's "sver:board" events); only the owner and moderators see the controls.
  */
-export function Crowd({ username }: { username: string }) {
+export function Crowd({ username, signedIn }: { username: string; signedIn?: boolean }) {
   const path = `/api/channels/${encodeURIComponent(username)}`;
   const [state, setState] = useState<State | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -147,9 +148,12 @@ export function Crowd({ username }: { username: string }) {
     {state.surge && <p className="surge-banner" role="status"><strong>Surge level {state.surge.level}</strong> · {state.surge.participants} taking part · next level at {state.surge.threshold * (state.surge.level + 1)} · {Math.floor(surgeLeft / 60)}:{String(surgeLeft % 60).padStart(2, "0")} left</p>}
     {state.rally && <section className="crowd-card panel" aria-label="Faction rally">
       <span className="eyebrow">Faction rally</span>
+      <p className="muted small rally-note">Viewers rally for their side on this stream. A rally counts like a chat message toward your faction&apos;s influence here.</p>
       <RallyMeter rally={state.rally} />
       {state.own ? <p className="muted small">Your viewers rally for their factions here; their rallies fill this meter.</p>
-        : state.faction && <RallyButton path={path} faction={state.faction} onRallied={load} />}
+        : state.faction ? <RallyButton path={path} faction={state.faction} onRallied={load} />
+        : signedIn ? <Link className="button quiet small" href="/welcome">Pick a side to rally</Link>
+        : signedIn === false ? <Link className="button quiet small" href="/signup">Enlist to rally</Link> : null}
     </section>}
     {state.counters.length > 0 && <ul className="crowd-counters" aria-label="Counters">{state.counters.map(c => <li key={c.id}>
       <span>{c.label}: <strong>{counterText(c)}</strong></span>

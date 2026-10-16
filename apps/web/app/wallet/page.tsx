@@ -12,7 +12,7 @@ export default async function WalletPage({ searchParams }: { searchParams: Promi
   if (!(await currentAccount())) redirect("/login");
   const returned = (await searchParams).checkout === "done";
   return <div className="settings-page single"><div className="settings-body">
-    <h1>Valor</h1>
+    <header className="page-head"><span className="eyebrow">Your account</span><h1>Wallet</h1><p className="lead">Your Valor, the channels you subscribe to and your support for S.V.E.R.</p></header>
     <Wallet returned={returned} />
     <MySubscriptions />
     <SupporterWallet />

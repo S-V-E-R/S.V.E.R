@@ -448,7 +448,7 @@ async fn starter(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     .await
     .unwrap_or_default();
     let mut starters = vec![(
-        "Welcome to {channel}'s chat! Be kind, keep it on topic, and have fun. Follow so you know when we're live.".to_string(),
+        "Welcome to the {channel} chat! Be kind, keep it on topic, and have fun. Follow so you know when we're live.".to_string(),
         30,
     )];
     if !links.is_empty() {

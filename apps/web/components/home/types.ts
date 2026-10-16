@@ -17,5 +17,7 @@ export type Recent = { user: { username: string | null; display_name: string; av
 export function uptime(startedAt: string, now = Date.now()): string {
   const minutes = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 60000));
   if (minutes < 60) return `${minutes} min`;
+  // Multi-day streams read as days and hours ("9d 13h"), not hundreds of hours.
+  if (minutes >= 1440) return `${Math.floor(minutes / 1440)}d ${Math.floor(minutes / 60) % 24}h`;
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }

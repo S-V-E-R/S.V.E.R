@@ -298,3 +298,24 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .playback-problem{order:1;flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 0}
 .playback-problem legend{padding:0 4px;font:700 12px/1.6 var(--font-label);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-dim)}
 .live-meta>[role="status"]{order:1;flex-basis:100%}
+/* Side menus (Studio, Settings): framed, current page marked, folded behind one button on phones. */
+.settings-nav{background:var(--tint)}
+.side-menu-group{display:flex;flex-direction:column;gap:4px}
+.side-menu-toggle{display:none}
+.settings-nav a{min-height:44px;display:flex;align-items:center}
+@media(min-width:901px){.settings-nav a{min-height:0}}
+@media(max-width:900px){
+  .settings-nav,.studio-nav{flex:none;flex-direction:column;flex-wrap:nowrap;gap:8px;border:1px solid var(--line);margin:12px 18px 0}
+  .settings-nav .eyebrow{padding:0}
+  .side-menu-toggle{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:44px;font-weight:700}
+  .side-menu-links{display:none}
+  .side-menu-links.open{display:flex;flex-direction:column;gap:6px}
+  .side-menu-links .studio-nav-group{flex-direction:column}
+}
+/* Default channel banner: crest and home city on the faction's tint. */
+.channel-banner.none{height:140px;background:var(--tint)}
+.banner-default{position:absolute;inset:0;display:flex;align-items:center;justify-content:flex-end;gap:14px;padding:0 28px;border-top:3px solid var(--accent)}
+.banner-default span{display:flex;flex-direction:column;font-family:var(--font-label);text-transform:uppercase;letter-spacing:.14em}
+.banner-default strong{font-size:20px;color:var(--ink)}
+.banner-default small{font-size:12px;color:var(--ink-dim)}
+@media(max-width:650px){.channel-banner.none{height:110px;aspect-ratio:auto}.banner-default{padding:0 14px}.banner-default strong{font-size:16px}}

@@ -35,7 +35,7 @@ export default function SiteShell({ account, alerts, actions, sidebar, banner, c
     <header className="topbar">
       <Link href="/" className="brand" aria-label="S.V.E.R home">S.V.E.R</Link>
       <nav className="public-navigation" aria-label="Main">
-        {[["/", "Home"], ["/factions", "Factions"], ["/roadmap", "Roadmap"], ["/about", "About"], ["/help", "Help"]].map(([href, label]) =>
+        {[["/", "Home"], ["/browse", "Browse"], ["/factions", "Factions"], ["/roadmap", "Roadmap"], ["/about", "About"], ["/help", "Help"]].map(([href, label]) =>
           <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{label}</Link>)}
       </nav>
       <nav className="account-navigation" aria-label="Account">{account ? <>
