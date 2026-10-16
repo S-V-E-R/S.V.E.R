@@ -39,7 +39,7 @@
 .channel-tabs a[aria-current=page]{color:var(--accent-light);border-bottom-color:var(--accent)}
 .section{margin:0 0 18px}.section h2{margin-top:0}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.row.between{justify-content:space-between}.row.wrap{flex-wrap:wrap}
-.grow{flex:1}.narrow{min-width:160px}
+.grow{flex:1 1 220px;min-width:0}.narrow{min-width:160px}
 .council{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;list-style:none;padding:12px;margin:0;border:1px solid var(--line)}
 .council li{border:1px solid var(--line);background:var(--panel-hi);aspect-ratio:1;position:relative;min-width:0}
 .council-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:100%;padding:10px;text-align:center;color:var(--text);text-decoration:none;overflow:hidden}
@@ -319,3 +319,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .banner-default strong{font-size:20px;color:var(--ink)}
 .banner-default small{font-size:12px;color:var(--ink-dim)}
 @media(max-width:650px){.channel-banner.none{height:110px;aspect-ratio:auto}.banner-default{padding:0 14px}.banner-default strong{font-size:16px}}
+/* Channel tabs on phones: one scrolling row with a fade at the right edge, never clipped. */
+.channel-tabs{scrollbar-width:none}
+.channel-tabs a{flex:none;white-space:nowrap;min-height:44px;display:inline-flex;align-items:center}
+@media(max-width:650px){.channel-tabs{mask-image:linear-gradient(90deg,#000 85%,transparent);-webkit-mask-image:linear-gradient(90deg,#000 85%,transparent);padding-right:24px}.channel-tabs a{padding:10px 12px;font-size:14px}.channel-actions{gap:8px}}

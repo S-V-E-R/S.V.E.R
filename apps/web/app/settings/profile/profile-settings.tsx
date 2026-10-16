@@ -25,10 +25,10 @@ export default function ProfileSettings() {
     <p className="intro">Changes show on <Link href={`/${me.username}`}>your channel</Link> right away.</p>
     {me.restricted_until && <p className="panel notice">Your channel is restricted. See <Link href="/settings/standing">Account standing</Link>.</p>}
     <Username me={me} onSaved={refresh} />
-    <Claim />
     <Identity me={me} onSaved={refresh} />
     <Images me={me} onSaved={refresh} />
     <Links me={me} onSaved={refresh} />
+    <Claim />
     <Card me={me} onSaved={refresh} />
   </>;
 }
