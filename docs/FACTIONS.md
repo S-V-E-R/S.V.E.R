@@ -50,7 +50,7 @@ Copy, beliefs and lore follow [COPY.md](COPY.md) and the live Factions page; the
 ## Weekly checkpoints
 
 - Each week (Monday 00:00 UTC) is its own battle. Standings show live all week; genres only change hands at the checkpoint.
-- **Size balancing:** a faction's score in a genre is its influence there divided by its number of **active members** (made a trusted contribution in the last 14 days, counted only for the faction they're in now, so one person never counts for two), with a minimum divisor in private tuning so a tiny faction can't win a genre with one person.
+- **Size balancing:** a faction's score in a genre is its influence there divided by its number of **active members** (made a trusted contribution in the last 14 days, counted only for the faction they're in now, so one person never counts for two), with a minimum divisor in private tuning so a tiny faction can't win a genre with one person. There is no minimum contribution and no account-age wait: one trusted contribution counts from day one (Joe, October 16, 2026).
 - **Flipping:** a challenger takes a held genre when its balanced score beats the holder's by more than the privately configured margin. Ties and narrow leads go to the holder.
 - **Neutral genres** are claimed by the first faction to reach a minimum influence there (tuning) and lead by the margin.
 - Weekly influence resets after each checkpoint; the week's results are kept for history and the hub.
@@ -140,5 +140,5 @@ An outside review of the war code led to these changes (migration 0115):
 - A raid or chat that earned nothing because of a cap is recorded at 0 points, so retrying it later can't earn.
 - Switching during the season break never uses up the free switch.
 - The war map, hubs and "my faction" no longer take the war lock: they run a due checkpoint only if nobody else is, then read without blocking influence awards.
-- **Open for Joe:** "active" still means any trusted contribution. A minimum (for example a streaming or watching contribution, not one chat message) would make diluting a rival's divisor with verified alts harder; the same question applies to the three votes that elect a board moderator.
+- **Decided by Joe (October 16, 2026):** no minimum and no waiting period. A new member counts as active from their first trusted contribution, and can vote for board moderators from the moment they join. Dilution by alts is left to the existing guards: verified email, trusted sessions, one faction per person and the private minimum divisor.
 
