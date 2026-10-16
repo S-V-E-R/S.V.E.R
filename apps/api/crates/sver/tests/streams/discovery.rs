@@ -548,7 +548,7 @@ async fn open_data(e: &Env) {
     let (_, csv) = get_text(e, "/api/open-data/monthly.csv").await;
     assert!(
         csv.starts_with(
-            "period,creators_cents,platform_cents,payouts_cents,wall_cents,supporters_cents\n"
+            "period,creators_cents,platform_cents,payouts_cents,wall_cents,supporters_cents,ads_cents\n"
         ),
         "Wall and platform supporters are their own lines: {csv}"
     );
