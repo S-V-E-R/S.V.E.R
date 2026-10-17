@@ -269,18 +269,25 @@ async fn review(
         false,
     )
     .await?;
+    // The streamer hears the decision; the staff note is in Creator Studio → Shine.
     let (title, body) = match to {
         "verified" => (
-            format!("Your stream for {charity} is verified"),
-            "It now shows as Good Works on your channel.".to_string(),
+            "Good Works badge added",
+            format!(
+                "Staff verified your charity stream for {charity}. The badge is on your channel."
+            ),
         ),
         "rejected" => (
-            format!("Your stream for {charity} wasn't verified"),
-            format!("Staff note: {note}"),
+            "Good Works not verified",
+            format!(
+                "Staff couldn't verify your charity stream for {charity}. The note is in Creator Studio → Shine."
+            ),
         ),
         _ => (
-            format!("Good Works for {charity} was revoked"),
-            format!("Staff note: {note}"),
+            "Good Works badge removed",
+            format!(
+                "Staff removed the Good Works badge for {charity}. The note is in Creator Studio → Shine."
+            ),
         ),
     };
     sqlx::query("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload) VALUES(gen_random_uuid()::text,$1,'good_works',$1,'good_works:'||$2||':'||$3,jsonb_build_object('title',$4::text,'body',$5::text,'url','/studio/shine')) ON CONFLICT DO NOTHING")

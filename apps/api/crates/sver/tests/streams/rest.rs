@@ -467,6 +467,13 @@ pub async fn exercise(e: &Env) {
     let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM moderation_actions WHERE target_type='charity_stream' AND target_id=$1")
         .bind(&charity).fetch_one(&e.app.db).await.unwrap();
     assert_eq!(audited, 2);
+    // The streamer hears each decision.
+    let notices: Vec<String> = sqlx::query_scalar("SELECT payload->>'title' FROM notifications WHERE user_id='rt-owner' AND kind='good_works' ORDER BY created_at")
+        .fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(
+        notices,
+        ["Good Works badge added", "Good Works badge removed"]
+    );
     let unbalanced: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM (SELECT unit FROM ledger_entries GROUP BY unit HAVING sum(amount)<>0) u",
     )

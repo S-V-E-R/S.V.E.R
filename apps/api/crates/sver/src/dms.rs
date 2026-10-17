@@ -396,11 +396,13 @@ async fn send(
         .fetch_one(&mut *tx).await?;
     // The recipient hears about the first unread message of a streak (never the text, which is
     // sealed), unless they muted the conversation; their notification settings decide site/push.
-    let (unread, muted): (i64, bool) = sqlx::query_as("SELECT (SELECT count(*) FROM dm_messages m WHERE m.conversation_id=$1 AND m.sender_id<>$2 AND m.seq>s.read_seq),s.muted FROM dm_state s WHERE s.conversation_id=$1 AND s.user_id=$2")
+    // Unread as the recipient sees it (the list and the badge): after what they've read or
+    // deleted for themselves, and not counting messages staff removed.
+    let (unread, muted): (i64, bool) = sqlx::query_as("SELECT (SELECT count(*) FROM dm_messages m WHERE m.conversation_id=$1 AND m.sender_id<>$2 AND m.deleted_at IS NULL AND m.seq>greatest(s.read_seq,s.cleared_seq)),s.muted FROM dm_state s WHERE s.conversation_id=$1 AND s.user_id=$2")
         .bind(&id).bind(&other.id).fetch_one(&mut *tx).await?;
     if unread == 1 && !muted {
         crate::alerts::community(&mut tx, &other.id, &me.id, "dm", &format!("{id}:{}", row.1), None,
-            &json!({"title": "New message", "body": format!("{} sent you a message.", me.username), "url": "/messages"})).await?;
+            &json!({"title": "New message", "body": format!("{} sent you a message.", me.username), "url": format!("/messages?with={}", me.username)})).await?;
     }
     // Sending reads everything before it.
     sqlx::query("UPDATE dm_state SET read_seq=$3 WHERE conversation_id=$1 AND user_id=$2")
@@ -518,15 +520,48 @@ async fn socket(
     let me = profiles::signed_in(&app, &jar).await?;
     Ok(upgrade
         .max_message_size(4096)
-        .on_upgrade(move |ws| session(app, me.id, ws)))
+        .on_upgrade(move |ws| session(app, jar, me.id, ws)))
 }
-async fn session(app: App, me: String, mut ws: WebSocket) {
+/// Whether the socket's session still stands, by the rules `auth::session` applies (not revoked or
+/// expired, same auth version, 2FA done, account not being deleted), without renewing it.
+async fn still_signed_in(app: &App, jar: &CookieJar, me: &str) -> bool {
+    let Some(token) = jar.get(app.config.cookie_name()) else {
+        return false;
+    };
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.user_id=$2 AND s.expires_at>now()
+        AND s.auth_version=u.auth_version AND (s.mfa_verified OR NOT u.mfa_enabled) AND u.deleted_at IS NULL AND NOT u.legacy_deletion_hold)")
+        .bind(sec::digest(token.value()))
+        .bind(me)
+        .fetch_one(&app.db)
+        .await
+        .unwrap_or(false)
+}
+/// Message text goes out on this socket, so it ends with the session (signing out everywhere, a
+/// password change, account deletion): checked before every delivery and each minute while idle.
+async fn session(app: App, jar: CookieJar, me: String, mut ws: WebSocket) {
     let mut events = app.chat.subscribe();
     let room = format!("dm:{me}");
+    let signed_out = Message::Close(Some(axum::extract::ws::CloseFrame {
+        code: 4001,
+        reason: "signed out".into(),
+    }));
+    let mut idle = tokio::time::interval(std::time::Duration::from_secs(60));
+    idle.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    idle.tick().await;
     loop {
         tokio::select! {
+            _ = idle.tick() => {
+                if !still_signed_in(&app, &jar, &me).await {
+                    let _ = ws.send(signed_out).await;
+                    return;
+                }
+            }
             event = events.recv() => match event {
                 Ok(e) if e.channel == room => {
+                    if !still_signed_in(&app, &jar, &me).await {
+                        let _ = ws.send(signed_out).await;
+                        return;
+                    }
                     if ws.send(Message::Text(e.payload.to_string().into())).await.is_err() { return; }
                 }
                 Ok(_) => {}

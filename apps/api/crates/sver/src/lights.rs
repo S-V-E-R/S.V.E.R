@@ -115,7 +115,7 @@ async fn give(
         return Err(Fail::bad("You can't light yourself up."));
     }
     let mut tx = app.db.begin().await?;
-    // One at a time per giver, so the daily cap holds across tabs.
+    // One give at a time per person, so parallel requests can't beat the daily count below.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('lights:'||$1,0))")
         .bind(&me.id)
         .execute(&mut *tx)

@@ -2,6 +2,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "../../components/Avatar";
 import { ReportButton } from "../../components/Report";
+import { ArrowIcon, LockIcon, MoreIcon, MutedIcon } from "../../components/shell/Icons";
 import { PlayerCardButton } from "../../components/UserChip";
 import { send, useLoad } from "../../lib/client-api";
 import { UsernameInput } from "../../components/UsernameInput";
@@ -28,6 +29,8 @@ function ago(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 const time = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+/** A page of a conversation (dms.rs PAGE): a full page means there may be older ones. */
+const PAGE = 50;
 
 /** Direct messages (docs/COMMUNITY.md "Direct messages"). `?with=username` opens a conversation. */
 export default function Messages() {
@@ -46,6 +49,12 @@ export default function Messages() {
   const [devices, setDevices] = useState<MyDevice[]>([]);
   const [safety, setSafety] = useState("");
   const [panel, setPanel] = useState<"new" | "settings" | null>(null);
+  const [sending, setSending] = useState(false);
+  // Older messages: whether there may be more, and whether a page is loading.
+  const [more, setMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  // The message whose time and Report are shown (the last of each run always shows them).
+  const [shown, setShown] = useState<string | null>(null);
   const opened = useRef<string | null>(null);
 
   const loadList = useCallback(async () => {
@@ -60,6 +69,7 @@ export default function Messages() {
     const r = await send<Thread>("GET", `/api/dms/${encodeURIComponent(name)}`);
     if (!r.ok) { setError(r.error); return; }
     setThread(r.data);
+    setMore(r.data.messages.length >= PAGE);
     // Recomputed on every load, so a device change never leaves an old number showing.
     const keys = r.data.private ? await send<{ mine: Device[]; theirs: Device[] }>("GET", `/api/dms/${encodeURIComponent(name)}/keys`) : null;
     setSafety(keys?.ok ? await safetyNumber(keys.data.mine, keys.data.theirs) : "");
@@ -91,7 +101,9 @@ export default function Messages() {
       socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/dms/socket`);
       socket.onmessage = event => {
         const data = JSON.parse(event.data) as { type: string; with?: string; message?: Message };
-        if (data.type === "private" && data.with?.toLowerCase() === opened.current?.toLowerCase() && opened.current) void loadThread(opened.current);
+        // The socket fell behind (resync) or Private mode changed: reload the open conversation too.
+        const here = !!opened.current && data.with?.toLowerCase() === opened.current.toLowerCase();
+        if (opened.current && (data.type === "resync" || (data.type === "private" && here))) void loadThread(opened.current);
         if (data.type === "dm" && data.message && data.with?.toLowerCase() === opened.current?.toLowerCase()) {
           const message = data.message;
           setThread(t => t && !t.messages.some(m => m.id === message.id) ? { ...t, messages: [...t.messages, message] } : t);
@@ -99,12 +111,15 @@ export default function Messages() {
         }
         void loadList();
       };
-      socket.onclose = () => { if (!closed) setTimeout(connect, 5000); };
+      // 4001: the session ended (signed out everywhere, password changed); don't keep retrying.
+      socket.onclose = event => { if (!closed && event.code !== 4001) setTimeout(connect, 5000); };
     };
     connect();
     return () => { closed = true; clearInterval(poll); socket?.close(); };
   }, [loadList, loadThread]);
-  useEffect(() => { bottom.current?.scrollIntoView({ block: "nearest" }); }, [thread?.messages.length]);
+  // Follow the newest message; loading older ones above doesn't jump to the bottom.
+  const newest = thread?.messages.at(-1)?.id;
+  useEffect(() => { bottom.current?.scrollIntoView({ block: "nearest" }); }, [newest]);
   // Decrypt private messages on this device as they arrive.
   useEffect(() => {
     if (!device || !thread) return;
@@ -117,29 +132,45 @@ export default function Messages() {
   }, [device, thread, plain]);
 
   async function choose(name: string) {
-    setOpen(name); opened.current = name; setError(""); setDraft(""); setSafety("");
+    setOpen(name); opened.current = name; setError(""); setDraft(""); setSafety(""); setShown(null);
     history.replaceState(null, "", `/messages?with=${encodeURIComponent(name)}`);
     await loadThread(name);
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!open || !draft.trim()) return;
+    // One send at a time: a second Enter while the first is on its way would send it twice.
+    if (!open || !draft.trim() || sending) return;
     let payload: object = { body: draft };
     // After Private mode was turned off, the first plain message is a deliberate choice.
     const last = thread?.messages.at(-1);
     if (thread && !thread.private && last?.private && !confirm("Private mode is off. This message won't be end-to-end encrypted. Send it anyway?")) return;
-    if (thread?.private) {
-      // Encrypted here for both people's devices; the server never sees the text.
-      if (!device) { setError(deviceNote || "This browser can't send private messages."); return; }
-      const keys = await send<{ mine: Device[]; theirs: Device[] }>("GET", `/api/dms/${encodeURIComponent(open)}/keys`);
-      if (!keys.ok) { setError(keys.error); return; }
-      payload = await seal(draft.trim(), [...keys.data.mine, ...keys.data.theirs]);
+    setSending(true);
+    try {
+      if (thread?.private) {
+        // Encrypted here for both people's devices; the server never sees the text.
+        if (!device) { setError(deviceNote || "This browser can't send private messages."); return; }
+        const keys = await send<{ mine: Device[]; theirs: Device[] }>("GET", `/api/dms/${encodeURIComponent(open)}/keys`);
+        if (!keys.ok) { setError(keys.error); return; }
+        payload = await seal(draft.trim(), [...keys.data.mine, ...keys.data.theirs]);
+      }
+      const r = await send<{ message: Message }>("POST", `/api/dms/${encodeURIComponent(open)}`, payload);
+      if (!r.ok) { setError(r.error); return; }
+      setDraft(""); setError("");
+      setThread(t => t && !t.messages.some(m => m.id === r.data.message.id) ? { ...t, messages: [...t.messages, r.data.message] } : t);
+      await loadList();
+    } finally {
+      setSending(false);
     }
-    const r = await send<{ message: Message }>("POST", `/api/dms/${encodeURIComponent(open)}`, payload);
+  }
+  async function loadOlder() {
+    const first = thread?.messages[0];
+    if (!open || !first || loadingOlder) return;
+    setLoadingOlder(true);
+    const r = await send<Thread>("GET", `/api/dms/${encodeURIComponent(open)}?before=${first.seq}`);
+    setLoadingOlder(false);
     if (!r.ok) { setError(r.error); return; }
-    setDraft(""); setError("");
-    setThread(t => t && !t.messages.some(m => m.id === r.data.message.id) ? { ...t, messages: [...t.messages, r.data.message] } : t);
-    await loadList();
+    setMore(r.data.messages.length >= PAGE);
+    setThread(t => t ? { ...t, messages: [...r.data.messages.filter(m => !t.messages.some(x => x.id === m.id)), ...t.messages] } : t);
   }
   async function togglePrivate() {
     if (!open || !thread) return;
@@ -157,6 +188,9 @@ export default function Messages() {
   }
   async function action(kind: "mute" | "clear" | "block") {
     if (!open || !thread) return;
+    const who = `@${thread.with.username ?? open}`;
+    if (kind === "clear" && !confirm(`Delete this conversation for you? You won't see these messages again. ${who} still will.`)) return;
+    if (kind === "block" && !confirm(`Block ${who}? Neither of you can message the other, and the conversation is hidden for both of you. You can unblock in Settings → Blocked.`)) return;
     const name = encodeURIComponent(open);
     const r = kind === "mute" ? await send("PUT", `/api/dms/${name}/mute`, { muted: !thread.muted })
       : kind === "clear" ? await send("DELETE", `/api/dms/${name}`)
@@ -200,7 +234,7 @@ export default function Messages() {
             <Avatar sizes={c.with.avatar} name={c.with.display_name} size={40} />
             <span className="messages-item-text">
               <span className="messages-item-top"><strong>{c.with.display_name}</strong><span className="small-text">{ago(c.last_at)}</span></span>
-              <span className="small-text">{c.muted && "🔕 "}{c.last}</span>
+              <span className="small-text">{c.muted && <span className="messages-muted" title="Muted"><MutedIcon size={12} /><span className="sr-only">Muted: </span></span>}{c.last}</span>
             </span>
             {c.unread > 0 && !c.muted && <span className="messages-unread">{c.unread}<span className="sr-only"> unread</span></span>}
           </button></li>)}</ul>}
@@ -208,16 +242,14 @@ export default function Messages() {
       <section className="messages-thread" aria-label="Conversation">
         {!thread ? <div className="messages-empty"><p>Choose a conversation, or start a new one.</p><button type="button" onClick={() => setPanel("new")}>New message</button>{error && <p role="alert" className="form-message error">{error}</p>}</div> : <>
           <header className="messages-thread-head">
-            <button type="button" className="small quiet messages-back" onClick={back} aria-label="Back to conversations">←</button>
+            <button type="button" className="small quiet messages-back" onClick={back} aria-label="Back to conversations"><ArrowIcon dir="left" /></button>
             <Avatar sizes={thread.with.avatar} name={thread.with.display_name} size={36} />
             {thread.with.username ? <PlayerCardButton username={thread.with.username}><span><strong>{thread.with.display_name}</strong> <span className="handle">@{thread.with.username}</span></span></PlayerCardButton> : <strong>{thread.with.display_name}</strong>}
             <span className="grow" />
-            <button type="button" className={`small${thread.private ? "" : " quiet"}`} aria-pressed={thread.private} disabled={!device && !thread.private} title={device ? "Private mode: end-to-end encrypted on your devices" : deviceNote} onClick={() => void togglePrivate()}>{thread.private ? "🔒 Private" : "Private: off"}</button>
-            <details className="menu messages-more"><summary className="button small quiet" aria-label="More actions">⋯</summary>
+            <button type="button" className={`small${thread.private ? "" : " quiet"}`} aria-pressed={thread.private} disabled={!device && !thread.private} title={device ? "Private mode: end-to-end encrypted on your devices" : deviceNote} onClick={() => void togglePrivate()}>{thread.private ? <><LockIcon /> Private</> : "Private: off"}</button>
+            <details className="menu messages-more"><summary className="button small quiet" aria-label="More actions"><MoreIcon /></summary>
               <div className="menu-list panel" role="menu">
-                <button type="button" role="menuitem" className="link-button" onClick={() => action("mute")}>{thread.muted ? "Unmute" : "Mute"}</button>
-                <button type="button" role="menuitem" className="link-button" onClick={() => action("clear")}>Delete for me</button>
-                <button type="button" role="menuitem" className="link-button danger-text" onClick={() => action("block")}>Block</button>
+                {(["mute", "clear", "block"] as const).map(kind => <button key={kind} type="button" role="menuitem" className={`link-button${kind === "block" ? " danger-text" : ""}`} onClick={e => { e.currentTarget.closest("details")?.removeAttribute("open"); void action(kind); }}>{kind === "mute" ? thread.muted ? "Unmute" : "Mute" : kind === "clear" ? "Delete for me" : "Block"}</button>)}
               </div>
             </details>
           </header>
@@ -230,15 +262,19 @@ export default function Messages() {
               <p className="muted">Compare this with @{thread.with.username} in person or over another app. If both of you see the same number, your messages are going only to each other&apos;s devices. It changes when either of you adds or removes a device.</p>
             </details>}
           </div>}
-          <ol className="messages-body">
+          <ol className="messages-body" aria-live="polite">
+            {more && <li className="messages-start"><button type="button" className="small quiet" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "Loading…" : "Load older messages"}</button></li>}
             {thread.messages.length === 0 && <li className="messages-start small-text">This is the start of your conversation with @{thread.with.username}.</li>}
             {thread.messages.map((m, i) => {
               const next = thread.messages[i + 1];
-              // The time goes under the last of a run from one person within 5 minutes.
+              // The time goes under the last of a run from one person within 5 minutes; any other
+              // message shows its time and Report when you tap or press it.
               const last = !next || next.sender !== m.sender || Date.parse(next.created_at) - Date.parse(m.created_at) > 300000;
+              const reveal = last || shown === m.id;
+              const toggle = () => { if (!last) setShown(s => s === m.id ? null : m.id); };
               return <li key={m.id} className={`${mine(m) ? "mine" : "theirs"}${last ? " run-end" : ""}`}>
-                <span className="messages-text">{m.private ? <><span aria-label="Private">🔒 </span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
-                {last && <span className="messages-meta small-text">{time(m.created_at)}{!mine(m) && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>}
+                <span className="messages-text" {...(last ? {} : { role: "button", tabIndex: 0, "aria-expanded": shown === m.id, title: "Show the time and Report", onClick: toggle, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } })}>{m.private ? <><span className="messages-lock" title="Private"><LockIcon size={12} /><span className="sr-only">Private: </span></span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
+                {reveal && <span className="messages-meta small-text">{time(m.created_at)}{!mine(m) && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>}
               </li>;
             })}
             <li ref={bottom} aria-hidden="true" />
@@ -247,8 +283,9 @@ export default function Messages() {
           {thread.can_send ? <form onSubmit={submit} className="messages-composer">
             {LINK.test(draft) && <p className="small-text messages-link-note" role="status">Links can lead anywhere. Only send ones you trust, and be careful opening links you receive.</p>}
             <label htmlFor="dm-input" className="sr-only">Message</label>
-            <textarea id="dm-input" value={draft} placeholder={thread.private ? "Private message" : `Message @${thread.with.username}`} onChange={e => setDraft(e.target.value)} maxLength={1000} rows={1} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
-            <button type="submit" disabled={!draft.trim()}>Send</button>
+            {/* Enter sends with a keyboard; touch keyboards have no Shift+Enter, so there Enter is a new line. */}
+            <textarea id="dm-input" value={draft} placeholder={thread.private ? "Private message" : `Message @${thread.with.username}`} onChange={e => setDraft(e.target.value)} maxLength={1000} rows={1} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
+            <button type="submit" disabled={!draft.trim() || sending}>{sending ? "Sending…" : "Send"}</button>
           </form> : <p className="muted messages-composer" role="status">{thread.reason}</p>}
         </>}
       </section>

@@ -1090,7 +1090,9 @@ async fn session(
                     } else if payload["type"] == "pin" {
                         let Ok(pin) = pinned(&app, &channel, &hidden).await else { return; };
                         payload["pinned"] = pin;
-                    } else if payload["type"] == "message" {
+                    } else if payload["type"] == "message" && payload["message"]["outside"].is_null() {
+                        // Outside messages and the bot's lines aren't in chat_messages and have no
+                        // S.V.E.R author; they go out as published (a later hide is its own event).
                         let Ok(message) = fresh(&app, &payload, &hidden).await else { return; };
                         let Some(message) = message else { continue; };
                         payload["message"] = message;

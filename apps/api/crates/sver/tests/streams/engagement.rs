@@ -192,6 +192,66 @@ pub async fn exercise(e: &Env) {
     assert_eq!(reroll(1).await, StatusCode::OK);
     assert_eq!(reroll(2).await, StatusCode::BAD_REQUEST, "one reroll a day");
 
+    // A failed payment leaves its order for the next minute, and never holds up anyone else's.
+    let mut tokens = Vec::new();
+    for (id, name) in [("ev-o1", "EvOrders1"), ("ev-o2", "EvOrders2")] {
+        tokens.push(person(e, id, name, true).await);
+        e.sql(sqlx::AssertSqlSafe(format!("INSERT INTO daily_orders(user_id,day,slot,kind,rarity,target) VALUES('{id}',current_date,0,'watch',0,1),('{id}',current_date,1,'chat',0,1),('{id}',current_date,2,'beacon',0,5)"))).await;
+        e.sql(sqlx::AssertSqlSafe(format!("INSERT INTO xp_days(user_id,day,source,xp,minutes) VALUES('{id}',current_date,'watch',10,1)"))).await;
+    }
+    e.sql("ALTER TABLE xp_days ADD CONSTRAINT payment_fails CHECK (user_id<>'ev-o1' OR source<>'orders') NOT VALID").await;
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    e.sql("ALTER TABLE xp_days DROP CONSTRAINT payment_fails")
+        .await;
+    let order = |user: &'static str| async move {
+        sqlx::query_as::<_, (bool, Option<i32>)>(
+            "SELECT completed_at IS NOT NULL,xp FROM daily_orders WHERE user_id=$1 AND slot=0",
+        )
+        .bind(user)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(order("ev-o1").await, (false, None), "not done, not paid");
+    assert_eq!(order("ev-o2").await, (true, Some(40)), "others are paid");
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    assert_eq!(
+        order("ev-o1").await,
+        (true, Some(40)),
+        "paid the next minute"
+    );
+    // A done order shows what it paid (no channel today, so XP only); a target of 1 reads naturally.
+    let (_, theirs) = call(e, "GET", "/api/me/orders", Some(&tokens[1]), Value::Null).await;
+    assert_eq!(
+        (
+            &theirs["orders"][0]["done"],
+            &theirs["orders"][0]["ev"],
+            &theirs["orders"][1]["label"]
+        ),
+        (&json!(true), &json!(0), &json!("Chat in a channel")),
+        "{theirs}"
+    );
+
+    // Several new channels qualifying at once award only what's left of today's 3 Scout bonuses.
+    person(e, "ev-scout", "EvScout", true).await;
+    for n in 0..4 {
+        person(e, &format!("ev-new{n}"), &format!("EvNew{n}"), true).await;
+        e.sql(sqlx::AssertSqlSafe(format!("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,alert_state) VALUES('ev-nb{n}','ev-new{n}','ev-nb{n}',1,'LIVE','s','v','c',now()-interval '12 minutes',now(),now(),'skipped')"))).await;
+        e.sql(sqlx::AssertSqlSafe(format!("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level,created_at) VALUES('ev-nb{n}','u:ev-scout',now()+interval '1 minute','trusted',now()-interval '11 minutes')"))).await;
+    }
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    let scouted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM scout_awards WHERE user_id='ev-scout'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(scouted, 3);
+    e.sql("DELETE FROM playback_leases WHERE viewer_key='u:ev-scout'")
+        .await;
+    // Ended long enough ago to stay out of discovery's recently-live channels.
+    e.sql("UPDATE broadcasts SET state='ENDED',started_at=now()-interval '20 days',ended_at=now()-interval '20 days' WHERE id LIKE 'ev-nb%'")
+        .await;
+
     // The viewer's view of the channel's rewards and balance.
     let (_, listed) = call(
         e,
