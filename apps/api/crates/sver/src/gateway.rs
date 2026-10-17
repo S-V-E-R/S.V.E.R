@@ -206,7 +206,8 @@ async fn session(app: App, c: Connection, ws: WebSocket) {
         game(
             &app,
             &c,
-            "game_session=NULL, game_seen_at=NULL, game_ready=false",
+            // Labels and disabled controls the game set go with it.
+            "game_session=NULL, game_seen_at=NULL, game_ready=false, live_state='{}'",
         )
         .await;
     }
