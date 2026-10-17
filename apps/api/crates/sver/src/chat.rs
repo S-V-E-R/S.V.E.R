@@ -1057,14 +1057,17 @@ async fn session(
     // across sockets if measured viewer load makes this polling significant.
     let mut refresh = tokio::time::interval(std::time::Duration::from_secs(5));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // A shared chat's membership and access are re-read at most once a second, not per event.
-    let mut squad_checked = std::time::Instant::now();
+    // A shared chat re-checks the viewer's access before passing events on, at most once a second:
+    // a ban or block still closes the socket within a second, and a busy chat costs one check a
+    // second per viewer rather than one per message.
+    let mut checked = std::time::Instant::now();
     loop {
         tokio::select! {
             _ = refresh.tick() => {
                 if let Some(id) = &squad {
                     let viewer = match profiles::viewer(&app,&jar).await { Ok(v)=>v, Err(_)=>return };
                     if crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
+                    checked = std::time::Instant::now();
                 }
                 let Ok(current) = crate::emotes::catalog(&app, &channel).await else { return; };
                 if current != emotes {
@@ -1076,9 +1079,10 @@ async fn session(
                 Ok(e) if e.channel == room
                     && (e.seq == 0 || e.seq > cursor) => {
                     if let Some(id) = &squad
-                        && squad_checked.elapsed() >= std::time::Duration::from_secs(1) {
+                        && checked.elapsed() >= std::time::Duration::from_secs(1)
+                    {
                         if crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
-                        squad_checked = std::time::Instant::now();
+                        checked = std::time::Instant::now();
                     }
                     let Ok(hidden) = crate::chat::hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }

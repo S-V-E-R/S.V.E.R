@@ -22,12 +22,44 @@ struct Squad {
     mode: String,
     ended_at: Option<DateTime<Utc>>,
 }
+/// Membership changes (create, invite, answer, leave, repair) serialize on one site-wide lock: they
+/// check rules across co-streams ("not already in one"), and they're rare. Readers never take it.
 async fn lock(db: &mut PgConnection) -> Res<()> {
-    // ponytail: infrequent squad changes share one lock; partition if contention is measured.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('squad-membership',0))")
         .execute(db)
         .await?;
     Ok(())
+}
+/// One co-stream's roster lock: a change to its members holds it exclusively (after `lock`), and a
+/// shared-chat send or moderation action holds it shared, so the roster it checked can't change
+/// before it commits, without sends in different co-streams (or the same one) waiting on each other.
+async fn hold(db: &mut PgConnection, id: &str) -> Res<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('squad:'||$1,0))")
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+/// The members readers see, host first: accounts still in good standing whose broadcast is still
+/// up. The worker and membership changes repair the stored roster; reads never wait for them, and a
+/// stream that ended drops out at once.
+async fn live_members(db: &mut PgConnection, s: &Squad) -> Res<Vec<String>> {
+    let mut members: Vec<String> = sqlx::query_scalar("SELECT m.user_id FROM squad_members m JOIN channel_users c ON c.id=m.user_id AND c.eligible
+        JOIN broadcasts b ON b.id=m.broadcast_id AND b.owner_id=m.user_id AND b.state IN ('LIVE','RECONNECTING')
+        WHERE m.squad_id=$1 ORDER BY m.joined_at,m.user_id")
+        .bind(&s.id)
+        .fetch_all(db)
+        .await?;
+    members.sort_by_key(|m| s.host_id.as_deref() != Some(m));
+    Ok(members)
+}
+/// A co-stream as readers see it, without any lock: over once the host's stream is gone, even before
+/// the worker records it.
+async fn snapshot(db: &mut PgConnection, id: &str) -> Res<(Squad, Vec<String>, bool)> {
+    let s = load(db, id).await?;
+    let members = live_members(db, &s).await?;
+    let ended = s.ended_at.is_some() || !s.host_id.as_ref().is_some_and(|h| members.contains(h));
+    Ok((s, members, ended))
 }
 async fn load(db: &mut PgConnection, id: &str) -> Res<Squad> {
     sqlx::query_as("SELECT id,host_id,mode,ended_at FROM squads WHERE id=$1")
@@ -97,11 +129,12 @@ async fn end(db: &mut PgConnection, id: &str) -> Res<()> {
         .await?;
     Ok(())
 }
-/// Repairs live membership in mutations and the worker (reads filter instead; see `current`).
+/// Repairs live membership on every read/mutation as well as in the worker.
 async fn reconcile(app: &App, db: &mut PgConnection, s: &Squad) -> Res<()> {
     if s.ended_at.is_some() {
         return Ok(());
     }
+    hold(db, &s.id).await?;
     let rows:Vec<(String,String)>=sqlx::query_as("SELECT user_id,broadcast_id FROM squad_members WHERE squad_id=$1 ORDER BY joined_at,user_id").bind(&s.id).fetch_all(&mut *db).await?;
     let mut present = Vec::<String>::new();
     // The host is checked first; a reconnect retains the same broadcast identity.
@@ -137,24 +170,26 @@ async fn reconcile(app: &App, db: &mut PgConnection, s: &Squad) -> Res<()> {
     }
     Ok(())
 }
-/// Lock-free read for pages and shared chat: members whose account is in good standing and whose
-/// broadcast is still active. A host who dropped reads as ended; the worker and mutations do the
-/// repair (and the pairwise ban and block checks) under the membership lock.
-async fn current(app: &App, id: &str) -> Res<(Squad, Vec<String>)> {
-    let mut db = app.db.acquire().await?;
-    let mut s = load(&mut db, id).await?;
-    if s.ended_at.is_some() {
-        return Ok((s, vec![]));
+/// Repairs only the co-streams these people are in (and `squad`, if given), so a membership left
+/// over from a stream that ended never blocks a create, invite or answer. Repairing every
+/// co-stream is the worker's job (`tick`).
+async fn settle(app: &App, users: &[&str], squad: Option<&str>) -> Res<()> {
+    let mut tx = app.db.begin().await?;
+    lock(&mut tx).await?;
+    let users: Vec<String> = users.iter().map(|u| u.to_string()).collect();
+    let rows: Vec<Squad> = sqlx::query_as("SELECT id,host_id,mode,ended_at FROM squads WHERE ended_at IS NULL AND (id=$2 OR id IN (SELECT squad_id FROM squad_members WHERE user_id=ANY($1)))")
+        .bind(&users)
+        .bind(squad)
+        .fetch_all(&mut *tx)
+        .await?;
+    for s in rows {
+        reconcile(app, &mut tx, &s).await?;
     }
-    let members: Vec<String> = sqlx::query_scalar("SELECT m.user_id FROM squad_members m JOIN channel_users c ON c.id=m.user_id AND c.eligible
-        JOIN broadcasts b ON b.id=m.broadcast_id AND b.owner_id=m.user_id AND b.state IN ('LIVE','RECONNECTING')
-        WHERE m.squad_id=$1 ORDER BY m.joined_at,m.user_id")
-        .bind(id).fetch_all(&mut *db).await?;
-    if !s.host_id.as_ref().is_some_and(|h| members.contains(h)) {
-        s.ended_at = Some(Utc::now());
-        return Ok((s, vec![]));
-    }
-    Ok((s, members))
+    sqlx::query("DELETE FROM squad_invites WHERE expires_at<=now()")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }
 pub async fn tick(app: &App) -> Res<()> {
     let mut tx = app.db.begin().await?;
@@ -186,7 +221,7 @@ async fn create(
         return Err(Fail::bad("Choose separate or merged chat."));
     }
     profiles::rate(&app, format!("squad-create:{}", user.id), 10, 3600).await?;
-    tick(&app).await?;
+    settle(&app, &[&user.id], None).await?;
     let mut tx = app.db.begin().await?;
     lock(&mut tx).await?;
     let broadcast = available(&mut tx, &user.id).await?;
@@ -225,9 +260,18 @@ async fn invite(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::rate(&app, format!("squad-invite:{}", user.id), 20, 3600).await?;
-    tick(&app).await?;
+    let named = profiles::eligible_by_name(
+        &mut *app.db.acquire().await?,
+        input.username.trim().trim_start_matches('@'),
+    )
+    .await?
+    .map(|u| u.id);
+    let mut people = vec![user.id.as_str()];
+    people.extend(named.as_deref());
+    settle(&app, &people, Some(&id)).await?;
     let mut tx = app.db.begin().await?;
     lock(&mut tx).await?;
+    hold(&mut tx, &id).await?;
     let s = load(&mut tx, &id).await?;
     if s.ended_at.is_some() || s.host_id.as_deref() != Some(&user.id) {
         return Err(Fail::denied("Only the live host can invite streamers."));
@@ -295,9 +339,10 @@ async fn answer(
     Json(input): Json<Answer>,
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
-    tick(&app).await?;
+    settle(&app, &[&user.id], Some(&id)).await?;
     let mut tx = app.db.begin().await?;
     lock(&mut tx).await?;
+    hold(&mut tx, &id).await?;
     let s = load(&mut tx, &id).await?;
     let invite:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM squad_invites WHERE squad_id=$1 AND user_id=$2 AND expires_at>now())").bind(&id).bind(&user.id).fetch_one(&mut *tx).await?;
     if !invite || s.ended_at.is_some() {
@@ -343,6 +388,7 @@ async fn leave(State(app): State<App>, jar: CookieJar, Path(id): Path<String>) -
     let user = profiles::signed_in(&app, &jar).await?;
     let mut tx = app.db.begin().await?;
     lock(&mut tx).await?;
+    hold(&mut tx, &id).await?;
     let s = load(&mut tx, &id).await?;
     if s.host_id.as_deref() == Some(&user.id) {
         end(&mut tx, &id).await?;
@@ -381,8 +427,10 @@ async fn cancel(
 }
 async fn page(State(app): State<App>, jar: CookieJar, Path(id): Path<String>) -> Res<Json<Value>> {
     let viewer = profiles::viewer(&app, &jar).await?;
-    let (s, ids) = current(&app, &id).await?;
     let mut db = app.db.acquire().await?;
+    // Every viewer polls this; it reads without the membership lock (see `snapshot`).
+    let (s, ids, ended) = snapshot(&mut db, &id).await?;
+    let ids = if ended { Vec::new() } else { ids };
     let users = profiles::public_channels(&mut db, &ids).await?;
     let mut members = Vec::new();
     for u in users {
@@ -410,7 +458,7 @@ async fn page(State(app): State<App>, jar: CookieJar, Path(id): Path<String>) ->
         (false, false, false, vec![])
     };
     Ok(Json(
-        json!({"id":id,"mode":s.mode,"ended":s.ended_at.is_some(),"members":members,"joined":joined,"host":host,"invited":invited,"pending":pending}),
+        json!({"id":id,"mode":s.mode,"ended":ended,"members":members,"joined":joined,"host":host,"invited":invited,"pending":pending}),
     ))
 }
 /// GET /api/channels/{username}/squad: the live co-stream (two or more visible streams) this
@@ -446,7 +494,7 @@ async fn for_channel(
 }
 async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
-    tick(&app).await?;
+    settle(&app, &[&user.id], None).await?;
     let current: Option<String> =
         sqlx::query_scalar("SELECT squad_id FROM squad_members WHERE user_id=$1")
             .bind(&user.id)
@@ -494,12 +542,15 @@ pub async fn active_of(db: &mut PgConnection, user: &str) -> Res<Option<Active>>
         .find(|a| a.members.iter().any(|m| m.0 == user)))
 }
 
-/// Chat calls this on reads, sends and socket refreshes. Channel bans apply across all members.
+/// Inside a shared-chat send or moderation action: holds the co-stream's roster (shared) and checks
+/// it is still the one `chat_context` authorized, so it can't change before the action commits.
 pub async fn lock_chat(db: &mut PgConnection, id: &str, expected: &[String]) -> Res<()> {
-    lock(db).await?;
-    let s = load(db, id).await?;
-    let members = roster(db, id).await?;
-    if s.ended_at.is_some()
+    sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended('squad:'||$1,0))")
+        .bind(id)
+        .execute(&mut *db)
+        .await?;
+    let (s, members, ended) = snapshot(db, id).await?;
+    if ended
         || s.mode != "MERGED"
         || members.len() != expected.len()
         || !members.iter().all(|m| expected.contains(m))
@@ -508,33 +559,38 @@ pub async fn lock_chat(db: &mut PgConnection, id: &str, expected: &[String]) -> 
     }
     Ok(())
 }
-/// Channel bans and personal blocks restrict shared-chat access immediately.
+/// Who may read and post in a shared chat, host first. Chat calls this on every read and send and,
+/// at most once a second, for each open socket, so it takes no lock (see `snapshot`): two queries,
+/// however many members. Channel bans and personal blocks apply across all members at once.
 pub async fn chat_context(app: &App, id: &str, viewer: Option<&str>) -> Res<Vec<String>> {
-    let (s, members) = current(app, id).await?;
-    if s.ended_at.is_some() || s.mode != "MERGED" {
+    let mut db = app.db.acquire().await?;
+    let (s, members, ended) = snapshot(&mut db, id).await?;
+    if ended || s.mode != "MERGED" {
         return Err(Fail::conflict(
             "This shared chat has ended or is unavailable.",
         ));
     }
     if let Some(v) = viewer {
-        let mut db = app.db.acquire().await?;
-        let restricted:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM squad_restrictions WHERE squad_id=$1 AND user_id=$2 AND (kind='ban' OR until>now()))").bind(id).bind(v).fetch_one(&mut *db).await?;
-        if restricted {
-            return Err(Fail::denied("You're restricted from this shared chat."));
-        }
-        for member in &members {
-            if moderation::banned(app, member, v).await?
-                || profiles::blocked_between(&mut db, member, v).await?
-            {
+        let barred: i32 = sqlx::query_scalar("SELECT CASE
+                WHEN EXISTS(SELECT 1 FROM squad_restrictions WHERE squad_id=$1 AND user_id=$2 AND (kind='ban' OR until>now())) THEN 1
+                WHEN EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=ANY($3) AND user_id=$2 AND kind='ban')
+                  OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=ANY($3) AND blocked_id=$2) OR (blocked_id=ANY($3) AND blocker_id=$2)) THEN 2
+                ELSE 0 END")
+            .bind(id)
+            .bind(v)
+            .bind(&members)
+            .fetch_one(&mut *db)
+            .await?;
+        match barred {
+            1 => return Err(Fail::denied("You're restricted from this shared chat.")),
+            2 => {
                 return Err(Fail::denied(
                     "A member's channel ban or block prevents shared chat access.",
                 ));
             }
+            _ => {}
         }
     }
-    let host = s.host_id.ok_or_else(Fail::missing)?;
-    let mut members = members;
-    members.sort_by_key(|m| m != &host);
     Ok(members)
 }
 pub async fn chat_role(

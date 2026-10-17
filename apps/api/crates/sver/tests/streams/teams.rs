@@ -485,6 +485,29 @@ pub async fn exercise(e: &Env) {
     .await;
     assert_eq!(found["squad"]["id"], squad.as_str());
     assert_eq!(found["squad"]["members"].as_array().unwrap().len(), 4);
+    // Reads never wait on membership changes: with the membership lock held elsewhere, the
+    // co-stream page, a member's watch page and the shared chat still answer at once.
+    let mut holder = e.app.db.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('squad-membership',0))")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    for read in [
+        path.clone(),
+        format!("{path}/chat"),
+        "/api/channels/TeamPerson2/squad".to_string(),
+    ] {
+        let answered = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            call(e, "GET", &read, Some(&fan), Value::Null),
+        )
+        .await;
+        assert!(
+            answered.is_ok_and(|r| r.0 == StatusCode::OK),
+            "{read} waited on the membership lock"
+        );
+    }
+    holder.rollback().await.unwrap();
     assert!(
         ok(
             e,
