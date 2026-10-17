@@ -65,6 +65,37 @@ pub async fn exercise(e: &Env) {
         0
     );
 
+    // Parallel gives can't beat the daily limit.
+    let racer = person(e, "li-racer", "LightRacer", true).await;
+    for n in 0..5 {
+        person(e, &format!("li-r{n}"), &format!("LightRecv{n}"), true).await;
+    }
+    let gives = (0..5).map(|n| {
+        let token = racer.clone();
+        async move {
+            call(
+                e,
+                "POST",
+                "/api/lights",
+                Some(&token),
+                json!({"to": format!("LightRecv{n}")}),
+            )
+            .await
+            .0
+        }
+    });
+    let results = futures_util::future::join_all(gives).await;
+    assert_eq!(
+        results.iter().filter(|s| **s == StatusCode::OK).count(),
+        3,
+        "{results:?}"
+    );
+    let given: i64 = sqlx::query_scalar("SELECT count(*) FROM lights WHERE from_id='li-racer'")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(given, 3);
+
     // Shine Moments: only the channel's own public, ready clips.
     let clip = uuid::Uuid::new_v4().to_string();
     let private = uuid::Uuid::new_v4().to_string();
