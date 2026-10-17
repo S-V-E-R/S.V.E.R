@@ -257,6 +257,14 @@ pub async fn connect(database_url: &str) -> std::result::Result<PgPool, String> 
     let db = PgPoolOptions::new()
         .max_connections(12)
         .acquire_timeout(Duration::from_secs(5))
+        // Days are UTC days (daily orders, XP caps, lights): `current_date` and `::date` must not
+        // follow whatever time zone the database server happens to use.
+        .after_connect(|conn, _| {
+            Box::pin(async move {
+                sqlx::query("SET TIME ZONE 'UTC'").execute(conn).await?;
+                Ok(())
+            })
+        })
         .connect(database_url)
         .await
         .map_err(|_| "Could not connect to the isolated database")?;
