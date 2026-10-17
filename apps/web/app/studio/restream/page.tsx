@@ -17,6 +17,7 @@ export default function RestreamPage() {
   const apply = (result: Result<Restream>, saved: string) => {
     if (result.ok) { setData(result.data); setMessage(saved); } else setMessage(result.error);
   };
+  const [adding, setAdding] = useState(false);
   const load = useCallback(async () => {
     const result = await send<Restream>("GET", "/api/me/restream");
     if (result.ok) setData(result.data); else setMessage(result.error);
@@ -25,8 +26,12 @@ export default function RestreamPage() {
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
+    if (adding) return;
     const values = Object.fromEntries(new FormData(form)) as Record<string, string>;
+    // One at a time, so a double tap doesn't add the destination twice.
+    setAdding(true);
     const result = await send<Restream>("POST", "/api/me/restream", { platform, server: values.server || null, key: values.key, label: values.label });
+    setAdding(false);
     apply(result, `${PLATFORMS[platform]} added. It goes live the next time you do.`);
     if (result.ok) form.reset();
   }
@@ -52,7 +57,7 @@ export default function RestreamPage() {
         <div className="row wrap">
           <label className="row"><input type="checkbox" checked={d.enabled} onChange={async e => apply(await send<Restream>("PATCH", `/api/me/restream/${d.id}`, { enabled: e.target.checked }), e.target.checked ? "Switched on." : "Switched off.")} /> Send my stream here</label>
           <form className="row" onSubmit={e => replaceKey(e, d)}><input name="key" type="password" autoComplete="off" placeholder="New stream key" aria-label={`New stream key for ${PLATFORMS[d.platform]}`} required /><button type="submit" className="small quiet">Replace key</button></form>
-          <button type="button" className="small quiet danger-text" onClick={async () => apply(await send<Restream>("DELETE", `/api/me/restream/${d.id}`), "Destination deleted, with its key.")}>Delete</button>
+          <button type="button" className="small quiet danger-text" onClick={async () => { if (window.confirm(`Delete ${PLATFORMS[d.platform]}? Its key is deleted too and can't be shown again.`)) apply(await send<Restream>("DELETE", `/api/me/restream/${d.id}`), "Destination deleted, with its key."); }}>Delete</button>
         </div>
       </li>)}</ul>}
       {data.destinations.length < data.max ? <form className="stack" onSubmit={add}>
@@ -61,7 +66,7 @@ export default function RestreamPage() {
         <label className="field"><span>Server{platform === "twitch" || platform === "youtube" ? " (optional; the platform's default is used)" : ""}</span><input name="server" placeholder={platform === "twitch" ? "rtmp://live.twitch.tv/app" : platform === "youtube" ? "rtmp://a.rtmp.youtube.com/live2" : "rtmps://…"} required={platform === "kick" || platform === "custom"} autoComplete="off" /></label>
         <label className="field"><span>Stream key</span><input name="key" type="password" autoComplete="off" required /><small>From the platform&apos;s stream settings. S.V.E.R stores it encrypted and never shows it again; you can replace it any time.</small></label>
         <label className="field narrow"><span>Name (optional)</span><input name="label" maxLength={40} /></label>
-        <button type="submit">Add destination</button>
+        <button type="submit" disabled={adding}>Add destination</button>
       </form> : <p className="muted">You&apos;re sending to the most destinations (three). Delete one to add another.</p>}
       <p className="muted small">Some platforms don&apos;t allow other platforms&apos; chat inside the video you send them, so keep S.V.E.R chat off the video you restream.</p>
     </Section>

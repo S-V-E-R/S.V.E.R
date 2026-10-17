@@ -110,6 +110,7 @@ export default function StreamStudio() {
     } finally { setBusy(false); }
   }
   async function stop() {
+    if (!window.confirm("Stop the stream and revoke your stream key? OBS disconnects now, and you'll need your password and authenticator to make a new key.")) return;
     setBusy(true); setSecret(null); setStatus({});
     const result = await send<{ disconnect_pending: boolean }>("POST", "/api/me/stream/stop");
     setStatus(result.ok ? { saved: result.data.disconnect_pending ? "Key revoked. OBS disconnection is pending; we'll keep retrying." : "Stream stopped and key revoked. Create a new key before broadcasting again." } : result);
