@@ -70,17 +70,24 @@ export function NotificationSettings() {
   }, []);
   useLoad(load);
   async function save(change: Partial<Settings>) {
-    if (!settings) return;
+    // One save at a time (the inputs are disabled meanwhile), so a quick second change can't overwrite the first.
+    if (!settings || busy) return;
+    setBusy(true);
     const next = { ...settings, ...change };
     const result = await send<Settings>("PUT", "/api/me/notifications/settings", { site: next.site, push: next.push, email: next.email, community: next.community });
     if (result.ok) { setSettings(result.data); setMessage("Saved."); } else setMessage(result.error);
+    setBusy(false);
   }
   async function togglePush() {
     if (!settings) return;
     setBusy(true); setMessage("");
     try {
       if (here) {
-        await send("DELETE", "/api/me/push", { endpoint: here });
+        const removed = await send("DELETE", "/api/me/push", { endpoint: here });
+        if (!removed.ok) throw new Error(removed.error);
+        // The browser forgets it too, so this page and the browser agree it's off.
+        const registration = await navigator.serviceWorker.getRegistration("/");
+        await (await registration?.pushManager.getSubscription())?.unsubscribe();
         setMessage("Push alerts are off on this browser.");
       } else {
         await subscribe(settings.push_key);
@@ -93,12 +100,12 @@ export function NotificationSettings() {
   if (!settings) return message ? <p role="alert" className="form-message error">{message}</p> : <p className="loading">Loading…</p>;
   return <>
     <Section title="Go-live alerts" intro="When a channel you follow goes live (at most once every 6 hours per channel). Turn alerts off for one channel with the bell next to Following on its page.">
-      <label className="checkbox"><input type="checkbox" checked={settings.site} onChange={e => save({ site: e.target.checked })} /> In-site notifications (the bell at the top)</label>
-      <label className="checkbox"><input type="checkbox" checked={settings.push} onChange={e => save({ push: e.target.checked })} /> Browser push notifications</label>
-      <label className="checkbox"><input type="checkbox" checked={settings.email} onChange={e => save({ email: e.target.checked })} /> Email (every email has a one-click unsubscribe)</label>
+      <label className="checkbox"><input type="checkbox" disabled={busy} checked={settings.site} onChange={e => save({ site: e.target.checked })} /> In-site notifications (the bell at the top)</label>
+      <label className="checkbox"><input type="checkbox" disabled={busy} checked={settings.push} onChange={e => save({ push: e.target.checked })} /> Browser push notifications</label>
+      <label className="checkbox"><input type="checkbox" disabled={busy} checked={settings.email} onChange={e => save({ email: e.target.checked })} /> Email (every email has a one-click unsubscribe)</label>
     </Section>
     <Section title="Guilds & co-streams" intro="Choose how each team event reaches you. You can also mute a guild from its page.">
-      {settings.community.map(t => <fieldset key={t.kind}><legend>{names[t.kind]}</legend>{(["site", "push"] as const).map(channel => <label key={channel} className="checkbox"><input type="checkbox" checked={t[channel]} onChange={e => save({ community: settings.community.map(c => c.kind === t.kind ? { ...c, [channel]: e.target.checked } : c) })} />{channel === "site" ? "In-site" : "Browser push"}</label>)}</fieldset>)}
+      {settings.community.map(t => <fieldset key={t.kind}><legend>{names[t.kind]}</legend>{(["site", "push"] as const).map(channel => <label key={channel} className="checkbox"><input type="checkbox" disabled={busy} checked={t[channel]} onChange={e => save({ community: settings.community.map(c => c.kind === t.kind ? { ...c, [channel]: e.target.checked } : c) })} />{channel === "site" ? "In-site" : "Browser push"}</label>)}</fieldset>)}
     </Section>
     <Section title="This browser" intro={`Push alerts are on for ${settings.push_devices} browser${settings.push_devices === 1 ? "" : "s"} on your account.`}>
       <button type="button" className="small" disabled={busy || (!here && !settings.push && !settings.community.some(t => t.push))} onClick={togglePush}>{here ? "Turn off push on this browser" : "Turn on push on this browser"}</button>
