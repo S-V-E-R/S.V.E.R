@@ -106,11 +106,16 @@ pub async fn save(
 
 // ---- Outside messages ----
 
-const OUTSIDE: &str = "SELECT jsonb_build_object('id',id,'seq',seq,'body',body,'created_at',created_at,'role',NULL,'mentions','[]'::jsonb,'reply',NULL,
+/// An outside message as chat JSON, for SELECTs and for the insert's RETURNING.
+macro_rules! outside_json {
+    () => {
+        "jsonb_build_object('id',id,'seq',seq,'body',body,'created_at',created_at,'role',NULL,'mentions','[]'::jsonb,'reply',NULL,
     'author',jsonb_build_object('username',NULL,'display_name',sender_name,'avatar',NULL,'linked',false,'deleted',false),
     'outside',jsonb_build_object('platform',platform,'sender_id',sender_id,'name',sender_name,'login',sender_login,'role',sender_role,
-        'url',CASE platform WHEN 'twitch' THEN 'https://www.twitch.tv/'||sender_login WHEN 'kick' THEN 'https://kick.com/'||sender_login ELSE NULL END))
-    FROM outside_chat_messages";
+        'url',CASE platform WHEN 'twitch' THEN 'https://www.twitch.tv/'||sender_login WHEN 'kick' THEN 'https://kick.com/'||sender_login ELSE NULL END))"
+    };
+}
+const OUTSIDE: &str = concat!("SELECT ", outside_json!(), " FROM outside_chat_messages");
 
 /// The latest outside messages for a channel's chat history (merged by `seq`).
 pub async fn recent(app: &App, channel: &str, limit: i64) -> Res<Vec<Value>> {
@@ -145,6 +150,10 @@ pub async fn receive(
     role: Option<&str>,
     text: &str,
 ) -> Res<bool> {
+    let body = clean(text);
+    if body.is_empty() || message_id.is_empty() || sender_id.is_empty() {
+        return Ok(false);
+    }
     if crate::switches::off(
         &mut *app.db.acquire().await?,
         &format!("linked_chat_{platform}"),
@@ -153,31 +162,26 @@ pub async fn receive(
     {
         return Ok(false);
     }
-    let channel: Option<String> = sqlx::query_scalar(
-        "SELECT owner_id FROM linked_chat_accounts WHERE platform=$1 AND subject=$2 AND enabled",
-    )
-    .bind(platform)
-    .bind(subject)
-    .fetch_optional(&app.db)
-    .await?;
-    let Some(channel) = channel else {
+    // The channel, its link status, whether S.V.E.R muted the sender, and its content rules: one
+    // round trip, then the insert, then a status write only when it wasn't connected yet.
+    type Facts = (String, String, bool, Option<Vec<String>>, Option<bool>);
+    let facts: Option<Facts> = sqlx::query_as("SELECT a.owner_id,a.status,
+            EXISTS(SELECT 1 FROM outside_chat_mutes m WHERE m.channel_id=a.owner_id AND m.platform=$1 AND m.sender_id=$3 AND (m.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=m.broadcast_id AND b.state<>'ENDED'))),
+            s.banned_words,s.block_links
+        FROM linked_chat_accounts a LEFT JOIN chat_settings s ON s.channel_id=a.owner_id
+        WHERE a.platform=$1 AND a.subject=$2 AND a.enabled")
+        .bind(platform).bind(subject).bind(sender_id).fetch_optional(&app.db).await?;
+    let Some((channel, status, muted, words, links)) = facts else {
         return Ok(false);
     };
-    let body = clean(text);
-    if body.is_empty()
-        || message_id.is_empty()
-        || sender_id.is_empty()
-        || muted(app, &channel, platform, sender_id).await?
-    {
-        return Ok(false);
-    }
-    let rules: Option<(Vec<String>, bool)> =
-        sqlx::query_as("SELECT banned_words,block_links FROM chat_settings WHERE channel_id=$1")
-            .bind(&channel)
-            .fetch_optional(&app.db)
-            .await?;
-    if let Some((words, links)) = rules
-        && moderation::check_content(&body, &words, links, false).is_err()
+    if muted
+        || moderation::check_content(
+            &body,
+            &words.unwrap_or_default(),
+            links.unwrap_or(false),
+            false,
+        )
+        .is_err()
     {
         return Ok(false);
     }
@@ -185,24 +189,22 @@ pub async fn receive(
     let login: String = clean(login).chars().take(50).collect();
     let name: String = clean(name).chars().take(50).collect();
     let name = if name.is_empty() { login.clone() } else { name };
-    let inserted: Option<i64> = sqlx::query_scalar("INSERT INTO outside_chat_messages(id,channel_id,platform,sender_id,sender_name,sender_login,sender_role,body) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING RETURNING seq")
+    let inserted: Option<(i64, Value)> = sqlx::query_as(concat!("INSERT INTO outside_chat_messages(id,channel_id,platform,sender_id,sender_name,sender_login,sender_role,body) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING RETURNING seq,", outside_json!()))
         .bind(&id).bind(&channel).bind(platform).bind(sender_id).bind(&name).bind(&login).bind(role).bind(&body)
         .fetch_optional(&app.db).await?;
-    let Some(seq) = inserted else {
+    let Some((seq, message)) = inserted else {
         return Ok(false);
     };
-    let message: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("{OUTSIDE} WHERE id=$1")))
-        .bind(&id)
-        .fetch_one(&app.db)
-        .await?;
     app.chat.publish(
         &channel,
         None,
         seq,
         json!({"type":"message","message":message}),
     );
-    sqlx::query("UPDATE linked_chat_accounts SET status='connected',detail=NULL,status_at=now() WHERE owner_id=$1 AND platform=$2 AND status<>'connected'")
-        .bind(&channel).bind(platform).execute(&app.db).await?;
+    if status != "connected" {
+        sqlx::query("UPDATE linked_chat_accounts SET status='connected',detail=NULL,status_at=now() WHERE owner_id=$1 AND platform=$2 AND status<>'connected'")
+            .bind(&channel).bind(platform).execute(&app.db).await?;
+    }
     Ok(true)
 }
 /// A message from a S.V.E.R system sender, such as the channel bot (platform `bot`): stored and
@@ -220,13 +222,9 @@ pub async fn post_system(
         return Ok(());
     }
     let id = format!("{platform}:{}", uuid::Uuid::new_v4());
-    let seq: i64 = sqlx::query_scalar("INSERT INTO outside_chat_messages(id,channel_id,platform,sender_id,sender_name,sender_login,body) VALUES($1,$2,$3,$4,$5,$4,$6) RETURNING seq")
+    let (seq, message): (i64, Value) = sqlx::query_as(concat!("INSERT INTO outside_chat_messages(id,channel_id,platform,sender_id,sender_name,sender_login,body) VALUES($1,$2,$3,$4,$5,$4,$6) RETURNING seq,", outside_json!()))
         .bind(&id).bind(channel).bind(platform).bind(sender_id).bind(name).bind(&body)
         .fetch_one(&app.db).await?;
-    let message: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("{OUTSIDE} WHERE id=$1")))
-        .bind(&id)
-        .fetch_one(&app.db)
-        .await?;
     app.chat.publish(
         channel,
         None,
@@ -235,9 +233,35 @@ pub async fn post_system(
     );
     Ok(())
 }
-async fn muted(app: &App, channel: &str, platform: &str, sender: &str) -> Res<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM outside_chat_mutes m WHERE m.channel_id=$1 AND m.platform=$2 AND m.sender_id=$3 AND (m.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=m.broadcast_id AND b.state<>'ENDED')))")
-        .bind(channel).bind(platform).bind(sender).fetch_one(&app.db).await?)
+/// A report on an outside message (docs/LINKED_CHAT.md "Moderation"): its sender isn't a S.V.E.R
+/// account, so the channel it showed in stands as the owner; the snapshot keeps the text past the
+/// 7-day expiry. Bot lines are the channel's own and aren't reported here.
+pub async fn report_target(
+    db: &mut PgConnection,
+    id: &str,
+) -> Res<Option<(String, String, Value)>> {
+    Ok(sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('body',m.body,'channel',c.username,'platform',m.platform,'sender',m.sender_name,'sender_id',m.sender_id,'sent_at',m.created_at)
+        FROM outside_chat_messages m JOIN channel_users c ON c.id=m.channel_id
+        WHERE m.id=$1 AND m.platform<>'bot' AND m.hidden_at IS NULL AND m.expires_at>now() AND c.eligible")
+        .bind(id).fetch_optional(db).await?)
+}
+/// Hides a reported outside message (a staff removal): the channel it showed in, and whether it
+/// was visible. The caller tells open chats after committing.
+pub async fn remove(db: &mut PgConnection, id: &str) -> Res<(String, bool)> {
+    let (channel, visible): (String, bool) = sqlx::query_as(
+        "SELECT channel_id,hidden_at IS NULL FROM outside_chat_messages WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *db)
+    .await?
+    .ok_or_else(Fail::missing)?;
+    if visible {
+        sqlx::query("UPDATE outside_chat_messages SET hidden_at=now() WHERE id=$1")
+            .bind(id)
+            .execute(&mut *db)
+            .await?;
+    }
+    Ok((channel, visible))
 }
 /// Which outside messages to hide.
 enum Hide<'a> {
@@ -654,6 +678,14 @@ async fn view(app: &App, owner: &str) -> Res<Json<Value>> {
         json!({"accounts": accounts, "mutes": mutes, "available": available, "streams": streams}),
     ))
 }
+/// GET /api/me/linked-chat/status: each linked platform's connection, for the notice in the
+/// streamer's own chat view (docs/LINKED_CHAT.md "Connection"). Light enough to poll.
+async fn status(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = crate::profiles::signed_in(&app, &jar).await?;
+    let accounts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('platform',platform,'enabled',enabled,'status',status,'detail',detail) FROM linked_chat_accounts WHERE owner_id=$1 ORDER BY platform")
+        .bind(&user.id).fetch_all(&app.db).await?;
+    Ok(Json(json!({"accounts": accounts})))
+}
 /// GET /api/me/linked-chat
 async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = crate::profiles::signed_in(&app, &jar).await?;
@@ -942,6 +974,7 @@ pub fn routes() -> Router<App> {
         .route("/api/integrations/twitch/eventsub", post(eventsub))
         .route("/api/me/linked-chat", get(mine))
         .route("/api/me/linked-chat/reply", post(reply))
+        .route("/api/me/linked-chat/status", get(status))
         .route(
             "/api/me/linked-chat/{platform}",
             patch(toggle).delete(unlink),

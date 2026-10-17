@@ -61,6 +61,19 @@ export default function Messages() {
     const r = await send<{ conversations: Conversation[] }>("GET", "/api/dms");
     if (r.ok) setList(r.data.conversations); else setError(r.error);
   }, []);
+  // The list follows the socket: a message moves its conversation to the top; one not listed yet
+  // (a new conversation) loads the list.
+  const listed = useRef<Conversation[] | null>(null);
+  useEffect(() => { listed.current = list; }, [list]);
+  const touch = useCallback((name: string, m: Message, unread: boolean) => {
+    const same = (c: Conversation) => c.with.username?.toLowerCase() === name.toLowerCase();
+    if (!listed.current?.some(same)) { void loadList(); return; }
+    const last = m.private ? "Private message" : Array.from(m.body ?? "").slice(0, 80).join("");
+    setList(l => {
+      const c = l?.find(same);
+      return l && c ? [{ ...c, last, last_at: m.created_at, unread: c.unread + (unread ? 1 : 0) }, ...l.filter(x => x !== c)] : l;
+    });
+  }, [loadList]);
   const loadDevices = useCallback(async () => {
     const r = await send<{ devices: MyDevice[] }>("GET", "/api/me/dm-devices");
     if (r.ok) setDevices(r.data.devices);
@@ -74,8 +87,8 @@ export default function Messages() {
     const keys = r.data.private ? await send<{ mine: Device[]; theirs: Device[] }>("GET", `/api/dms/${encodeURIComponent(name)}/keys`) : null;
     setSafety(keys?.ok ? await safetyNumber(keys.data.mine, keys.data.theirs) : "");
     if (r.data.messages.length) await send("POST", `/api/dms/${encodeURIComponent(name)}/read`);
-    await loadList();
-  }, [loadList]);
+    setList(l => l && l.map(c => c.with.username?.toLowerCase() === name.toLowerCase() ? { ...c, unread: 0 } : c));
+  }, []);
   const loadAll = useCallback(async () => {
     const [account, settings] = await Promise.all([send<{ id: string; username: string }>("GET", "/api/auth/me"), send<{ policy: string }>("GET", "/api/me/dm-settings")]);
     if (account.ok) {
@@ -92,31 +105,37 @@ export default function Messages() {
   }, [loadList, loadThread, loadDevices]);
   useLoad(loadAll);
 
-  // New messages arrive over a socket; while it's down, the page reloads every 15 seconds.
+  // New messages arrive over a socket and update the list in place; the list is fetched again only
+  // to resync (the socket fell behind or reconnected). While it's down, the page reloads every 15 s.
   useEffect(() => {
     let closed = false;
     let socket: WebSocket | null = null;
     const poll = setInterval(() => { if (!socket || socket.readyState !== WebSocket.OPEN) { void loadList(); if (opened.current) void loadThread(opened.current); } }, 15000);
+    let reconnect = false;
     const connect = () => {
       socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/dms/socket`);
+      socket.onopen = () => { if (reconnect) { void loadList(); if (opened.current) void loadThread(opened.current); } reconnect = true; };
       socket.onmessage = event => {
         const data = JSON.parse(event.data) as { type: string; with?: string; message?: Message };
         // The socket fell behind (resync) or Private mode changed: reload the open conversation too.
         const here = !!opened.current && data.with?.toLowerCase() === opened.current.toLowerCase();
         if (opened.current && (data.type === "resync" || (data.type === "private" && here))) void loadThread(opened.current);
-        if (data.type === "dm" && data.message && data.with?.toLowerCase() === opened.current?.toLowerCase()) {
+        if (data.type === "resync") void loadList();
+        if (data.type === "dm" && data.message && data.with) {
           const message = data.message;
-          setThread(t => t && !t.messages.some(m => m.id === message.id) ? { ...t, messages: [...t.messages, message] } : t);
-          if (opened.current) void send("POST", `/api/dms/${encodeURIComponent(opened.current)}/read`);
+          if (here) {
+            setThread(t => t && !t.messages.some(m => m.id === message.id) ? { ...t, messages: [...t.messages, message] } : t);
+            void send("POST", `/api/dms/${encodeURIComponent(data.with)}/read`);
+          }
+          touch(data.with, message, !here && message.sender.toLowerCase() === data.with.toLowerCase());
         }
-        void loadList();
       };
       // 4001: the session ended (signed out everywhere, password changed); don't keep retrying.
       socket.onclose = event => { if (!closed && event.code !== 4001) setTimeout(connect, 5000); };
     };
     connect();
     return () => { closed = true; clearInterval(poll); socket?.close(); };
-  }, [loadList, loadThread]);
+  }, [loadList, loadThread, touch]);
   // Follow the newest message; loading older ones above doesn't jump to the bottom.
   const newest = thread?.messages.at(-1)?.id;
   useEffect(() => { bottom.current?.scrollIntoView({ block: "nearest" }); }, [newest]);
@@ -157,7 +176,7 @@ export default function Messages() {
       if (!r.ok) { setError(r.error); return; }
       setDraft(""); setError("");
       setThread(t => t && !t.messages.some(m => m.id === r.data.message.id) ? { ...t, messages: [...t.messages, r.data.message] } : t);
-      await loadList();
+      touch(open, r.data.message, false);
     } finally {
       setSending(false);
     }
@@ -196,7 +215,7 @@ export default function Messages() {
       : kind === "clear" ? await send("DELETE", `/api/dms/${name}`)
       : await send("PUT", `/api/blocks/${name}`);
     if (!r.ok) { setError(r.error); return; }
-    await loadThread(open);
+    await Promise.all([loadThread(open), loadList()]);
   }
 
   function back() {

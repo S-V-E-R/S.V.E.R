@@ -295,10 +295,11 @@ async fn reply(ws: &mut WebSocket, value: Value) -> bool {
 }
 async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket) {
     let mut events = app.chat.subscribe();
+    let mut dms = app.dms.subscribe();
     let mut topics: HashSet<String> = HashSet::new();
     // Chat topics: channel ID -> topic. Messages come straight from the chat hub, not the outbox.
     let mut chats: HashMap<String, String> = HashMap::new();
-    // The person's own topics: hub channel `dm:{id}` -> whispers topic; notifications are polled.
+    // The person's own topics: DM hub channel `dm:{id}` -> whispers topic; notifications are polled.
     let mut own = Own::default();
     // ponytail: one indexed query per subscribed socket every 5 s; publish notifications on the hub
     // if many sockets subscribe.
@@ -317,12 +318,6 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
             incoming = events.recv() => match incoming {
                 Ok(e) if e.channel == HUB => {
                     if e.payload["topic"].as_str().is_some_and(|t| topics.contains(t)) && !reply(&mut ws, e.payload.clone()).await {
-                        return;
-                    }
-                }
-                Ok(e) if own.whispers.as_ref().is_some_and(|(hub, _)| *hub == e.channel) => {
-                    let topic = own.whispers.as_ref().map(|w| w.1.clone()).unwrap_or_default();
-                    if !reply(&mut ws, json!({"type": "event", "topic": topic, "data": e.payload})).await {
                         return;
                     }
                 }
@@ -345,6 +340,19 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
                 }
                 Ok(_) => {}
                 // Missed events: the client resubscribes with `since` to replay them.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    if !reply(&mut ws, json!({"type": "resync"})).await { return; }
+                }
+                Err(_) => return,
+            },
+            dm = dms.recv() => match dm {
+                Ok(e) if own.whispers.as_ref().is_some_and(|(hub, _)| *hub == e.channel) => {
+                    let topic = own.whispers.as_ref().map(|w| w.1.clone()).unwrap_or_default();
+                    if !reply(&mut ws, json!({"type": "event", "topic": topic, "data": e.payload})).await {
+                        return;
+                    }
+                }
+                Ok(_) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     if !reply(&mut ws, json!({"type": "resync"})).await { return; }
                 }

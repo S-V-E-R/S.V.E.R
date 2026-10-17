@@ -133,6 +133,19 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     const timer = setInterval(() => { if (!document.hidden) void loadRole(); }, 15000);
     return () => clearInterval(timer);
   }, [role, loadRole]);
+  // The streamer's own chat says when a linked platform's chat is down (docs/LINKED_CHAT.md); never
+  // on the OBS overlay, which goes out on the video.
+  const [linkedDown, setLinkedDown] = useState<string[]>([]);
+  useEffect(() => {
+    if (role !== "owner" || squad || variant === "overlay") return;
+    const load = async () => {
+      const r = await send<{ accounts: { platform: string; enabled: boolean; status: string; detail: string | null }[] }>("GET", "/api/me/linked-chat/status");
+      if (r.ok) setLinkedDown(r.data.accounts.filter(a => a.enabled && (a.status === "reconnecting" || a.status === "revoked")).map(a => a.detail ?? `${PLATFORM_NAMES[a.platform] ?? a.platform} chat isn't connected.`));
+    };
+    void load();
+    const timer = setInterval(() => { if (!document.hidden) void load(); }, 30000);
+    return () => clearInterval(timer);
+  }, [role, squad, variant]);
   // Followers-only chat always ends by itself; clear the banner at its end time.
   useEffect(() => {
     if (!followersOnly) return;
@@ -338,6 +351,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       {canPin && <button type="button" className="small quiet" onClick={() => changePin(null)}>Unpin</button>}
     </aside>}
     {notice && <p className="chat-system" role="status">{notice}</p>}
+    {linkedDown.map(text => <p key={text} className="chat-system" role="status">{text} <Link href="/studio/linked-chat">Linked chat settings</Link></p>)}
     {followersOnly && <p className="chat-system" role="status">Followers-only chat until {time(followersOnly)} (followers of at least 10 minutes can chat).{canPin && <> <button type="button" className="small quiet" onClick={() => protect(false)}>End now</button></>}</p>}
     {subsOnly ? <p className="chat-system" role="status">Subscriber-only chat.{canPin && <> <button type="button" className="small quiet" onClick={() => limitToSubs(false)}>Open to everyone</button></>}</p>
       : canPin && <p className="chat-system"><button type="button" className="small quiet" onClick={() => limitToSubs(true)}>Subscriber-only chat</button></p>}
@@ -361,6 +375,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute")}>Mute here for this stream</button>
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute-forever")}>Mute here permanently</button>
         </div></details>}
+        {account && role !== "owner" && <> <ReportButton target={{ target_type: "outside_message", target_id: m.id }} /></>}
       </li> : <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
         {m.skill && <span className="badge skill-badge">✨ {m.skill}</span>}
