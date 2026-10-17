@@ -155,6 +155,15 @@ pub async fn exercise(e: &Env) {
         bot_lines(e, "cm-owner").await.is_empty(),
         "no chat since the stream started"
     );
+    // A last post from an earlier stream, with chat only before this one started, doesn't count.
+    e.sql("UPDATE chat_timers SET last_sent_at=now()-interval '2 days' WHERE id='cm-t'")
+        .await;
+    e.sql("INSERT INTO chat_messages(id,channel_id,author_id,body,created_at) VALUES('cm-old','cm-owner','cm-owner','last stream',now()-interval '1 day')").await;
+    sver::commands::tick(&e.app).await.unwrap();
+    assert!(
+        bot_lines(e, "cm-owner").await.is_empty(),
+        "a stale last_sent_at doesn't fire on the first tick"
+    );
     e.sql("INSERT INTO chat_messages(id,channel_id,author_id,body) VALUES('cm-m','cm-owner','cm-owner','hello chat')").await;
     sver::commands::tick(&e.app).await.unwrap();
     sver::commands::tick(&e.app).await.unwrap();
@@ -202,6 +211,8 @@ pub async fn exercise(e: &Env) {
     e.sql("UPDATE chat_settings SET bot=NULL,bot_rivalry=false WHERE channel_id='cm-owner'")
         .await;
     // Quips (off by default): while live, at most every 30 minutes, only after chat since the last.
+    e.sql("UPDATE broadcasts SET started_at=now()-interval '40 minutes' WHERE id='cm-b'")
+        .await;
     e.sql("UPDATE chat_settings SET bot_quips=true,bot_quip_at=now()-interval '31 minutes' WHERE channel_id='cm-owner'").await;
     e.sql("INSERT INTO chat_messages(id,channel_id,author_id,body) VALUES('cm-q','cm-owner','cm-owner','still here')").await;
     sver::commands::tick(&e.app).await.unwrap();
@@ -267,11 +278,13 @@ async fn part_two(e: &Env) {
             .contains("CbViewer"),
         "the bot announces it"
     );
-    let logged: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_moderation_log WHERE channel_id='stream-owner' AND action='automod_timeout')")
+    let logged: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_moderation_log WHERE channel_id='stream-owner' AND action='automod_timeout' AND actor_id='stream-owner' AND target_id='cb-viewer')")
         .fetch_one(&e.app.db).await.unwrap();
-    assert!(logged);
+    assert!(logged, "logged by the channel, not the viewer");
     e.sql("DELETE FROM channel_restrictions WHERE user_id='cb-viewer'")
         .await;
+    assert_eq!(say("gg").await.0, StatusCode::OK);
+    assert_eq!(say("gg").await.0, StatusCode::OK, "short lines may repeat");
     assert_eq!(say("a calm message").await.0, StatusCode::OK);
     assert_eq!(
         say("a calm message").await.0,

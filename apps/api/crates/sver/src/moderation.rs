@@ -44,8 +44,7 @@ pub async fn role_of(app: &App, channel: &str, user: &auth::User) -> Res<Option<
     if moderator {
         return Ok(Some(Role::Moderator));
     }
-    let mut conn = app.db.acquire().await?;
-    if user.mfa_enabled && safety::is_staff(&mut conn, &user.id).await? {
+    if user.mfa_enabled && safety::is_staff(&mut *app.db.acquire().await?, &user.id).await? {
         return Ok(Some(Role::Staff));
     }
     Ok(None)
