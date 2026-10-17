@@ -202,7 +202,7 @@ pub async fn id_by_slug(db: &mut PgConnection, slug: &str) -> Res<Option<String>
 }
 pub fn badge_sql(user: &'static str) -> String {
     format!(
-        "(SELECT jsonb_build_object('slug',g.slug,'name',g.name,'tag',g.tag,'guild_image',CASE WHEN g.emblem_visible THEN g.avatar_key END) FROM guild_badges b JOIN guilds g ON g.id=b.guild_id AND g.status='ACTIVE' WHERE b.user_id={user})"
+        "(SELECT jsonb_build_object('slug',g.slug,'name',g.name,'tag',g.tag,'guild_image',CASE WHEN g.emblem_visible THEN g.avatar_key END) FROM guild_badges b JOIN guilds g ON g.id=b.guild_id AND g.status='ACTIVE' WHERE b.user_id={user} AND EXISTS(SELECT 1 FROM guild_members m WHERE m.guild_id=b.guild_id AND m.user_id=b.user_id))"
     )
 }
 pub async fn hydrate_badges(app: &App, items: &mut [Value]) -> Res<()> {

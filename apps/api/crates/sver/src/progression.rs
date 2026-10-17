@@ -301,12 +301,19 @@ async fn ensure_orders(db: &mut PgConnection, user: &str) -> Res<()> {
 /// and any weekly milestone (10, 20, 30 orders: 100, 200, 300 XP; Proposed).
 async fn complete_orders(app: &App) -> Res<()> {
     let done: Vec<(String, i16, i16)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "UPDATE daily_orders o SET completed_at=now() WHERE o.day=current_date AND o.completed_at IS NULL AND ({PROGRESS})>=o.target RETURNING o.user_id,o.slot,o.rarity"
+        "SELECT o.user_id,o.slot,o.rarity FROM daily_orders o WHERE o.day=current_date AND o.completed_at IS NULL AND ({PROGRESS})>=o.target"
     )))
     .fetch_all(&app.db)
     .await?;
     for (user, slot, rarity) in done {
+        // Marked done in the same transaction that pays it, so an order is never done but unpaid
+        // (and a second worker finds it already taken).
         let mut tx = app.db.begin().await?;
+        let taken = sqlx::query("UPDATE daily_orders SET completed_at=now() WHERE user_id=$1 AND day=current_date AND slot=$2 AND completed_at IS NULL")
+            .bind(&user).bind(slot).execute(&mut *tx).await?.rows_affected();
+        if taken == 0 {
+            continue;
+        }
         let days = streak(&mut tx, &user).await?;
         let mut xp =
             (ORDER_XP * RARITY[rarity as usize].2 * streak_multiplier(days)).round() as i32;
@@ -327,9 +334,10 @@ async fn complete_orders(app: &App) -> Res<()> {
         // ponytail: "where the order was done" = the channel of the latest playback or chat
         // today; an order finished with no channel activity (only Beacons, say) pays XP only.
         let channel: Option<String> = sqlx::query_scalar("SELECT a.channel FROM (
-                SELECT b.owner_id AS channel,l.expires_at AS at FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id WHERE l.viewer_key='u:'||$1 AND l.expires_at>=current_date
+                SELECT b.owner_id AS channel,l.expires_at AS at FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id WHERE l.viewer_key='u:'||$1 AND l.level IN ('counted','trusted') AND l.expires_at>=current_date
                 UNION ALL SELECT channel_id,created_at FROM chat_messages WHERE author_id=$1 AND channel_id IS NOT NULL AND created_at>=current_date
             ) a WHERE a.channel<>$1 AND NOT EXISTS(SELECT 1 FROM channel_restrictions r WHERE r.channel_id=a.channel AND r.user_id=$1 AND r.kind='ban')
+            AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=a.channel AND k.blocked_id=$1) OR (k.blocker_id=$1 AND k.blocked_id=a.channel))
             ORDER BY a.at DESC LIMIT 1")
             .bind(&user).fetch_optional(&mut *tx).await?;
         if let Some(channel) = &channel {

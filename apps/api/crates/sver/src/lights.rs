@@ -115,6 +115,11 @@ async fn give(
         return Err(Fail::bad("You can't light yourself up."));
     }
     let mut tx = app.db.begin().await?;
+    // One at a time per giver, so the daily cap holds across tabs.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('lights:'||$1,0))")
+        .bind(&me.id)
+        .execute(&mut *tx)
+        .await?;
     profiles::ensure_unrestricted(&mut tx, &me.id).await?;
     if profiles::blocked_between(&mut tx, &me.id, &to).await? {
         return Err(Fail::denied("You can't light up this person."));

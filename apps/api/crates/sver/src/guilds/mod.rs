@@ -303,7 +303,15 @@ async fn act(
     let me = role(&mut tx, &g, &user.id).await?;
     match input.action.as_str() {
         "apply" => {
-            admission(&mut tx, &g, &user.id, true).await?;
+            // An invitation (kept 30 days) still holds if the guild stopped recruiting since.
+            let invited: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM guild_invitations WHERE guild_id=$1 AND user_id=$2)",
+            )
+            .bind(&g.id)
+            .bind(&user.id)
+            .fetch_one(&mut *tx)
+            .await?;
+            admission(&mut tx, &g, &user.id, !invited).await?;
             let message = text::plain(&input.message, "message", 1, 500, 8, true)?;
             let existing:Option<(String,bool)>=sqlx::query_as("SELECT status,coalesce(declined_at>now()-interval '7 days',false) FROM guild_applications WHERE guild_id=$1 AND user_id=$2")
                 .bind(&g.id).bind(&user.id).fetch_optional(&mut *tx).await?;
@@ -600,6 +608,12 @@ async fn notify(
 }
 async fn depart(db: &mut PgConnection, g: &Guild, user: &str, actor: Option<&str>) -> Res<()> {
     sqlx::query("DELETE FROM guild_members WHERE guild_id=$1 AND user_id=$2")
+        .bind(&g.id)
+        .bind(user)
+        .execute(&mut *db)
+        .await?;
+    // The emblem goes with the membership.
+    sqlx::query("DELETE FROM guild_badges WHERE guild_id=$1 AND user_id=$2")
         .bind(&g.id)
         .bind(user)
         .execute(&mut *db)
