@@ -423,6 +423,12 @@ async fn private_mode(e: &Env) {
         .0,
         StatusCode::BAD_REQUEST
     );
+    // A new device needs a recently confirmed sign-in, so a stolen session alone can't add one.
+    e.sql("UPDATE sessions SET authenticated_at=now()-interval '1 hour' WHERE user_id='dm-pa'")
+        .await;
+    assert_eq!(add(&a, 1).await.0, StatusCode::FORBIDDEN);
+    e.sql("UPDATE sessions SET authenticated_at=now() WHERE user_id='dm-pa'")
+        .await;
     let a_dev = add(&a, 1).await.1["id"].as_str().unwrap().to_string();
     let b_dev = add(&b, 2).await.1["id"].as_str().unwrap().to_string();
     e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='dm-pb'")

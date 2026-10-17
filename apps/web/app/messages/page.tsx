@@ -1,5 +1,6 @@
 "use client";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Avatar } from "../../components/Avatar";
 import { ReportButton } from "../../components/Report";
 import { ArrowIcon, LockIcon, MoreIcon, MutedIcon } from "../../components/shell/Icons";
@@ -45,6 +46,8 @@ export default function Messages() {
   // Private mode: this browser's device key, and what it could decrypt (null: not readable here).
   const [device, setDevice] = useState<ThisDevice | null>(null);
   const [deviceNote, setDeviceNote] = useState("");
+  // Adding this browser as a Private-mode device needs a recently confirmed sign-in.
+  const [confirmDevice, setConfirmDevice] = useState<{ id: string; password: boolean } | null>(null);
   const [plain, setPlain] = useState<Record<string, Opened | null>>({});
   const [devices, setDevices] = useState<MyDevice[]>([]);
   const [safety, setSafety] = useState("");
@@ -77,12 +80,13 @@ export default function Messages() {
     await loadList();
   }, [loadList]);
   const loadAll = useCallback(async () => {
-    const [account, settings] = await Promise.all([send<{ id: string; username: string }>("GET", "/api/auth/me"), send<{ policy: string }>("GET", "/api/me/dm-settings")]);
+    const [account, settings] = await Promise.all([send<{ id: string; username: string; has_password: boolean }>("GET", "/api/auth/me"), send<{ policy: string }>("GET", "/api/me/dm-settings")]);
     if (account.ok) {
       setMe(account.data.username);
       const mine = await ensureDevice(account.data.id);
       if (mine && typeof mine !== "string") setDevice(mine);
       else setDeviceNote(typeof mine === "string" ? mine : "This browser can't keep the keys Private mode needs.");
+      setConfirmDevice(typeof mine === "string" && /confirm your sign-in/i.test(mine) ? { id: account.data.id, password: account.data.has_password } : null);
       await loadDevices();
     }
     if (settings.ok) setPolicy(settings.data.policy);
@@ -179,6 +183,16 @@ export default function Messages() {
     setError("");
     await loadThread(open);
   }
+  async function addThisDevice(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!confirmDevice) return;
+    const password = String(new FormData(event.currentTarget).get("password") ?? "");
+    const r = await send("POST", "/api/auth/reauth", { password });
+    if (!r.ok) { setError(r.error); return; }
+    const mine = await ensureDevice(confirmDevice.id);
+    if (mine && typeof mine !== "string") { setDevice(mine); setDeviceNote(""); setConfirmDevice(null); setError(""); await loadDevices(); }
+    else setError(typeof mine === "string" ? mine : "This browser can't keep the keys Private mode needs.");
+  }
   async function removeDevice(id: string) {
     if (!confirm(id === device?.id ? "Remove this browser? It won't be able to read private messages any more." : "Remove this device? It won't be able to read new private messages.")) return;
     const r = await send("DELETE", `/api/me/dm-devices/${encodeURIComponent(id)}`);
@@ -225,6 +239,10 @@ export default function Messages() {
             <option value="nobody">Nobody</option>
           </select></label>
           <p className="small-text">Messages are text only and are kept for 12 months. S.V.E.R stores them encrypted, and staff can read a conversation only when it&apos;s reported. Turn on <strong>Private</strong> in a conversation to encrypt it end to end on your devices: nobody else, including S.V.E.R, can read it, and a report sends only the message you report. Private messages can&apos;t be read on a device added later. Private mode is for two adults.</p>
+          {confirmDevice && (confirmDevice.password ? <form className="row wrap" onSubmit={addThisDevice}>
+            <label className="field"><span>Confirm your password to use Private mode in this browser</span><input name="password" type="password" autoComplete="current-password" required /></label>
+            <button type="submit" className="small">Add this browser</button>
+          </form> : <p className="small-text"><Link href="/account">Confirm your sign-in in Account security</Link>, then come back to use Private mode in this browser.</p>)}
           {devices.length > 0 && <div><strong className="small-text">Your Private-mode devices</strong>
             <ul className="messages-devices">{devices.map(d => <li key={d.id}>Added {time(d.created_at)}{d.id === device?.id && <strong> (this browser)</strong>} <button type="button" className="small quiet danger-text" onClick={() => void removeDevice(d.id)}>Remove</button></li>)}</ul>
           </div>}
@@ -246,7 +264,7 @@ export default function Messages() {
             <Avatar sizes={thread.with.avatar} name={thread.with.display_name} size={36} />
             {thread.with.username ? <PlayerCardButton username={thread.with.username}><span><strong>{thread.with.display_name}</strong> <span className="handle">@{thread.with.username}</span></span></PlayerCardButton> : <strong>{thread.with.display_name}</strong>}
             <span className="grow" />
-            <button type="button" className={`small${thread.private ? "" : " quiet"}`} aria-pressed={thread.private} disabled={!device && !thread.private} title={device ? "Private mode: end-to-end encrypted on your devices" : deviceNote} onClick={() => void togglePrivate()}>{thread.private ? <><LockIcon /> Private</> : "Private: off"}</button>
+            <button type="button" className={`small${thread.private ? "" : " quiet"}`} aria-pressed={thread.private} disabled={!device && !thread.private && !confirmDevice} title={device ? "Private mode: end-to-end encrypted on your devices" : deviceNote} onClick={() => { if (!device && confirmDevice) setPanel("settings"); else void togglePrivate(); }}>{thread.private ? <><LockIcon /> Private</> : "Private: off"}</button>
             <details className="menu messages-more"><summary className="button small quiet" aria-label="More actions"><MoreIcon /></summary>
               <div className="menu-list panel" role="menu">
                 {(["mute", "clear", "block"] as const).map(kind => <button key={kind} type="button" role="menuitem" className={`link-button${kind === "block" ? " danger-text" : ""}`} onClick={e => { e.currentTarget.closest("details")?.removeAttribute("open"); void action(kind); }}>{kind === "mute" ? thread.muted ? "Unmute" : "Mute" : kind === "clear" ? "Delete for me" : "Block"}</button>)}

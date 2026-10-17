@@ -8,7 +8,7 @@
 //! of a private message carries the reporter's plaintext, accepted only if it matches the
 //! commitment.
 use crate::{
-    App,
+    App, auth,
     profiles::{self, Fail, Res},
     security as sec,
 };
@@ -601,7 +601,11 @@ async fn add_device(
     jar: CookieJar,
     Json(input): Json<NewDevice>,
 ) -> Res<Json<Value>> {
-    let me = profiles::signed_in(&app, &jar).await?;
+    // A new device can read new private messages, so it needs a recently confirmed sign-in
+    // (Joe's decision, October 17): a stolen session alone can't add one.
+    let (tx, me, session) = auth::session(&app, &jar, false).await?;
+    tx.commit().await?;
+    auth::recent(&session)?;
     if !valid_key(&input.public_key) {
         return Err(Fail::field("public_key", "That device key isn't valid."));
     }
