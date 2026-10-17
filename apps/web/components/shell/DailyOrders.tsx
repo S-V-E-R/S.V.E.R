@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../../lib/client-api";
 
 type Order = { slot: number; label: string; rarity: string; target: number; progress: number; done: boolean; xp: number; ev?: number; ev_channel?: string | null };
@@ -13,6 +13,14 @@ export function DailyOrders() {
     if (r.ok) setData(r.data);
   }, []);
   useLoad(load);
+  // Progress moves while you watch: refresh each minute while visible, and on coming back.
+  useEffect(() => {
+    const refresh = () => { if (!document.hidden) void load(); };
+    const timer = setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh); };
+  }, [load]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function reroll(slot: number) {
@@ -27,11 +35,11 @@ export function DailyOrders() {
     {data.verify ? <p className="side-empty">Verify your email to get daily orders.</p>
       : <ul className="order-list">{data.orders.map(o => <li key={o.slot} className={o.done ? "done" : undefined} data-rarity={o.rarity.toLowerCase()}>
         <span className="order-label">{o.label}</span>
-        <span className="order-meta"><span title={o.done && o.ev_channel ? `${o.ev} Engagement Valor in ${o.ev_channel}` : "Engagement Valor goes to the channel you're in when it's done"}>{o.rarity} · {o.xp} XP · {o.ev ?? 0} Engagement Valor</span><span>{o.done ? "Done" : `${o.progress}/${o.target}`}</span></span>
+        <span className="order-meta"><span title={o.done && o.ev_channel ? `${o.ev} Engagement Valor in ${o.ev_channel}` : "Engagement Valor goes to the channel you're in when it's done"}>{o.rarity} · {o.xp} XP{o.done && !o.ev ? "" : ` · ${o.ev ?? 0} Engagement Valor`}</span><span>{o.done ? "Done" : `${o.progress}/${o.target}`}</span></span>
         <span className="xp-bar" aria-hidden="true"><span style={{ width: `${Math.round(100 * o.progress / o.target)}%` }} /></span>
         {data.can_reroll && !o.done && <button type="button" className="link-button order-reroll" disabled={busy} onClick={() => void reroll(o.slot)}>Reroll<span className="sr-only"> {o.label}</span></button>}
       </li>)}</ul>}
     {error && <p role="alert" className="side-empty">{error}</p>}
-    {!data.verify && <p className="side-empty">{data.week ?? 0} done this week · milestones at 10, 20, 30</p>}
+    {!data.verify && <p className="side-empty">{data.week ?? 0} done this week · milestones at 7, 14, 21</p>}
   </section>;
 }

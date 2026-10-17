@@ -30,7 +30,7 @@ pub const CATALOG: [(&str, &str, &str); 21] = [
     (
         "order_keeper",
         "Order Keeper",
-        "30 daily orders done in one week",
+        "21 daily orders done in one week",
     ),
     ("legend", "Legend", "Legend loyalty rank in a channel"),
     ("level_10", "Level 10", "Reached level 10"),
@@ -103,7 +103,7 @@ fn rules() -> Vec<(&'static str, &'static str, i64)> {
         (
             "order_keeper",
             "SELECT DISTINCT user_id FROM order_milestones WHERE orders>=$1",
-            30,
+            21,
         ),
         (
             "legend",

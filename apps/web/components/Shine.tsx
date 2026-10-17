@@ -38,7 +38,7 @@ export function Shine({ username, isOwner, signedIn }: { username: string; isOwn
     {!!moments.length && <ol className="moment-list">{moments.map(m => <li key={m.video_id}><Link href={`/${m.kind === "CLIP" ? "clips" : "videos"}/${m.video_id}`}><strong>{m.title}</strong></Link>{m.description && <p className="muted small">{m.description}</p>}</li>)}</ol>}
     {signedIn && !isOwner && <p className="muted small">Send a light to say this channel did something good. It&apos;s free: 3 a day, one per channel.</p>}
     {signedIn && !isOwner && <form onSubmit={give} className="row wrap">
-      <label className="field"><span className="sr-only">Message (optional)</span><input name="message" maxLength={200} placeholder="Add a few words (optional)" /></label>
+      <label className="field"><span className="sr-only">Message only this channel sees (optional)</span><input name="message" maxLength={200} placeholder="A few words only they will see (optional)" /></label>
       <button type="submit" className="small" disabled={giving}>Light it up</button>
     </form>}
     {message && <p role="status" className="muted small">{message}</p>}

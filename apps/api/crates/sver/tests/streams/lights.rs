@@ -47,6 +47,14 @@ pub async fn exercise(e: &Env) {
     );
     let (_, got) = call(e, "GET", "/api/channels/Streamer/lights", None, Value::Null).await;
     assert_eq!(got["count"], 1);
+    assert_eq!(
+        got["recent"],
+        json!([]),
+        "messages are private to the recipient"
+    );
+    let got = e
+        .call("GET", "/api/channels/Streamer/lights", Value::Null)
+        .await;
     assert_eq!(got["recent"][0]["message"], "Great stream, thank you");
     let noticed: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id='stream-owner' AND kind='light')",
