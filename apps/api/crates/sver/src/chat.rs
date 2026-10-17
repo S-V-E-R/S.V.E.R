@@ -379,7 +379,13 @@ impl Gif {
             && url(&self.play)
             && (1..=2000).contains(&self.width)
             && (1..=2000).contains(&self.height);
-        ok.then(|| json!({"slug": self.slug, "still": self.still, "play": self.play, "width": self.width, "height": self.height}))
+        // Every viewer draws the box at this size, so keep it chat-sized whatever the client sent.
+        let scale = (400.0 / f64::from(self.width.max(self.height))).min(1.0);
+        let (width, height) = (
+            ((f64::from(self.width) * scale).round() as i32).max(1),
+            ((f64::from(self.height) * scale).round() as i32).max(1),
+        );
+        ok.then(|| json!({"slug": self.slug, "still": self.still, "play": self.play, "width": width, "height": height}))
     }
     /// Alt text and the text every other reader (linked chat, apps, replay) sees.
     fn body(&self) -> String {
@@ -658,7 +664,19 @@ pub(crate) async fn send_from(
     let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted,skill,gif) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO NOTHING")
         .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.as_ref().map(|s| s.shown.as_str())).bind(gif.as_ref().map(|(g, _)| g.clone())).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
-        return Err(Fail::conflict("That message ID is already in use."));
+        // A retry of the author's own message that was removed meanwhile.
+        let mine: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM chat_messages WHERE id=$1 AND author_id=$2)",
+        )
+        .bind(&input.id)
+        .bind(&user.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        return Err(Fail::conflict(if mine {
+            "That message was removed."
+        } else {
+            "That message ID is already in use."
+        }));
     }
     if let (Some(valor), Some(channel)) = (tribute, channel) {
         // The message and the Valor move commit together; the lock serializes the buyer's spends.
