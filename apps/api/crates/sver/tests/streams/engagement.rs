@@ -145,7 +145,7 @@ pub async fn exercise(e: &Env) {
             .1
     };
     assert_eq!(orders().await["orders"].as_array().unwrap().len(), 3);
-    e.sql("UPDATE daily_orders SET kind=CASE slot WHEN 0 THEN 'watch' ELSE 'poll' END,rarity=0,target=CASE slot WHEN 0 THEN 1 ELSE 5 END WHERE user_id='ev-viewer'").await;
+    e.sql("UPDATE daily_orders SET kind=CASE slot WHEN 0 THEN 'watch' ELSE 'poll' END,rarity=0,target=CASE slot WHEN 0 THEN 1 ELSE 5 END,drawn_at=now() WHERE user_id='ev-viewer'").await;
     let before = balance(e, "ev-viewer").await;
     sver::engagement::award_watch(&e.app).await.unwrap();
     let today = orders().await;
@@ -407,6 +407,24 @@ pub async fn exercise(e: &Env) {
     follow(e, &viewer, "PUT").await;
     e.sql("UPDATE daily_orders SET kind='follow',target=1 WHERE user_id='ev-viewer' AND day=current_date AND slot=2").await;
     assert_eq!(orders().await["orders"][2]["progress"], 0, "a refollow");
+    // The orders pass looks only at orders that could have moved since its last run: progress
+    // older than that pass waits until the order is drawn (or rerolled) again.
+    person(e, "ev-late", "EvLate", true).await;
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    e.sql("INSERT INTO engagement(channel_id,user_id,first_followed_at) VALUES('ev-owner','ev-late',greatest(now()-interval '3 minutes',current_date::timestamptz))").await;
+    e.sql("INSERT INTO daily_orders(user_id,day,slot,kind,rarity,target,drawn_at) VALUES('ev-late',current_date,0,'follow',0,1,now()-interval '1 hour')").await;
+    let follow_done = || async {
+        sqlx::query_scalar::<_, bool>("SELECT completed_at IS NOT NULL FROM daily_orders WHERE user_id='ev-late' AND day=current_date AND slot=0")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    assert!(!follow_done().await, "nothing new since the last pass");
+    e.sql("UPDATE daily_orders SET drawn_at=now() WHERE user_id='ev-late'")
+        .await;
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    assert!(follow_done().await);
     // One tick never gives more than 3 Scout bonuses a day (one is already in today).
     for n in 1..=4 {
         person(e, &format!("ev-new{n}"), &format!("EvNew{n}"), true).await;
@@ -426,7 +444,7 @@ pub async fn exercise(e: &Env) {
     e.sql("INSERT INTO daily_orders(user_id,day,slot,kind,rarity,target,completed_at,xp)
         SELECT 'ev-viewer',d::date,s,'watch',0,1,now(),40 FROM generate_series(date_trunc('week',current_date),date_trunc('week',current_date)+interval '6 days','1 day') d, generate_series(0,2) s
         WHERE d::date<>current_date").await;
-    e.sql("UPDATE daily_orders SET kind='watch',target=1 WHERE user_id='ev-viewer' AND day=current_date AND completed_at IS NULL").await;
+    e.sql("UPDATE daily_orders SET kind='watch',target=1,drawn_at=now() WHERE user_id='ev-viewer' AND day=current_date AND completed_at IS NULL").await;
     sver::engagement::award_watch(&e.app).await.unwrap();
     let milestones: Vec<i16> = sqlx::query_scalar(
         "SELECT orders FROM order_milestones WHERE user_id='ev-viewer' ORDER BY orders",

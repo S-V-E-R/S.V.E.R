@@ -156,6 +156,16 @@ async fn current(app: &App, id: &str) -> Res<(Squad, Vec<String>)> {
     }
     Ok((s, members))
 }
+/// Repairs only the live co-streams these people are in, plus `squad` when given, under the
+/// caller's membership lock. The worker tick repairs the rest.
+async fn repair(app: &App, db: &mut PgConnection, users: &[&str], squad: Option<&str>) -> Res<()> {
+    let rows: Vec<Squad> = sqlx::query_as("SELECT id,host_id,mode,ended_at FROM squads WHERE ended_at IS NULL AND (id=$2 OR id IN (SELECT squad_id FROM squad_members WHERE user_id=ANY($1)))")
+        .bind(users).bind(squad).fetch_all(&mut *db).await?;
+    for s in rows {
+        reconcile(app, db, &s).await?;
+    }
+    Ok(())
+}
 pub async fn tick(app: &App) -> Res<()> {
     let mut tx = app.db.begin().await?;
     lock(&mut tx).await?;
@@ -186,9 +196,9 @@ async fn create(
         return Err(Fail::bad("Choose separate or merged chat."));
     }
     profiles::rate(&app, format!("squad-create:{}", user.id), 10, 3600).await?;
-    tick(&app).await?;
     let mut tx = app.db.begin().await?;
     lock(&mut tx).await?;
+    repair(&app, &mut tx, &[&user.id], None).await?;
     let broadcast = available(&mut tx, &user.id).await?;
     if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM squad_members WHERE user_id=$1)")
         .bind(&user.id)
@@ -225,17 +235,17 @@ async fn invite(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::rate(&app, format!("squad-invite:{}", user.id), 20, 3600).await?;
-    tick(&app).await?;
     let mut tx = app.db.begin().await?;
     lock(&mut tx).await?;
+    let target = profiles::eligible_by_name(&mut tx, input.username.trim().trim_start_matches('@'))
+        .await?
+        .ok_or_else(Fail::channel_missing)?;
+    repair(&app, &mut tx, &[&target.id], Some(&id)).await?;
     let s = load(&mut tx, &id).await?;
     if s.ended_at.is_some() || s.host_id.as_deref() != Some(&user.id) {
         return Err(Fail::denied("Only the live host can invite streamers."));
     }
     available(&mut tx, &user.id).await?;
-    let target = profiles::eligible_by_name(&mut tx, input.username.trim().trim_start_matches('@'))
-        .await?
-        .ok_or_else(Fail::channel_missing)?;
     let target_broadcast = available(&mut tx, &target.id).await?;
     let busy: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM squad_members WHERE user_id=$1)")
@@ -295,9 +305,9 @@ async fn answer(
     Json(input): Json<Answer>,
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
-    tick(&app).await?;
     let mut tx = app.db.begin().await?;
     lock(&mut tx).await?;
+    repair(&app, &mut tx, &[&user.id], Some(&id)).await?;
     let s = load(&mut tx, &id).await?;
     let invite:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM squad_invites WHERE squad_id=$1 AND user_id=$2 AND expires_at>now())").bind(&id).bind(&user.id).fetch_one(&mut *tx).await?;
     if !invite || s.ended_at.is_some() {
@@ -446,7 +456,10 @@ async fn for_channel(
 }
 async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
-    tick(&app).await?;
+    let mut tx = app.db.begin().await?;
+    lock(&mut tx).await?;
+    repair(&app, &mut tx, &[&user.id], None).await?;
+    tx.commit().await?;
     let current: Option<String> =
         sqlx::query_scalar("SELECT squad_id FROM squad_members WHERE user_id=$1")
             .bind(&user.id)

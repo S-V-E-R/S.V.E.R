@@ -254,9 +254,6 @@ async fn main() -> Result<(), String> {
             if sver::tiers::tick(&media_jobs).await.is_err() {
                 eprintln!("tiers_event=tick outcome=retry");
             }
-            if sver::shine::tick(&media_jobs).await.is_err() {
-                eprintln!("shine_event=tick outcome=retry");
-            }
             if sver::payouts::tick(&media_jobs).await.is_err() {
                 eprintln!("payout_event=tick outcome=retry");
             }

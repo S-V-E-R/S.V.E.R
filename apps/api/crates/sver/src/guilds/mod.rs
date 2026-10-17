@@ -765,6 +765,7 @@ pub fn routes() -> Router<App> {
         )
         .route("/api/me/guilds", get(read::mine))
         .route("/api/me/guilds/badge", put(select_badge))
+        .route("/api/me/guilds/live", get(read::live_mates))
         .route("/api/admin/guilds", get(review::queue))
         .route("/api/admin/guilds/{id}", post(review::action))
 }

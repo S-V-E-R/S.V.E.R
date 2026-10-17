@@ -40,17 +40,15 @@ function IdentityFields({ guild }: { guild?: Guild }) {
     <label className="checkbox"><input name="recruiting" type="checkbox" defaultChecked={guild?.recruiting ?? true} /> Accept applications</label>
   </>;
 }
-export function GuildStudio({ initial, account }: { initial: MyGuilds; account: string }) {
+export function GuildStudio({ initial }: { initial: MyGuilds }) {
   const router = useRouter();
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [mates, setMates] = useState<Chip[]>([]);
   const loadMates = useCallback(async () => {
-    const pages = await Promise.all(initial.items.filter(g => g.role && g.status === "ACTIVE").map(g => send<GuildPage>("GET", `/api/guilds/${g.slug}`)));
-    const members = new Map<string, Chip>();
-    for (const p of pages) if (p.ok) for (const m of p.data.members) if (m.live && m.user.username && m.user.username !== account) members.set(m.user.username, m.user);
-    setMates([...members.values()]);
-  }, [initial.items, account]);
+    const r = await send<{ members: Chip[] }>("GET", "/api/me/guilds/live");
+    if (r.ok) setMates(r.data.members);
+  }, []);
   useLoad(loadMates);
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true);

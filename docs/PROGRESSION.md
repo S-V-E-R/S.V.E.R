@@ -66,6 +66,7 @@ Lights and Shine Moments ([SUPPORT.md](SUPPORT.md) "Shine", Question 4), achieve
 - **Daily orders (Q3): XP plus Engagement Valor**, 10 / 15 / 20 / 30 / 50 by rarity, in the channel of the viewer's latest playback or chat that day (where they were when it finished; never their own channel or one that banned them). An order finished with no channel activity pays XP only. The amount and channel are kept on the order (`daily_orders.ev`, `ev_channel`); the sidebar shows them.
 - Q4 (Lights and Shine): answered October 10, 2026 (SUPPORT.md "Shine"). Light messages are private to the recipient (Joe's decision, October 17); the public page shows only the count.
 - **October 17 review fixes:** chat XP and the chat order count only while the viewer has Counted or Trusted playback of that channel ("chatting where you are watching"); the follow order counts only channels followed for the first time; one tick never gives more than 3 Scout bonuses; database sessions run in UTC, so "today" is the UTC day everywhere.
+- **Orders pass (October 17, 2026, performance):** each minute's pass evaluates only open orders that could have moved since the last finished pass: their kind's records changed, or the order was drawn or rerolled since (`daily_orders.drawn_at`, migration 0123). The first pass after a restart checks every open order.
 
 ## Questions for Joe
 

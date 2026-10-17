@@ -526,40 +526,57 @@ pub fn expand(
     out.sort_by_key(|o| o.0);
     out
 }
-async fn load_schedule(
-    db: &mut PgConnection,
-    user_id: &str,
-) -> Res<(
+type Schedule = (
     Option<String>,
     Vec<Block>,
     Vec<(String, DateTime<Utc>, DateTime<Utc>)>,
-)> {
-    let tz: Option<String> = sqlx::query_scalar("SELECT timezone FROM schedules WHERE user_id=$1")
-        .bind(user_id)
-        .fetch_optional(&mut *db)
-        .await?;
-    let blocks: Vec<(i32, i32, i32, String)> = sqlx::query_as("SELECT weekday,start_minute,end_minute,label FROM schedule_blocks WHERE user_id=$1 ORDER BY position").bind(user_id).fetch_all(&mut *db).await?;
-    let events: Vec<(String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as("SELECT title,start_at,end_at FROM schedule_events WHERE user_id=$1 AND end_at>now() ORDER BY start_at").bind(user_id).fetch_all(&mut *db).await?;
-    Ok((
-        tz,
-        blocks
-            .into_iter()
-            .map(|b| Block {
-                weekday: b.0,
-                start: b.1,
-                end: b.2,
-                label: b.3,
-            })
-            .collect(),
-        events,
-    ))
-}
-async fn occurrences(
+);
+/// Several people's schedules in three queries (a guild page); no schedule reads as empty.
+async fn load_schedules(
     db: &mut PgConnection,
-    user_id: &str,
-    days: i64,
-) -> Res<(Option<String>, Vec<Value>)> {
-    let (tz, blocks, events) = load_schedule(db, user_id).await?;
+    users: &[String],
+) -> Res<std::collections::HashMap<String, Schedule>> {
+    let mut out: std::collections::HashMap<String, Schedule> = users
+        .iter()
+        .map(|u| (u.clone(), Schedule::default()))
+        .collect();
+    let zones: Vec<(String, String)> =
+        sqlx::query_as("SELECT user_id,timezone FROM schedules WHERE user_id=ANY($1)")
+            .bind(users)
+            .fetch_all(&mut *db)
+            .await?;
+    for (user, tz) in zones {
+        if let Some(s) = out.get_mut(&user) {
+            s.0 = Some(tz);
+        }
+    }
+    let blocks: Vec<(String, i32, i32, i32, String)> = sqlx::query_as("SELECT user_id,weekday,start_minute,end_minute,label FROM schedule_blocks WHERE user_id=ANY($1) ORDER BY user_id,position").bind(users).fetch_all(&mut *db).await?;
+    for (user, weekday, start, end, label) in blocks {
+        if let Some(s) = out.get_mut(&user) {
+            s.1.push(Block {
+                weekday,
+                start,
+                end,
+                label,
+            });
+        }
+    }
+    let events: Vec<(String, String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as("SELECT user_id,title,start_at,end_at FROM schedule_events WHERE user_id=ANY($1) AND end_at>now() ORDER BY start_at").bind(users).fetch_all(&mut *db).await?;
+    for (user, title, start, end) in events {
+        if let Some(s) = out.get_mut(&user) {
+            s.2.push((title, start, end));
+        }
+    }
+    Ok(out)
+}
+async fn load_schedule(db: &mut PgConnection, user_id: &str) -> Res<Schedule> {
+    Ok(load_schedules(db, &[user_id.to_string()])
+        .await?
+        .remove(user_id)
+        .unwrap_or_default())
+}
+/// A schedule's occurrences over the next `days`: weekly blocks and one-off events together.
+fn upcoming((tz, blocks, events): Schedule, days: i64) -> Vec<Value> {
     let now = Utc::now();
     let until = now + Duration::days(days);
     let mut all: Vec<(DateTime<Utc>, DateTime<Utc>, String, &str)> = Vec::new();
@@ -577,7 +594,27 @@ async fn occurrences(
             .map(|(t, s, e)| (s, e, t, "event")),
     );
     all.sort_by_key(|o| o.0);
-    Ok((tz, all.into_iter().map(|(s, e, l, kind)| json!({"start_at": s, "end_at": e, "label": l, "kind": kind, "live": false})).collect()))
+    all.into_iter().map(|(s, e, l, kind)| json!({"start_at": s, "end_at": e, "label": l, "kind": kind, "live": false})).collect()
+}
+async fn occurrences(
+    db: &mut PgConnection,
+    user_id: &str,
+    days: i64,
+) -> Res<(Option<String>, Vec<Value>)> {
+    let schedule = load_schedule(db, user_id).await?;
+    Ok((schedule.0.clone(), upcoming(schedule, days)))
+}
+/// The next `n` occurrences (two weeks ahead) for each of several people.
+pub async fn next_occurrences_for(
+    db: &mut PgConnection,
+    users: &[String],
+    n: usize,
+) -> Res<std::collections::HashMap<String, Vec<Value>>> {
+    Ok(load_schedules(db, users)
+        .await?
+        .into_iter()
+        .map(|(user, s)| (user, upcoming(s, 14).into_iter().take(n).collect()))
+        .collect())
 }
 /// The next `n` occurrences for the Home tab.
 pub async fn next_occurrences(db: &mut PgConnection, user_id: &str, n: usize) -> Res<Value> {

@@ -1263,6 +1263,12 @@ pub async fn tick(app: &App) -> Result<()> {
                             "bitrate_warning":kbps.is_some_and(|n|n>8000.0),"bitrate_warning_provisional":true});
                         sqlx::query("UPDATE broadcasts SET confirmed_live_at=CASE WHEN $2 AND $3 THEN coalesce(confirmed_live_at,clock_timestamp()) ELSE confirmed_live_at END,state=CASE WHEN $2 AND $3 THEN 'LIVE' ELSE state END,recv_bytes=$4,health=$5::jsonb||jsonb_strip_nulls(jsonb_build_object('keyframe_seconds',health->'keyframe_seconds','b_frames',health->'b_frames','keyframe_warning',health->'keyframe_warning','probed_at',health->'probed_at','captions',health->'captions')),observed_at=CASE WHEN $3 THEN clock_timestamp() ELSE observed_at END WHERE id=$1 AND state IN ('STARTING','LIVE')")
                             .bind(&b.id).bind(compatible).bind(fresh).bind(bytes).bind(health).execute(&mut *tx).await?;
+                        // Going live: a charity chosen beforehand makes it a charity stream.
+                        if compatible && fresh && b.state == "STARTING" {
+                            crate::shine::sync(&mut tx, &owner)
+                                .await
+                                .map_err(|_| Error::internal())?;
+                        }
                     }
                 } else if b.state != "STARTING" {
                     // The on_publish response can still be in flight when the
