@@ -453,6 +453,27 @@ pub async fn exercise(e: &Env) {
             .len(),
         4
     );
+    // Pages and shared chat never wait on the membership lock.
+    let mut held = e.app.db.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('squad-membership',0))")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let wait = std::time::Duration::from_secs(3);
+    assert!(
+        tokio::time::timeout(wait, ok(e, a, "GET", &path, Value::Null))
+            .await
+            .is_ok()
+    );
+    assert!(
+        tokio::time::timeout(
+            wait,
+            call(e, "GET", &format!("{path}/chat"), Some(&fan), Value::Null)
+        )
+        .await
+        .is_ok()
+    );
+    held.rollback().await.unwrap();
     // Any member's watch page finds the shared view; a channel outside it does not.
     let found = ok(
         e,

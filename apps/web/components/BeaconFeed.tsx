@@ -12,6 +12,7 @@ import { ReportForm, TakeDownLink } from "./Report";
 import { ShareButton } from "./ShareButton";
 import { AdFrame, fetchAd, type ServedAd } from "./Ads";
 import { Turnstile } from "./Turnstile";
+import { DonateLink } from "./DonateLink";
 import "../styles/beacons.css";
 
 const SOUND = "sver-beacon-sound";
@@ -236,7 +237,7 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
         <h2>{b.title}</h2>
         <p>{c.username ? <Link href={`/${c.username}`}>@{c.username}</Link> : c.display_name}{b.category && <> · {b.category}</>}</p>
         {item.clipper?.username && <p className="muted">Clipped by <Link href={`/${item.clipper.username}`}>{item.clipper.display_name}</Link></p>}
-        {item.charity && <p className="beacon-shine"><span className="eyebrow">Shine</span> {item.charity.name}{item.charity.url && <> · <a href={item.charity.url} target="_blank" rel="noopener noreferrer">Donate</a></>}</p>}
+        {item.charity && <p className="beacon-shine"><span className="eyebrow">Shine</span> {item.charity.name}{item.charity.url && <> · <DonateLink url={item.charity.url}>Donate</DonateLink></>}</p>}
         {b.clip_id && <p><Link href={`/clips/${b.clip_id}`} className="muted">From a clip</Link></p>}
       </div>
     </div>

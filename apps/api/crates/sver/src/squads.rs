@@ -97,7 +97,7 @@ async fn end(db: &mut PgConnection, id: &str) -> Res<()> {
         .await?;
     Ok(())
 }
-/// Repairs live membership on every read/mutation as well as in the worker.
+/// Repairs live membership in mutations and the worker (reads filter instead; see `current`).
 async fn reconcile(app: &App, db: &mut PgConnection, s: &Squad) -> Res<()> {
     if s.ended_at.is_some() {
         return Ok(());
@@ -137,14 +137,23 @@ async fn reconcile(app: &App, db: &mut PgConnection, s: &Squad) -> Res<()> {
     }
     Ok(())
 }
+/// Lock-free read for pages and shared chat: members whose account is in good standing and whose
+/// broadcast is still active. A host who dropped reads as ended; the worker and mutations do the
+/// repair (and the pairwise ban and block checks) under the membership lock.
 async fn current(app: &App, id: &str) -> Res<(Squad, Vec<String>)> {
-    let mut tx = app.db.begin().await?;
-    lock(&mut tx).await?;
-    let s = load(&mut tx, id).await?;
-    reconcile(app, &mut tx, &s).await?;
-    let s = load(&mut tx, id).await?;
-    let members = roster(&mut tx, id).await?;
-    tx.commit().await?;
+    let mut db = app.db.acquire().await?;
+    let mut s = load(&mut db, id).await?;
+    if s.ended_at.is_some() {
+        return Ok((s, vec![]));
+    }
+    let members: Vec<String> = sqlx::query_scalar("SELECT m.user_id FROM squad_members m JOIN channel_users c ON c.id=m.user_id AND c.eligible
+        JOIN broadcasts b ON b.id=m.broadcast_id AND b.owner_id=m.user_id AND b.state IN ('LIVE','RECONNECTING')
+        WHERE m.squad_id=$1 ORDER BY m.joined_at,m.user_id")
+        .bind(id).fetch_all(&mut *db).await?;
+    if !s.host_id.as_ref().is_some_and(|h| members.contains(h)) {
+        s.ended_at = Some(Utc::now());
+        return Ok((s, vec![]));
+    }
     Ok((s, members))
 }
 pub async fn tick(app: &App) -> Res<()> {

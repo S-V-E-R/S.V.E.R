@@ -115,6 +115,11 @@ async fn give(
         return Err(Fail::bad("You can't light yourself up."));
     }
     let mut tx = app.db.begin().await?;
+    // One at a time per giver, so the daily cap holds across tabs.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('lights:'||$1,0))")
+        .bind(&me.id)
+        .execute(&mut *tx)
+        .await?;
     profiles::ensure_unrestricted(&mut tx, &me.id).await?;
     if profiles::blocked_between(&mut tx, &me.id, &to).await? {
         return Err(Fail::denied("You can't light up this person."));
@@ -162,7 +167,8 @@ async fn give(
         json!({"given": true, "left_today": LIGHTS_PER_DAY - today - 1}),
     ))
 }
-/// GET /api/channels/{name}/lights: the count and the latest lights with messages.
+/// GET /api/channels/{name}/lights: the count, and for the channel itself the latest lights with
+/// messages (Joe's decision, October 17: messages are private to the recipient).
 async fn received(
     State(app): State<App>,
     jar: CookieJar,
@@ -175,14 +181,17 @@ async fn received(
             .bind(&id)
             .fetch_one(&app.db)
             .await?;
+    if viewer.as_ref().is_none_or(|v| v.id != id) {
+        return Ok(Json(json!({"count": count, "recent": []})));
+    }
     let mut recent: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT jsonb_build_object('id',l.id,'from',{},'message',l.message,'at',l.created_at) FROM lights l JOIN channel_users c ON c.id=l.from_id
         WHERE l.to_id=$1 AND NOT l.hidden AND c.eligible AND l.message IS NOT NULL
-        AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=$2 AND k.blocked_id=l.from_id) OR (k.blocker_id=l.from_id AND k.blocked_id=$2))
+        AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=$1 AND k.blocked_id=l.from_id) OR (k.blocker_id=l.from_id AND k.blocked_id=$1))
         ORDER BY l.created_at DESC LIMIT 10",
         profiles::chip_sql("c")
     )))
-    .bind(&id).bind(viewer.as_ref().map(|v| v.id.as_str()).unwrap_or("")).fetch_all(&app.db).await?;
+    .bind(&id).fetch_all(&app.db).await?;
     recent.iter_mut().for_each(|v| profiles::hydrate(&app, v));
     Ok(Json(json!({"count": count, "recent": recent})))
 }

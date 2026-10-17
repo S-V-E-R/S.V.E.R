@@ -269,6 +269,22 @@ async fn review(
         false,
     )
     .await?;
+    let (title, body) = match to {
+        "verified" => (
+            format!("Your stream for {charity} is verified"),
+            "It now shows as Good Works on your channel.".to_string(),
+        ),
+        "rejected" => (
+            format!("Your stream for {charity} wasn't verified"),
+            format!("Staff note: {note}"),
+        ),
+        _ => (
+            format!("Good Works for {charity} was revoked"),
+            format!("Staff note: {note}"),
+        ),
+    };
+    sqlx::query("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload) VALUES(gen_random_uuid()::text,$1,'good_works',$1,'good_works:'||$2||':'||$3,jsonb_build_object('title',$4::text,'body',$5::text,'url','/studio/shine')) ON CONFLICT DO NOTHING")
+        .bind(&owner).bind(&id).bind(to).bind(title).bind(body).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(json!({"status": to})))
 }
