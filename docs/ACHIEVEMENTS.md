@@ -41,4 +41,4 @@ Cosmetics never affect MAGNet, rotation, influence or money.
 
 ## As built (October 10, 2026; `achievements.rs`, migration 0085)
 
-Covered by `tests/streams/achievements.rs`.
+Covered by `tests/streams/achievements.rs`. Since October 17, 2026, each pass skips people who already hold a key, and the four level achievements come from one pass over `xp_days`.

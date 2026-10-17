@@ -234,6 +234,26 @@ const PROGRESS: &str = "CASE o.kind
     WHEN 'scout' THEN (SELECT count(*) FROM scout_awards WHERE user_id=o.user_id AND at>=o.day::timestamp AT TIME ZONE 'UTC')
     ELSE 0 END";
 
+/// Whether order `o` could have moved since `$1`: its records have something new, or the order was
+/// drawn or rerolled since. Each kind reads the records PROGRESS counts.
+const TOUCHED: &str = "(o.drawn_at>=$1 OR CASE o.kind
+    WHEN 'watch' THEN EXISTS(SELECT 1 FROM xp_days WHERE user_id=o.user_id AND day=o.day AND source='watch' AND updated_at>=$1)
+    WHEN 'chat' THEN EXISTS(SELECT 1 FROM chat_messages WHERE author_id=o.user_id AND created_at>=$1)
+    WHEN 'follow' THEN EXISTS(SELECT 1 FROM engagement WHERE user_id=o.user_id AND first_followed_at>=$1)
+    WHEN 'surge' THEN EXISTS(SELECT 1 FROM surge_awards a JOIN surges s ON s.id=a.surge_id WHERE a.user_id=o.user_id AND s.ended_at>=$1)
+    WHEN 'rally' THEN EXISTS(SELECT 1 FROM rallies WHERE user_id=o.user_id AND minute>=extract(epoch FROM $1)::bigint/60)
+    WHEN 'poll' THEN EXISTS(SELECT 1 FROM poll_votes WHERE user_id=o.user_id AND created_at>=$1)
+    WHEN 'board' THEN EXISTS(SELECT 1 FROM board_presses WHERE user_id=o.user_id AND created_at>=$1)
+    WHEN 'beacon' THEN EXISTS(SELECT 1 FROM beacon_playback WHERE viewer_key='u:'||o.user_id AND day=o.day AND updated_at>=$1)
+    WHEN 'raid' THEN EXISTS(SELECT 1 FROM playback_leases WHERE viewer_key='u:'||o.user_id AND raid_id IS NOT NULL AND created_at>=$1)
+    WHEN 'scout' THEN EXISTS(SELECT 1 FROM scout_awards WHERE user_id=o.user_id AND at>=$1)
+    ELSE true END)";
+/// When the last finished orders pass began, less a minute for writes still in flight then. None
+/// after a restart, so the first pass checks every open order.
+/// ponytail: per process, for the one API instance; keep it in Postgres if workers ever run on several.
+static ORDERS_SINCE: std::sync::Mutex<Option<chrono::DateTime<chrono::Utc>>> =
+    std::sync::Mutex::new(None);
+
 /// The streak multiplier: ×1.1 at 3 days rising to ×2 at 30.
 pub fn streak_multiplier(days: i64) -> f64 {
     if days < 3 {
@@ -318,9 +338,14 @@ async fn ensure_orders(db: &mut PgConnection, user: &str) -> Res<()> {
 /// Each minute: stamps orders whose progress reached the target, pays their XP (rarity × streak)
 /// and any weekly milestone (7, 14, 21 orders: 100, 200, 300 XP; Joe's decision, October 17).
 async fn complete_orders(app: &App) -> Res<()> {
+    let started = chrono::Utc::now() - chrono::Duration::minutes(1);
+    let since = *ORDERS_SINCE.lock().unwrap_or_else(|e| e.into_inner());
+    // Only orders that could have moved since the last pass are evaluated.
     let done: Vec<(String, i16, i16)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT o.user_id,o.slot,o.rarity FROM daily_orders o WHERE o.day=current_date AND o.completed_at IS NULL AND ({PROGRESS})>=o.target"
+        "SELECT o.user_id,o.slot,o.rarity FROM daily_orders o WHERE o.day=current_date AND o.completed_at IS NULL
+            AND ($1::timestamptz IS NULL OR {TOUCHED}) AND ({PROGRESS})>=o.target"
     )))
+    .bind(since)
     .fetch_all(&app.db)
     .await?;
     for (user, slot, rarity) in done {
@@ -371,6 +396,7 @@ async fn complete_orders(app: &App) -> Res<()> {
             .bind(&user).bind(xp).execute(&mut *tx).await?;
         tx.commit().await?;
     }
+    *ORDERS_SINCE.lock().unwrap_or_else(|e| e.into_inner()) = Some(started);
     Ok(())
 }
 /// slot, kind, rarity, target, progress, XP paid, Engagement Valor paid, its channel's name
@@ -437,7 +463,7 @@ async fn reroll(State(app): State<App>, jar: CookieJar, Path(slot): Path<i16>) -
     let taken: Vec<String> = kinds.into_iter().map(|k| k.1).collect();
     let faction = has_faction(&mut tx, &user.id).await?;
     let (kind, rarity) = (draw_kind(&taken, faction), draw_rarity());
-    sqlx::query("UPDATE daily_orders SET kind=$3,rarity=$4,target=$5,rerolled=true WHERE user_id=$1 AND day=current_date AND slot=$2")
+    sqlx::query("UPDATE daily_orders SET kind=$3,rarity=$4,target=$5,rerolled=true,drawn_at=now() WHERE user_id=$1 AND day=current_date AND slot=$2")
         .bind(&user.id).bind(slot).bind(KINDS[kind].0).bind(rarity).bind(KINDS[kind].2[rarity as usize])
         .execute(&mut *tx).await?;
     tx.commit().await?;
