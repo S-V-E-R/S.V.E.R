@@ -414,7 +414,7 @@ async fn send(
     tx.commit().await?;
     let message = message(&app, &row);
     for (to, with) in [(&other.id, &me.username), (&me.id, &other.username)] {
-        app.chat.publish(
+        app.dms.publish(
             &format!("dm:{to}"),
             None,
             row.1,
@@ -539,7 +539,7 @@ async fn still_signed_in(app: &App, jar: &CookieJar, me: &str) -> bool {
 /// Message text goes out on this socket, so it ends with the session (signing out everywhere, a
 /// password change, account deletion): checked before every delivery and each minute while idle.
 async fn session(app: App, jar: CookieJar, me: String, mut ws: WebSocket) {
-    let mut events = app.chat.subscribe();
+    let mut events = app.dms.subscribe();
     let room = format!("dm:{me}");
     let signed_out = Message::Close(Some(axum::extract::ws::CloseFrame {
         code: 4001,
@@ -723,7 +723,7 @@ async fn set_private(
     .await?;
     tx.commit().await?;
     for (to, with) in [(&other.id, &me.username), (&me.id, &other.username)] {
-        app.chat.publish(
+        app.dms.publish(
             &format!("dm:{to}"),
             None,
             0,

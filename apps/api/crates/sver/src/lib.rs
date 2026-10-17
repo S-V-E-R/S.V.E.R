@@ -235,6 +235,8 @@ pub struct App {
     pub hashing: Arc<tokio::sync::Semaphore>,
     pub dummy_hash: Arc<String>,
     pub chat: chat::Hub,
+    /// Direct-message events (`dm:{user}`), apart from the busy chat bus.
+    pub dms: chat::Hub,
 }
 impl App {
     pub async fn new(db: PgPool, config: Config) -> Result<Self> {
@@ -250,6 +252,7 @@ impl App {
             hashing: Arc::new(tokio::sync::Semaphore::new(4)),
             dummy_hash: Arc::new(security::hash_sync(&security::token())?),
             chat: chat::Hub::default(),
+            dms: chat::Hub::default(),
         })
     }
 }
