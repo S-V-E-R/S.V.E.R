@@ -63,7 +63,9 @@ export default function StreamStudio() {
       pending = true;
       try { await load(); } finally { pending = false; }
     }, 5000);
-    const hide = () => { if (document.hidden) { secretEpoch.current++; setSecret(null); setPassword(""); setCode(""); } };
+    // Only the shown key hides when the tab does; typed password and code stay, so a phone user can
+    // switch to their authenticator app and come back.
+    const hide = () => { if (document.hidden) { secretEpoch.current++; setSecret(null); } };
     document.addEventListener("visibilitychange", hide);
     return () => { active.current = false; clearInterval(timer); document.removeEventListener("visibilitychange", hide); };
   }, [load]);
