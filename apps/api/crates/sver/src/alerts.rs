@@ -245,9 +245,11 @@ pub async fn deliver(app: &App) -> Res<()> {
         let payload = json!({"id":job,"tag":format!("sver-live-{}",username.to_lowercase()),
             "title":format!("{display_name} is live"),"body":"Watch now on S.V.E.R.","url":format!("/{username}")});
         let sent = match &input {
+            // A failed send (timeout, push service down) retries; only the service saying the
+            // subscription is gone removes it.
             Some(input) => staff_push::send(app, &key, input, &job, &payload)
                 .await
-                .unwrap_or(Sent::Gone),
+                .unwrap_or(Sent::Retry),
             None => Sent::Gone,
         };
         match sent {
