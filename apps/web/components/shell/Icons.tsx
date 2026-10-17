@@ -17,6 +17,9 @@ export const BellIcon = ({ size = 18 }: Props) => svg(size, <path d="M3 8.5V5.5a
 export const MessageIcon = ({ size = 18 }: Props) => svg(size, <path d="M1.5 2.5h9v6h-5l-2.5 2v-2h-1.5z" />);
 export const MenuIcon = ({ size = 18 }: Props) => svg(size, <path d="M1.5 3h9M1.5 6h9M1.5 9h9" />);
 export const CloseIcon = ({ size = 18 }: Props) => svg(size, <path d="m2.5 2.5 7 7M9.5 2.5l-7 7" />);
+export const LockIcon = ({ size = 14 }: Props) => svg(size, <><path d="M2.5 5.5h7v5h-7z" /><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" /></>);
+export const MutedIcon = ({ size = 14 }: Props) => svg(size, <><path d="M3 8.5V5.5a3 3 0 0 1 5-2.2M9 5.8v2.7l1 1H4.5M5 10.5h2" /><path d="m1.5 1.5 9 9" /></>);
+export const MoreIcon = ({ size = 18 }: Props) => <svg width={size} height={size} viewBox="0 0 12 12" fill="currentColor" aria-hidden="true" focusable="false"><circle cx="2.5" cy="6" r="1" /><circle cx="6" cy="6" r="1" /><circle cx="9.5" cy="6" r="1" /></svg>;
 
 /** The MAGNet mark: three 4×10 px bars in the three faction colors (M.A.G. = Myria, Aetheron, Glint). */
 export const MagnetMark = () => <span className="magnet-mark" aria-hidden="true"><span /><span /><span /></span>;
