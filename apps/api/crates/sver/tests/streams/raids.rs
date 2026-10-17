@@ -195,6 +195,9 @@ pub async fn exercise(e: &Env) {
     );
     e.sql("UPDATE raids SET execute_at=now()-interval '61 seconds' WHERE status='moved'")
         .await;
+    // Only sessions the integrity pass counted are arrivals (it has run by now in production).
+    e.sql("UPDATE playback_leases SET level='counted' WHERE raid_id IS NOT NULL")
+        .await;
     tick(e).await;
     assert_eq!(arrivals(e, &id).await, Some(2));
     // A raid explains a burst of arrivals for viewer integrity.
