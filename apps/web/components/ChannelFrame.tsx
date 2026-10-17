@@ -11,6 +11,7 @@ import { LivePlayer } from "./LivePlayer";
 import { SongPlayer } from "./SongPlayer";
 import { Crest } from "./Crest";
 import { factionInfo, factionOf } from "../lib/factions";
+import { DonateLink } from "./DonateLink";
 import "../styles/profiles.css";
 
 /** The next scheduled stream, in the channel's own time zone when it has one. */
@@ -58,7 +59,7 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
           {data.header?.welcome && <p className="welcome-line">{data.header.welcome}</p>}
           {(c.mood_emoji || c.status_text || currently) && <p className="status-line">{c.mood_emoji && <span aria-label="Mood">{c.mood_emoji}</span>}{currently && <span className="currently"><strong>{currently.label}</strong> {currently.text}</span>}{c.status_text && <span>{c.status_text}</span>}</p>}
           {c.supporter?.since && <p className="supporter-line"><SupportingSince since={c.supporter.since} /></p>}
-          {c.shine?.live && <p className="shine-banner" role="note">Charity stream for <strong>{c.shine.live.name}</strong> <a className="button small" href={c.shine.live.url} target="_blank" rel="noopener noreferrer">Donate to {c.shine.live.name}</a></p>}
+          {c.shine?.live && <p className="shine-banner" role="note">Charity stream for <strong>{c.shine.live.name}</strong> <DonateLink className="button small" url={c.shine.live.url}>Donate to {c.shine.live.name}</DonateLink></p>}
           {c.shine && c.shine.badges.length > 0 && <p className="good-works">{c.shine.badges.map(b => <span key={b.charity + b.verified_at} className="badge good-works-badge" title="Good Works, verified by S.V.E.R staff">Good Works · {b.charity} · ${(b.raised_cents / 100).toLocaleString()}</span>)}</p>}
           {c.bio && <p className="bio">{c.bio}</p>}
           {c.links.length > 0 && <ul className="links">{c.links.map(l => <li key={l.url}><a href={l.url} rel="nofollow noopener noreferrer ugc" target="_blank"><PlatformIcon platform={l.platform} /><span>{platformNames[l.platform] || l.platform}</span>{linkHost(l.url) && <small className="link-host">{linkHost(l.url)}</small>}</a></li>)}</ul>}
