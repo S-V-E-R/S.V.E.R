@@ -158,6 +158,19 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    // Linked chat subscribes and unsubscribes at Twitch, which can take its 10-second timeout per
+    // call; on its own loop a slow Twitch never holds up playback, raids or Engagement Valor.
+    let linked = app.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if sver::linked_chat::tick(&linked).await.is_err() {
+                eprintln!("linked_chat_event=supervise outcome=retry");
+            }
+        }
+    });
     // Event webhooks too: a slow developer endpoint never delays a game's board webhook.
     let hooks = app.clone();
     tokio::spawn(async move {
@@ -223,9 +236,6 @@ async fn main() -> Result<(), String> {
             }
             if sver::bot::drain(&media_jobs).await.is_err() {
                 eprintln!("bot_event=drain outcome=retry");
-            }
-            if sver::linked_chat::tick(&media_jobs).await.is_err() {
-                eprintln!("linked_chat_event=supervise outcome=retry");
             }
             if sver::playback::tick(&media_jobs).await.is_err() {
                 eprintln!("playback_event=delivery outcome=retry");

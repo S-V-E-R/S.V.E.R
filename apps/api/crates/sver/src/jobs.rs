@@ -150,6 +150,9 @@ pub async fn tick(app: &App) -> Result<()> {
         .await?;
     }
     crate::chat::expire(app).await?;
+    if crate::linked_chat::expire(app).await.is_err() {
+        eprintln!("linked_chat_event=expiry outcome=retry");
+    }
     Ok(())
 }
 

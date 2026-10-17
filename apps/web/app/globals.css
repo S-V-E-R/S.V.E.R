@@ -429,7 +429,9 @@ a.takedown-link:hover { color: var(--ink); }
 .messages-item-text { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .messages-item-top { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
 .messages-item-top strong, .messages-item-text > .small-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; margin: 0; }
-.messages-unread { min-width: 20px; height: 20px; padding: 0 6px; display: inline-grid; place-items: center; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; border-radius: 10px; }
+.messages-unread { min-width: 20px; height: 20px; padding: 0 6px; display: inline-grid; place-items: center; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; }
+.messages-muted, .messages-lock { display: inline-flex; vertical-align: -1px; margin-right: 4px; }
+.messages-text[role="button"] { cursor: pointer; }
 .messages-thread { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .messages-thread-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .messages-back { display: none; }
