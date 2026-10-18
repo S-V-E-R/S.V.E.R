@@ -526,12 +526,41 @@ async fn open_data(e: &Env) {
     for n in 0..10 {
         person(e, &format!("od-{n}"), &format!("OpenData{n}"), true).await;
     }
+    // A 20-day stream on the 24/7 channel: its hours land in the weeks they happened, so last
+    // week is a full 168, shown apart from creators' hours (withheld: fewer than 10 creators).
+    let plays: Option<String> = sqlx::query_scalar("SELECT channel_id FROM plays_runtime")
+        .fetch_optional(&e.app.db)
+        .await
+        .unwrap();
+    match &plays {
+        Some(_) => e.sql("UPDATE plays_runtime SET channel_id='od-0'").await,
+        None => e.sql("INSERT INTO plays_runtime(channel_id,game,bridge_hash) VALUES('od-0','Synthetic game',repeat('0',64))").await,
+    }
+    e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,ended_at,confirmed_live_at) VALUES('od-b','od-0','od-b',1,'ENDED','s','v','c',now()-interval '20 days',now()-interval '20 days',now()-interval '20 days',now(),now()-interval '20 days')").await;
     sver::open_data::compute(&e.app).await.unwrap();
+    match &plays {
+        Some(channel) => {
+            sqlx::query("UPDATE plays_runtime SET channel_id=$1")
+                .bind(channel)
+                .execute(&e.app.db)
+                .await
+                .unwrap();
+        }
+        None => e.sql("DELETE FROM plays_runtime").await,
+    }
     let (status, data) = get(e, "/api/open-data", None).await;
     assert_eq!(status, StatusCode::OK);
     let weeks = data["weekly"].as_array().unwrap();
     assert_eq!(weeks.len(), 12);
     let this = weeks.last().unwrap();
+    assert_eq!(this["complete"], false, "this week is still filling up");
+    let last = weeks[10]["hours_always_on"].as_f64().unwrap();
+    assert!((168.0..200.0).contains(&last), "{last}");
+    assert_eq!(
+        weeks[10]["hours_streamed"],
+        Value::Null,
+        "fewer than 10 creators"
+    );
     assert!(this["accounts_total"].as_f64().unwrap() >= 10.0, "{this}");
     assert_eq!(this["faction_glint"], Value::Null, "fewer than 10");
     assert_eq!(
@@ -542,13 +571,13 @@ async fn open_data(e: &Env) {
     let (status, csv) = get_text(e, "/api/open-data/weekly.csv").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        csv.starts_with("period,accounts_total,") && csv.contains("fewer than 10"),
+        csv.starts_with("period,complete,accounts_total,") && csv.contains("fewer than 10"),
         "{csv}"
     );
     let (_, csv) = get_text(e, "/api/open-data/monthly.csv").await;
     assert!(
         csv.starts_with(
-            "period,creators_cents,platform_cents,payouts_cents,wall_cents,supporters_cents,ads_cents\n"
+            "period,from,complete,creators_cents,platform_cents,payouts_cents,wall_cents,supporters_cents,ads_cents\n"
         ),
         "Wall and platform supporters are their own lines: {csv}"
     );
