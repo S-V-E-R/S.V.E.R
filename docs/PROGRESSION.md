@@ -36,7 +36,7 @@ A title that follows the account level, different per faction (Proposed ladder a
 
 - **3 orders a day (Proposed; legacy used 4)**, reset at midnight UTC, 1 reroll a day. They're drawn by rarity weight (Common 50, Uncommon 30, Rare 15, Epic 4, Legendary 1; ported) from types the viewer can actually do: no streamer-only or subscriber-only orders for people who can't do them.
 - **Types, each completed by an event S.V.E.R already records:** watch N minutes (Counted playback), chat in N channels, follow a new channel, take part in a Surge, rally your faction, vote in a poll, press a board control, watch a Beacon to the end, join a raid, watch a stream started in the last 30 minutes (Scout).
-- **Rewards:** XP (rarity ×1 / 1.5 / 2 / 3 / 5; streak ×1.1 at 3 days up to ×2 at 30; ported, capped lower) plus what Question 3 decides. Weekly milestones at 10/20/30 orders (ported) pay XP only unless Question 3 says otherwise.
+- **Rewards:** XP (rarity ×1 / 1.5 / 2 / 3 / 5; streak ×1.1 at 3 days up to ×2 at 30; ported, capped lower) plus what Question 3 decides. Weekly milestones at 7/14/21 orders pay 100/200/300 XP (Joe, October 17, 2026: legacy's 10/20/30 couldn't all be reached at 3 orders a day; 21 is every order in a week).
 - **Integrity:** progress comes from the existing event records (watch leases, chat messages, Surge participation…), never from client reports, and each event counts once per order.
 
 ## 4. The Scout bonus
