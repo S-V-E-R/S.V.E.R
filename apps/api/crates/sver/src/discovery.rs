@@ -460,15 +460,15 @@ async fn browse(State(app): State<App>) -> Res<Json<Value>> {
         sqlx::query_as("SELECT id,name,home FROM faction_genres ORDER BY position,name")
             .fetch_all(&mut *db)
             .await?;
-    let categories: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT id,name,genre FROM stream_categories WHERE active ORDER BY lower(name)",
+    let categories: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id,name,genre,image_key FROM stream_categories WHERE active ORDER BY lower(name)",
     )
     .fetch_all(&mut *db)
     .await?;
     let count = |f: &dyn Fn(&Stream) -> bool| live.iter().filter(|s| f(s)).count();
     let items: Vec<Value> = genres.into_iter().filter_map(|(id, name, home)| {
         let cats: Vec<Value> = categories.iter().filter(|c| c.2 == id)
-            .map(|c| json!({"id":c.0,"name":c.1,"live":count(&|s| s.category_id.as_deref() == Some(c.0.as_str()))})).collect();
+            .map(|c| json!({"id":c.0,"name":c.1,"live":count(&|s| s.category_id.as_deref() == Some(c.0.as_str())),"image":crate::streams::catalog::art::art_json(&app, c.3.as_deref())})).collect();
         (!cats.is_empty()).then(|| json!({"id":id,"name":name,"home":home,"live":count(&|s| s.genre.as_deref() == Some(id.as_str())),"categories":cats}))
     }).collect();
     Ok(Json(json!({"genres":items,"live":live.len()})))

@@ -60,6 +60,12 @@ async fn main() -> Result<(), String> {
                 if sver::streams::catalog::tick(&catalog).await.is_err() {
                     eprintln!("catalog_event=refresh outcome=retry");
                 }
+                if sver::streams::catalog::steam::tick(&catalog).await.is_err() {
+                    eprintln!("catalog_event=steam outcome=retry");
+                }
+                if sver::streams::catalog::art::tick(&catalog).await.is_err() {
+                    eprintln!("catalog_event=art outcome=failed");
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
         });

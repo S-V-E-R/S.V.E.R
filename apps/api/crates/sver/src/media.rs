@@ -444,6 +444,8 @@ pub enum Kind {
     AdPortrait,
     /// Not an image: an ad video, normalized by adnet.rs; only its name and limit are used here.
     AdVideo,
+    /// Category cover art at 3:4 (streams/catalog/art.rs), fetched or uploaded by staff.
+    CategoryArt,
 }
 impl Kind {
     pub fn name(self) -> &'static str {
@@ -460,6 +462,7 @@ impl Kind {
             Kind::AlertSound => "alert_sound",
             Kind::AdLandscape | Kind::AdPortrait => "ad_image",
             Kind::AdVideo => "ad_video",
+            Kind::CategoryArt => "category_art",
         }
     }
     pub fn max_bytes(self) -> usize {
@@ -471,7 +474,7 @@ impl Kind {
             | Kind::AdLandscape
             | Kind::AdPortrait => 5 * 1024 * 1024,
             Kind::AdVideo => 11 * 1024 * 1024,
-            Kind::Banner => 10 * 1024 * 1024,
+            Kind::Banner | Kind::CategoryArt => 10 * 1024 * 1024,
             Kind::SponsorLogo => 2 * 1024 * 1024,
             Kind::SongThumb => 5 * 1024 * 1024,
             Kind::Emote | Kind::AlertSound => 1024 * 1024,
@@ -494,6 +497,7 @@ impl Kind {
                 Kind::AlertSound => "Alert sounds can be up to 1 MB.",
                 Kind::AdLandscape | Kind::AdPortrait => "Ad pictures can be up to 5 MB.",
                 Kind::AdVideo => "Ad videos can be up to 11 MB.",
+                Kind::CategoryArt => "Category art can be up to 10 MB.",
             },
         )
     }
@@ -723,6 +727,38 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
             }
         }
         Kind::AlertSound | Kind::AdVideo => Err(Fail::bad("That isn't an image.")),
+        Kind::CategoryArt => {
+            // Centered 3:4; box art is usually 2:3, so a little of the top and bottom goes.
+            let crop = centered(width, height, 0.75);
+            if crop.width < CATEGORY_ART_WIDTHS[0] {
+                return Err(Fail::field(
+                    "file",
+                    "Use a picture at least 300 by 400 pixels.",
+                ));
+            }
+            let prefix = format!("categories/{}", content_hash(bytes, kind, &crop));
+            let cropped = image.crop_imm(crop.x, crop.y, crop.width, crop.height);
+            let mut variants = Vec::new();
+            // Never upscaled past the smallest size.
+            for w in CATEGORY_ART_WIDTHS {
+                if w > crop.width && w != CATEGORY_ART_WIDTHS[0] {
+                    break;
+                }
+                let resized = cropped.resize_exact(w, w * 4 / 3, FilterType::Lanczos3);
+                variants.push(Variant {
+                    key: format!("{prefix}/{w}.webp"),
+                    bytes: encode(&resized)?,
+                    width: w,
+                    height: w * 4 / 3,
+                });
+            }
+            let largest = variants.last().map_or(0, |v| v.width);
+            Ok(Processed {
+                stored: format!("{prefix}@{largest}"),
+                variants,
+                fingerprints,
+            })
+        }
         Kind::AdLandscape | Kind::AdPortrait => {
             let landscape = kind == Kind::AdLandscape;
             let (across, down, widths) = if landscape {
@@ -918,6 +954,9 @@ pub async fn process_async(bytes: Vec<u8>, kind: Kind, crop: Option<Crop>) -> Re
         .map_err(|_| Fail::internal())?
 }
 
+/// Category art widths (3:4), served as `categories/{hash}/{width}.webp`.
+pub const CATEGORY_ART_WIDTHS: [u32; 2] = [300, 600];
+
 /// Public media is WebP images, plus MP4 video for ads.
 fn content_type(key: &str) -> &'static str {
     if key.ends_with(".mp4") {
@@ -961,6 +1000,15 @@ pub async fn store(app: &App, processed: &Processed) -> Res<()> {
 pub async fn record(
     db: &mut PgConnection,
     owner: &str,
+    kind: Kind,
+    processed: &Processed,
+) -> Res<()> {
+    record_as(db, Some(owner), kind, processed).await
+}
+/// `record`, with `None` for site-owned files such as category art.
+pub async fn record_as(
+    db: &mut PgConnection,
+    owner: Option<&str>,
     kind: Kind,
     processed: &Processed,
 ) -> Res<()> {
