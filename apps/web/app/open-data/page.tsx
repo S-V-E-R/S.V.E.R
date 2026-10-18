@@ -5,11 +5,12 @@ export const metadata = { title: "Open data | S.V.E.R", description: "How S.V.E.
 
 type Row = { period: string; from?: string; complete: boolean; [metric: string]: number | string | boolean | null | undefined };
 type Data = { weekly: Row[]; monthly: Row[]; notes: Record<string, string>; updated: string | null };
-type Metric = { key: string; title: string; unit?: string; money?: boolean };
+/** `under` is a second figure drawn beneath this one in its own color (the 24/7 channel's hours under creators'). */
+type Metric = { key: string; title: string; unit?: string; money?: boolean; withheld?: string; under?: { key: string; title: string } };
 
 const WEEKLY: Metric[] = [
   { key: "accounts_total", title: "Accounts" }, { key: "accounts_new", title: "New accounts" }, { key: "channels_streamed", title: "Channels that streamed" },
-  { key: "hours_streamed", title: "Hours streamed" }, { key: "rotation_reach", title: "Streams the fair rotation put first", unit: "%" },
+  { key: "hours_streamed", title: "Hours streamed", unit: " hours", withheld: "hidden until 10 creators stream", under: { key: "hours_always_on", title: "24/7 channel" } }, { key: "rotation_reach", title: "Streams the fair rotation put first", unit: "%" },
   { key: "faction_myria", title: "Myria members" }, { key: "faction_aetheron", title: "Aetheron members" }, { key: "faction_glint", title: "Glint members" },
 ];
 const MONTHLY: Metric[] = [["creators_cents", "Creators' share"], ["platform_cents", "S.V.E.R's share"], ["payouts_cents", "Payouts sent"], ["wall_cents", "Wall seats sold"], ["ads_cents", "Ad revenue"], ["supporters_cents", "Platform supporters"]].map(([key, title]) => ({ key, title, money: true }));
@@ -17,6 +18,7 @@ const MONTHLY: Metric[] = [["creators_cents", "Creators' share"], ["platform_cen
 const dollars = (cents: number) => `$${(cents / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const format = (m: Metric, v: number) => m.money ? dollars(v) : `${v.toLocaleString("en-US")}${m.unit ?? ""}`;
 const value = (r: Row, key: string) => typeof r[key] === "number" ? r[key] as number : null;
+const shown = (m: Metric, v: number | null) => v === null ? m.withheld ?? "fewer than 10" : format(m, v);
 
 /** Monday of an ISO week ("2026-W42"). */
 function monday(period: string) {
@@ -43,28 +45,40 @@ function Headline({ rows, metric, unit }: { rows: Row[]; metric: Metric; unit: s
   const combined = (r: Row) => !!r.from && r.from !== r.period;
   const now = value(last, metric.key), prev = before && !combined(before) && !combined(last) ? value(before, metric.key) : null;
   const change = now !== null && prev !== null ? Math.round((now - prev) * 10) / 10 : null;
+  const week = periodLabel(last).replace("Week of", "week of");
+  const under = metric.under ? value(last, metric.under.key) : null;
+  // Creators' hours hidden: lead with the 24/7 channel's, which is S.V.E.R's own and always shown.
+  if (metric.under && now === null && under !== null) return <p className="open-headline">
+    <strong>{format(metric, under)}</strong>
+    <span className="muted small"> on the {metric.under.title}, {week}; creators&apos; hours are {metric.withheld}</span>
+  </p>;
   return <p className="open-headline">
     <strong>{now === null ? "Fewer than 10" : format(metric, now)}</strong>
-    <span className="muted small"> {periodLabel(last).replace("Week of", "week of")}{change ? <>, {change > 0 ? "up" : "down"} {format(metric, Math.abs(change))} on the {unit} before</> : change === 0 ? <>, same as the {unit} before</> : null}</span>
+    <span className="muted small"> {metric.under && "by creators, "}{week}{change ? <>, {change > 0 ? "up" : "down"} {format(metric, Math.abs(change))} on the {unit} before</> : change === 0 ? <>, same as the {unit} before</> : null}{under !== null && <>; plus {format(metric, under)} on the {metric.under!.title}</>}</span>
   </p>;
 }
 
 /** One figure over time: a bar per period, a flat stub where it's withheld, a faded bar for the period still in progress. */
 function Bars({ rows, metric }: { rows: Row[]; metric: Metric }) {
   const values = rows.map(r => value(r, metric.key));
-  const max = Math.max(1, ...values.map(v => v ?? 0));
-  const describe = (r: Row, v: number | null) => `${periodLabel(r)}: ${v === null ? "fewer than 10" : format(metric, v)}${r.complete ? "" : " so far"}`;
+  const unders = rows.map(r => metric.under ? value(r, metric.under.key) ?? 0 : 0);
+  const max = Math.max(1, ...values.map((v, i) => (v ?? 0) + unders[i]));
+  const describe = (r: Row, v: number | null, i = rows.indexOf(r)) => `${periodLabel(r)}: ${shown(metric, v)}${metric.under ? `, ${metric.under.title} ${format(metric, unders[i])}` : ""}${r.complete ? "" : " so far"}`;
   // At least 12 slots wide, so a chart with few bars keeps the same scale as the rest.
   const width = Math.max(rows.length, 12) * 28, every = Math.ceil(rows.length / 4);
   return <svg className="open-chart" viewBox={`0 0 ${width} 132`} role="img" aria-label={rows.map((r, i) => describe(r, values[i])).join("; ")}>
     <text x={2} y={9} className="open-tick">{format(metric, max)}</text>
     <line x1={0} x2={width} y1={12} y2={12} className="open-gridline" />
+    {metric.under && <defs><pattern id={`open-under-${metric.key}`} width={4} height={4} patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width={4} height={4} className="open-bar-under" /><rect width={1.5} height={4} className="open-bar-under-stripe" /></pattern></defs>}
     {rows.map((r, i) => {
       const v = values[i];
+      const u = unders[i] > 0 ? Math.max(2, (unders[i] / max) * 100) : 0;
       const h = v === null ? 0 : Math.max(2, (v / max) * 100);
+      const partial = r.complete ? "" : " open-bar-partial";
       return <g key={r.period}>
         <title>{describe(r, v)}</title>
-        {v === null ? <rect x={i * 28 + 4} y={108} width={20} height={4} className="open-bar-withheld" /> : <rect x={i * 28 + 4} y={112 - h} width={20} height={h} className={r.complete ? "open-bar" : "open-bar open-bar-partial"} />}
+        {u > 0 && <rect x={i * 28 + 4} y={112 - u} width={20} height={u} fill={`url(#open-under-${metric.key})`} className={partial} />}
+        {v === null ? <rect x={i * 28 + 4} y={108 - u} width={20} height={4} className="open-bar-withheld" /> : <rect x={i * 28 + 4} y={112 - u - h} width={20} height={h} className={`open-bar${partial}`} />}
         {(rows.length - 1 - i) % every === 0 && <text x={i * 28 + 14} y={126} textAnchor="middle" className="open-tick">{tick(r)}</text>}
       </g>;
     })}
@@ -76,19 +90,21 @@ function Charts({ rows, metrics, notes, unit }: { rows: Row[]; metrics: Metric[]
     <h3>{m.title}</h3>
     <Headline rows={rows} metric={m} unit={unit} />
     <Bars rows={rows} metric={m} />
-    <p className="muted small">{notes[m.key]}.</p>
+    {m.under && <p className="open-legend small"><span className="open-swatch" /> Creators <span className="open-swatch open-swatch-under" /> {m.under.title} <span className="open-swatch open-swatch-withheld" /> Hidden</p>}
+    <p className="muted small">{notes[m.key]}.{m.under && <> {notes[m.under.key]}.</>}</p>
   </section>)}</div>;
 }
 
 /** The same figures as a table, newest first. */
-function Table({ rows, metrics }: { rows: Row[]; metrics: Metric[] }) {
+function Table({ rows, metrics: shownMetrics }: { rows: Row[]; metrics: Metric[] }) {
+  const metrics = shownMetrics.flatMap(m => m.under ? [{ ...m, title: `${m.title} (creators)` }, { ...m, ...m.under, under: undefined, withheld: undefined }] : [m]);
   return <details className="open-table">
     <summary>Show as a table</summary>
     <div className="table-scroll"><table>
       <thead><tr><th scope="col">Period</th>{metrics.map(m => <th key={m.key} scope="col">{m.title}</th>)}</tr></thead>
       <tbody>{[...rows].reverse().map(r => <tr key={r.period}>
         <th scope="row">{periodLabel(r)}{r.complete ? "" : " (so far)"}</th>
-        {metrics.map(m => { const v = value(r, m.key); return <td key={m.key}>{v === null ? "fewer than 10" : format(m, v)}</td>; })}
+        {metrics.map(m => { const v = value(r, m.key); return <td key={m.key}>{shown(m, v)}</td>; })}
       </tr>)}</tbody>
     </table></div>
   </details>;

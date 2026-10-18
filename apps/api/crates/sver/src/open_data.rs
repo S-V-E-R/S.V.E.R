@@ -24,7 +24,11 @@ const WEEKLY: &[(&str, &str)] = &[
     ("channels_streamed", "Channels live at any point that week"),
     (
         "hours_streamed",
-        "Hours live that week, counted in the week they happened (a stream that runs past Sunday splits across weeks)",
+        "Hours creators were live that week, counted in the week they happened (a stream that runs past Sunday splits across weeks); hidden until 10 creators streamed, so no one's hours show",
+    ),
+    (
+        "hours_always_on",
+        "Hours of S.V.E.R's own 24/7 channel (SVER Plays) that week",
     ),
     (
         "rotation_reach",
@@ -78,7 +82,9 @@ pub async fn compute(app: &App) -> Res<()> {
           ('accounts_total',(SELECT count(*) FROM users WHERE created_at<w+interval '1 week' AND (deleted_at IS NULL OR deleted_at>=w+interval '1 week'))::float8),
           ('accounts_new',(SELECT count(*) FROM users WHERE created_at>=w AND created_at<w+interval '1 week')::float8),
           ('channels_streamed',(SELECT count(DISTINCT owner_id) FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w)::float8),
-          ('hours_streamed',(SELECT coalesce(sum(extract(epoch FROM least(coalesce(ended_at,now()),w+interval '1 week')-greatest(confirmed_live_at,w))),0)/3600 FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w)::float8),
+          ('hours_streamed',(SELECT coalesce(sum(extract(epoch FROM least(coalesce(ended_at,now()),w+interval '1 week')-greatest(confirmed_live_at,w))),0)/3600 FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w AND NOT EXISTS(SELECT 1 FROM plays_runtime p WHERE p.channel_id=owner_id))::float8),
+          ('hours_streamed_base',(SELECT count(DISTINCT owner_id) FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w AND NOT EXISTS(SELECT 1 FROM plays_runtime p WHERE p.channel_id=owner_id))::float8),
+          ('hours_always_on',(SELECT coalesce(sum(extract(epoch FROM least(coalesce(ended_at,now()),w+interval '1 week')-greatest(confirmed_live_at,w))),0)/3600 FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w AND EXISTS(SELECT 1 FROM plays_runtime p WHERE p.channel_id=owner_id))::float8),
           ('rotation_reach_base',(SELECT count(*) FROM broadcasts WHERE confirmed_live_at>=w AND confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())-confirmed_live_at>=interval '10 minutes')::float8),
           ('rotation_reach',(SELECT CASE WHEN count(*)=0 THEN 0 ELSE 100.0*count(f.broadcast_id)/count(*) END FROM broadcasts b LEFT JOIN rotation_firsts f ON f.broadcast_id=b.id WHERE b.confirmed_live_at>=w AND b.confirmed_live_at<w+interval '1 week' AND coalesce(b.ended_at,now())-b.confirmed_live_at>=interval '10 minutes')::float8),
           ('faction_myria',(SELECT count(*) FROM faction_members WHERE faction='myria' AND joined_at<w+interval '1 week')::float8),
@@ -144,13 +150,16 @@ async fn figures(app: &App) -> Res<(Vec<Value>, Vec<Value>)> {
         let mut row = json!({"period": period, "complete": **period != this_week});
         for (metric, _) in WEEKLY {
             let value = get(period, metric).unwrap_or(0.0);
-            // Counts under 10 are "fewer than 10"; the reach percentage needs 10 streams behind it.
-            let base = if *metric == "rotation_reach" {
-                get(period, "rotation_reach_base").unwrap_or(0.0)
-            } else {
-                value
+            // Counts under 10 are "fewer than 10"; the reach percentage needs 10 streams behind it,
+            // creators' hours 10 creators. The 24/7 channel is S.V.E.R's own, so it always shows.
+            let base = match *metric {
+                "rotation_reach" | "hours_streamed" => {
+                    get(period, &format!("{metric}_base")).unwrap_or(0.0)
+                }
+                "hours_always_on" => 10.0,
+                _ => value,
             };
-            row[*metric] = if base < 10.0 && *metric != "hours_streamed" {
+            row[*metric] = if base < 10.0 {
                 Value::Null
             } else {
                 json!((value * 10.0).round() / 10.0)
