@@ -113,7 +113,7 @@ function Table({ rows, metrics: shownMetrics }: { rows: Row[]; metrics: Metric[]
 /** /open-data (docs/CHANNEL_ADDITIONS.md "Open data"): figures written nightly; no per-person numbers. */
 export default async function OpenData() {
   const data = (await apiGet<Data>("/api/open-data")).data;
-  return <SitePage path="/open-data" title="Open data" intro="How S.V.E.R is doing and where the money goes. There are no per-person or per-channel figures: a weekly count under 10 shows as fewer than 10, and a month in which fewer than 10 creators were paid is combined with the next." wide>
+  return <SitePage path="/open-data" title="Open data" intro="How S.V.E.R is doing and where the money goes. There are no per-person or per-channel figures: a weekly count under 10 shows as fewer than 10 (faction members are shown exactly, since each faction's member directory is public), and a month in which fewer than 10 creators were paid is combined with the next." wide>
     {!data ? <p role="alert">The figures couldn&apos;t be loaded. Please try again later.</p> : <>
       {data.updated && <p className="muted small">Updated {new Date(data.updated).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" })} UTC, once a day. Weeks run Monday to Sunday (UTC); a faded bar is the week or month still in progress.</p>}
       <h2>Weekly <a className="small" href="/api/open-data/weekly.csv" download>Download CSV</a></h2>

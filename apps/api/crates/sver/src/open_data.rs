@@ -34,9 +34,18 @@ const WEEKLY: &[(&str, &str)] = &[
         "rotation_reach",
         "Percent of streams live 10+ minutes that the fair rotation put in first place",
     ),
-    ("faction_myria", "Myria members"),
-    ("faction_aetheron", "Aetheron members"),
-    ("faction_glint", "Glint members"),
+    (
+        "faction_myria",
+        "Myria members at the end of the week, shown exactly: the member directory is public",
+    ),
+    (
+        "faction_aetheron",
+        "Aetheron members at the end of the week, shown exactly: the member directory is public",
+    ),
+    (
+        "faction_glint",
+        "Glint members at the end of the week, shown exactly: the member directory is public",
+    ),
 ];
 const MONTHLY: &[(&str, &str)] = &[
     (
@@ -87,9 +96,9 @@ pub async fn compute(app: &App) -> Res<()> {
           ('hours_always_on',(SELECT coalesce(sum(extract(epoch FROM least(coalesce(ended_at,now()),w+interval '1 week')-greatest(confirmed_live_at,w))),0)/3600 FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w AND EXISTS(SELECT 1 FROM plays_runtime p WHERE p.channel_id=owner_id))::float8),
           ('rotation_reach_base',(SELECT count(*) FROM broadcasts WHERE confirmed_live_at>=w AND confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())-confirmed_live_at>=interval '10 minutes')::float8),
           ('rotation_reach',(SELECT CASE WHEN count(*)=0 THEN 0 ELSE 100.0*count(f.broadcast_id)/count(*) END FROM broadcasts b LEFT JOIN rotation_firsts f ON f.broadcast_id=b.id WHERE b.confirmed_live_at>=w AND b.confirmed_live_at<w+interval '1 week' AND coalesce(b.ended_at,now())-b.confirmed_live_at>=interval '10 minutes')::float8),
-          ('faction_myria',(SELECT count(*) FROM faction_members WHERE faction='myria' AND joined_at<w+interval '1 week')::float8),
-          ('faction_aetheron',(SELECT count(*) FROM faction_members WHERE faction='aetheron' AND joined_at<w+interval '1 week')::float8),
-          ('faction_glint',(SELECT count(*) FROM faction_members WHERE faction='glint' AND joined_at<w+interval '1 week')::float8)
+          ('faction_myria',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='myria' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8),
+          ('faction_aetheron',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='aetheron' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8),
+          ('faction_glint',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='glint' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8)
         ) m(metric,value)
         ON CONFLICT(period,metric) DO UPDATE SET value=EXCLUDED.value,computed_at=now()")
         .execute(&mut *tx).await?;
@@ -156,7 +165,8 @@ async fn figures(app: &App) -> Res<(Vec<Value>, Vec<Value>)> {
                 "rotation_reach" | "hours_streamed" => {
                     get(period, &format!("{metric}_base")).unwrap_or(0.0)
                 }
-                "hours_always_on" => 10.0,
+                // Faction membership is public in each faction's member directory.
+                "hours_always_on" | "faction_myria" | "faction_aetheron" | "faction_glint" => 10.0,
                 _ => value,
             };
             row[*metric] = if base < 10.0 {

@@ -537,6 +537,11 @@ async fn open_data(e: &Env) {
         None => e.sql("INSERT INTO plays_runtime(channel_id,game,bridge_hash) VALUES('od-0','Synthetic game',repeat('0',64))").await,
     }
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,ended_at,confirmed_live_at) VALUES('od-b','od-0','od-b',1,'ENDED','s','v','c',now()-interval '20 days',now()-interval '20 days',now()-interval '20 days',now(),now()-interval '20 days')").await;
+    // Three members, one of them deleted: faction counts are exact and leave deleted accounts out.
+    e.sql("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES('od-1','aetheron',now(),now()),('od-2','aetheron',now(),now()),('od-3','aetheron',now(),now()) ON CONFLICT(user_id) DO UPDATE SET faction='aetheron'").await;
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='aetheron' AND u.deleted_at IS NULL AND f.user_id NOT IN ('od-1','od-2','od-3')").fetch_one(&e.app.db).await.unwrap();
+    e.sql("UPDATE users SET deleted_at=now() WHERE id='od-3'")
+        .await;
     sver::open_data::compute(&e.app).await.unwrap();
     match &plays {
         Some(channel) => {
@@ -562,7 +567,11 @@ async fn open_data(e: &Env) {
         "fewer than 10 creators"
     );
     assert!(this["accounts_total"].as_f64().unwrap() >= 10.0, "{this}");
-    assert_eq!(this["faction_glint"], Value::Null, "fewer than 10");
+    assert_eq!(
+        this["faction_aetheron"].as_f64().unwrap(),
+        (before + 2) as f64,
+        "faction counts are exact (the directory is public): {this}"
+    );
     assert_eq!(
         data["monthly"],
         json!([]),
