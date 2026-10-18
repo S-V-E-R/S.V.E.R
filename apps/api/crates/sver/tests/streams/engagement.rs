@@ -193,6 +193,10 @@ pub async fn exercise(e: &Env) {
     assert_eq!(reroll(2).await, StatusCode::BAD_REQUEST, "one reroll a day");
 
     // A failed payment leaves its order for the next minute, and never holds up anyone else's.
+    // (The viewer's rerolled order is a random draw; keep it out of reach so the reward
+    // arithmetic below stays as it was.)
+    e.sql("UPDATE daily_orders SET target=1000 WHERE user_id='ev-viewer' AND completed_at IS NULL")
+        .await;
     let mut tokens = Vec::new();
     for (id, name) in [("ev-o1", "EvOrders1"), ("ev-o2", "EvOrders2")] {
         tokens.push(person(e, id, name, true).await);
@@ -231,6 +235,34 @@ pub async fn exercise(e: &Env) {
         (&json!(true), &json!(0), &json!("Chat in a channel")),
         "{theirs}"
     );
+
+    // Weekly milestones at 7, 14 and 21 (every order 3 a day allows): the 21st order of the week
+    // pays all three (100 + 200 + 300 XP) and earns Order Keeper.
+    person(e, "ev-keeper", "EvKeeper", true).await;
+    e.sql(
+        "INSERT INTO daily_orders(user_id,day,slot,kind,rarity,target,completed_at,xp)
+        SELECT 'ev-keeper',date_trunc('week',current_date)::date+d,s,'poll',0,1,now(),40
+        FROM generate_series(0,6) d, generate_series(0,2) s
+        WHERE NOT (date_trunc('week',current_date)::date+d=current_date AND s=0)",
+    )
+    .await;
+    e.sql("INSERT INTO daily_orders(user_id,day,slot,kind,rarity,target) VALUES('ev-keeper',current_date,0,'watch',0,1)").await;
+    e.sql("INSERT INTO xp_days(user_id,day,source,xp,minutes) VALUES('ev-keeper',current_date,'watch',10,1)").await;
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    let milestones: Vec<i16> = sqlx::query_scalar(
+        "SELECT orders FROM order_milestones WHERE user_id='ev-keeper' ORDER BY orders",
+    )
+    .fetch_all(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(milestones, [7, 14, 21]);
+    let (order_xp, paid): (i32, i32) = sqlx::query_as("SELECT (SELECT xp FROM daily_orders WHERE user_id='ev-keeper' AND day=current_date AND slot=0),(SELECT xp FROM xp_days WHERE user_id='ev-keeper' AND day=current_date AND source='orders')")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(paid - order_xp, 600, "100 + 200 + 300 XP");
+    sver::achievements::award(&e.app).await.unwrap();
+    let keeper: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_achievements WHERE user_id='ev-keeper' AND key='order_keeper')")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert!(keeper, "Order Keeper is reachable");
 
     // Several new channels qualifying at once award only what's left of today's 3 Scout bonuses.
     person(e, "ev-scout", "EvScout", true).await;

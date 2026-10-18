@@ -2,10 +2,11 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
+import { ReportButton } from "./Report";
 import type { Chip } from "../lib/types";
 
 type Moment = { video_id: string; kind: "CLIP" | "HIGHLIGHT"; title: string; description: string };
-type Lights = { count: number; recent: { id: string; from: Chip; message: string; at: string }[] };
+type Lights = { count: number; recent: { id: string; from: Chip; message: string; at: string; can_report?: boolean }[] };
 
 /** Shine Moments and Light It Up on a channel page (docs/SUPPORT.md "Shine"). */
 export function Shine({ username, isOwner, signedIn }: { username: string; isOwner: boolean; signedIn: boolean }) {
@@ -38,6 +39,6 @@ export function Shine({ username, isOwner, signedIn }: { username: string; isOwn
       <button type="submit" className="small">Light it up</button>
     </form>}
     {message && <p role="status" className="muted small">{message}</p>}
-    {!!lights?.recent.length && <ul className="light-list">{lights.recent.map(l => <li key={l.id}><strong>{l.from.display_name}</strong>: {l.message}{isOwner && <> <button type="button" className="small quiet" onClick={() => void hide(l.id)}>Hide</button></>}</li>)}</ul>}
+    {!!lights?.recent.length && <ul className="light-list">{lights.recent.map(l => <li key={l.id}><strong>{l.from.display_name}</strong>: {l.message}{isOwner && <> <button type="button" className="small quiet" onClick={() => void hide(l.id)}>Hide</button></>}{l.can_report && <> <ReportButton target={{ target_type: "light", target_id: l.id }} /></>}</li>)}</ul>}
   </section>;
 }

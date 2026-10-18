@@ -64,7 +64,7 @@ pub async fn live_streams(db: &mut PgConnection) -> Res<Vec<Stream>> {
           (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers,
           NOT EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at) AS first_stream,
           coalesce((SELECT max(p.ended_at) FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at)<b.started_at-interval '30 days',false) AS returning,
-          (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id) AS charity,
+          (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id AND EXISTS(SELECT 1 FROM charity_links k WHERE k.url=cs.donate_url AND k.status='approved')) AS charity,
           coalesce(s.mature,false) AS mature, s.language,
           EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.ended_at>b.started_at-interval '30 minutes' AND p.started_at<b.started_at) AS restarted
          FROM broadcasts b JOIN channel_users cu ON cu.id=b.owner_id AND cu.eligible
