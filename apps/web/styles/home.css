@@ -186,7 +186,7 @@ a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .season-replay:hover:not(:disabled) { color: var(--accent-light); filter: none; }
 /* Home shelves: one row that scrolls sideways, so a row never ends with one stranded card. */
 .stream-grid.shelf, .territory-grid.shelf { grid-auto-flow: column; grid-template-columns: none; overflow-x: auto; scrollbar-width: thin; padding-bottom: 6px; scroll-snap-type: x proximity; }
-.stream-grid.shelf { grid-auto-columns: minmax(220px, 1fr); }
+.stream-grid.shelf { grid-auto-columns: minmax(220px, 280px); }
 .territory-grid.shelf { grid-auto-columns: minmax(150px, 160px); }
 .stream-grid.shelf > *, .territory-grid.shelf > * { scroll-snap-align: start; }
 @media (max-width: 700px) { .stream-grid.shelf { grid-auto-columns: 72%; } .territory-grid.shelf { grid-auto-columns: 44%; } }
