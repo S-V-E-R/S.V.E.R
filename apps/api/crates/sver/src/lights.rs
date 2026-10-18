@@ -175,14 +175,15 @@ async fn received(
 ) -> Res<Json<Value>> {
     let id = channel(&app, &name).await?;
     let viewer = profiles::viewer(&app, &jar).await?;
-    let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM lights WHERE to_id=$1 AND NOT hidden")
-            .bind(&id)
-            .fetch_one(&app.db)
-            .await?;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM lights WHERE to_id=$1 AND NOT hidden AND removed_at IS NULL",
+    )
+    .bind(&id)
+    .fetch_one(&app.db)
+    .await?;
     let mut recent: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT jsonb_build_object('id',l.id,'from',{},'message',l.message,'at',l.created_at) FROM lights l JOIN channel_users c ON c.id=l.from_id
-        WHERE l.to_id=$1 AND NOT l.hidden AND c.eligible AND l.message IS NOT NULL
+        "SELECT jsonb_build_object('id',l.id,'from',{},'message',l.message,'at',l.created_at,'can_report',$2<>'' AND l.from_id<>$2) FROM lights l JOIN channel_users c ON c.id=l.from_id
+        WHERE l.to_id=$1 AND NOT l.hidden AND l.removed_at IS NULL AND c.eligible AND l.message IS NOT NULL
         AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=$2 AND k.blocked_id=l.from_id) OR (k.blocker_id=l.from_id AND k.blocked_id=$2))
         ORDER BY l.created_at DESC LIMIT 10",
         profiles::chip_sql("c")
@@ -204,6 +205,58 @@ async fn hide(State(app): State<App>, jar: CookieJar, Path(id): Path<String>) ->
         return Err(Fail::missing());
     }
     Ok(Json(json!({"hidden": true})))
+}
+
+// ---- Reports (Joe, October 17, 2026: lights stay public, and their messages can be reported) ----
+
+/// A light's message as a report target: shown on the recipient's page, not by the reporter, and
+/// outside any block between them (what the reporter can see). The giver owns it.
+pub async fn report_target(
+    db: &mut sqlx::PgConnection,
+    id: &str,
+    reporter: &str,
+) -> Res<Option<(String, String, Value)>> {
+    Ok(sqlx::query_as("SELECT c.id,c.username,jsonb_build_object('message',l.message,'to',o.username) FROM lights l JOIN channel_users c ON c.id=l.from_id JOIN channel_users o ON o.id=l.to_id
+        WHERE l.id=$1 AND l.from_id<>$2 AND NOT l.hidden AND l.removed_at IS NULL AND l.message IS NOT NULL AND o.eligible AND c.deleted_at IS NULL
+          AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=$2 AND k.blocked_id=l.from_id) OR (k.blocker_id=l.from_id AND k.blocked_id=$2))")
+        .bind(id).bind(reporter).fetch_optional(db).await?)
+}
+pub async fn owner(db: &mut sqlx::PgConnection, id: &str) -> Res<Option<String>> {
+    Ok(sqlx::query_scalar("SELECT from_id FROM lights WHERE id=$1")
+        .bind(id)
+        .fetch_optional(db)
+        .await?)
+}
+pub async fn current(db: &mut sqlx::PgConnection, id: &str) -> Res<Value> {
+    Ok(sqlx::query_scalar("SELECT jsonb_build_object('message',message,'hidden',hidden,'removed',removed_at IS NOT NULL) FROM lights WHERE id=$1")
+        .bind(id).fetch_optional(db).await?.unwrap_or(Value::Null))
+}
+/// Staff removal takes the whole light off the page (its message and its place in the count).
+pub async fn remove(db: &mut sqlx::PgConnection, id: &str) -> Res<Value> {
+    let visible: bool =
+        sqlx::query_scalar("SELECT removed_at IS NULL FROM lights WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *db)
+            .await?
+            .ok_or_else(Fail::missing)?;
+    if visible {
+        sqlx::query("UPDATE lights SET removed_at=now() WHERE id=$1")
+            .bind(id)
+            .execute(&mut *db)
+            .await?;
+    }
+    let previous = if visible { "VISIBLE" } else { "REMOVED" };
+    Ok(json!({"type": "light", "id": id, "previous": previous}))
+}
+/// An overturned strike puts back a light staff removed (a recipient's own hide stays).
+pub async fn restore(db: &mut sqlx::PgConnection, id: &str, previous: &str) -> Res<()> {
+    if previous == "VISIBLE" {
+        sqlx::query("UPDATE lights SET removed_at=NULL WHERE id=$1")
+            .bind(id)
+            .execute(db)
+            .await?;
+    }
+    Ok(())
 }
 
 pub fn routes() -> Router<App> {

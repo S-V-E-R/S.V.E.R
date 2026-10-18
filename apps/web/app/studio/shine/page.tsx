@@ -4,7 +4,8 @@ import { Section, Status, type SaveState } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 
 type Stream = { id: string; charity: string; url: string; started_at: string; live: boolean; raised_cents: number | null; proof_url: string | null; status: "none" | "submitted" | "verified" | "rejected" | "revoked"; review_note: string | null };
-type Data = { charity_name: string | null; charity_url: string | null; streams: Stream[] };
+type Link = { status: "pending" | "approved" | "rejected"; note: string | null };
+type Data = { charity_name: string | null; charity_url: string | null; link: Link | null; streams: Stream[] };
 const STATUS = { none: "Not submitted", submitted: "Waiting for staff", verified: "Good Works badge", rejected: "Not verified", revoked: "Badge revoked" };
 
 /** Creator Studio → Shine: charity streams and Good Works badges (docs/SUPPORT.md "Shine"). */
@@ -38,13 +39,18 @@ export default function StudioShine() {
   if (!data) return state.error ? <Status state={state} /> : <p className="loading">Loading…</p>;
   return <><h1>Shine</h1>
     <p>Let your light shine. Mark your streams as charity streams: viewers see a Shine banner with a button to the charity&apos;s own donation page. S.V.E.R never collects or holds charity money.</p>
-    <Section title="Charity stream" intro="Applies to your current stream if you're live, and to your next streams until you remove it. Use a registered charity and a link to its own donation page or a recognized fundraiser for it.">
+    <Section title="Charity stream" intro="Applies to your current stream if you're live, and to your next streams until you remove it. Use a registered charity and a link to its own donation page or a recognized fundraiser for it. Staff check each new link once before viewers see it.">
       <form onSubmit={save} className="reward-form">
         <label className="field"><span>Charity</span><input value={name} maxLength={80} onChange={e => setName(e.target.value)} placeholder="For example: American Red Cross" /></label>
         <label className="field"><span>Donation page</span><input type="url" value={url} maxLength={500} onChange={e => setUrl(e.target.value)} placeholder="https://" /></label>
         <button disabled={busy || !name || !url}>Save charity</button>
         {data.charity_name && <button type="button" className="quiet" disabled={busy} onClick={e => save(e, true)}>Remove charity</button>}
       </form>
+      {data.link && <p className={data.link.status === "rejected" ? "form-message error" : "muted"} role="status">{data.link.status === "approved"
+        ? "Approved: viewers see the Donate button while you're live."
+        : data.link.status === "pending"
+          ? "Waiting for staff to check this link. Viewers see the Donate button once it's approved; you can go live meanwhile."
+          : <>Staff didn&apos;t approve this link{data.link.note ? <>: {data.link.note}</> : "."} Use the charity&apos;s own donation page or a recognized fundraiser for it.</>}</p>}
     </Section>
     <Section title="Good Works" intro="After a charity stream ends, submit the amount raised with a link to the charity's receipt or fundraiser page. Staff verify it and add a Good Works badge to your channel.">
       {data.streams.length === 0 ? <p className="muted">No charity streams yet.</p> : <ul className="list">{data.streams.map(stream => <li key={stream.id}>
