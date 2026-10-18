@@ -17,6 +17,8 @@ use std::collections::BTreeSet;
 const ENDPOINT: &str = "https://query.wikidata.org/sparql";
 const PAGE_SIZE: usize = 200;
 
+pub mod art;
+pub mod steam;
 #[cfg(test)]
 mod tests;
 
@@ -135,7 +137,7 @@ fn query(cursor: &str, recent: bool) -> Res<String> {
         String::new()
     };
     Ok(format!(
-        r#"SELECT ?game ?name ?description (SAMPLE(?rated) AS ?mature)
+        r#"SELECT ?game ?name ?description (SAMPLE(?rated) AS ?mature) (SAMPLE(?steamId) AS ?steam)
         (GROUP_CONCAT(DISTINCT ?genreName;separator="|") AS ?genres)
         (GROUP_CONCAT(DISTINCT ?alias;separator="|") AS ?aliases) WHERE {{
         {{ SELECT DISTINCT ?game WHERE {{ ?game wdt:P31 wd:Q7889.
@@ -148,6 +150,7 @@ fn query(cursor: &str, recent: bool) -> Res<String> {
         OPTIONAL {{ ?game schema:description ?description FILTER(LANG(?description)="en") }}
         OPTIONAL {{ ?game wdt:P136 ?genre. ?genre rdfs:label ?genreName FILTER(LANG(?genreName)="en") }}
         OPTIONAL {{ ?game skos:altLabel ?alias FILTER(LANG(?alias) IN ("en","mul")) }}
+        OPTIONAL {{ ?game wdt:P1733 ?steamId }}
         BIND(EXISTS {{ ?game wdt:P852|wdt:P908 ?rating. VALUES ?rating {{ {MATURE_RATINGS} }} }} AS ?rated)
     }} GROUP BY ?game ?name ?description ORDER BY ?game"#
     ))
@@ -167,6 +170,9 @@ struct Game {
     aliases: Binding,
     #[serde(default)]
     mature: Binding,
+    /// Steam application id (P1733), used for cover art and to merge the Steam feed's entry.
+    #[serde(default)]
+    steam: Binding,
 }
 #[derive(Deserialize)]
 struct Results {
@@ -198,8 +204,19 @@ async fn import(db: &mut PgConnection, game: &Game) -> Res<()> {
     let genres = terms(&game.genres.value);
     let description: String = game.description.value.chars().take(1000).collect();
     let genre = classify(&genres, &description);
-    sqlx::query("INSERT INTO game_catalog(source_id,name,aliases,genres,description,suggested_genre,mature) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(source_id) DO UPDATE SET name=$2,aliases=$3,genres=$4,description=$5,suggested_genre=$6,mature=$7,refreshed_at=now()")
-        .bind(id).bind(&name).bind(&aliases).bind(&genres).bind(description).bind(genre).bind(game.mature.value == "true").execute(&mut *db).await?;
+    let steam = game
+        .steam
+        .value
+        .parse::<i64>()
+        .ok()
+        .filter(|n| (1..10_000_000_000).contains(n));
+    // Wikidata takes over an unused Steam-feed entry for the same game, keeping its app id.
+    let adopted: Option<Option<i64>> = sqlx::query_scalar("WITH gone AS (DELETE FROM game_catalog WHERE source_id LIKE 'steam%' AND category_id IS NULL AND NOT reviewed AND (steam_app_id=$1 OR lower(name)=lower($2)) RETURNING steam_app_id) SELECT steam_app_id FROM gone ORDER BY steam_app_id=$1 DESC NULLS LAST LIMIT 1")
+        .bind(steam).bind(&name).fetch_optional(&mut *db).await?;
+    let steam = steam.or(adopted.flatten());
+    // An app id still held by a Steam entry already in use stays there; this entry links to it below.
+    sqlx::query("INSERT INTO game_catalog(source_id,name,aliases,genres,description,suggested_genre,mature,steam_app_id) VALUES($1,$2,$3,$4,$5,$6,$7,(SELECT $8::bigint WHERE NOT EXISTS(SELECT 1 FROM game_catalog WHERE steam_app_id=$8 AND source_id<>$1))) ON CONFLICT(source_id) DO UPDATE SET name=$2,aliases=$3,genres=$4,description=$5,suggested_genre=$6,mature=$7,steam_app_id=coalesce(EXCLUDED.steam_app_id,game_catalog.steam_app_id),refreshed_at=now()")
+        .bind(id).bind(&name).bind(&aliases).bind(&genres).bind(description).bind(genre).bind(game.mature.value == "true").bind(steam).execute(&mut *db).await?;
     let (category, reviewed): (Option<String>, bool) = sqlx::query_as(
         "SELECT category_id,reviewed FROM game_catalog WHERE source_id=$1 FOR UPDATE",
     )
@@ -209,12 +226,14 @@ async fn import(db: &mut PgConnection, game: &Game) -> Res<()> {
     if category.is_some() || reviewed {
         return Ok(());
     }
-    // Match staff-created categories (including hidden ones) before considering a new row.
+    // The Steam entry's category for the same app, then staff-created categories (including
+    // hidden ones), before considering a new row.
     let existing: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM stream_categories c WHERE lower(name)=lower($1) AND NOT EXISTS(SELECT 1 FROM game_catalog g WHERE g.category_id=c.id AND g.source_id<>$2) ORDER BY id LIMIT 1",
+        "SELECT id FROM (SELECT category_id AS id,0 AS rank FROM game_catalog WHERE steam_app_id=$3 AND source_id<>$2 AND category_id IS NOT NULL UNION ALL SELECT id,1 FROM stream_categories c WHERE lower(name)=lower($1) AND NOT EXISTS(SELECT 1 FROM game_catalog g WHERE g.category_id=c.id AND g.source_id<>$2)) x ORDER BY rank,id LIMIT 1",
     )
     .bind(&name)
     .bind(id)
+    .bind(steam)
     .fetch_optional(&mut *db)
     .await?;
     sqlx::query("UPDATE game_catalog SET category_id=$2 WHERE source_id=$1")
@@ -241,10 +260,11 @@ pub async fn select(db: &mut PgConnection, category: &str) -> Res<String> {
     if exists {
         return Ok(category.into());
     }
-    let source = category
-        .strip_prefix("wikidata-q")
-        .map(|n| format!("Q{n}"))
-        .ok_or_else(|| Fail::bad("Choose an available stream category."))?;
+    let source = match category.strip_prefix("wikidata-q") {
+        Some(n) => format!("Q{n}"),
+        None if category.starts_with("steam") => category.to_string(),
+        None => return Err(Fail::bad("Choose an available stream category.")),
+    };
     let row: Option<(String, String, Option<String>)> = sqlx::query_as("SELECT name,suggested_genre,category_id FROM game_catalog WHERE source_id=$1 AND suggested_genre IS NOT NULL AND NOT reviewed FOR UPDATE")
         .bind(&source).fetch_optional(&mut *db).await?;
     let (name, genre, linked) =
@@ -326,7 +346,7 @@ async fn tick_at(app: &App, endpoint: &str) -> Res<()> {
 
 async fn fetch(app: &App, endpoint: &str, cursor: &str, recent: bool) -> Result<Vec<Game>, u64> {
     let query = query(cursor, recent).map_err(|_| 3600u64)?;
-    let mut response = app
+    let response = app
         .http
         .get(endpoint)
         .header("User-Agent", "SVER-Catalog/1.0 (https://sver.tv/contact)")
@@ -337,21 +357,9 @@ async fn fetch(app: &App, endpoint: &str, cursor: &str, recent: bool) -> Result<
         .await
         .map_err(|_| 3600u64)?;
     if !response.status().is_success() {
-        return Err(response
-            .headers()
-            .get("retry-after")
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(3600)
-            .clamp(60, 86400));
+        return Err(retry_after(&response));
     }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| 3600u64)? {
-        if body.len() + chunk.len() > 2_000_000 {
-            return Err(3600);
-        }
-        body.extend_from_slice(&chunk);
-    }
+    let body = read(response, 2_000_000).await.ok_or(3600u64)?;
     let page: Page = serde_json::from_slice(&body).map_err(|_| 3600u64)?;
     if page.results.bindings.len() > PAGE_SIZE {
         return Err(3600);
@@ -365,6 +373,36 @@ async fn fetch(app: &App, endpoint: &str, cursor: &str, recent: bool) -> Result<
         previous = id;
     }
     Ok(page.results.bindings)
+}
+
+/// Seconds to wait before retrying a provider, from its Retry-After header.
+fn retry_after(response: &reqwest::Response) -> u64 {
+    response
+        .headers()
+        .get("retry-after")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(3600)
+        .clamp(60, 86400)
+}
+/// A provider response body, or `None` past `limit` bytes or on a broken connection.
+async fn read(mut response: reqwest::Response, limit: usize) -> Option<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if body.len() + chunk.len() > limit {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Some(body)
+}
+/// The category id a catalog entry gets when first chosen.
+fn choice_id(source: &str) -> String {
+    if source.starts_with("steam") {
+        source.into()
+    } else {
+        format!("wikidata-{}", source.to_lowercase())
+    }
 }
 
 pub async fn review_queue(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
@@ -410,7 +448,7 @@ pub async fn review(
         let chosen = if let Some(existing) = existing {
             existing
         } else {
-            let id = format!("wikidata-{}", id.to_lowercase());
+            let id = choice_id(&id);
             sqlx::query("INSERT INTO stream_categories(id,name,genre) VALUES($1,$2,$3)")
                 .bind(&id)
                 .bind(name)

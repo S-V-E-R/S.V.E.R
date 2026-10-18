@@ -28,7 +28,7 @@ export function GameCatalogReview({ genres, changed }: { genres: { id: string; n
       <p className="small-print">{data.status.last_success_at ? `Last data received: ${new Date(data.status.last_success_at).toLocaleString()}.` : "No automatic update has completed yet."} {data.status.failures > 0 && "Updates are retrying; saved games remain available."}</p>
       <p>{data.status.pending} games need classification{data.status.pending > 50 && " · showing the first 50"}.</p>
       {data.items.map(game => <form key={game.id} className="panel" onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void decide(game.id, String(form.get("genre")), String(form.get("note")), String(form.get("name"))); }}>
-        <p><strong>{game.name}</strong> · <a href={`https://www.wikidata.org/wiki/${game.id}`}>Source</a></p>
+        <p><strong>{game.name}</strong> · <a href={game.id.startsWith("steam") ? `https://store.steampowered.com/app/${game.id.slice(5)}` : `https://www.wikidata.org/wiki/${game.id}`}>Source</a></p>
         <p className="muted">{game.genres.join(", ") || "No published genre"}{game.description && ` · ${game.description}`}</p>
         <label className="field"><span>Catalog name for {game.name}</span><input name="name" required maxLength={160} defaultValue={game.name} disabled={busy} /></label>
         <label className="field"><span>Genre for {game.name}</span><select name="genre" required defaultValue="" disabled={busy}><option value="" disabled>Choose a genre</option>{genres.map(genre => <option key={genre.id} value={genre.id}>{genre.name}</option>)}</select></label>

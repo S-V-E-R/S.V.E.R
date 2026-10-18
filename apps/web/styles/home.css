@@ -220,6 +220,15 @@ a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .genre-groups .genre-tabs { border-bottom: 0; margin-bottom: 0; }
 .territory-tile[data-theme] { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .territory-tile.contested { background-image: repeating-linear-gradient(135deg, transparent 0 10px, color-mix(in srgb, var(--accent) 10%, transparent) 10px 12px); }
+/* Cover art sits under a dark fade so the name and turf stay readable in every theme. */
+.territory-tile.has-art { overflow: hidden; }
+.territory-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.territory-tile.has-art::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 30%, rgba(0, 0, 0, .78) 56%, rgba(0, 0, 0, .94)); }
+.territory-tile.has-art { text-shadow: 0 1px 2px #000; }
+.territory-tile.has-art > :not(.territory-art) { z-index: 1; }
+.territory-tile.has-art h3, .territory-tile.has-art .territory-turf, .territory-tile.has-art .territory-live { position: relative; }
+.territory-tile.has-art .territory-live { color: rgba(255, 255, 255, .78); }
+.territory-tile.has-art h3 { color: #fff; }
 .territory-tile .contested-tag { display: block; margin-top: 2px; font: 700 11px/1.2 var(--font-label); letter-spacing: .1em; text-transform: uppercase; color: var(--accent-light); }
 @media (max-width: 700px) { .genre-groups, .magnet-lanes { flex-direction: column; flex-wrap: nowrap; gap: 6px; } }
 
