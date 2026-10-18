@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../../lib/client-api";
 
 type Order = { slot: number; label: string; rarity: string; target: number; progress: number; done: boolean; xp: number; ev?: number; ev_channel?: string | null };
-type Orders = { orders: Order[]; streak?: number; week?: number; can_reroll?: boolean; verify?: boolean };
+type Orders = { orders: Order[]; streak?: number; week?: number; milestones?: number[]; can_reroll?: boolean; verify?: boolean };
 
 /**
  * Sidebar daily orders (docs/PROGRESSION.md section 3): three a day, reset at midnight UTC. The
@@ -45,6 +45,6 @@ export function DailyOrders() {
         {data.can_reroll && !o.done && <button type="button" className="link-button order-reroll" disabled={busy} onClick={() => void reroll(o.slot)}>Reroll<span className="sr-only"> {o.label}</span></button>}
       </li>)}</ul>}
     {error && <p role="alert" className="side-empty">{error}</p>}
-    {!data.verify && <p className="side-empty">{data.week ?? 0} done this week · milestones at 7, 14, 21</p>}
+    {!data.verify && <p className="side-empty">{data.week ?? 0} done this week · milestones at {(data.milestones ?? [7, 14, 21]).join(", ")}</p>}
   </section>;
 }

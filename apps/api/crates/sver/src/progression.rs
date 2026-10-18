@@ -235,6 +235,9 @@ pub const RARITY: [(&str, u32, f64); 5] = [
 ];
 /// XP for a Common order before the streak (Proposed).
 const ORDER_XP: f64 = 40.0;
+/// Weekly milestones (Joe, October 17, 2026): every 7 orders, up to all 21 that 3 a day allow;
+/// 100, 200 and 300 XP. Order Keeper (achievements.rs) is the last one.
+pub const MILESTONES: [(i16, i32); 3] = [(7, 100), (14, 200), (21, 300)];
 /// Engagement Valor an order pays by rarity (Joe's decision: 10–50, free, no cash value), in the
 /// channel the viewer was last in that day.
 const ORDER_EV: [i64; 5] = [10, 15, 20, 30, 50];
@@ -350,8 +353,8 @@ async fn complete_orders(app: &App) -> Res<()> {
     }
     Ok(())
 }
-/// Marks one order done and pays its XP (rarity × streak), any weekly milestone (7, 14, 21
-/// orders: 100, 200, 300 XP; Joe's decision, October 17) and its Engagement Valor, all or nothing.
+/// Marks one order done and pays its XP (rarity × streak), any weekly milestone (`MILESTONES`)
+/// and its Engagement Valor, all or nothing.
 async fn pay_order(app: &App, user: &str, slot: i16) -> Res<()> {
     let mut tx = app.db.begin().await?;
     // Another pass may have paid it meanwhile; only the one that marks it pays.
@@ -373,11 +376,15 @@ async fn pay_order(app: &App, user: &str, slot: i16) -> Res<()> {
         .execute(&mut *tx)
         .await?;
     let paid: Vec<i16> = sqlx::query_scalar("INSERT INTO order_milestones(user_id,week,orders)
-            SELECT $1,date_trunc('week',current_date)::date,m FROM unnest(ARRAY[7,14,21]::smallint[]) m
+            SELECT $1,date_trunc('week',current_date)::date,m FROM unnest($2::smallint[]) m
             WHERE m<=(SELECT count(*) FROM daily_orders WHERE user_id=$1 AND completed_at IS NOT NULL AND day>=date_trunc('week',current_date)::date)
             ON CONFLICT DO NOTHING RETURNING orders")
-            .bind(&user).fetch_all(&mut *tx).await?;
-    xp += paid.iter().map(|m| *m as i32 * 100 / 7).sum::<i32>();
+            .bind(&user).bind(MILESTONES.map(|m| m.0).to_vec()).fetch_all(&mut *tx).await?;
+    xp += paid
+        .iter()
+        .filter_map(|m| MILESTONES.iter().find(|(at, _)| at == m))
+        .map(|(_, bonus)| bonus)
+        .sum::<i32>();
     // ponytail: "where the order was done" = the channel of the latest playback or chat
     // today; an order finished with no channel activity (only Beacons, say) pays XP only.
     let channel: Option<String> = sqlx::query_scalar("SELECT a.channel FROM (
@@ -443,7 +450,7 @@ async fn orders_json(db: &mut PgConnection, user: &str) -> Res<Value> {
         })
         .collect();
     Ok(
-        json!({"orders": orders, "streak": days, "multiplier": streak_multiplier(days.max(1)), "week": week, "can_reroll": !rerolled}),
+        json!({"orders": orders, "streak": days, "multiplier": streak_multiplier(days.max(1)), "week": week, "milestones": MILESTONES.map(|m| m.0), "can_reroll": !rerolled}),
     )
 }
 /// GET /api/me/orders: today's orders (verified accounts only; created on first view).
