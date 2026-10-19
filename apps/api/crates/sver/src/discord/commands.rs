@@ -129,6 +129,8 @@ pub fn definitions() -> Vec<Value> {
     ];
     all.extend(super::levels::definitions());
     all.extend(super::quests::definitions());
+    all.extend(super::factions::definitions());
+    all.extend(super::sync::definitions());
     all.extend(super::moderation::definitions());
     all
 }
@@ -175,6 +177,7 @@ pub async fn interaction(app: &App, raw: Value) {
     let reply = match i.kind {
         2 => command(app, &i).await,
         3 | 5 if i.custom_id().starts_with("mod:") => super::moderation::component(app, &i).await,
+        3 if i.custom_id().starts_with("fac:") => super::factions::component(app, &i).await,
         _ => None,
     };
     if let Some(reply) = reply.filter(|r| *r != ANSWERED) {
@@ -189,6 +192,12 @@ async fn command(app: &App, i: &Interaction) -> Option<Value> {
         return Some(reply);
     }
     if let Some(reply) = super::quests::command(app, i).await {
+        return Some(reply);
+    }
+    if let Some(reply) = super::factions::command(app, i).await {
+        return Some(reply);
+    }
+    if let Some(reply) = super::sync::command(app, i).await {
         return Some(reply);
     }
     Some(match i.name() {

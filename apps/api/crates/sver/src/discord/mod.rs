@@ -8,15 +8,17 @@
 //! `discord_grants`), so roles a server's moderators hand out by hand are never touched.
 //!
 //! The community bot on the S.V.E.R home server (docs/DISCORD_BOT.md) adds a Gateway connection
-//! (`gateway`), slash commands (`commands`), the staff settings for that server (`home`) and
-//! moderation (`moderation`).
+//! (`gateway`), slash commands (`commands`), the staff settings for that server (`home`), levels,
+//! factions, the S.V.E.R sync (`sync`) and moderation (`moderation`).
 pub mod card;
 pub mod commands;
+pub mod factions;
 pub mod gateway;
 pub mod home;
 pub mod levels;
 pub mod moderation;
 pub mod quests;
+pub mod sync;
 
 /// Gives (or takes back) a role on a server; false when Discord refused.
 pub(crate) async fn role(app: &App, guild: &str, user: &str, role: &str, give: bool) -> bool {

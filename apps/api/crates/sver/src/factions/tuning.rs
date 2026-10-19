@@ -15,6 +15,11 @@ pub struct Tuning {
     /// file, they take the demo values below.
     pub raid_points: i64,
     pub raid_daily_cap: i64,
+    /// Influence for Discord chat or a voice minute in a channel mapped to a genre, and its daily
+    /// cap (docs/DISCORD_BOT.md "Influence"). Missing from an older private file, they take the
+    /// demo values below.
+    pub discord_points: i64,
+    pub discord_daily_cap: i64,
     pub minimum_divisor: i64,
     pub flip_margin_bps: i64,
     pub neutral_minimum: i64,
@@ -31,6 +36,8 @@ impl Default for Tuning {
             chat_hourly_cap: 3,
             raid_points: 5,
             raid_daily_cap: 10,
+            discord_points: 1,
+            discord_daily_cap: 10,
             minimum_divisor: 2,
             flip_margin_bps: 100,
             neutral_minimum: 10,
@@ -58,6 +65,8 @@ impl Tuning {
             || !(1..=1_000_000_000).contains(&value.chat_hourly_cap)
             || !(1..=1_000_000).contains(&value.raid_points)
             || !(1..=1_000_000_000).contains(&value.raid_daily_cap)
+            || !(1..=1_000_000).contains(&value.discord_points)
+            || !(1..=1_000_000_000).contains(&value.discord_daily_cap)
             || !(1..=1_000_000).contains(&value.minimum_divisor)
             || !(0..=10_000).contains(&value.flip_margin_bps)
             || !(1..=1_000_000_000).contains(&value.neutral_minimum)

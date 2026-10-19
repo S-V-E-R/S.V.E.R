@@ -245,7 +245,25 @@ def moderation(db):
     return statements, f"moderation settings: {len(settings)}, warnings: {len(warnings)}"
 
 
-SECTIONS = [home, levels, quests, moderation]
+def holidays(db):
+    """Faction holidays, replacing the seeded ones of the same name. Legacy rewards
+    {xpMultiplier, factionContribution} become the day's factor and each member's points."""
+    out = []
+    legacy = rows(db, "SELECT faction, name, month, day, rewards, active FROM faction_holidays")
+    for h in legacy:
+        if h["faction"] not in FACTIONS:
+            continue
+        reward = json.loads(h["rewards"] or "{}")
+        factor = min(10.0, max(0.1, float(reward.get("xpMultiplier", 1))))
+        points = max(0, int(reward.get("factionContribution", 0)))
+        out.append("INSERT INTO discord_holidays(faction,name,month,day,factor,points,active) VALUES("
+                   f"{literal(h['faction'])},{literal(h['name'])},{int(h['month'])},{int(h['day'])},{factor},{points},"
+                   f"{'true' if h['active'] else 'false'}) ON CONFLICT(name) DO UPDATE SET faction=EXCLUDED.faction,"
+                   "month=EXCLUDED.month,day=EXCLUDED.day,factor=EXCLUDED.factor,points=EXCLUDED.points,active=EXCLUDED.active;")
+    return out, f"holidays: {len(out)}"
+
+
+SECTIONS = [home, levels, quests, moderation, holidays]
 
 
 def main():

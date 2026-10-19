@@ -2,7 +2,7 @@
 import { FormEvent, useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
 
-type Field = { key: string; kind: "text" | "forum" | "voice" | "category" | "texts" | "given" | "role" | "toggle" | "zone" | "number" | "words" | "roles" | "optin"; group: string; label: string };
+type Field = { key: string; kind: "text" | "forum" | "voice" | "category" | "texts" | "given" | "role" | "toggle" | "zone" | "number" | "words" | "roles" | "optin" | "genres"; group: string; label: string };
 type Channel = { id: string; name: string; type: number; parent: string | null };
 type Role = { id: string; name: string; givable: boolean };
 type Health = {
@@ -14,12 +14,33 @@ type View = {
   health: Health;
   guilds: { id: string; name: string }[];
   fields: Field[];
+  genres: { id: string; name: string }[];
   home: { guild_id: string; settings: Record<string, unknown>; channels: Channel[]; roles: Role[] } | null;
 };
 
 /** Discord channel types each kind of setting accepts (matches discord/home.rs). */
-const TYPES: Record<string, number[]> = { text: [0, 5], texts: [0, 5], forum: [0, 5, 15], voice: [2, 13], category: [4] };
+const TYPES: Record<string, number[]> = { text: [0, 5], texts: [0, 5], forum: [0, 5, 15], voice: [2, 13], category: [4], genres: [0, 2, 5, 13] };
 const when = (t: string | null) => (t ? new Date(t).toLocaleString() : "never");
+
+/** Channels whose chat and voice count as war influence for a genre: rows of channel and genre, saved as one object. */
+function GenreMap({ name, label, value, channels, genres }: { name: string; label: string; value: unknown; channels: Channel[]; genres: { id: string; name: string }[] }) {
+  const [rows, setRows] = useState<[string, string][]>(() => value && typeof value === "object" ? Object.entries(value as Record<string, string>) : []);
+  const [channel, setChannel] = useState("");
+  const [genre, setGenre] = useState("");
+  const channelName = (id: string) => channels.find(c => c.id === id)?.name ?? id;
+  const genreName = (id: string) => genres.find(g => g.id === id)?.name ?? id;
+  return <fieldset className="stack"><legend>{label}</legend>
+    <input type="hidden" name={name} value={JSON.stringify(Object.fromEntries(rows))} />
+    {rows.length === 0 ? <p className="muted">No channels count toward the war yet.</p> : <ul className="list">{rows.map(([c, g]) => <li key={c} className="row wrap">
+      <span>#{channelName(c)} → {genreName(g)}</span>
+      <button type="button" className="small" onClick={() => setRows(rows.filter(r => r[0] !== c))} aria-label={`Remove #${channelName(c)}`}>Remove</button></li>)}</ul>}
+    <div className="row wrap">
+      <label className="field narrow"><span>Channel</span><select value={channel} onChange={e => setChannel(e.target.value)}><option value="">Choose a channel</option>{channels.filter(c => !rows.some(r => r[0] === c.id)).map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}</select></label>
+      <label className="field narrow"><span>Genre</span><select value={genre} onChange={e => setGenre(e.target.value)}><option value="">Choose a genre</option>{genres.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
+      <button type="button" className="small" disabled={!channel || !genre} onClick={() => { setRows([...rows, [channel, genre]]); setChannel(""); setGenre(""); }}>Add</button>
+    </div>
+  </fieldset>;
+}
 
 /** The S.V.E.R home server's Discord bot (docs/DISCORD_BOT.md): health and settings. */
 export default function DiscordAdmin() {
@@ -43,6 +64,7 @@ export default function DiscordAdmin() {
       if (f.kind === "toggle" || f.kind === "optin") settings[f.key] = form.get(f.key) === "on";
       else if (f.kind === "texts" || f.kind === "roles") settings[f.key] = form.getAll(f.key).map(String).filter(Boolean);
       else if (f.kind === "words") settings[f.key] = String(form.get(f.key) ?? "").split("\n").map(w => w.trim()).filter(Boolean);
+      else if (f.kind === "genres") settings[f.key] = JSON.parse(String(form.get(f.key) || "{}"));
       else if (f.kind === "number") { const v = String(form.get(f.key) ?? "").trim(); settings[f.key] = v ? Number(v) : null; }
       else { const v = String(form.get(f.key) ?? ""); settings[f.key] = v || null; }
     }
@@ -71,6 +93,7 @@ export default function DiscordAdmin() {
         {(home?.roles ?? []).map(r => <option key={r.id} value={r.id} disabled={f.kind === "given" && !r.givable}>{r.name}{f.kind === "given" && !r.givable ? " (above the bot)" : ""}</option>)}
       </select></label>;
     const channels = (home?.channels ?? []).filter(c => TYPES[f.kind]?.includes(c.type));
+    if (f.kind === "genres") return <GenreMap key={f.key} name={f.key} label={label(f)} value={value} channels={channels} genres={view.genres} />;
     if (f.kind === "texts") {
       const picked = Array.isArray(value) ? value.map(String) : [];
       return <label key={f.key} className="field"><span>{label(f)}</span>

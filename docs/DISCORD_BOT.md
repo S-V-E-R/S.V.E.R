@@ -37,18 +37,18 @@ Specified October 19, 2026. The S.V.E.R Discord bot replaces the legacy communit
 
 - `/faction join` (with a confirm to switch), the role-select panel and onboarding set the Discord faction. **Synced with S.V.E.R:** for a linked account the S.V.E.R faction wins and Discord follows it; Discord can't move someone's S.V.E.R faction (faction changes on S.V.E.R have their own rules). Unlinked members choose in Discord.
 - **Faction roles** (Myria, Aetheron, Glint) and private faction HQ channels, as set up today.
-- **Faction points** per season: chat, voice, events, quests and stream support, shown by `/faction stats` and `/faction leaderboard` (the legacy `/factions` commands were never registered; they are now).
-- **Seasons** start and end from the staff page or `/season`, and end on their own at `ends_at` (the legacy bot never ended them). The winner gets a 1.5× faction multiplier for 14 days.
-- **Holidays**: Myria Founding Day (March 15) and the Iron Trial (September 20), Aetheron Shield Day (May 10) and the Vigil (November 11), Glint Spark Festival (July 4) and Winter Luminance (December 21): a faction multiplier for the day and a contribution for every member, announced in the faction channel.
-- **Territories**: `/territories` and the "has taken control of" posts read the war map directly (`factions` module), no polling of an old API.
-- **Influence** as decided above: `source='discord'` in `faction_influence`, its own daily cap, channel→genre mapping on the staff page.
+- **Faction points** per season: chat, voice, events, quests, holidays and stream support, shown by `/faction stats` (points and members per faction) and `/faction leaderboard` (top 10 contributors), for the running season or all time when none runs (the legacy `/factions` commands were never registered; they are now).
+- **Seasons** start and end with staff `/season start <name> <days>|end|status`, at most one at a time, and end on their own at `ends_at` (the legacy bot never ended them). The faction with the most points inside the season wins (a tie at the top has no winner), gets a 1.5× faction multiplier for 14 days, and the end is posted in the faction channel (or announcements).
+- **Holidays**: Myria Founding Day (March 15) and the Iron Trial (September 20), Aetheron Shield Day (May 10) and the Vigil (November 11), Glint Spark Festival (July 4) and Winter Luminance (December 21): a faction multiplier for the day and a contribution for every member, announced in the faction channel. Each runs once on its UTC date; the multiplier lasts until the next UTC midnight. Staff manage them with `/holiday create|list|remove`.
+- **Territories**: `/territories` and the "has taken control of" posts read the war map through the `factions` module, no polling of an old API. Holders are compared every 5 minutes; the first look and a new war season only record.
+- **Influence** as decided above: `source='discord'` in `faction_influence`, one award per kept message (its id is the event) or voice minute, the war's own checks, faction events and caps, and a Discord daily cap (private tuning: `discord_points`, `discord_daily_cap`). Staff map text and voice channels to genres on the staff page ("Influence channels"); messages in threads don't count.
 
 ## Account link and sync
 
 - **Linked automatically.** A Discord account is linked when the person signs in with Discord or links Discord in settings (the `identities` table). No link tokens, no second flow. `/link sver` explains this and sends the link to settings.
-- **Roles** (home server): S.V.E.R level bands (staff choose the bands and roles), faction, Wolfsworn, Greycloak, Founder, Streamer (has gone live). Only roles the bot gave are ever taken back (as today).
-- **Nickname**: optional per member (`/link nickname on`), off by default.
-- **Discord rank on S.V.E.R**: the profile of a linked account can show its Discord rank (the owner chooses to show it).
+- **Roles** (home server, every 15 minutes and right after `/link` or `/faction`): S.V.E.R level bands (staff `/levelroles add <level> <role>|remove <level>|list`; a member gets only the highest band reached), faction, Wolfsworn, Greycloak, Founder, Streamer (has gone live), the last four set on the staff page ("S.V.E.R sync"). Only roles the bot gave are ever taken back (as today); a role the member already had is never recorded as the bot's. Members not in the server are skipped.
+- **Nickname**: optional per member (`/link nickname on|off`), off by default. `/link status` shows the link, level, faction and nickname setting.
+- **Discord rank on S.V.E.R**: the profile of a linked account can show its Discord rank as a badge (the owner turns it on under User card in profile settings; `GET/PUT /api/me/discord-rank`).
 - **Level-ups**: an S.V.E.R level-up of a linked member posts in the rank-up channel ("reached Level N on S.V.E.R").
 - **Fixed:** the legacy 10-minute sync failed on every run and never synced anyone; faction conflicts could never be resolved.
 

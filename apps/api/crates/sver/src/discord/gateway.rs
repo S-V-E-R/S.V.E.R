@@ -4,7 +4,7 @@
 //!
 //! The connection resumes after a drop and identifies afresh after a restart. Events go to
 //! `dispatch` on their own task, so a slow handler never delays a heartbeat.
-use super::{bot_token, call, commands, home, levels, moderation, quests};
+use super::{bot_token, call, commands, factions, home, levels, moderation, quests, sync};
 use crate::App;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Method;
@@ -115,7 +115,8 @@ async fn lead(app: &App) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Every minute, while this process runs the bot: voice XP and achievement posts.
+/// Every minute, while this process runs the bot: voice XP, achievement posts, seasons, holidays,
+/// and every few minutes the territory posts and the S.V.E.R sync.
 async fn ticker(app: App) {
     let mut every = tokio::time::interval(Duration::from_secs(60));
     every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -135,6 +136,14 @@ async fn ticker(app: App) {
 pub async fn minute(app: &App) {
     logged("voice_minute", levels::minute(app).await);
     logged("achievements", quests::announce(app).await);
+    logged("seasons", factions::seasons(app).await);
+    logged("holidays", factions::holidays(app).await);
+    if factions::due("territories", 5) {
+        logged("territories", factions::territory_posts(app).await);
+    }
+    if factions::due("sync", 15) {
+        logged("sync", sync::all(app).await);
+    }
 }
 fn logged(what: &str, result: crate::profiles::Res<()>) {
     if result.is_err() {
@@ -354,6 +363,7 @@ pub async fn dispatch(app: &App, kind: &str, data: Value) {
         "MESSAGE_CREATE" => {
             if !moderation::event(app, kind, &data).await {
                 logged("message", levels::message(app, &data).await);
+                logged("influence", factions::message(app, &data).await);
             }
         }
         "MESSAGE_UPDATE"

@@ -482,6 +482,7 @@ pub fn router(app: App) -> Router {
         .merge(outside_emotes::routes())
         .merge(discord::routes())
         .merge(discord::home::routes())
+        .merge(discord::sync::routes())
         .merge(overlays::routes())
         .merge(ravens_eye::routes())
         .merge(achievements::routes())
