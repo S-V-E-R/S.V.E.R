@@ -26,7 +26,7 @@ pub async fn held(db: &mut PgConnection, name: &str, except_user: Option<&str>) 
 }
 async fn last_rename(db: &mut PgConnection, user_id: &str) -> Res<Option<DateTime<Utc>>> {
     Ok(sqlx::query_scalar(
-        "SELECT max(changed_at) FROM username_history WHERE user_id=$1 AND reason='rename'",
+        "SELECT max(changed_at) FROM username_history WHERE user_id=$1 AND reason IN ('rename','claim')",
     )
     .bind(user_id)
     .fetch_one(&mut *db)

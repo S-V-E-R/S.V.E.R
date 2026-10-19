@@ -14,11 +14,9 @@ use axum::{
     routing::{get, post},
 };
 use axum_extra::extract::cookie::CookieJar;
-use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
-use std::sync::atomic::{AtomicI64, Ordering};
 
 /// A broadcast that is publicly live: LIVE, or RECONNECTING inside its grace window.
 const LIVE: &str = "(b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>now()))";
@@ -57,19 +55,9 @@ pub async fn sync(db: &mut PgConnection, owner: Option<&str>) -> Res<()> {
         .bind(owner).execute(db).await?;
     Ok(())
 }
-static LAST_MINUTE: AtomicI64 = AtomicI64::new(0);
-pub async fn tick(app: &App) -> Res<()> {
-    let now = Utc::now().timestamp();
-    if now - LAST_MINUTE.load(Ordering::Relaxed) < 60 {
-        return Ok(());
-    }
-    LAST_MINUTE.store(now, Ordering::Relaxed);
-    sync(&mut *app.db.acquire().await?, None).await
-}
 
 /// The channel's Shine: the live charity banner, Good Works badges and past charity streams.
 pub async fn channel(db: &mut PgConnection, owner: &str) -> Res<Value> {
-    sync(db, Some(owner)).await?;
     // LIVE is fixed SQL; the owner is bound.
     let live: Option<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT jsonb_build_object('name',cs.charity_name,'url',cs.donate_url) FROM charity_streams cs JOIN broadcasts b ON b.id=cs.broadcast_id WHERE cs.owner_id=$1 AND {LIVE} AND {} LIMIT 1", approved("cs.donate_url"))))
         .bind(owner).fetch_optional(&mut *db).await?;

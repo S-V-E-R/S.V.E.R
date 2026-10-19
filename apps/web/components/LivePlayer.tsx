@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { PlayerEffects } from "./BoardEffects";
@@ -72,7 +73,7 @@ async function startWebRtc(video: HTMLVideoElement, url: string, onFatal: () => 
   pc.onconnectionstatechange = () => { if (pc.connectionState === "failed" || pc.connectionState === "disconnected") onFatal(); };
   try {
     await pc.setLocalDescription(await pc.createOffer());
-    const response = await fetch(url, { method: "POST", body: pc.localDescription?.sdp, headers: { "Content-Type": "application/sdp" } });
+    const response = await fetch(url, { method: "POST", body: pc.localDescription?.sdp, headers: { "Content-Type": "application/sdp" }, signal: AbortSignal.timeout(8000) });
     if (!response.ok) throw new Error("WebRTC playback was refused.");
     await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
   } catch (error) {
@@ -116,6 +117,7 @@ function playingWithin(video: HTMLVideoElement, ms: number) {
  * Uses native controls for keyboard, fullscreen, volume and captions.
  */
 export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, muted, onUnmute, followRaids = true, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; muted?: boolean; onUnmute?: () => void; followRaids?: boolean; children?: React.ReactNode }) {
+  const router = useRouter();
   const [live, setLive] = useState<Live | null>(null);
   const [lastRaid, setLastRaid] = useState<Raid | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
@@ -310,7 +312,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   if (live.mature_blocked) return <div className="live-player"><p className="panel" role="status">This stream is labeled mature, so it isn&apos;t available on your account.</p>{meta}{!nested && <UpNext username={username} focused={focused} />}</div>;
   if (warning) return <div className="live-player"><div className="panel mature-warning" role="dialog" aria-label="Mature stream">
     <p><span className="chip mature-tag">Mature</span> <strong>{live.title}</strong> is labeled mature: it may include violent or horror games, strong language or mature themes.</p>
-    <div className="row"><button type="button" onClick={() => acceptMature(username, !!signedIn)}>Watch</button><button type="button" className="quiet" onClick={() => history.back()}>Go back</button></div>
+    <div className="row"><button type="button" onClick={() => acceptMature(username, !!signedIn)}>Watch</button><button type="button" className="quiet" onClick={() => history.length > 1 ? history.back() : router.push("/")}>Go back</button></div>
   </div></div>;
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p>{meta}</div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;

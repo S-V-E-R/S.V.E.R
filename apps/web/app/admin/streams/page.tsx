@@ -10,7 +10,8 @@ type Stream = { id: string; state: string; started_at: string; title: string; ca
   channel: { username: string; display_name: string };
   health: { video_codec?: string | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean; keyframe_warning?: boolean; keyframe_seconds?: number | null; b_frames?: boolean | null };
   counts: { sessions: number; public: number; trusted: number; excluded: number; pending: number } };
-type Category = { id: string; name: string; genre: string; active: boolean; channels: number };
+/** `game`: linked to the game catalog, so its art is fetched automatically. */
+type Category = { id: string; name: string; genre: string; active: boolean; channels: number; image: Record<string, string> | null; image_manual: boolean; game: boolean };
 
 const PROBLEM_NAMES: Record<string, string> = { stutter: "stutters", no_audio: "no audio", wont_load: "won't load", out_of_sync: "out of sync", blurry: "blurry", distorted: "distorted" };
 const since = (iso: string) => { const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
@@ -55,6 +56,14 @@ export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boo
     const result = await send<{ items: Category[] }>("PATCH", `/api/admin/categories/${encodeURIComponent(category.id)}`, { ...body, note });
     if (result.ok) setCategories(result.data.items); else setMessage(result.error);
   }
+  async function art(category: Category, file: File | null) {
+    const body = new FormData();
+    if (file) body.append("file", file);
+    const path = `/api/admin/categories/${encodeURIComponent(category.id)}/art`;
+    const r = file ? await send("POST", path, body) : await send("DELETE", path);
+    setMessage(r.ok ? (file ? `Art saved for ${category.name}.` : `Art removed from ${category.name}.`) : r.error);
+    if (r.ok) await load();
+  }
   async function merge(category: Category, into: string, note: string) {
     const r = await send("POST", `/api/admin/categories/${category.id}/merge`, { into, note });
     setMessage(r.ok ? "Categories merged." : r.error); if (r.ok) await load();
@@ -85,9 +94,16 @@ export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boo
         <label className="field"><span>Reason</span><input name="note" required maxLength={500} /></label>
         <button type="submit" className="small">Add category</button>
       </form>
+      <p className="muted">Game categories get cover art automatically (Steam, then SteamGridDB), retried daily until some exists. An upload replaces it and is never overwritten. {categories.filter(c => c.active && !c.image).length} active categories have no art yet.</p>
       <ul className="list">{categories.map(c => <li key={c.id} className="row between">
-        <span>{c.name} <span className="muted">· {c.genre} · {c.channels} channel{c.channels === 1 ? "" : "s"}{c.active ? "" : " · hidden"}</span></span>
         <span className="row">
+          {/* eslint-disable-next-line @next/next/no-img-element -- media CDN image */}
+          {c.image ? <img src={c.image["300"]} alt="" width={36} height={48} /> : <span className="muted">{c.game ? "Art pending" : "No art"}</span>}
+          <span>{c.name} <span className="muted">· {c.genre} · {c.channels} channel{c.channels === 1 ? "" : "s"}{c.active ? "" : " · hidden"}{c.image_manual ? " · uploaded art" : ""}</span></span>
+        </span>
+        <span className="row">
+          <label className="field"><span>Upload art for {c.name}</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (file) void art(c, file); }} /></label>
+          {c.image && <button type="button" className="small quiet" onClick={() => { if (window.confirm(`Remove ${c.name}'s art?${c.game ? " It will be fetched again automatically." : ""}`)) void art(c, null); }}>Remove art</button>}
           <button type="button" className="small quiet" onClick={() => { const name = window.prompt("New name", c.name)?.trim(); if (name && name !== c.name) void change(c, { name }); }}>Rename</button>
           <button type="button" className="small quiet" onClick={() => change(c, { active: !c.active })}>{c.active ? "Hide" : "Show"}</button>
         <details><summary>Move or merge</summary><form onSubmit={e => { e.preventDefault(); void change(c, { genre: String(new FormData(e.currentTarget).get("genre")) }); }}><label className="field"><span>Genre</span><select name="genre" defaultValue={c.genre}>{genres.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label><button className="small quiet">Move category</button></form><form onSubmit={e => { e.preventDefault(); const d = new FormData(e.currentTarget); if (window.confirm(`Merge ${c.name} into the selected category? Existing channels will move to it.`)) void merge(c, String(d.get("into")), String(d.get("note"))); }}><label className="field"><span>Merge into</span><select name="into" required defaultValue=""><option value="" disabled>Choose a category</option>{categories.filter(d => d.id !== c.id && d.active).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label><label className="field"><span>Reason</span><input name="note" required maxLength={500} /></label><button className="small quiet">Merge category</button></form></details>

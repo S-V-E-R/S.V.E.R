@@ -60,6 +60,12 @@ async fn main() -> Result<(), String> {
                 if sver::streams::catalog::tick(&catalog).await.is_err() {
                     eprintln!("catalog_event=refresh outcome=retry");
                 }
+                if sver::streams::catalog::steam::tick(&catalog).await.is_err() {
+                    eprintln!("catalog_event=steam outcome=retry");
+                }
+                if sver::streams::catalog::art::tick(&catalog).await.is_err() {
+                    eprintln!("catalog_event=art outcome=failed");
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
         });
@@ -263,9 +269,6 @@ async fn main() -> Result<(), String> {
             }
             if sver::tiers::tick(&media_jobs).await.is_err() {
                 eprintln!("tiers_event=tick outcome=retry");
-            }
-            if sver::shine::tick(&media_jobs).await.is_err() {
-                eprintln!("shine_event=tick outcome=retry");
             }
             if sver::payouts::tick(&media_jobs).await.is_err() {
                 eprintln!("payout_event=tick outcome=retry");

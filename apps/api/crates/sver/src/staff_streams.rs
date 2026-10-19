@@ -145,9 +145,12 @@ async fn stop(
 /// GET /api/admin/categories: the whole catalog, including inactive categories.
 async fn categories(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     safety::staff(&app, &jar).await?;
-    let items: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',k.id,'name',k.name,'genre',k.genre,'active',k.active,'channels',(SELECT count(*) FROM stream_settings s WHERE s.category_id=k.id)) FROM stream_categories k ORDER BY k.active DESC,lower(k.name)")
+    let mut items: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',k.id,'name',k.name,'genre',k.genre,'active',k.active,'channels',(SELECT count(*) FROM stream_settings s WHERE s.category_id=k.id),'image',k.image_key,'image_manual',k.image_manual,'game',EXISTS(SELECT 1 FROM game_catalog g WHERE g.category_id=k.id)) FROM stream_categories k ORDER BY k.active DESC,lower(k.name)")
         .fetch_all(&app.db)
         .await?;
+    for item in &mut items {
+        item["image"] = crate::streams::catalog::art::art_json(&app, item["image"].as_str());
+    }
     Ok(Json(json!({"items":items})))
 }
 fn name(text: &str) -> Res<String> {
@@ -360,6 +363,14 @@ pub fn routes() -> Router<App> {
         .route("/api/admin/categories", get(categories).post(create))
         .route("/api/admin/categories/{id}", patch(edit))
         .route("/api/admin/categories/{id}/merge", post(merge_category))
+        .route(
+            "/api/admin/categories/{id}/art",
+            post(crate::streams::catalog::art::upload)
+                .delete(crate::streams::catalog::art::remove)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    crate::media::UPLOAD_LIMIT,
+                )),
+        )
 }
 
 #[cfg(test)]

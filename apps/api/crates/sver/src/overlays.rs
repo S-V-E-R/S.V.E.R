@@ -322,8 +322,8 @@ async fn upload_image(
     multipart: Multipart,
 ) -> Res<Json<Value>> {
     let (me, kind) = uploader(&app, &jar, &kind).await?;
-    let (bytes, _, _) = media::read_upload(multipart, Kind::AlertImage).await?;
     profiles::rate(&app, format!("image-upload:{me}"), 20, 3600).await?;
+    let (bytes, _, _) = media::read_upload(multipart, Kind::AlertImage).await?;
     let processed = media::process_async(bytes, Kind::AlertImage, None).await?;
     media::store(&app, &processed).await?;
     let mut tx = app.db.begin().await?;

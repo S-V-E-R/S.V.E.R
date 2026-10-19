@@ -50,7 +50,12 @@ async fn change_password(
     jar: CookieJar,
     Json(input): Json<NewPassword>,
 ) -> Result<Json<Value>> {
-    // Hash first (it can call the breach check), then take the step-up inside one transaction.
+    // Signed in, recently, and within a rate before the hashing and breach check; the step-up
+    // itself is taken afterwards, inside one transaction.
+    let (tx, user, session) = auth::session(&app, &jar, false).await?;
+    auth::recent(&session)?;
+    tx.rollback().await?;
+    sec::reserve(&app, vec![format!("password-change:{}", user.id)], 5, 900).await?;
     let hash = sec::new_password(&app, input.password).await?;
     let (mut tx, user, session) = auth::sensitive(&app, &jar, &input.code).await?;
     sqlx::query("UPDATE users SET password_hash=$2 WHERE id=$1")

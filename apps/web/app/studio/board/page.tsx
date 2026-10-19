@@ -150,7 +150,7 @@ export default function StudioBoard() {
         const data = await act("PUT", "/api/me/board/settings", { moderators_run: mine.moderators_run, webhook_url: webhook || null, input_cap: cap ? Number(cap) : null }, "Saved.", dirty);
         if (data?.webhook_secret) setSecret(data.webhook_secret);
       }}>
-        <label className="checkbox"><input type="checkbox" checked={mine.moderators_run} onChange={e => void act("PUT", "/api/me/board/settings", { moderators_run: e.target.checked, webhook_url: mine.webhook_url, input_cap: mine.input_cap }, "Saved.", dirty)} /> Let my channel moderators pause the board and block viewers from it</label>
+        <label className="checkbox"><input type="checkbox" checked={mine.moderators_run} onChange={async e => { const typed = [webhook, cap] as const; await act("PUT", "/api/me/board/settings", { moderators_run: e.target.checked, webhook_url: mine.webhook_url, input_cap: mine.input_cap }, "Saved.", dirty); setWebhook(typed[0]); setCap(typed[1]); }} /> Let my channel moderators pause the board and block viewers from it</label>
         <label className="field"><span>Webhook URL (optional)</span><input type="url" value={webhook} maxLength={500} placeholder="https://example.com/sver" onChange={e => setWebhook(e.target.value)} /></label>
         <label className="field narrow"><span>Input cap (presses and joystick moves a second sent to your game)</span><input type="number" min={1} max={100} placeholder="No cap" value={cap} onChange={e => setCap(e.target.value)} /></label>
         <button className="small" disabled={busy}>Save</button>
