@@ -257,13 +257,12 @@ pub async fn connect(database_url: &str) -> std::result::Result<PgPool, String> 
     let db = PgPoolOptions::new()
         .max_connections(12)
         .acquire_timeout(Duration::from_secs(5))
-        // "Today" is the UTC day everywhere (current_date and AT TIME ZONE 'UTC' agree).
-        .after_connect(|c, _| {
+        // Days are UTC days (daily orders, XP caps, lights): `current_date` and `::date` must not
+        // follow whatever time zone the database server happens to use.
+        .after_connect(|conn, _| {
             Box::pin(async move {
-                sqlx::query("SET TIME ZONE 'UTC'")
-                    .execute(c)
-                    .await
-                    .map(|_| ())
+                sqlx::query("SET TIME ZONE 'UTC'").execute(conn).await?;
+                Ok(())
             })
         })
         .connect(database_url)

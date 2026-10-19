@@ -1084,6 +1084,52 @@ async fn beacons_publish_watermark_count_and_remove() {
     );
     assert_eq!(fetch(&e.app, &hd_url, None).await.0, StatusCode::FORBIDDEN);
 
+    // A staff removal blocks posting the same video again, and deleting a clip (not a legal
+    // removal) removes every Beacon made from it.
+    e.sql("UPDATE beacons SET quota=false").await;
+    let clip2 = uuid::Uuid::new_v4().to_string();
+    std::fs::create_dir_all(root.join("private").join(&clip2)).unwrap();
+    std::fs::copy(
+        &clip_file,
+        root.join("private").join(&clip2).join("clip.mp4"),
+    )
+    .unwrap();
+    sqlx::query("INSERT INTO videos(id,owner_id,clipper_id,kind,status,approval,visibility,title,category,genre,started_at,duration_ms,mp4_key) VALUES($1,'stream-owner','bc-viewer','CLIP','READY','APPROVED','PUBLIC','Big play','Minecraft','sandbox',now(),8000,$2)")
+        .bind(&clip2).bind(format!("{clip2}/clip.mp4")).execute(&db).await.unwrap();
+    let post = || json!({"source":"CLIP","clip_id":clip2,"crop":crop,"title":"Again","request_id":uuid::Uuid::new_v4().to_string()});
+    let first = e.call("POST", "/api/me/beacons", post()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    work(&e.app).await;
+    assert_ne!(beacon(&e, &first).await["status"], "FAILED");
+    let mut tx = db.begin().await.unwrap();
+    sver::beacons::review::remove(&mut tx, &first)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let again = e.call("POST", "/api/me/beacons", post()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    work(&e.app).await;
+    assert_eq!(
+        beacon(&e, &again).await["status"],
+        "FAILED",
+        "a staff-removed video can't be posted again"
+    );
+    let mut tx = db.begin().await.unwrap();
+    sver::videos::request_delete(&mut tx, &clip2, false)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    work(&e.app).await;
+    assert_eq!(
+        beacon(&e, &first).await["status"],
+        "DELETED",
+        "deleting the clip removes its Beacons"
+    );
+
     // Take It Down on a clip removes every Beacon made from it and blocks its exact copies.
     let from_clip = e
         .call(

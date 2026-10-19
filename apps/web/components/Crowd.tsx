@@ -50,7 +50,7 @@ export function Results({ poll }: { poll: PollState }) {
 }
 
 function PollCard({ poll, path, state, now, onChange }: { poll: PollState; path: string; state: State; now: number; onChange: () => void }) {
-  const [stake, setStake] = useState("100");
+  const [stake, setStake] = useState(() => String(Math.max(1, Math.min(100, state.max_stake, state.balance ?? 100))));
   const [winner, setWinner] = useState(0);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);

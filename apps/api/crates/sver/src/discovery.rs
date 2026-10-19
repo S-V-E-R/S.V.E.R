@@ -64,7 +64,7 @@ pub async fn live_streams(db: &mut PgConnection) -> Res<Vec<Stream>> {
           (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers,
           NOT EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at) AS first_stream,
           coalesce((SELECT max(p.ended_at) FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.started_at<b.started_at)<b.started_at-interval '30 days',false) AS returning,
-          (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id) AS charity,
+          (SELECT cs.charity_name FROM charity_streams cs WHERE cs.broadcast_id=b.id AND EXISTS(SELECT 1 FROM charity_links k WHERE k.url=cs.donate_url AND k.status='approved')) AS charity,
           coalesce(s.mature,false) AS mature, s.language,
           EXISTS(SELECT 1 FROM broadcasts p WHERE p.owner_id=b.owner_id AND p.id<>b.id AND p.ended_at>b.started_at-interval '30 minutes' AND p.started_at<b.started_at) AS restarted
          FROM broadcasts b JOIN channel_users cu ON cu.id=b.owner_id AND cu.eligible
@@ -460,15 +460,15 @@ async fn browse(State(app): State<App>) -> Res<Json<Value>> {
         sqlx::query_as("SELECT id,name,home FROM faction_genres ORDER BY position,name")
             .fetch_all(&mut *db)
             .await?;
-    let categories: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT id,name,genre FROM stream_categories WHERE active ORDER BY lower(name)",
+    let categories: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id,name,genre,image_key FROM stream_categories WHERE active ORDER BY lower(name)",
     )
     .fetch_all(&mut *db)
     .await?;
     let count = |f: &dyn Fn(&Stream) -> bool| live.iter().filter(|s| f(s)).count();
     let items: Vec<Value> = genres.into_iter().filter_map(|(id, name, home)| {
         let cats: Vec<Value> = categories.iter().filter(|c| c.2 == id)
-            .map(|c| json!({"id":c.0,"name":c.1,"live":count(&|s| s.category_id.as_deref() == Some(c.0.as_str()))})).collect();
+            .map(|c| json!({"id":c.0,"name":c.1,"live":count(&|s| s.category_id.as_deref() == Some(c.0.as_str())),"image":crate::streams::catalog::art::art_json(&app, c.3.as_deref())})).collect();
         (!cats.is_empty()).then(|| json!({"id":id,"name":name,"home":home,"live":count(&|s| s.genre.as_deref() == Some(id.as_str())),"categories":cats}))
     }).collect();
     Ok(Json(json!({"genres":items,"live":live.len()})))

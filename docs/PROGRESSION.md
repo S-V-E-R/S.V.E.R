@@ -36,7 +36,7 @@ A title that follows the account level, different per faction (Proposed ladder a
 
 - **3 orders a day (Proposed; legacy used 4)**, reset at midnight UTC, 1 reroll a day. They're drawn by rarity weight (Common 50, Uncommon 30, Rare 15, Epic 4, Legendary 1; ported) from types the viewer can actually do: no streamer-only or subscriber-only orders for people who can't do them.
 - **Types, each completed by an event S.V.E.R already records:** watch N minutes (Counted playback), chat in N channels, follow a new channel, take part in a Surge, rally your faction, vote in a poll, press a board control, watch a Beacon to the end, join a raid, watch a stream started in the last 30 minutes (Scout).
-- **Rewards:** XP (rarity ×1 / 1.5 / 2 / 3 / 5; streak ×1.1 at 3 days up to ×2 at 30; ported, capped lower) plus what Question 3 decides. Weekly milestones at 7/14/21 orders (legacy's 10/20/30 scaled to 3 a day; Joe's decision, October 17) pay 100/200/300 XP only unless Question 3 says otherwise.
+- **Rewards:** XP (rarity ×1 / 1.5 / 2 / 3 / 5; streak ×1.1 at 3 days up to ×2 at 30; ported, capped lower) plus what Question 3 decides. Weekly milestones at 7/14/21 orders pay 100/200/300 XP (Joe, October 17, 2026: legacy's 10/20/30 couldn't all be reached at 3 orders a day; 21 is every order in a week).
 - **Integrity:** progress comes from the existing event records (watch leases, chat messages, Surge participation…), never from client reports, and each event counts once per order.
 
 ## 4. The Scout bonus
@@ -64,11 +64,21 @@ Lights and Shine Moments ([SUPPORT.md](SUPPORT.md) "Shine", Question 4), achieve
 - **Level-up reward (Q1): a cosmetic every 10 levels.** The level badge gets a new frame at levels 10, 20 … 100 (`progression::frame`, CSS borders only). It's derived from the level, so a level-up and its reward can't drift apart. Choosing among unlocked frames, and more cosmetics, come with achievements and message cosmetics (Phase 3).
 - **Faction rank titles (Q2): the 22-rank ladder from the main S.V.E.R Discord** (Initiate … Overlord, Novice … Sovereign, Spark … Inferno; Private … Commander without a faction), spread evenly over levels 1–100 (levels 1, 6, 10, 15 … 95, 100). Shown on the player card and the user card (chat hover). Switching faction keeps the level and shows the new faction's name for it.
 - **Daily orders (Q3): XP plus Engagement Valor**, 10 / 15 / 20 / 30 / 50 by rarity, in the channel of the viewer's latest playback or chat that day (where they were when it finished; never their own channel or one that banned them). An order finished with no channel activity pays XP only. The amount and channel are kept on the order (`daily_orders.ev`, `ev_channel`); the sidebar shows them.
-- Q4 (Lights and Shine): answered October 10, 2026 (SUPPORT.md "Shine"). Light messages are private to the recipient (Joe's decision, October 17); the public page shows only the count.
-- **October 17 review fixes:** chat XP and the chat order count only while the viewer has Counted or Trusted playback of that channel ("chatting where you are watching"); the follow order counts only channels followed for the first time; one tick never gives more than 3 Scout bonuses; database sessions run in UTC, so "today" is the UTC day everywhere.
-- **Orders pass (October 17, 2026, performance):** each minute's pass evaluates only open orders that could have moved since the last finished pass: their kind's records changed, or the order was drawn or rerolled since (`daily_orders.drawn_at`, migration 0123). The first pass after a restart checks every open order.
+- **Lights and Shine Moments (Q4): built with Progression** on October 10, 2026 ([SUPPORT.md](SUPPORT.md) "Shine", `lights.rs`, migration 0088).
+- **Orders pass (October 17, 2026, performance):** each minute's pass evaluates only open orders that could have moved since the last finished pass: their kind's records changed, or the order was drawn or rerolled since (`daily_orders.drawn_at`, migration 0126). A pass where a payment failed keeps the old mark, so that order is checked again. The first pass after a restart checks every open order.
 
-## Questions for Joe
+## Review fixes (October 17, 2026)
+
+From the touch-packet review of this area:
+
+- Each order is marked done inside the transaction that pays it. A failed payment (a deadlock, a pool timeout) leaves the order for the next minute instead of done and never paid, and doesn't stop anyone else's payouts.
+- Today's orders are created under a per-person lock, so two first views at once can't repeat an order type.
+- The Scout limit of 3 a day holds within a single pass too: several new channels qualifying at once (a co-stream of new channels) award only what's left of today's 3.
+- Database sessions are pinned to UTC, so `current_date` is the UTC day whatever the server's time zone.
+- A done order shows the Engagement Valor it actually paid ("XP only" when it finished with no channel), and a target of 1 reads naturally ("Chat in a channel").
+- The sidebar refreshes each minute while visible and when you come back to the page.
+
+## Questions for Joe (answered October 10, 2026; kept for the record)
 
 1. **Level-up reward.** Legacy paid Valor (level × 10). Purchased Valor is money (creators are paid 0.8¢ for each one spent), so S.V.E.R would be minting a liability. Options: (a) nothing but the badge, (b) a cosmetic (badge frame, name color) every 10 levels, (c) Purchased Valor with a monthly budget. Proposed: (b).
 2. **Faction rank titles.** Six titles per faction for levels 1, 10, 25, 50, 75, 100. Do you want to name them, or should they be drafted from LORE.md for your approval?

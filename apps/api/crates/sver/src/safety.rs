@@ -70,6 +70,7 @@ const TARGETS: &[&str] = &[
     "live_stream",
     "dm_message",
     "wall_tile",
+    "light",
 ];
 pub const STANDING_MAIL: &str =
     "There's an update to your account standing. See sver.tv/settings/standing.";
@@ -207,6 +208,7 @@ async fn target(
         "vod"|"highlight"|"clip"=>crate::videos::review::target(db,kind,id).await?,
         "beacon" => crate::beacons::review::target(db, id).await?,
         "wall_tile" => crate::seats::report_target(db, id).await?,
+        "light" => crate::lights::report_target(db, id, reporter).await?,
         "beacon_comment" => crate::beacons::comment_target(db, id, reporter).await?,
         "guild" | "guild_emblem" => crate::guilds::target(db,id,reporter,kind=="guild_emblem").await?,
         "faction_post" => crate::factions::target(db,id,reporter).await?,
@@ -972,6 +974,9 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
     if kind == "emote" {
         return crate::emotes::remove(db, id).await;
     }
+    if kind == "light" {
+        return crate::lights::remove(db, id).await;
+    }
     if kind == "dm_message" {
         let visible = crate::dms::remove(db, id).await?;
         let previous = if visible { "VISIBLE" } else { "REMOVED" };
@@ -1060,6 +1065,7 @@ async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
         "guild" | "guild_emblem" => crate::guilds::owner(db, id).await?,
         "faction_post" => crate::factions::owner(db, id).await?,
         "emote" => crate::emotes::owner(db, id).await?,
+        "light" => crate::lights::owner(db, id).await?,
         "dm_message" => {
             sqlx::query_scalar("SELECT sender_id FROM dm_messages WHERE id=$1")
                 .bind(id)
@@ -1136,6 +1142,7 @@ async fn current_content(
         "beacon_comment" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM beacon_comments WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "guild" | "guild_emblem" => crate::guilds::snapshot(db, id).await?,
         "emote" => crate::emotes::current(db, id).await?,
+        "light" => crate::lights::current(db, id).await?,
         // Never decrypted here: staff open the sealed excerpt through /api/admin/dm-reports.
         "dm_message" => sqlx::query_scalar("SELECT jsonb_build_object('sealed',true,'deleted',deleted_at IS NOT NULL) FROM dm_messages WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "profile" => match profile_snapshot(db, id, field).await {
@@ -1695,6 +1702,10 @@ pub async fn decide(
                 }
                 "wall_tile" => {
                     crate::seats::restore(&mut tx, item_id, previous).await?;
+                    continue;
+                }
+                "light" => {
+                    crate::lights::restore(&mut tx, item_id, previous).await?;
                     continue;
                 }
                 "wall_post" => "wall_posts",

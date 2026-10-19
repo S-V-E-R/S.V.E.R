@@ -358,7 +358,9 @@ pub async fn request_delete(db: &mut PgConnection, id: &str, expiry: bool) -> Re
         return Err(Fail::denied("This recording is held for a review."));
     }
     sqlx::query("UPDATE videos SET status='DELETING',revision=revision+1 WHERE id=$1 AND status NOT IN ('EXPIRED','DELETED','DELETING')").bind(id).execute(&mut *db).await?;
-    enqueue(db, id, "DELETE", Some(id), json!({"expiry":expiry})).await
+    enqueue(db, id, "DELETE", Some(id), json!({"expiry":expiry})).await?;
+    // Removing a clip removes its Beacons; one still processing then can't publish.
+    crate::beacons::remove_made_from(db, &[id.to_owned()], false).await
 }
 pub async fn erase(db: &mut PgConnection, owner: &str) -> Res<()> {
     let ids: Vec<String> = sqlx::query_scalar(

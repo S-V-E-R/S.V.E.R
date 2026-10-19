@@ -379,7 +379,13 @@ impl Gif {
             && url(&self.play)
             && (1..=2000).contains(&self.width)
             && (1..=2000).contains(&self.height);
-        ok.then(|| json!({"slug": self.slug, "still": self.still, "play": self.play, "width": self.width, "height": self.height}))
+        // Every viewer draws the box at this size, so keep it chat-sized whatever the client sent.
+        let scale = (400.0 / f64::from(self.width.max(self.height))).min(1.0);
+        let (width, height) = (
+            ((f64::from(self.width) * scale).round() as i32).max(1),
+            ((f64::from(self.height) * scale).round() as i32).max(1),
+        );
+        ok.then(|| json!({"slug": self.slug, "still": self.still, "play": self.play, "width": width, "height": height}))
     }
     /// Alt text and the text every other reader (linked chat, apps, replay) sees.
     fn body(&self) -> String {
@@ -658,7 +664,19 @@ pub(crate) async fn send_from(
     let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted,skill,gif) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO NOTHING")
         .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.as_ref().map(|s| s.shown.as_str())).bind(gif.as_ref().map(|(g, _)| g.clone())).execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
-        return Err(Fail::conflict("That message ID is already in use."));
+        // A retry of the author's own message that was removed meanwhile.
+        let mine: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM chat_messages WHERE id=$1 AND author_id=$2)",
+        )
+        .bind(&input.id)
+        .bind(&user.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        return Err(Fail::conflict(if mine {
+            "That message was removed."
+        } else {
+            "That message ID is already in use."
+        }));
     }
     if let (Some(valor), Some(channel)) = (tribute, channel) {
         // The message and the Valor move commit together; the lock serializes the buyer's spends.
@@ -1057,14 +1075,17 @@ async fn session(
     // across sockets if measured viewer load makes this polling significant.
     let mut refresh = tokio::time::interval(std::time::Duration::from_secs(5));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // A shared chat's membership and access are re-read at most once a second, not per event.
-    let mut squad_checked = std::time::Instant::now();
+    // A shared chat re-checks the viewer's access before passing events on, at most once a second:
+    // a ban or block still closes the socket within a second, and a busy chat costs one check a
+    // second per viewer rather than one per message.
+    let mut checked = std::time::Instant::now();
     loop {
         tokio::select! {
             _ = refresh.tick() => {
                 if let Some(id) = &squad {
                     let viewer = match profiles::viewer(&app,&jar).await { Ok(v)=>v, Err(_)=>return };
                     if crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
+                    checked = std::time::Instant::now();
                 }
                 let Ok(current) = crate::emotes::catalog(&app, &channel).await else { return; };
                 if current != emotes {
@@ -1076,9 +1097,10 @@ async fn session(
                 Ok(e) if e.channel == room
                     && (e.seq == 0 || e.seq > cursor) => {
                     if let Some(id) = &squad
-                        && squad_checked.elapsed() >= std::time::Duration::from_secs(1) {
+                        && checked.elapsed() >= std::time::Duration::from_secs(1)
+                    {
                         if crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
-                        squad_checked = std::time::Instant::now();
+                        checked = std::time::Instant::now();
                     }
                     let Ok(hidden) = crate::chat::hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
@@ -1090,7 +1112,9 @@ async fn session(
                     } else if payload["type"] == "pin" {
                         let Ok(pin) = pinned(&app, &channel, &hidden).await else { return; };
                         payload["pinned"] = pin;
-                    } else if payload["type"] == "message" {
+                    } else if payload["type"] == "message" && payload["message"]["outside"].is_null() {
+                        // Outside messages and the bot's lines aren't in chat_messages and have no
+                        // S.V.E.R author; they go out as published (a later hide is its own event).
                         let Ok(message) = fresh(&app, &payload, &hidden).await else { return; };
                         let Some(message) = message else { continue; };
                         payload["message"] = message;

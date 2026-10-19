@@ -12,7 +12,7 @@ Earned automatically from records S.V.E.R already keeps, checked every 10 minute
 | `voice` | Voice of the Crowd | You chatted in 10 different channels |
 | `scout` | Scout | You scouted a new stream |
 | `pathfinder` | Pathfinder | You scouted 10 new streams |
-| `order_keeper` | Order Keeper | 30 daily orders done in one week |
+| `order_keeper` | Order Keeper | Every daily order in a week: 21 (Joe, October 17, 2026; 30 couldn't be reached at 3 orders a day) |
 | `legend` | Legend | Legend loyalty rank in a channel |
 | `level_10`, `level_25`, `level_50`, `level_100` | Level 10 … Level 100 | Reached that account level |
 | `first_light` | First Light | You went live for the first time |

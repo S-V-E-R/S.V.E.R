@@ -215,7 +215,7 @@ pub async fn tick(app: &App) -> Res<()> {
     }
     // Arrivals: leases that actually started on the target within 60 seconds and came from the
     // raid, never the raider's own viewer count.
-    let counted: Vec<(String, String, i64, String, Option<String>)> = sqlx::query_as("UPDATE raids r SET arrivals=(SELECT count(*) FROM playback_leases l WHERE l.raid_id=r.id AND l.broadcast_id=r.target_broadcast_id),counted_at=now() FROM channel_users c WHERE c.id=r.raider_id AND r.status='moved' AND r.counted_at IS NULL AND r.execute_at<=now()-interval '60 seconds' RETURNING r.id,r.target_id,r.arrivals::bigint,c.display_name,(SELECT faction FROM faction_members WHERE user_id=r.raider_id)")
+    let counted: Vec<(String, String, i64, String, Option<String>)> = sqlx::query_as("UPDATE raids r SET arrivals=(SELECT count(*) FROM playback_leases l WHERE l.raid_id=r.id AND l.broadcast_id=r.target_broadcast_id AND l.level IN ('counted','trusted')),counted_at=now() FROM channel_users c WHERE c.id=r.raider_id AND r.status='moved' AND r.counted_at IS NULL AND r.execute_at<=now()-interval '60 seconds' RETURNING r.id,r.target_id,r.arrivals::bigint,c.display_name,(SELECT faction FROM faction_members WHERE user_id=r.raider_id)")
         .fetch_all(&app.db)
         .await?;
     for (id, target, arrivals, raider, faction) in counted {

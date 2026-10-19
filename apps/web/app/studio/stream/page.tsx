@@ -63,7 +63,9 @@ export default function StreamStudio() {
       pending = true;
       try { await load(); } finally { pending = false; }
     }, 5000);
-    const hide = () => { if (document.hidden) { secretEpoch.current++; setSecret(null); setPassword(""); setCode(""); } };
+    // Only the shown key hides when the tab does; typed password and code stay, so a phone user can
+    // switch to their authenticator app and come back.
+    const hide = () => { if (document.hidden) { secretEpoch.current++; setSecret(null); } };
     document.addEventListener("visibilitychange", hide);
     return () => { active.current = false; clearInterval(timer); document.removeEventListener("visibilitychange", hide); };
   }, [load]);
@@ -110,6 +112,7 @@ export default function StreamStudio() {
     } finally { setBusy(false); }
   }
   async function stop() {
+    if (!window.confirm("Stop the stream and revoke your stream key? OBS disconnects now, and you'll need your password and authenticator to make a new key.")) return;
     setBusy(true); setSecret(null); setStatus({});
     const result = await send<{ disconnect_pending: boolean }>("POST", "/api/me/stream/stop");
     setStatus(result.ok ? { saved: result.data.disconnect_pending ? "Key revoked. OBS disconnection is pending; we'll keep retrying." : "Stream stopped and key revoked. Create a new key before broadcasting again." } : result);

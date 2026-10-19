@@ -30,7 +30,14 @@ use std::{
 };
 
 const PLATFORMS: [&str; 3] = ["twitch", "youtube", "kick"];
-const EVENTS: [&str; 2] = ["channel.chat.message", "channel.chat.message_delete"];
+/// Messages, single deletes, and the clears Twitch moderation sends: a ban or timeout clears that
+/// chatter's messages, and /clear clears them all. All four need only the linking scopes.
+const EVENTS: [&str; 4] = [
+    "channel.chat.message",
+    "channel.chat.message_delete",
+    "channel.chat.clear_user_messages",
+    "channel.chat.clear",
+];
 
 /// The permissions asked for when linking a platform for chat; None where it isn't available yet.
 /// Twitch: read the streamer's chat and post as them (`user:bot`/`channel:bot` let webhooks carry chat).
@@ -232,21 +239,67 @@ async fn muted(app: &App, channel: &str, platform: &str, sender: &str) -> Res<bo
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM outside_chat_mutes m WHERE m.channel_id=$1 AND m.platform=$2 AND m.sender_id=$3 AND (m.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=m.broadcast_id AND b.state<>'ENDED')))")
         .bind(channel).bind(platform).bind(sender).fetch_one(&app.db).await?)
 }
-/// Hides outside messages on S.V.E.R and tells connected viewers. `by_sender` hides everything
-/// one sender said here (`key` is "platform\nsender"); otherwise `key` is one message ID.
-async fn hide(app: &App, channel: &str, key: &str, by_sender: bool) -> Res<()> {
-    let rows: Vec<(String, i64)> = if by_sender {
-        let (platform, sender) = key.split_once('\n').unwrap_or_default();
-        sqlx::query_as("UPDATE outside_chat_messages SET hidden_at=now() WHERE channel_id=$1 AND platform=$2 AND sender_id=$3 AND hidden_at IS NULL RETURNING id,seq")
-            .bind(channel).bind(platform).bind(sender).fetch_all(&app.db).await?
-    } else {
-        sqlx::query_as("UPDATE outside_chat_messages SET hidden_at=now() WHERE channel_id=$1 AND id=$2 AND hidden_at IS NULL RETURNING id,seq")
-            .bind(channel).bind(key).fetch_all(&app.db).await?
+/// Which outside messages to hide.
+enum Hide<'a> {
+    /// One message, by its ID.
+    Message(&'a str),
+    /// Everything one sender said here: platform, sender ID.
+    Sender(&'a str, &'a str),
+    /// Everything from one platform (a chat clear there).
+    Platform(&'a str),
+}
+/// Hides outside messages on S.V.E.R and tells connected viewers.
+async fn hide(app: &App, channel: &str, which: Hide<'_>) -> Res<()> {
+    const SET: &str = "UPDATE outside_chat_messages SET hidden_at=now() WHERE channel_id=$1 AND hidden_at IS NULL";
+    let rows: Vec<String> = match which {
+        Hide::Message(id) => {
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("{SET} AND id=$2 RETURNING id")))
+                .bind(channel)
+                .bind(id)
+                .fetch_all(&app.db)
+                .await?
+        }
+        Hide::Sender(platform, sender) => {
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "{SET} AND platform=$2 AND sender_id=$3 RETURNING id"
+            )))
+            .bind(channel)
+            .bind(platform)
+            .bind(sender)
+            .fetch_all(&app.db)
+            .await?
+        }
+        Hide::Platform(platform) => {
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "{SET} AND platform=$2 RETURNING id"
+            )))
+            .bind(channel)
+            .bind(platform)
+            .fetch_all(&app.db)
+            .await?
+        }
     };
-    for (id, seq) in rows {
+    // Sequence 0, like every other delete: open sockets skip events at or before their snapshot,
+    // and the hidden message may well be in it.
+    for id in rows {
         app.chat
-            .publish(channel, None, seq, json!({"type":"delete","id":id}));
+            .publish(channel, None, 0, json!({"type":"delete","id":id}));
     }
+    Ok(())
+}
+/// Outside messages and the bot's lines are kept 7 days (docs/LINKED_CHAT.md), like S.V.E.R chat;
+/// a mute for one broadcast ends with it. Runs in the 30-second jobs pass, 1,000 rows at a time.
+pub async fn expire(app: &App) -> Res<()> {
+    let removed: Vec<(String, String)> = sqlx::query_as("DELETE FROM outside_chat_messages WHERE id IN (SELECT id FROM outside_chat_messages WHERE expires_at<=now() ORDER BY expires_at LIMIT 1000) RETURNING channel_id,id")
+        .fetch_all(&app.db)
+        .await?;
+    for (channel, id) in removed {
+        app.chat
+            .publish(&channel, None, 0, json!({"type":"delete","id":id}));
+    }
+    sqlx::query("DELETE FROM outside_chat_mutes m WHERE m.broadcast_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=m.broadcast_id AND b.state<>'ENDED')")
+        .execute(&app.db)
+        .await?;
     Ok(())
 }
 
@@ -310,9 +363,7 @@ async fn eventsub(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Re
                 .to_string()
                 .into_response();
         }
-        "revocation" => sqlx::query("UPDATE linked_chat_accounts SET status='revoked',detail='Twitch stopped sending chat. Link Twitch again to restore it.',status_at=now(),subscriptions=array_remove(subscriptions,$2) WHERE platform='twitch' AND subject=$1")
-            .bind(&subject).bind(event["subscription"]["id"].as_str().unwrap_or_default())
-            .execute(&app.db).await.map(|_| ()).map_err(Fail::from),
+        "revocation" => revoked(&app, &subject, &event).await,
         "notification" => notification(&app, &subject, &event).await,
         _ => Ok(()),
     };
@@ -321,6 +372,32 @@ async fn eventsub(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Re
         // A 5xx asks Twitch to retry; the message ID makes the retry harmless.
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
+}
+/// Twitch ended a subscription. When it gave up because our endpoint kept failing
+/// (`notification_failures_exceeded`, our own outage), the access is still good: the supervisor
+/// subscribes again on its next pass. Anything else (access removed, the Twitch account gone, a
+/// retired event version) needs the streamer to link again.
+async fn revoked(app: &App, subject: &str, event: &Value) -> Res<()> {
+    let id = event["subscription"]["id"].as_str().unwrap_or_default();
+    if event["subscription"]["status"] == "notification_failures_exceeded" {
+        // Only a subscription we still hold; a late notice for one already replaced changes nothing.
+        sqlx::query("UPDATE linked_chat_accounts SET status='reconnecting',detail='Twitch chat disconnected, reconnecting.',status_at=now()-interval '30 seconds',subscriptions='{}'
+            WHERE platform='twitch' AND subject=$1 AND status<>'revoked' AND $2=ANY(subscriptions)")
+            .bind(subject).bind(id).execute(&app.db).await?;
+        return Ok(());
+    }
+    sqlx::query("UPDATE linked_chat_accounts SET status='revoked',detail='Twitch stopped sending chat. Link Twitch again to restore it.',status_at=now(),subscriptions=array_remove(subscriptions,$2) WHERE platform='twitch' AND subject=$1")
+        .bind(subject).bind(id).execute(&app.db).await?;
+    Ok(())
+}
+/// The S.V.E.R channel a Twitch broadcaster is linked to.
+async fn owner_of(app: &App, subject: &str) -> Res<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT owner_id FROM linked_chat_accounts WHERE platform='twitch' AND subject=$1",
+    )
+    .bind(subject)
+    .fetch_optional(&app.db)
+    .await?)
 }
 async fn notification(app: &App, subject: &str, body: &Value) -> Res<()> {
     let e = &body["event"];
@@ -354,14 +431,23 @@ async fn notification(app: &App, subject: &str, body: &Value) -> Res<()> {
             .await?;
         }
         Some("channel.chat.message_delete") => {
-            let channel: Option<String> = sqlx::query_scalar(
-                "SELECT owner_id FROM linked_chat_accounts WHERE platform='twitch' AND subject=$1",
-            )
-            .bind(subject)
-            .fetch_optional(&app.db)
-            .await?;
-            if let (Some(channel), Some(id)) = (channel, e["message_id"].as_str()) {
-                hide(app, &channel, &format!("twitch:{id}"), false).await?;
+            if let (Some(channel), Some(id)) =
+                (owner_of(app, subject).await?, e["message_id"].as_str())
+            {
+                hide(app, &channel, Hide::Message(&format!("twitch:{id}"))).await?;
+            }
+        }
+        // A ban or timeout on Twitch clears that chatter's messages there, so here too.
+        Some("channel.chat.clear_user_messages") => {
+            if let (Some(channel), Some(target)) =
+                (owner_of(app, subject).await?, e["target_user_id"].as_str())
+            {
+                hide(app, &channel, Hide::Sender("twitch", target)).await?;
+            }
+        }
+        Some("channel.chat.clear") => {
+            if let Some(channel) = owner_of(app, subject).await? {
+                hide(app, &channel, Hide::Platform("twitch")).await?;
             }
         }
         _ => {}
@@ -542,7 +628,8 @@ async fn streamer(app: &App, jar: &CookieJar) -> Res<auth::User> {
 async fn view(app: &App, owner: &str) -> Res<Json<Value>> {
     let accounts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('platform',platform,'handle',handle,'enabled',enabled,'status',status,'detail',detail) FROM linked_chat_accounts WHERE owner_id=$1 ORDER BY platform")
         .bind(owner).fetch_all(&app.db).await?;
-    let mutes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('platform',m.platform,'sender_id',m.sender_id,'name',coalesce((SELECT sender_name FROM outside_chat_messages o WHERE o.channel_id=m.channel_id AND o.platform=m.platform AND o.sender_id=m.sender_id ORDER BY seq DESC LIMIT 1),m.sender_id),'permanent',m.broadcast_id IS NULL) FROM outside_chat_mutes m WHERE m.channel_id=$1 ORDER BY m.created_at DESC LIMIT 200")
+    let mutes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('platform',m.platform,'sender_id',m.sender_id,'name',coalesce((SELECT sender_name FROM outside_chat_messages o WHERE o.channel_id=m.channel_id AND o.platform=m.platform AND o.sender_id=m.sender_id ORDER BY seq DESC LIMIT 1),m.sender_id),'permanent',m.broadcast_id IS NULL) FROM outside_chat_mutes m WHERE m.channel_id=$1
+            AND (m.broadcast_id IS NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.id=m.broadcast_id AND b.state<>'ENDED')) ORDER BY m.created_at DESC LIMIT 200")
         .bind(owner).fetch_all(&app.db).await?;
     let available: serde_json::Map<String, Value> = PLATFORMS
         .iter()
@@ -749,7 +836,7 @@ async fn hide_message(
 ) -> Res<Json<Value>> {
     let channel = moderation::channel(&app, &name).await?;
     let (user, role) = moderation::actor(&app, &jar, &channel).await?;
-    hide(&app, &channel, &id, false).await?;
+    hide(&app, &channel, Hide::Message(&id)).await?;
     let mut tx = app.db.begin().await?;
     let reason = "Hid a linked-chat message";
     moderation::log(
@@ -796,8 +883,7 @@ async fn mute(
     hide(
         &app,
         &channel,
-        &format!("{}\n{}", input.platform, input.sender_id),
-        true,
+        Hide::Sender(&input.platform, &input.sender_id),
     )
     .await?;
     let mut tx = app.db.begin().await?;
