@@ -6,6 +6,13 @@
 //!
 //! Roles are the streamer's own, picked in Studio. The bot only removes a role it gave (recorded in
 //! `discord_grants`), so roles a server's moderators hand out by hand are never touched.
+//!
+//! The community bot on the S.V.E.R home server (docs/DISCORD_BOT.md) adds a Gateway connection
+//! (`gateway`), slash commands (`commands`) and the staff settings for that server (`home`).
+pub mod commands;
+pub mod gateway;
+pub mod home;
+
 use crate::{
     App,
     profiles::{self, Fail, Res},
@@ -29,10 +36,10 @@ const PERMISSIONS: u64 = 1024 | 2048 | 16384 | 268_435_456;
 const SWEEP_MINUTES: i32 = 15;
 const FACTIONS: [&str; 3] = ["myria", "aetheron", "glint"];
 
-fn api() -> String {
+pub(crate) fn api() -> String {
     std::env::var("DISCORD_API").unwrap_or_else(|_| "https://discord.com/api/v10".into())
 }
-fn bot_token() -> Option<String> {
+pub(crate) fn bot_token() -> Option<String> {
     std::env::var("DISCORD_BOT_TOKEN")
         .ok()
         .filter(|t| !t.is_empty())
@@ -47,18 +54,34 @@ fn callback(app: &App) -> String {
     format!("{}/api/me/discord/callback", app.config.origin)
 }
 
-/// One Discord API call: the status and JSON body, or None when Discord couldn't be reached.
-async fn call(app: &App, method: Method, path: &str, body: Option<Value>) -> Option<(u16, Value)> {
-    let mut request = app
-        .http
-        .request(method, format!("{}{path}", api()))
-        .header("Authorization", format!("Bot {}", bot_token()?));
-    if let Some(body) = body {
-        request = request.json(&body);
+/// One Discord API call: the status and JSON body, or None when Discord couldn't be reached. A
+/// rate-limited call waits as Discord asks (up to 5 seconds) and is tried once more.
+pub(crate) async fn call(
+    app: &App,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+) -> Option<(u16, Value)> {
+    let token = bot_token()?;
+    for attempt in 0..2 {
+        let mut request = app
+            .http
+            .request(method.clone(), format!("{}{path}", api()))
+            .header("Authorization", format!("Bot {token}"));
+        if let Some(body) = &body {
+            request = request.json(body);
+        }
+        let response = request.send().await.ok()?;
+        let status = response.status().as_u16();
+        let body = response.json().await.unwrap_or(Value::Null);
+        if status == 429 && attempt == 0 {
+            let wait = body["retry_after"].as_f64().unwrap_or(1.0).clamp(0.0, 5.0);
+            tokio::time::sleep(std::time::Duration::from_secs_f64(wait)).await;
+            continue;
+        }
+        return Some((status, body));
     }
-    let response = request.send().await.ok()?;
-    let status = response.status().as_u16();
-    Some((status, response.json().await.unwrap_or(Value::Null)))
+    None
 }
 
 /// What a failed call means for the streamer, shown in Studio; None for a passing problem.
@@ -100,8 +123,15 @@ async fn server(app: &App, channel: &str) -> Res<Option<Server>> {
         .bind(channel).fetch_optional(&app.db).await?)
 }
 
-/// The server's text channels and the roles the bot may hand out, read live from Discord.
-async fn choices(app: &App, guild: &str) -> Res<(Vec<Value>, Vec<Value>)> {
+/// A server read live from Discord: every channel (id, name, type, parent), every role but
+/// @everyone and managed ones (with whether the bot can give it), and the bot's own server-wide
+/// permissions.
+pub(crate) struct Lists {
+    pub channels: Vec<Value>,
+    pub roles: Vec<Value>,
+    pub permissions: u64,
+}
+pub(crate) async fn lists(app: &App, guild: &str) -> Res<Lists> {
     let fail = || Fail::unavailable("Discord didn't answer. Try again in a minute.");
     let channels = call(app, Method::GET, &format!("/guilds/{guild}/channels"), None)
         .await
@@ -135,22 +165,43 @@ async fn choices(app: &App, guild: &str) -> Res<(Vec<Value>, Vec<Value>)> {
             .unwrap_or(0)
     };
     // The bot can give a role only below its own highest role.
-    let top = list(&bot.1["roles"])
+    let mine: Vec<String> = list(&bot.1["roles"])
         .iter()
-        .filter_map(|r| r.as_str().map(position))
-        .max()
-        .unwrap_or(0);
-    let text = list(&channels.1)
-        .into_iter()
-        .filter(|c| matches!(c["type"].as_i64(), Some(0 | 5)))
-        .map(|c| json!({"id": c["id"], "name": c["name"]}))
+        .filter_map(|r| r.as_str().map(String::from))
         .collect();
-    let givable = list(&roles.1)
+    let top = mine.iter().map(|r| position(r)).max().unwrap_or(0);
+    // Server-wide permissions: @everyone's (its id is the server's) plus each of the bot's roles.
+    let permissions = list(&roles.1)
+        .iter()
+        .filter(|r| r["id"] == guild || mine.iter().any(|m| r["id"] == m.as_str()))
+        .filter_map(|r| r["permissions"].as_str()?.parse::<u64>().ok())
+        .fold(0, |all, p| all | p);
+    let channels = list(&channels.1)
+        .into_iter()
+        .map(|c| json!({"id": c["id"], "name": c["name"], "type": c["type"], "parent": c["parent_id"]}))
+        .collect();
+    let roles = list(&roles.1)
         .into_iter()
         .filter(|r| r["id"] != guild && r["managed"] != true)
         .map(|r| json!({"id": r["id"], "name": r["name"], "givable": r["position"].as_i64().unwrap_or(0) < top}))
         .collect();
-    Ok((text, givable))
+    Ok(Lists {
+        channels,
+        roles,
+        permissions,
+    })
+}
+
+/// The server's text channels and the roles the bot may hand out, read live from Discord.
+async fn choices(app: &App, guild: &str) -> Res<(Vec<Value>, Vec<Value>)> {
+    let l = lists(app, guild).await?;
+    let text = l
+        .channels
+        .into_iter()
+        .filter(|c| matches!(c["type"].as_i64(), Some(0 | 5)))
+        .map(|c| json!({"id": c["id"], "name": c["name"]}))
+        .collect();
+    Ok((text, l.roles))
 }
 
 /// GET /api/me/discord: whether the bot is available, and the linked server with its choices.

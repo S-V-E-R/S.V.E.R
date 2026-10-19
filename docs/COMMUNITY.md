@@ -106,6 +106,8 @@ Carried over from legacy: each faction has its own bot persona, and a neutral on
 
 ## Discord bot
 
+The community bot for the S.V.E.R home server, which replaces the legacy bot, is specified in [DISCORD_BOT.md](DISCORD_BOT.md). This section covers the streamer bot it builds on.
+
 - A S.V.E.R Discord bot that a streamer adds to their server: posts "now live" messages, and syncs Discord roles for their S.V.E.R subscribers, faction and guild.
 - Uses Discord's official bot API; the streamer links their Discord account (already a sign-in option).
 - **Done when:** go-live posts arrive in a chosen Discord channel and subscriber and faction roles stay in sync.
