@@ -4,7 +4,7 @@
 //! taken control" posts, and Discord chat and voice as war influence.
 use super::{
     card,
-    commands::{Interaction, MANAGE_GUILD, embed, private},
+    commands::{ANSWERED, Interaction, MANAGE_GUILD, defer, embed, finish, private, respond},
     home, levels, quests, role, send, sync,
 };
 use crate::{App, profiles::Res};
@@ -139,7 +139,21 @@ fn answer(result: Res<Value>) -> Value {
 /// Answers this module's commands; None when the command isn't one of them.
 pub async fn command(app: &App, i: &Interaction) -> Option<Value> {
     Some(match (i.name(), i.sub()) {
-        ("faction", Some("join")) => answer(join(app, i).await),
+        // Up to five role calls: answered "thinking…" first, so a slow Discord never misses the
+        // three-second window.
+        ("faction", Some("join")) => {
+            let (app, i) = (app.clone(), Interaction::parse(&i.raw)?);
+            tokio::spawn(async move {
+                respond(&app, &i, defer(true)).await;
+                let mut reply = answer(join(&app, &i).await)["data"].take();
+                // An edit can't carry the private flag; the deferral already set it.
+                if let Some(d) = reply.as_object_mut() {
+                    d.remove("flags");
+                }
+                finish(&app, &i, reply, None).await;
+            });
+            ANSWERED
+        }
         ("faction", Some("stats")) => answer(stats(app).await),
         ("faction", Some("leaderboard")) => answer(leaderboard(app).await),
         ("territories", _) => answer(territories(app).await),
@@ -203,22 +217,54 @@ pub async fn component(app: &App, i: &Interaction) -> Option<Value> {
     let pick = id
         .strip_prefix("fac:join:")
         .filter(|f| levels::FACTIONS.contains(f))?;
-    let done: Res<String> = async {
-        // Linked in the meantime: S.V.E.R still wins.
-        if let Some(sver) = sync::linked(app, &i.user).await?.and_then(|a| a.faction) {
-            set(app, &i.user, &sver).await?;
-            return Ok(format!(
-                "Your faction comes from your S.V.E.R account: **{}**.",
-                title(&sver)
-            ));
+    let (app, i, pick) = (app.clone(), Interaction::parse(&i.raw)?, pick.to_string());
+    // The role calls happen after a deferred update, as for /faction join.
+    tokio::spawn(async move {
+        respond(&app, &i, json!({"type": 6})).await;
+        let done: Res<String> = async {
+            // Linked in the meantime: S.V.E.R still wins.
+            if let Some(sver) = sync::linked(&app, &i.user).await?.and_then(|a| a.faction) {
+                set(&app, &i.user, &sver).await?;
+                return Ok(format!(
+                    "Your faction comes from your S.V.E.R account: **{}**.",
+                    title(&sver)
+                ));
+            }
+            set(&app, &i.user, &pick).await?;
+            Ok(welcome(&pick))
         }
-        set(app, &i.user, pick).await?;
-        Ok(welcome(pick))
+        .await;
+        let content = done
+            .unwrap_or_else(|_| "That couldn't be done right now. Try again in a minute.".into());
+        finish(&app, &i, update(content)["data"].take(), None).await;
+    });
+    Some(ANSWERED)
+}
+
+/// A member rejoined the home server: Discord took their roles when they left, so their faction
+/// and rank roles come back (the sync restores the rest).
+pub async fn rejoined(app: &App, user: &str) -> Res<()> {
+    let Some(guild) = home::guild(app).await else {
+        return Ok(());
+    };
+    let faction = levels::faction(app, user).await?;
+    let settings = home::settings(app).await;
+    if let Some(r) = faction.as_deref().and_then(|f| home::id(&settings, f)) {
+        role(app, &guild, user, &r, true).await;
     }
-    .await;
-    Some(update(done.unwrap_or_else(|_| {
-        "That couldn't be done right now. Try again in a minute.".into()
-    })))
+    let held: Option<i16> = sqlx::query_scalar("SELECT rank FROM discord_xp WHERE discord_user=$1")
+        .bind(user)
+        .fetch_optional(&app.db)
+        .await?;
+    if let Some(r) = levels::ladder(app)
+        .await?
+        .iter()
+        .find(|r| Some(r.rank) == held)
+        .and_then(|r| r.role(faction.as_deref()))
+    {
+        role(app, &guild, user, &r, true).await;
+    }
+    Ok(())
 }
 
 /// The running season (number, name, start, end), if any.

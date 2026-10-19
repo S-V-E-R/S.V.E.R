@@ -154,9 +154,11 @@ async fn member(
         call(app, Method::PATCH, &path, Some(json!({"nick": m.username}))).await;
     }
     if m.sver_level != Some(level as i32) {
-        sqlx::query("INSERT INTO discord_members(discord_user,sver_level) VALUES($1,$2) ON CONFLICT(discord_user) DO UPDATE SET sver_level=$2")
-            .bind(&m.discord).bind(level as i32).execute(&app.db).await?;
-        if let (Some(before), Some(channel)) = (m.sver_level, home::id(settings, "rank_up"))
+        // Only the sync that actually moves the level posts, when two overlap.
+        let moved = sqlx::query("INSERT INTO discord_members(discord_user,sver_level) VALUES($1,$2) ON CONFLICT(discord_user) DO UPDATE SET sver_level=$2 WHERE discord_members.sver_level IS DISTINCT FROM $2")
+            .bind(&m.discord).bind(level as i32).execute(&app.db).await?.rows_affected() == 1;
+        if let (true, Some(before), Some(channel)) =
+            (moved, m.sver_level, home::id(settings, "rank_up"))
             && level > i64::from(before)
         {
             let line = format!("<@{}> reached **Level {level}** on S.V.E.R!", m.discord);
@@ -213,6 +215,27 @@ async fn reconcile(
                 .await?;
         }
     }
+    Ok(())
+}
+
+/// GUILD_MEMBER_ADD / GUILD_MEMBER_REMOVE on the home server. Leaving strips every role, so the
+/// sync's grants end with it; rejoining brings back the faction and rank roles and syncs the rest.
+pub async fn membership(app: &App, kind: &str, d: &Value) -> Res<()> {
+    let Some(user) = d["user"]["id"].as_str() else {
+        return Ok(());
+    };
+    if d["user"]["bot"] == true || d["guild_id"].as_str() != home::guild(app).await.as_deref() {
+        return Ok(());
+    }
+    if kind == "GUILD_MEMBER_REMOVE" {
+        sqlx::query("DELETE FROM discord_home_grants WHERE discord_user=$1")
+            .bind(user)
+            .execute(&app.db)
+            .await?;
+        return Ok(());
+    }
+    factions::rejoined(app, user).await?;
+    soon(app, user);
     Ok(())
 }
 

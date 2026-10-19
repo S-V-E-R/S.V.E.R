@@ -640,18 +640,33 @@ async fn factions(e: &Env) {
             .await
             .unwrap()
     };
-    // A command or button, answered before this returns; the logged answer comes back.
+    // A command or button and its logged answer: the reply, or for a deferred one ("thinking…"
+    // or a deferred update) the edit that follows it. Each interaction's token is its id.
     let ask = async |id: &str, user: &str, staff: bool, kind: u64, data: Value| {
-        interaction(&e.app, json!({"id": id, "token": "tk", "type": kind, "guild_id": "900", "channel_id": "10",
+        interaction(&e.app, json!({"id": id, "token": id, "type": kind, "guild_id": "900", "channel_id": "10",
             "member": {"user": {"id": user}, "permissions": if staff { "32" } else { "0" }, "roles": []}, "data": data}))
             .await;
-        calls
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|l| l.starts_with(&format!("POST /interactions/{id}/")))
-            .cloned()
-            .unwrap_or_default()
+        let edit = format!("PATCH /webhooks/app1/{id}/messages/@original");
+        for _ in 0..200 {
+            let found = {
+                let log = calls.lock().unwrap();
+                let reply = log
+                    .iter()
+                    .find(|l| l.starts_with(&format!("POST /interactions/{id}/")))
+                    .cloned();
+                match reply {
+                    Some(r) if r.contains(r#""type":5"#) || r.contains(r#""type":6"#) => {
+                        log.iter().find(|l| l.starts_with(&edit)).cloned()
+                    }
+                    other => other,
+                }
+            };
+            if let Some(answer) = found {
+                return answer;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        String::new()
     };
     let sub = |name: &str, sub: &str, options: Value| json!({"name": name, "options": [{"type": 1, "name": sub, "options": options}]});
     // Background syncs after a command settle before the next look.
@@ -774,7 +789,7 @@ async fn factions(e: &Env) {
     )
     .await;
     assert!(
-        reply.contains(r#""type":7"#) && reply.contains("Welcome to **Glint**"),
+        reply.contains("Welcome to **Glint**") && reply.contains(r#""components":[]"#),
         "{reply}"
     );
     let c = taken();
@@ -1017,6 +1032,29 @@ async fn factions(e: &Env) {
         c.iter().any(|l| l.starts_with("POST /channels/10/messages")
             && l.contains("<@910> reached **Level 5** on S.V.E.R!")),
         "{c:#?}"
+    );
+    // Leaving strips every role, so the grants end; rejoining brings the faction, rank and synced
+    // roles back.
+    let member = json!({"guild_id": "900", "user": {"id": "910", "username": "fx"}, "joined_at": "2026-01-01T00:00:00Z"});
+    dispatch(&e.app, "GUILD_MEMBER_REMOVE", member.clone()).await;
+    assert_eq!(
+        count("SELECT count(*) FROM discord_home_grants WHERE discord_user='910'").await,
+        0
+    );
+    taken();
+    dispatch(&e.app, "GUILD_MEMBER_ADD", member).await;
+    settle().await;
+    let c = taken();
+    for role in ["63", "431", "67"] {
+        assert!(
+            has(&c, &format!("PUT /guilds/900/members/910/roles/{role} ")),
+            "{role} in {c:#?}"
+        );
+    }
+    assert_eq!(
+        count("SELECT count(*) FROM discord_home_grants WHERE discord_user='910' AND role='67'")
+            .await,
+        1
     );
     // Unlinked: everything the sync gave is taken back.
     e.sql("DELETE FROM identities WHERE subject='910'").await;

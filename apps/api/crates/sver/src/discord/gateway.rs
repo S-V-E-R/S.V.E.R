@@ -366,12 +366,12 @@ pub async fn dispatch(app: &App, kind: &str, data: Value) {
                 logged("influence", factions::message(app, &data).await);
             }
         }
-        "MESSAGE_UPDATE"
-        | "MESSAGE_DELETE"
-        | "MESSAGE_DELETE_BULK"
-        | "GUILD_MEMBER_ADD"
-        | "GUILD_MEMBER_REMOVE" => {
+        "MESSAGE_UPDATE" | "MESSAGE_DELETE" | "MESSAGE_DELETE_BULK" => {
             moderation::event(app, kind, &data).await;
+        }
+        "GUILD_MEMBER_ADD" | "GUILD_MEMBER_REMOVE" => {
+            moderation::event(app, kind, &data).await;
+            logged("membership", sync::membership(app, kind, &data).await);
         }
         "MESSAGE_REACTION_ADD" => logged("reaction", levels::reaction(app, &data).await),
         "VOICE_STATE_UPDATE" => logged("voice", levels::voice_state(app, &data).await),
