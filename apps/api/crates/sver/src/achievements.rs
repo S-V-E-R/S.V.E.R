@@ -70,15 +70,15 @@ pub const STYLES: [(&str, &str, i64); 5] = [
     ("outlined", "Outlined", 50),
 ];
 
-/// Each achievement's rule: a query of user IDs that have earned it, with one bound number.
+/// The level achievements, granted together from one pass over `xp_days`.
+const LEVELS: [(&str, i64); 4] = [
+    ("level_10", 10),
+    ("level_25", 25),
+    ("level_50", 50),
+    ("level_100", 100),
+];
+/// Each other achievement's rule: a query of user IDs that have earned it, with one bound number.
 fn rules() -> Vec<(&'static str, &'static str, i64)> {
-    let level = |key, l| {
-        (
-            key,
-            "SELECT user_id FROM xp_days GROUP BY user_id HAVING sum(xp)>=$1",
-            progression::xp_for(l),
-        )
-    };
     vec![
         (
             "first_follow",
@@ -110,10 +110,6 @@ fn rules() -> Vec<(&'static str, &'static str, i64)> {
             "SELECT DISTINCT user_id FROM engagement WHERE earned>=$1",
             progression::LOYALTY[4].1,
         ),
-        level("level_10", 10),
-        level("level_25", 25),
-        level("level_50", 50),
-        level("level_100", 100),
         (
             "first_light",
             "SELECT DISTINCT owner_id FROM broadcasts WHERE confirmed_live_at IS NOT NULL AND $1=$1",
@@ -172,17 +168,32 @@ fn rules() -> Vec<(&'static str, &'static str, i64)> {
     ]
 }
 
-/// Every 10 minutes: grants every achievement whose rule now holds. Earned ones are kept.
+/// Every 10 minutes: grants every achievement whose rule now holds, skipping people who already
+/// have it. Earned ones are kept.
 pub async fn award(app: &App) -> Res<()> {
     for (key, sql, n) in rules() {
         sqlx::query(sqlx::AssertSqlSafe(format!(
-            "INSERT INTO user_achievements(user_id,key) SELECT s.u,$2 FROM ({sql}) s(u) WHERE s.u IS NOT NULL ON CONFLICT DO NOTHING"
+            "INSERT INTO user_achievements(user_id,key) SELECT s.u,$2 FROM ({sql}) s(u)
+            WHERE s.u IS NOT NULL AND NOT EXISTS(SELECT 1 FROM user_achievements a WHERE a.user_id=s.u AND a.key=$2) ON CONFLICT DO NOTHING"
         )))
         .bind(n)
         .bind(key)
         .execute(&app.db)
         .await?;
     }
+    let (keys, needs): (Vec<&str>, Vec<i64>) = LEVELS
+        .iter()
+        .map(|(key, level)| (*key, progression::xp_for(*level)))
+        .unzip();
+    sqlx::query("INSERT INTO user_achievements(user_id,key)
+        SELECT t.user_id,k.key FROM (SELECT user_id,sum(xp) AS xp FROM xp_days GROUP BY user_id HAVING sum(xp)>=$3) t
+        JOIN unnest($1::text[],$2::bigint[]) k(key,need) ON t.xp>=k.need
+        WHERE NOT EXISTS(SELECT 1 FROM user_achievements a WHERE a.user_id=t.user_id AND a.key=k.key) ON CONFLICT DO NOTHING")
+        .bind(&keys)
+        .bind(&needs)
+        .bind(needs[0])
+        .execute(&app.db)
+        .await?;
     Ok(())
 }
 

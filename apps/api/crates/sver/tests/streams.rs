@@ -957,12 +957,32 @@ async fn exercise(e: &Env) {
         "STARTING",
         "Inventory can precede SRS accepting the callback response"
     );
+    e.sql("UPDATE stream_settings SET charity_name='Food Bank',charity_url='https://food.example/give' WHERE owner_id='stream-owner'").await;
+    // Only a link staff approved makes a charity stream.
+    e.sql("INSERT INTO charity_links(url,status,charity_name) VALUES('https://food.example/give','approved','Food Bank') ON CONFLICT DO NOTHING").await;
     e.publishing(&key, client, 1000);
     streams::tick(&e.app).await.unwrap();
     e.publishing(&key, client, 2000);
     streams::tick(&e.app).await.unwrap();
     let live = e.mine().await;
     assert_eq!(live["broadcast"]["state"], "LIVE");
+    // Going live makes it a charity stream; viewing the channel never writes one.
+    let charity = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM charity_streams WHERE owner_id='stream-owner'",
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(charity().await, 1);
+    e.sql("DELETE FROM charity_streams WHERE owner_id='stream-owner'")
+        .await;
+    sver::shine::channel(&mut e.app.db.acquire().await.unwrap(), "stream-owner")
+        .await
+        .unwrap();
+    assert_eq!(charity().await, 0);
+    e.sql("UPDATE stream_settings SET charity_name=NULL,charity_url=NULL WHERE owner_id='stream-owner'").await;
     assert!(live["broadcast"]["health"]["keyframe_seconds"].is_null());
     assert_eq!(live["broadcast"]["health"]["bitrate_warning"], true);
     e.call(

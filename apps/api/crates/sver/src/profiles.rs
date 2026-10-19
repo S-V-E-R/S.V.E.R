@@ -212,6 +212,16 @@ pub async fn blocked_between(db: &mut PgConnection, a: &str, b: &str) -> Res<boo
         .fetch_one(&mut *db)
         .await?)
 }
+/// Which of `others` block `user` or are blocked by them, in one query.
+pub async fn blocked_among(
+    db: &mut PgConnection,
+    user: &str,
+    others: &[String],
+) -> Res<std::collections::HashSet<String>> {
+    let ids: Vec<String> = sqlx::query_scalar("SELECT CASE WHEN blocker_id=$1 THEN blocked_id ELSE blocker_id END FROM user_blocks WHERE (blocker_id=$1 AND blocked_id=ANY($2)) OR (blocked_id=$1 AND blocker_id=ANY($2))")
+        .bind(user).bind(others).fetch_all(&mut *db).await?;
+    Ok(ids.into_iter().collect())
+}
 pub async fn rate(app: &App, key: String, limit: i32, seconds: i64) -> Res<()> {
     sec::reserve(app, vec![key], limit, seconds).await?;
     Ok(())
