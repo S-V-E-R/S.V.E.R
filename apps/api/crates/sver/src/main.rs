@@ -164,6 +164,10 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    // The community bot's Gateway connection (docs/DISCORD_BOT.md); off unless DISCORD_GATEWAY=1.
+    if sver::discord::gateway::enabled() {
+        tokio::spawn(sver::discord::gateway::run(app.clone()));
+    }
     // Linked chat subscribes and unsubscribes at Twitch, which can take its 10-second timeout per
     // call; on its own loop a slow Twitch never holds up playback, raids or Engagement Valor.
     let linked = app.clone();

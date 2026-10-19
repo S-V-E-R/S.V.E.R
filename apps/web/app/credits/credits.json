@@ -2698,6 +2698,14 @@
   },
   {
    "kind": "rust",
+   "name": "tokio-tungstenite",
+   "version": "0.30.0",
+   "license": "MIT",
+   "url": "https://github.com/snapview/tokio-tungstenite",
+   "text": "5c07409e74572128"
+  },
+  {
+   "kind": "rust",
    "name": "tokio",
    "version": "1.53.3",
    "license": "MIT",
@@ -2780,6 +2788,14 @@
    "kind": "rust",
    "name": "tungstenite",
    "version": "0.29.0",
+   "license": "MIT OR Apache-2.0",
+   "url": "https://github.com/snapview/tungstenite-rs",
+   "text": "a69edb2155ca65cd"
+  },
+  {
+   "kind": "rust",
+   "name": "tungstenite",
+   "version": "0.30.0",
    "license": "MIT OR Apache-2.0",
    "url": "https://github.com/snapview/tungstenite-rs",
    "text": "a69edb2155ca65cd"
@@ -2895,6 +2911,14 @@
    "license": "MIT OR Apache-2.0",
    "url": "https://github.com/leotaku/web-push-native",
    "text": null
+  },
+  {
+   "kind": "rust",
+   "name": "webpki-roots",
+   "version": "0.26.11",
+   "license": "CDLA-Permissive-2.0",
+   "url": "https://github.com/rustls/webpki-roots",
+   "text": "d30183ec6610abca"
   },
   {
    "kind": "rust",
