@@ -341,12 +341,25 @@ async fn socket_ends_with_session(e: &Env, c: &str, d: &str) {
         .headers_mut()
         .insert("cookie", format!("sver_dev={d}").parse().unwrap());
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    // DM sockets listen on their own hub, not the site-wide chat bus.
+    e.app.chat.publish(
+        "dm:dm-d",
+        None,
+        1,
+        json!({"type": "dm", "with": "DmCharlie", "message": {"body": "from the chat bus"}}),
+    );
     charlie_to_delta(e, c, "while signed in").await;
     let live = super::chat::next_json(&mut socket).await;
     assert_eq!(
         (&live["type"], &live["message"]["body"]),
         (&json!("dm"), &json!("while signed in"))
     );
+    // The event carries what the conversation list needs, so the page doesn't refetch it.
+    assert_eq!(
+        (&live["with"], &live["message"]["sender"]),
+        (&json!("DmCharlie"), &json!("DmCharlie"))
+    );
+    assert!(live["message"]["created_at"].is_string(), "{live}");
     e.sql("DELETE FROM sessions WHERE user_id='dm-d'").await;
     charlie_to_delta(e, c, "after signing out").await;
     loop {

@@ -185,6 +185,34 @@ pub async fn exercise(e: &Env) {
             .await
             .unwrap();
     assert_eq!(status, "connected");
+    // Once connected, a message doesn't write the status again; a reconnecting link recovers on
+    // the next message.
+    let status_at = || async {
+        sqlx::query_as::<_, (String, chrono::DateTime<chrono::Utc>)>(
+            "SELECT status,status_at FROM linked_chat_accounts WHERE owner_id='stream-owner'",
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    e.sql("UPDATE linked_chat_accounts SET status_at=now()-interval '1 hour' WHERE owner_id='stream-owner'").await;
+    let connected = status_at().await;
+    webhook(e, "notification", chat("m1b", "tw-v", "still here"), true).await;
+    assert_eq!(status_at().await, connected);
+    e.sql("UPDATE linked_chat_accounts SET status='reconnecting' WHERE owner_id='stream-owner'")
+        .await;
+    webhook(e, "notification", chat("m1c", "tw-v", "and again"), true).await;
+    assert_eq!(status_at().await.0, "connected");
+    e.sql("DELETE FROM outside_chat_messages WHERE id IN ('twitch:m1b','twitch:m1c')")
+        .await;
+    assert_eq!(
+        super::chat::next_json(&mut watching).await["message"]["id"],
+        "twitch:m1b"
+    );
+    assert_eq!(
+        super::chat::next_json(&mut watching).await["message"]["id"],
+        "twitch:m1c"
+    );
 
     // The channel's banned words apply to how outside messages are shown.
     e.sql("INSERT INTO chat_settings(channel_id,banned_words) VALUES('stream-owner',ARRAY['zonkword']) ON CONFLICT(channel_id) DO UPDATE SET banned_words=ARRAY['zonkword']").await;
@@ -293,6 +321,68 @@ pub async fn exercise(e: &Env) {
     .await;
     assert!(outside(e).await.is_empty(), "a clear there clears here");
 
+    // Viewers report outside messages to staff; the sender isn't a S.V.E.R account, so staff
+    // remove the message (or dismiss) but can't strike anyone for it.
+    let viewer = super::chat::person(e, "lc-viewer", "LcViewer", true).await;
+    let staff = super::chat::person(e, "lc-staff", "LcStaff", true).await;
+    e.sql("UPDATE users SET mfa_enabled=true,mfa_secret='synthetic' WHERE id='lc-staff'")
+        .await;
+    e.sql("UPDATE sessions SET mfa_verified=true WHERE user_id='lc-staff'")
+        .await;
+    e.sql("INSERT INTO staff_roles(user_id,role) VALUES('lc-staff','admin')")
+        .await;
+    webhook(e, "notification", chat("m11", "tw-r", "rude words"), true).await;
+    let report = |id: &str| {
+        let (id, viewer) = (id.to_string(), viewer.clone());
+        async move {
+            super::chat::call(e, "POST", "/api/reports", Some(&viewer),
+                json!({"target_type":"outside_message","target_id":id,"reason":"harassment","note":""})).await
+        }
+    };
+    assert_eq!(report("twitch:m11").await.0, StatusCode::OK);
+    let snapshot: Value = sqlx::query_scalar("SELECT snapshot FROM reports WHERE target_type='outside_message' AND target_id='twitch:m11'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(
+        (
+            &snapshot["value"]["body"],
+            &snapshot["value"]["platform"],
+            &snapshot["value"]["sender"]
+        ),
+        (&json!("rude words"), &json!("twitch"), &json!("Name tw-r"))
+    );
+    let act = |body: Value| {
+        let staff = staff.clone();
+        async move {
+            super::chat::call(
+                e,
+                "POST",
+                "/api/admin/reports/outside_message/twitch:m11/actions",
+                Some(&staff),
+                body,
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        act(json!({"action":"remove_content","note":"rude","strike":{"reason":"harassment","severity":"STANDARD"}})).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, done) = act(json!({"action":"remove_content","note":"rude"})).await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert!(outside(e).await.is_empty(), "staff removal hides it here");
+    // The bot's lines are the channel's own, not outside messages.
+    sver::linked_chat::post_system(&e.app, "stream-owner", "bot", "bot", "PYRE", "Welcome")
+        .await
+        .unwrap();
+    let bot: String =
+        sqlx::query_scalar("SELECT id FROM outside_chat_messages WHERE platform='bot'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(report(&bot).await.0, StatusCode::NOT_FOUND);
+    e.sql("DELETE FROM outside_chat_messages WHERE platform='bot'")
+        .await;
+
     // Twitch giving up on our endpoint (our own outage) only needs subscribing again; access
     // removed on Twitch needs linking again.
     let account = || async {
@@ -317,6 +407,14 @@ pub async fn exercise(e: &Env) {
         StatusCode::NO_CONTENT
     );
     assert_eq!(account().await, ("reconnecting".into(), vec![]));
+    // The streamer's own chat view reads the notice from the status endpoint.
+    let status = e
+        .call("GET", "/api/me/linked-chat/status", Value::Null)
+        .await;
+    assert_eq!(
+        status["accounts"][0],
+        json!({"platform":"twitch","enabled":true,"status":"reconnecting","detail":"Twitch chat disconnected, reconnecting."})
+    );
     e.sql("UPDATE linked_chat_accounts SET status='connected',subscriptions=ARRAY['sub-new'] WHERE owner_id='stream-owner'").await;
     webhook(
         e,
