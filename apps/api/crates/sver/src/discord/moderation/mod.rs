@@ -43,17 +43,13 @@ struct By {
 impl By {
     /// The moderator with their server-wide permissions, from their roles: the interaction's own
     /// permissions include channel overwrites, so Manage Channels on one channel would otherwise
-    /// pass for the whole server. No permissions while Discord can't list the roles.
+    /// pass for the whole server. The server's owner has them all. No permissions while Discord
+    /// can't say.
     async fn of(app: &App, h: &Home, i: &Interaction) -> Self {
-        let permissions = match call(
-            app,
-            Method::GET,
-            &format!("/guilds/{}/roles", h.guild),
-            None,
-        )
-        .await
+        let permissions = match call(app, Method::GET, &format!("/guilds/{}", h.guild), None).await
         {
-            Some((200, roles)) => roles
+            Some((200, g)) if g["owner_id"] == i.user.as_str() => u64::MAX,
+            Some((200, g)) => g["roles"]
                 .as_array()
                 .into_iter()
                 .flatten()

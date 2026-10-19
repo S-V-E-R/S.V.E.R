@@ -39,12 +39,13 @@ async fn fake(
         // 777 has the protected role; 778 is on the mod team.
         ("GET", ["guilds", "900", "members", user]) => json!({"user": {"id": user},
             "roles": match *user { "777" => vec!["60"], "778" => vec!["50"], _ => vec![] }, "joined_at": "2020-01-01T00:00:00Z"}),
-        ("GET", ["guilds", "900", "roles"]) => json!([
+        // 44 owns the server and holds no roles.
+        ("GET", ["guilds", "900"]) => json!({"owner_id": "44", "roles": [
             {"id": "900", "position": 0, "permissions": "0"},
             {"id": "60", "position": 1, "permissions": "0"},
             {"id": "50", "position": 5, "permissions": "1099511627776"},
             {"id": "55", "position": 6, "permissions": "1099511635990"},
-        ]),
+        ]}),
         ("GET", ["guilds", "900", "channels"]) => json!([
             {"id": "10", "type": 0, "permission_overwrites": []},
             {"id": "12", "type": 0, "permission_overwrites": [{"id": "900", "type": 0, "allow": "0", "deny": "1024"}]},
@@ -319,6 +320,7 @@ pub async fn exercise(e: &Env) {
         ("i7a", "778", MODERATOR, "is staff"),
         ("i7b", "42", MODERATOR, "can't moderate yourself"),
         ("i7c", "500", MODERATOR, "That's the bot"),
+        ("i7i", "44", MODERATOR, "owns the server"),
         ("i7d", "706", HELPER, "needs the Ban Members permission"),
     ] {
         ask(
@@ -361,6 +363,32 @@ pub async fn exercise(e: &Env) {
     let c = taken(&calls);
     find(&c, &[EDITED, "needs the Manage Channels permission"]);
     none(&c, "/permissions/");
+    // The owner moderates without a role, and is never restricted.
+    ask_as(
+        e,
+        "i7j",
+        2,
+        "44",
+        "8",
+        json!([]),
+        command("purge", json!([{"name": "count", "value": 5}])),
+    )
+    .await;
+    let c = taken(&calls);
+    find(&c, &["GET /channels/30/messages"]);
+    none(&c, "needs the");
+    for (n, text) in [("8030", "examplebadword"), ("8031", "examplebadword again")] {
+        event(e, "MESSAGE_CREATE", message(n, "44", text)).await;
+    }
+    assert_eq!(
+        count(
+            e,
+            "SELECT count(*) FROM discord_escalations WHERE user_id='44'"
+        )
+        .await,
+        1
+    );
+    none(&taken(&calls), "/members/44/roles/51");
     // When Discord can't say who someone is (an error, a rate limit), nothing is done to them.
     for (n, user) in [("i7g", "556"), ("i7h", "557")] {
         ask(
@@ -421,6 +449,55 @@ pub async fn exercise(e: &Env) {
     taken(&calls);
     tick(e).await;
     none(&taken(&calls), "DELETE /guilds/900/bans/709");
+
+    // A length change waits on the member's ban lock and leaves a ban the timed lift claimed
+    // meanwhile alone.
+    ask(
+        e,
+        "i8c",
+        2,
+        "42",
+        MODERATOR,
+        command(
+            "ban",
+            json!([{"name": "user", "value": "711"}, {"name": "duration", "value": "1h"}]),
+        ),
+    )
+    .await;
+    taken(&calls);
+    let mut held = e.app.db.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('discord-ban:711', 0))")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let change = command(
+        "duration",
+        json!([{"name": "user", "value": "711"}, {"name": "duration", "value": "7d"}]),
+    );
+    tokio::join!(ask(e, "i8d", 2, "42", MODERATOR, change), async {
+        let mut waiting = false;
+        for _ in 0..500 {
+            waiting = count(
+                e,
+                "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted
+                AND ((classid::bigint<<32)|objid::bigint)=hashtextextended('discord-ban:711', 0)",
+            )
+            .await
+                > 0;
+            if waiting {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(waiting, "the length change didn't wait for the ban lock");
+        e.sql("UPDATE discord_cases SET lifted_at=now() WHERE user_id='711' AND action='ban'")
+            .await;
+        held.commit().await.unwrap();
+    });
+    let c = taken(&calls);
+    find(&c, &[EDITED, "has no active mute or ban"]);
+    none(&c, "now ends");
+    assert_eq!(count(e, "SELECT count(*) FROM discord_cases WHERE user_id='711' AND expires_at<now()+interval '2 hours'").await, 1);
 
     // The ban trap bans whoever writes there, but not for a system notice such as a pin.
     e.sql(r#"UPDATE discord_home SET settings=settings||'{"ban_trap": "40"}'"#)
