@@ -307,6 +307,7 @@ pub async fn exercise(e: &Env) {
     // SAFETY: only this test reads this variable.
     unsafe { std::env::set_var("DISCORD_CDN", format!("http://{address}")) };
     levels(e, &calls).await;
+    super::discord_moderation::exercise(e).await;
 }
 
 /// Levels and ranks, quests and achievements (docs/DISCORD_BOT.md), driven through the same
@@ -576,7 +577,7 @@ async fn levels(e: &Env, calls: &Calls) {
 
 /// A fake Gateway: sends what the test hands it and reports what the bot sends. `{"close": code}`
 /// closes the connection with that code; the next connection starts with Hello again.
-async fn fake_gateway() -> (
+pub(super) async fn fake_gateway() -> (
     String,
     tokio::sync::mpsc::UnboundedSender<Value>,
     tokio::sync::mpsc::UnboundedReceiver<Value>,

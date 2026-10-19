@@ -99,6 +99,7 @@ Specified October 19, 2026. The S.V.E.R Discord bot replaces the legacy communit
 - **Tickets / modmail** by DM or `/ticket`: a private thread per ticket, claim, close with reason, notes, priority and category, inactivity warning at 5 days and close at 7, transcripts. **Fixed:** tickets could never be configured; the one-per-hour limit didn't work.
 - **Mod log** for automod, warnings, escalations, actions, deletes, bulk deletes, edits, joins and leaves. Deleted-message evidence is kept 30 days.
 - **Health**: `/health` and the staff page show the Gateway, permissions and role position.
+- **Tuning** is on the staff page (Automod, Escalation and Safety): numbers and word lists, each check off while its numbers or list are empty. The import carries the legacy values over; the legacy bot's built-in NSFW words and sites were code, not data, so staff enter those.
 
 ## Data carried over
 
