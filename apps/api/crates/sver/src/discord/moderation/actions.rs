@@ -47,8 +47,10 @@ async fn strikes(app: &App, user: &str) -> Res<i64> {
     .await?)
 }
 
-/// The member as Discord has them; None when they aren't in the server.
-pub(super) async fn member(app: &App, h: &Home, user: &str) -> Option<Value> {
+/// The member as Discord has them: Ok(None) only when Discord says they aren't in the server
+/// (Unknown Member), Err when it didn't say (a rate limit, an outage), so "unknown" is never
+/// taken for "absent".
+pub(super) async fn member(app: &App, h: &Home, user: &str) -> Result<Option<Value>, ()> {
     match call(
         app,
         Method::GET,
@@ -57,15 +59,20 @@ pub(super) async fn member(app: &App, h: &Home, user: &str) -> Option<Value> {
     )
     .await
     {
-        Some((200, m)) => Some(m),
-        _ => None,
+        Some((200, m)) => Ok(Some(m)),
+        Some((404, body)) if body["code"] == 10007 => Ok(None),
+        _ => Err(()),
     }
 }
 /// The restricted role: members keep seeing channels but can't take part until staff review.
+/// Never staff or protected members (nor anyone, while Discord can't say who they are).
 pub(super) async fn restrict(app: &App, h: &Home, user: &str) -> bool {
     let Some(role) = home::id(&h.s, "restricted") else {
         return false;
     };
+    if !matches!(untouchable(app, h, user, None).await, Ok(None)) {
+        return false;
+    }
     done(
         app,
         Method::PUT,
@@ -96,14 +103,28 @@ async fn timeout(app: &App, h: &Home, user: &str, minutes: Option<i64>) -> bool 
     )
     .await
 }
-/// Mass spam: a 24-hour timeout pending review.
-pub(super) async fn quarantine(app: &App, h: &Home, user: &str) -> Res<bool> {
-    let ok = timeout(app, h, user, Some(1440)).await;
-    if ok {
-        sqlx::query("INSERT INTO discord_cases(user_id,action,reason,expires_at) VALUES($1,'mute','Automod: mass spam',now()+interval '24 hours')")
-            .bind(user).execute(&app.db).await?;
+/// Mass spam: a 24-hour timeout pending review. Why not, when it wasn't given.
+pub(super) async fn quarantine(app: &App, h: &Home, user: &str) -> Res<Option<String>> {
+    if let Some(why) = untouchable(app, h, user, None).await? {
+        return Ok(Some(why));
     }
-    Ok(ok)
+    if !timeout(app, h, user, Some(1440)).await {
+        return Ok(Some("Discord refused the timeout.".into()));
+    }
+    sqlx::query("INSERT INTO discord_cases(user_id,action,reason,expires_at) VALUES($1,'mute','Automod: mass spam',now()+interval '24 hours')")
+        .bind(user).execute(&app.db).await?;
+    Ok(None)
+}
+
+/// Holds the member's ban lock until the transaction ends, so a ban and the lifting of an
+/// expired timed ban for the same member never interleave.
+async fn ban_lock(app: &App, user: &str) -> Res<sqlx::Transaction<'static, sqlx::Postgres>> {
+    let mut tx = app.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('discord-ban:'||$1, 0))")
+        .bind(user)
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
 }
 
 #[derive(Clone, Copy)]
@@ -159,8 +180,10 @@ async fn untouchable(app: &App, h: &Home, user: &str, by: Option<&By>) -> Res<Op
     if by.is_some_and(|b| b.id == user) {
         return Ok(Some("You can't moderate yourself.".into()));
     }
-    let Some(m) = member(app, h, user).await else {
-        return Ok(None);
+    let m = match member(app, h, user).await {
+        Ok(Some(m)) => m,
+        Ok(None) => return Ok(None),
+        Err(()) => return Ok(Some("Discord didn't answer. Try again in a minute.".into())),
     };
     let theirs: Vec<String> = m["roles"]
         .as_array()
@@ -243,11 +266,13 @@ pub(super) async fn act(
     {
         return Ok(Err(missing(act.needs())));
     }
-    if !matches!(act, Act::Unmute)
-        && let Some(why) = untouchable(app, h, user, by).await?
-    {
+    if let Some(why) = untouchable(app, h, user, by).await? {
         return Ok(Err(why));
     }
+    let _lock = match act {
+        Act::Ban(_) | Act::Softban => Some(ban_lock(app, user).await?),
+        _ => None,
+    };
     let by = by.map(|b| b.id.as_str());
     let length = act
         .minutes()
@@ -413,7 +438,16 @@ async fn approve(app: &App, h: &Home, i: &Interaction, id: i64, length: Option<i
         "kick" => Act::Kick,
         _ => Act::Ban(minutes),
     };
-    match act(app, h, &user, Some(&By::of(i)), step, "Escalation approved").await? {
+    match act(
+        app,
+        h,
+        &user,
+        Some(&By::of(app, h, i).await),
+        step,
+        "Escalation approved",
+    )
+    .await?
+    {
         Ok(_) => {
             unrestrict(app, h, &user).await;
             Ok(update(
@@ -641,8 +675,9 @@ pub(super) async fn left(app: &App, h: &Home, d: &Value) -> Res<()> {
     Ok(())
 }
 
-/// Someone posted in the ban trap: banned, with a week of their messages deleted. Discord refuses
-/// to ban the server owner; their message is just deleted.
+/// Someone posted in the ban trap: banned, with a week of their messages deleted. Staff, the mod
+/// team and protected members (and anyone, while Discord can't say who they are) only lose the
+/// message; so does the server owner, whom Discord refuses to ban.
 pub(super) async fn trapped(
     app: &App,
     h: &Home,
@@ -650,13 +685,16 @@ pub(super) async fn trapped(
     message: &str,
     user: &str,
 ) -> Res<()> {
-    let banned = done(
-        app,
-        Method::PUT,
-        &format!("/guilds/{}/bans/{user}", h.guild),
-        Some(json!({"delete_message_seconds": 7 * 86_400})),
-    )
-    .await;
+    let spared = untouchable(app, h, user, None).await?;
+    let lock = ban_lock(app, user).await?;
+    let banned = spared.is_none()
+        && done(
+            app,
+            Method::PUT,
+            &format!("/guilds/{}/bans/{user}", h.guild),
+            Some(json!({"delete_message_seconds": 7 * 86_400})),
+        )
+        .await;
     if banned {
         close_bans(app, user).await?;
         sqlx::query("INSERT INTO discord_cases(user_id,action,reason) VALUES($1,'ban','Posted in the ban trap')")
@@ -670,19 +708,18 @@ pub(super) async fn trapped(
         )
         .await;
     }
+    drop(lock);
+    let outcome = match (banned, spared) {
+        (true, _) => "Banned, with a week of messages deleted.".to_string(),
+        (false, Some(why)) => format!("Not banned ({why}); the message was deleted."),
+        (false, None) => "The ban failed; the message was deleted.".into(),
+    };
     note(
         app,
         h,
         "Ban trap",
         ACTION,
-        format!(
-            "<@{user}> posted in <#{channel}>. {}",
-            if banned {
-                "Banned, with a week of messages deleted."
-            } else {
-                "The ban failed; the message was deleted."
-            }
-        ),
+        format!("<@{user}> posted in <#{channel}>. {outcome}"),
     )
     .await;
     Ok(())
@@ -693,6 +730,14 @@ pub(super) async fn tick(app: &App, h: &Home) -> Res<()> {
     let due: Vec<(i64, String)> = sqlx::query_as("UPDATE discord_cases SET lifted_at=now() WHERE id IN (SELECT id FROM discord_cases WHERE action='ban' AND lifted_at IS NULL AND expires_at<=now() ORDER BY expires_at LIMIT 20 FOR UPDATE SKIP LOCKED) RETURNING id,user_id")
         .fetch_all(&app.db).await?;
     for (id, user) in due {
+        // Under the member's ban lock: if a newer ban landed meanwhile, it stands and this one is
+        // simply over.
+        let mut lock = ban_lock(app, &user).await?;
+        let newer: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discord_cases WHERE user_id=$1 AND action='ban' AND lifted_at IS NULL AND id<>$2)")
+            .bind(&user).bind(id).fetch_one(&mut *lock).await?;
+        if newer {
+            continue;
+        }
         match call(
             app,
             Method::DELETE,
@@ -770,7 +815,7 @@ pub(super) async fn component(
     action: &str,
     target: &str,
 ) -> Res<Value> {
-    let who = By::of(i);
+    let who = By::of(app, h, i).await;
     let by = i.user.as_str();
     let number: i64 = target.parse().unwrap_or(0);
     // Buttons that don't go through `act` check their permission here.
@@ -866,8 +911,10 @@ pub(super) async fn component(
             )
         }
         ("new", "approve") => {
-            if member(app, h, target).await.is_none() {
-                return Ok(private("They're no longer in the server."));
+            match member(app, h, target).await {
+                Ok(Some(_)) => {}
+                Ok(None) => return Ok(private("They're no longer in the server.")),
+                Err(()) => return Ok(private("Discord didn't answer. Try again in a minute.")),
             }
             unrestrict(app, h, target).await;
             update(
@@ -988,7 +1035,7 @@ pub(super) async fn panel(app: &App, h: &Home, i: &Interaction) -> Res<Value> {
     let Some(user) = i.option("user").and_then(Value::as_str) else {
         return Ok(private("Pick a member."));
     };
-    let m = member(app, h, user).await;
+    let m = member(app, h, user).await.ok().flatten();
     let joined = m
         .as_ref()
         .and_then(|m| m["joined_at"].as_str())
@@ -1048,7 +1095,7 @@ pub(super) async fn command(app: &App, h: &Home, i: &Interaction) -> Res<Value> 
         "softban" => Some(Act::Softban),
         _ => None,
     };
-    let who = By::of(i);
+    let who = By::of(app, h, i).await;
     if let (Some(step), Some(user)) = (step, user) {
         return Ok(private(
             match act(app, h, user, Some(&who), step, reason).await? {

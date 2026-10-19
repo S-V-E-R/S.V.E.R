@@ -26,6 +26,16 @@ async fn fake(
         ("GET", ["guilds", "900", "members", "555"]) => {
             return (StatusCode::NOT_FOUND, Json(json!({"code": 10007})));
         }
+        // Discord failing (556) or rate limiting even the retry (557).
+        ("GET", ["guilds", "900", "members", "556"]) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})));
+        }
+        ("GET", ["guilds", "900", "members", "557"]) => {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({"retry_after": 0})),
+            );
+        }
         // 777 has the protected role; 778 is on the mod team.
         ("GET", ["guilds", "900", "members", user]) => json!({"user": {"id": user},
             "roles": match *user { "777" => vec!["60"], "778" => vec!["50"], _ => vec![] }, "joined_at": "2020-01-01T00:00:00Z"}),
@@ -33,6 +43,7 @@ async fn fake(
             {"id": "900", "position": 0, "permissions": "0"},
             {"id": "60", "position": 1, "permissions": "0"},
             {"id": "50", "position": 5, "permissions": "1099511627776"},
+            {"id": "55", "position": 6, "permissions": "1099511635990"},
         ]),
         ("GET", ["guilds", "900", "channels"]) => json!([
             {"id": "10", "type": 0, "permission_overwrites": []},
@@ -86,12 +97,25 @@ const MODERATOR: &str = "1099511635990";
 /// Timeouts only.
 const HELPER: &str = "1099511627776";
 /// Anyone with permissions here is on the mod team (role 50).
+/// Moderators hold role 55 (those permissions server-wide), helpers role 50 (timeouts only).
 async fn ask(e: &Env, id: &str, kind: u64, user: &str, permissions: &str, data: Value) {
-    let roles = if permissions == "0" {
-        json!([])
-    } else {
-        json!(["50"])
+    let roles = match permissions {
+        MODERATOR => json!(["55"]),
+        HELPER => json!(["50"]),
+        _ => json!([]),
     };
+    ask_as(e, id, kind, user, permissions, roles, data).await;
+}
+/// `permissions` is what the interaction carries (channel overwrites included).
+async fn ask_as(
+    e: &Env,
+    id: &str,
+    kind: u64,
+    user: &str,
+    permissions: &str,
+    roles: Value,
+    data: Value,
+) {
     sver::discord::commands::interaction(&e.app, json!({"id": id, "token": "tk", "type": kind, "guild_id": "900",
         "channel_id": "30", "member": {"user": {"id": user}, "permissions": permissions, "roles": roles}, "data": data}))
         .await;
@@ -323,6 +347,35 @@ pub async fn exercise(e: &Env) {
         &taken(&calls),
         &[EDITED, "needs the Manage Messages permission"],
     );
+    // Manage Channels on one channel (an overwrite) isn't Manage Channels for the server.
+    ask_as(
+        e,
+        "i7f",
+        2,
+        "42",
+        MODERATOR,
+        json!(["50"]),
+        command("lockdown", json!([])),
+    )
+    .await;
+    let c = taken(&calls);
+    find(&c, &[EDITED, "needs the Manage Channels permission"]);
+    none(&c, "/permissions/");
+    // When Discord can't say who someone is (an error, a rate limit), nothing is done to them.
+    for (n, user) in [("i7g", "556"), ("i7h", "557")] {
+        ask(
+            e,
+            n,
+            2,
+            "42",
+            MODERATOR,
+            command("ban", json!([{"name": "user", "value": user}])),
+        )
+        .await;
+        let c = taken(&calls);
+        find(&c, &[EDITED, "Discord didn't answer"]);
+        none(&c, "/bans/");
+    }
 
     // A timed ban lifts when it ends, once.
     ask(
@@ -383,6 +436,14 @@ pub async fn exercise(e: &Env) {
     let c = taken(&calls);
     find(&c, &["PUT /guilds/900/bans/710", "604800"]);
     find(&c, &["Ban trap", "710"]);
+    // A moderator posting a warning there loses the message, never their place.
+    let mut warning = message("8022", "778", "don't type here");
+    warning["channel_id"] = json!("40");
+    event(e, "MESSAGE_CREATE", warning).await;
+    let c = taken(&calls);
+    none(&c, "/bans/");
+    find(&c, &["DELETE /channels/40/messages/8022"]);
+    find(&c, &["Ban trap", "Not banned", "is staff"]);
 
     // The new-account filter holds a brand-new account for staff.
     let fresh = new_account();

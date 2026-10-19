@@ -241,7 +241,7 @@ pub(super) async fn direct(app: &App, h: &Home, d: &Value) -> Res<()> {
         return record(app, t.id, user, "user", content, &attached).await;
     }
     // Only members of the server can open tickets.
-    let Some(m) = actions::member(app, h, user).await else {
+    let Ok(Some(m)) = actions::member(app, h, user).await else {
         return Ok(());
     };
     if too_soon(app, user).await? {

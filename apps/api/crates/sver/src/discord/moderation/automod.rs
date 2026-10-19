@@ -493,10 +493,9 @@ async fn punish(app: &App, h: &Home, d: &Value, author: &str, hit: Hit) -> Res<(
                     };
                 }
             }
-            let outcome = if actions::quarantine(app, h, author).await? {
-                "Timed out for 24 hours, pending review"
-            } else {
-                "The timeout failed"
+            let outcome = match actions::quarantine(app, h, author).await? {
+                None => "Timed out for 24 hours, pending review".to_string(),
+                Some(why) => format!("Not timed out: {why}"),
             };
             let samples: Vec<String> = gone
                 .iter()
