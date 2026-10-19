@@ -38,7 +38,7 @@ rand = "0.10"
 sha2 = "0.11"
 sha1 = "0.11"
 totp-rs = { version = "6.0", features = ["otpauth"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
 url = "2"
 email_address = "0.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
@@ -49,6 +49,8 @@ hmac = "0.13"
 web-push-native = { version = "0.5", default-features = false, features = ["vapid"] }
 futures-util = "0.3"
 maxminddb = "0.32"
+# The Discord bot's /rank card text (docs/DISCORD_BOT.md).
+ab_glyph = "0.2"
 # The Discord bot's Gateway connection (docs/DISCORD_BOT.md).
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 

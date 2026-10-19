@@ -22,6 +22,8 @@ pub struct Interaction {
     pub roles: Vec<String>,
     pub permissions: u64,
     pub data: Value,
+    /// The whole interaction (the member's name and avatar, resolved users).
+    pub raw: Value,
 }
 impl Interaction {
     pub fn parse(raw: &Value) -> Option<Self> {
@@ -47,7 +49,29 @@ impl Interaction {
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(0),
             data: raw["data"].clone(),
+            raw: raw.clone(),
         })
+    }
+    /// The user an option names (its id), or the asker.
+    pub fn user_or_me(&self, option: &str) -> String {
+        self.option(option)
+            .and_then(Value::as_str)
+            .unwrap_or(&self.user)
+            .to_string()
+    }
+    /// A user's display name and avatar hash, from the asker or the resolved option.
+    pub fn profile(&self, user: &str) -> (String, Option<String>) {
+        let u = if user == self.user {
+            self.raw["member"]["user"].clone()
+        } else {
+            self.data["resolved"]["users"][user].clone()
+        };
+        let name = u["global_name"]
+            .as_str()
+            .or(u["username"].as_str())
+            .unwrap_or("Member")
+            .to_string();
+        (name, u["avatar"].as_str().map(String::from))
     }
     /// Manage Server or Administrator.
     pub fn staff(&self) -> bool {
@@ -96,11 +120,14 @@ pub fn embed(embed: Value, only_you: bool) -> Value {
 
 /// Every command's definition, registered on the home server.
 pub fn definitions() -> Vec<Value> {
-    vec![
+    let mut all = vec![
         json!({"name": "help", "description": "What the S.V.E.R bot can do."}),
         json!({"name": "health", "description": "How the S.V.E.R bot is doing.",
             "default_member_permissions": MANAGE_GUILD.to_string()}),
-    ]
+    ];
+    all.extend(super::levels::definitions());
+    all.extend(super::quests::definitions());
+    all
 }
 
 /// Puts `definitions` on the home server (Discord replaces the whole set). False when Discord
@@ -152,6 +179,12 @@ pub async fn interaction(app: &App, raw: Value) {
 }
 
 async fn command(app: &App, i: &Interaction) -> Option<Value> {
+    if let Some(reply) = super::levels::command(app, i).await {
+        return Some(reply);
+    }
+    if let Some(reply) = super::quests::command(app, i).await {
+        return Some(reply);
+    }
     Some(match i.name() {
         "help" => help(i),
         "health" if i.staff() => health(app).await,
@@ -164,6 +197,55 @@ pub async fn respond(app: &App, i: &Interaction, reply: Value) {
     let path = format!("/interactions/{}/{}/callback", i.id, i.token);
     if call(app, Method::POST, &path, Some(reply)).await.is_none() {
         eprintln!("discord_event=interaction outcome=failed");
+    }
+}
+
+/// "Thinking…": buys the 15 minutes Discord allows for a slow answer, sent with `finish`.
+pub fn defer(only_you: bool) -> Value {
+    json!({"type": 5, "data": {"flags": if only_you { EPHEMERAL } else { 0 }}})
+}
+/// Replaces a deferred reply, optionally with one attached file.
+pub async fn finish(app: &App, i: &Interaction, data: Value, file: Option<(&str, Vec<u8>)>) {
+    let Some(token) = super::bot_token() else {
+        return;
+    };
+    let application: Option<String> =
+        sqlx::query_scalar("SELECT application_id FROM discord_gateway")
+            .fetch_optional(&app.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    let Some(application) = application else {
+        return;
+    };
+    let url = format!(
+        "{}/webhooks/{application}/{}/messages/@original",
+        super::api(),
+        i.token
+    );
+    let request = app
+        .http
+        .patch(url)
+        .header("Authorization", format!("Bot {token}"));
+    let request = match file {
+        Some((name, bytes)) => {
+            let mut data = data;
+            data["attachments"] = json!([{"id": 0, "filename": name}]);
+            let part = reqwest::multipart::Part::bytes(bytes)
+                .file_name(name.to_string())
+                .mime_str("image/png")
+                .expect("a fixed media type");
+            request.multipart(
+                reqwest::multipart::Form::new()
+                    .text("payload_json", data.to_string())
+                    .part("files[0]", part),
+            )
+        }
+        None => request.json(&data),
+    };
+    if !request.send().await.is_ok_and(|r| r.status().is_success()) {
+        eprintln!("discord_event=interaction_finish outcome=failed");
     }
 }
 
