@@ -351,7 +351,10 @@ pub async fn tick(app: &App, source: &str) -> Result<()> {
                 .args(["-hide_banner", "-loglevel", "quiet", "-nostdin"])
                 .args(["-rw_timeout", "15000000", "-i"])
                 .arg(format!("{source}/{public_id}"))
-                .args(["-map", "0", "-c", "copy", "-f", "flv"])
+                // Output-side timeout too, so a stalled destination ends the relay; only the main
+                // video and audio go out (FLV can't carry other streams).
+                .args(["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-f", "flv"])
+                .args(["-rw_timeout", "15000000"])
                 .args(["-flvflags", "no_duration_filesize"])
                 .arg(format!("{server}/{key}"))
                 .stdin(std::process::Stdio::null())

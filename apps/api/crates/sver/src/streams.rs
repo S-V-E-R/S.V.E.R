@@ -503,7 +503,14 @@ async fn apply(
             "Use a stream title with 1–140 characters and no control characters.",
         ));
     }
-    if editor.is_some() && input.mature == Some(false) {
+    // Turning the label off is what's restricted; sending it unchanged (off) is just a save.
+    let mature_on: bool = sqlx::query_scalar(
+        "SELECT coalesce((SELECT mature FROM stream_settings WHERE owner_id=$1),false)",
+    )
+    .bind(owner)
+    .fetch_one(&mut *tx)
+    .await?;
+    if editor.is_some() && mature_on && input.mature == Some(false) {
         return Err(Error::bad(
             "Only the channel owner can turn the Mature label off.",
         ));
@@ -534,7 +541,7 @@ async fn apply(
     }
     let locked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM broadcasts WHERE owner_id=$1 AND mature_locked AND state<>'ENDED')")
         .bind(owner).fetch_one(&mut *tx).await?;
-    if locked && input.mature == Some(false) {
+    if locked && mature_on && input.mature == Some(false) {
         return Err(Error::bad(
             "Staff labeled this broadcast mature; the label stays on until it ends.",
         ));
@@ -990,10 +997,18 @@ pub async fn hook(
             return Err(Error::denied("Retired publisher."));
         }
         let now = clock(&mut tx).await?;
-        let broadcast_id = if let Some(b) = open {
-            sqlx::query("UPDATE broadcasts SET state='STARTING',server_id=$2,service_id=$3,client_id=$4,startup_deadline=$5,publisher_started_at=clock_timestamp(),reconnect_deadline=NULL,checked_at=NULL,observed_at=NULL,recv_bytes=NULL,health='{}' WHERE id=$1")
-                .bind(&b.id).bind(&input.server_id).bind(&input.service_id).bind(&input.client_id).bind(now+Duration::seconds(15)).execute(&mut *tx).await?;
-            b.id
+        // Resume the open broadcast unless it ended meanwhile (an expiry racing this reconnect);
+        // an ended one is never revived, a new broadcast starts instead.
+        let resumed = match open {
+            Some(b) => {
+                let n = sqlx::query("UPDATE broadcasts SET state='STARTING',server_id=$2,service_id=$3,client_id=$4,startup_deadline=$5,publisher_started_at=clock_timestamp(),reconnect_deadline=NULL,checked_at=NULL,observed_at=NULL,recv_bytes=NULL,health='{}' WHERE id=$1 AND state<>'ENDED'")
+                    .bind(&b.id).bind(&input.server_id).bind(&input.service_id).bind(&input.client_id).bind(now+Duration::seconds(15)).execute(&mut *tx).await?.rows_affected();
+                (n == 1).then_some(b.id)
+            }
+            None => None,
+        };
+        let broadcast_id = if let Some(id) = resumed {
+            id
         } else {
             let bid = id();
             sqlx::query("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,mature) VALUES($1,$2,$3,$4,'STARTING',$5,$6,$7,$8,$8,$9,coalesce((SELECT mature FROM stream_settings WHERE owner_id=$2),false))")
