@@ -55,7 +55,7 @@ Specified October 19, 2026. The S.V.E.R Discord bot replaces the legacy communit
 ## Quests and achievements
 
 - **Quests**: daily, weekly, monthly and one-time, with requirements chat messages, voice minutes, event RSVPs, giveaway entries, stream watching (now tracked), or several at once. Rewards: XP (through multipliers and the cap), faction points, an optional role. Milestones at 5, 10, 25, 50 and 100 completions. `/quests list|progress|board`; staff create and remove them. The six existing quests come over. **Fixed:** a recurring quest paid out only once ever; RSVPs could be farmed; faction-only quests and completion limits weren't enforced.
-- **Achievements**: the 16 legacy achievements (S.V.E.R linked / supporter / streamer, first stream, 10 h streamed, levels 10/25/50/100, voice 10/50/100 h, collab posted, birthday set, faction joined, hero nominated), posted to the achievements channel with rarity colours. **Fixed:** no channel was set, so none were ever posted.
+- **Achievements**: the 16 legacy achievements (S.V.E.R linked / supporter / streamer ("On the Air", in place of the legacy partner badge: there is no partner program), first stream, 10 h streamed, levels 10/25/50/100, voice 10/50/100 h, collab posted, birthday set, faction joined, hero nominated), posted to the achievements channel with rarity colours. **Fixed:** no channel was set, so none were ever posted.
 
 ## Go-live alerts and streamers
 
@@ -109,7 +109,7 @@ A one-time import from the legacy bot's SQLite database, rehearsed on a copy fir
 Each step is its own PR and release.
 
 1. **Core**: Gateway, slash command framework, the home-server settings, the staff page shell, the data import (rehearsed), health.
-2. **Levels and ranks**: XP, voice, multipliers, ranks, rank card, leaderboard, profile.
+2. **Levels and ranks**: XP, voice, multipliers, ranks, rank card, leaderboard, profile, quests and achievements.
 3. **Factions and sync**: faction roles, seasons, holidays, territories, influence, S.V.E.R role/level sync, Discord rank on profiles.
 4. **Streamers**: go-live alerts on all four platforms, Now Live, sessions, profiles, schedules, milestones, clip of the week, spotlights, collab, LFG.
 5. **Community**: welcome and onboarding, goodbye, birthdays, anniversaries, events, polls, giveaways, reminders, mentors, panels, threads and forums, temp rooms, custom commands, embeds, free games, GitHub changelog, WoW/Chromely.

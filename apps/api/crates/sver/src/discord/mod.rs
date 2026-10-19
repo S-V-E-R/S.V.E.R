@@ -9,9 +9,50 @@
 //!
 //! The community bot on the S.V.E.R home server (docs/DISCORD_BOT.md) adds a Gateway connection
 //! (`gateway`), slash commands (`commands`) and the staff settings for that server (`home`).
+pub mod card;
 pub mod commands;
 pub mod gateway;
 pub mod home;
+pub mod levels;
+pub mod quests;
+
+/// Gives (or takes back) a role on a server; false when Discord refused.
+pub(crate) async fn role(app: &App, guild: &str, user: &str, role: &str, give: bool) -> bool {
+    let method = if give { Method::PUT } else { Method::DELETE };
+    let path = format!("/guilds/{guild}/members/{user}/roles/{role}");
+    matches!(call(app, method, &path, None).await, Some((status, _)) if status < 300)
+}
+/// Sends a direct message; false when the member's DMs are closed to the bot.
+pub(crate) async fn dm(app: &App, user: &str, message: Value) -> bool {
+    let Some((200, channel)) = call(
+        app,
+        Method::POST,
+        "/users/@me/channels",
+        Some(json!({"recipient_id": user})),
+    )
+    .await
+    else {
+        return false;
+    };
+    match channel["id"].as_str() {
+        Some(id) => send(app, id, message).await.is_some(),
+        None => false,
+    }
+}
+/// Posts a message to a channel; its id when Discord took it.
+pub(crate) async fn send(app: &App, channel: &str, message: Value) -> Option<String> {
+    match call(
+        app,
+        Method::POST,
+        &format!("/channels/{channel}/messages"),
+        Some(message),
+    )
+    .await
+    {
+        Some((status, body)) if status < 300 => body["id"].as_str().map(String::from),
+        _ => None,
+    }
+}
 
 use crate::{
     App,

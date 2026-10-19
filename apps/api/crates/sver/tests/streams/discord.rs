@@ -8,8 +8,29 @@ type Calls = Arc<Mutex<Vec<String>>>;
 fn fake(calls: Calls) -> Router {
     let log = move |line: String| calls.lock().unwrap().push(line);
     let (a, b, c, d) = (log.clone(), log.clone(), log.clone(), log.clone());
-    let (f, g) = (log.clone(), log);
+    let (f, g) = (log.clone(), log.clone());
+    let (h, k) = (log.clone(), log);
     Router::new()
+        .route(
+            "/channels/{id}/messages",
+            post(move |Path(id): Path<String>, body: String| async move {
+                h(format!("SEND {id} {body}"));
+                Json(json!({"id": "m2"}))
+            }),
+        )
+        .route(
+            "/users/@me/channels",
+            post(|| async { Json(json!({"id": "dm1"})) }),
+        )
+        .route(
+            "/webhooks/{app}/{token}/messages/@original",
+            axum::routing::patch(move |headers: axum::http::HeaderMap, body: axum::body::Bytes| async move {
+                let kind = headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").split(';').next().unwrap_or("").to_string();
+                let png = body.windows(4).any(|w| w == b"\x89PNG");
+                k(format!("FINISH {kind} png={png}"));
+                Json(json!({}))
+            }),
+        )
         .route(
             "/applications/{app}/guilds/{guild}/commands",
             axum::routing::put(
@@ -283,6 +304,274 @@ pub async fn exercise(e: &Env) {
     assert_eq!(linked_rows().await, 0);
 
     gateway(e, &calls).await;
+    // SAFETY: only this test reads this variable.
+    unsafe { std::env::set_var("DISCORD_CDN", format!("http://{address}")) };
+    levels(e, &calls).await;
+}
+
+/// Levels and ranks, quests and achievements (docs/DISCORD_BOT.md), driven through the same
+/// Gateway dispatch the live connection uses.
+async fn levels(e: &Env, calls: &Calls) {
+    use sver::discord::gateway::{dispatch, minute};
+    let taken = || std::mem::take(&mut *calls.lock().unwrap());
+    let xp = |user: &'static str| async move {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT coalesce((SELECT total FROM discord_xp WHERE discord_user=$1),0)",
+        )
+        .bind(user)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    let say = |user: &'static str, content: &'static str| {
+        json!({"id": "x", "guild_id": "900", "channel_id": "10", "content": content,
+            "author": {"id": user}, "member": {"roles": []}})
+    };
+    let ready = || e.sql("UPDATE discord_xp SET message_at=now()-interval '2 minutes'");
+    e.sql(r#"UPDATE discord_home SET settings=settings||'{"leveling":true,"rank_up":"12","achievements":"12","factions_channel":"12"}'"#).await;
+    e.sql("UPDATE discord_ranks SET roles=jsonb_build_object('none','40'||rank,'myria','41'||rank,'aetheron','42'||rank,'glint','43'||rank)").await;
+    e.sql("INSERT INTO discord_members(discord_user,faction) VALUES('800','myria')")
+        .await;
+    taken();
+
+    // A message earns 15–25 XP and Myria chat points; the first rank comes silently with it.
+    dispatch(&e.app, "MESSAGE_CREATE", say("800", "hello there")).await;
+    let first = xp("800").await;
+    assert!((15..=25).contains(&first), "{first}");
+    let points: i64 = sqlx::query_scalar("SELECT coalesce(sum(points),0) FROM discord_points WHERE discord_user='800' AND faction='myria' AND kind='chat'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(points, first, "counted once, not twice");
+    assert_eq!(taken(), ["PUT 800 411"]);
+    // Within a minute, too short, a bot or another server: nothing.
+    dispatch(&e.app, "MESSAGE_CREATE", say("800", "hello again")).await;
+    ready().await;
+    dispatch(&e.app, "MESSAGE_CREATE", say("800", "hey")).await;
+    let mut bot = say("800", "beep boop beep");
+    bot["author"]["bot"] = json!(true);
+    dispatch(&e.app, "MESSAGE_CREATE", bot).await;
+    let mut elsewhere = say("800", "hello elsewhere");
+    elsewhere["guild_id"] = json!("901");
+    dispatch(&e.app, "MESSAGE_CREATE", elsewhere).await;
+    assert_eq!(xp("800").await, first);
+
+    // A faction multiplier is for that faction only.
+    e.sql("INSERT INTO discord_multipliers(name,factor,kind,target) VALUES('Glint day',3,'faction','glint'),('Myria day',2,'faction','myria')").await;
+    dispatch(&e.app, "MESSAGE_CREATE", say("800", "doubled for myria")).await;
+    let gain = xp("800").await - first;
+    assert!((30..=50).contains(&gain), "{gain}");
+    e.sql("DELETE FROM discord_multipliers").await;
+
+    // The daily cap, after multipliers.
+    e.sql("UPDATE discord_xp SET day_xp=1995 WHERE discord_user='800'")
+        .await;
+    ready().await;
+    let before = xp("800").await;
+    dispatch(&e.app, "MESSAGE_CREATE", say("800", "capped message")).await;
+    assert_eq!(xp("800").await - before, 5);
+
+    // Promotion: the rank role is swapped for the faction's next one, and it's announced.
+    e.sql("UPDATE discord_xp SET total=495,day_xp=0 WHERE discord_user='800'")
+        .await;
+    ready().await;
+    taken();
+    dispatch(&e.app, "MESSAGE_CREATE", say("800", "promotion time")).await;
+    let changes = taken();
+    assert!(
+        changes.contains(&"DELETE 800 411".to_string()),
+        "{changes:?}"
+    );
+    assert!(changes.contains(&"PUT 800 412".to_string()), "{changes:?}");
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.starts_with("SEND 12") && c.contains("Sentinel-II")),
+        "{changes:?}"
+    );
+    // No XP in a channel staff turned it off for.
+    e.sql(r#"UPDATE discord_home SET settings=settings||'{"xp_off":["10"]}'"#)
+        .await;
+    ready().await;
+    let before = xp("800").await;
+    dispatch(&e.app, "MESSAGE_CREATE", say("800", "no xp in here")).await;
+    assert_eq!(xp("800").await, before);
+    e.sql("UPDATE discord_home SET settings=settings-'xp_off'")
+        .await;
+
+    // Reactions: 5 XP, never on your own message.
+    let react = |user: &str, author: &str| json!({"guild_id": "900", "channel_id": "10", "user_id": user, "message_author_id": author, "member": {"roles": []}});
+    dispatch(&e.app, "MESSAGE_REACTION_ADD", react("801", "800")).await;
+    dispatch(&e.app, "MESSAGE_REACTION_ADD", react("801", "800")).await;
+    assert_eq!(xp("801").await, 5, "once per 30 seconds");
+    dispatch(&e.app, "MESSAGE_REACTION_ADD", react("804", "804")).await;
+    assert_eq!(xp("804").await, 0);
+
+    // Voice: 3 XP a minute with company, 2 more while someone else streams; nothing alone.
+    let voice = |user: &str, channel: Value, stream: bool| json!({"guild_id": "900", "user_id": user, "channel_id": channel, "self_stream": stream, "member": {"roles": []}});
+    dispatch(
+        &e.app,
+        "VOICE_STATE_UPDATE",
+        voice("800", json!("11"), false),
+    )
+    .await;
+    dispatch(
+        &e.app,
+        "VOICE_STATE_UPDATE",
+        voice("801", json!("11"), true),
+    )
+    .await;
+    let due = || e.sql("UPDATE discord_voice SET credited_at=now()-interval '2 minutes'");
+    due().await;
+    let (a, b) = (xp("800").await, xp("801").await);
+    minute(&e.app).await;
+    assert_eq!(xp("800").await - a, 5, "voice and watching");
+    assert_eq!(
+        xp("801").await - b,
+        3,
+        "a streamer doesn't watch themselves"
+    );
+    dispatch(
+        &e.app,
+        "VOICE_STATE_UPDATE",
+        voice("801", Value::Null, false),
+    )
+    .await;
+    due().await;
+    let a = xp("800").await;
+    minute(&e.app).await;
+    assert_eq!(xp("800").await, a, "alone");
+    let minutes: (i32, i32) = sqlx::query_as(
+        "SELECT voice_minutes,watch_minutes FROM discord_xp WHERE discord_user='800'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(minutes, (1, 1));
+    // Connecting again rebuilds who is in voice from the server itself.
+    dispatch(
+        &e.app,
+        "GUILD_CREATE",
+        json!({"id": "900", "name": "Test Server", "afk_channel_id": "13",
+        "voice_states": [{"user_id": "802", "channel_id": "11"}], "members": []}),
+    )
+    .await;
+    let present: Vec<String> = sqlx::query_scalar("SELECT discord_user FROM discord_voice")
+        .fetch_all(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(present, ["802"]);
+
+    // A weekly quest: complete once per week, rewarded with XP and faction points, and a DM.
+    e.sql("INSERT INTO discord_members(discord_user,faction) VALUES('803','glint')")
+        .await;
+    e.sql(r#"INSERT INTO discord_quests(name,period,needs,xp,points) VALUES('Chatter','weekly','{"chat_messages":2}',100,10)"#).await;
+    taken();
+    for text in ["first message", "second message", "third message"] {
+        ready().await;
+        dispatch(&e.app, "MESSAGE_CREATE", say("803", text)).await;
+    }
+    let done: i64 = sqlx::query_scalar("SELECT count(*) FROM discord_quest_progress WHERE discord_user='803' AND completed_at IS NOT NULL")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(done, 1);
+    assert!(xp("803").await >= 100 + 45);
+    let quest_points: i64 = sqlx::query_scalar("SELECT coalesce(sum(points),0) FROM discord_points WHERE discord_user='803' AND kind='quest'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(quest_points, 10);
+    assert!(
+        taken()
+            .iter()
+            .any(|c| c.starts_with("SEND dm1") && c.contains("Chatter"))
+    );
+
+    // Achievements unlock from the numbers and are posted to their channel.
+    e.sql("UPDATE discord_xp SET total=10000 WHERE discord_user='800'")
+        .await;
+    sver::discord::quests::check(&e.app, "800").await.unwrap();
+    taken();
+    minute(&e.app).await;
+    assert!(
+        taken()
+            .iter()
+            .any(|c| c.starts_with("SEND 12") && c.contains("Rising Star")),
+        "level 10"
+    );
+
+    // /rank answers at once and then sends the card; /leaderboard lists members; /xpmult is staff-only.
+    let ask = |id: &str, name: &str, permissions: &str, options: Value| {
+        json!({"id": id, "token": "tk", "type": 2, "guild_id": "900",
+            "member": {"user": {"id": "800", "username": "eight"}, "permissions": permissions, "roles": []},
+            "data": {"name": name, "options": options}})
+    };
+    taken();
+    dispatch(
+        &e.app,
+        "INTERACTION_CREATE",
+        ask("r1", "rank", "0", json!([])),
+    )
+    .await;
+    let mut finished = false;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c == "FINISH multipart/form-data png=true")
+        {
+            finished = true;
+            break;
+        }
+    }
+    let log = taken();
+    assert!(finished, "{log:?}");
+    assert!(
+        log.iter()
+            .any(|c| c.starts_with("REPLY r1") && c.contains(r#""type":5"#)),
+        "{log:?}"
+    );
+    dispatch(
+        &e.app,
+        "INTERACTION_CREATE",
+        ask("r2", "leaderboard", "0", json!([])),
+    )
+    .await;
+    dispatch(
+        &e.app,
+        "INTERACTION_CREATE",
+        ask("r3", "xpmult", "0", json!([{"type": 1, "name": "list"}])),
+    )
+    .await;
+    dispatch(&e.app, "INTERACTION_CREATE", ask("r4", "xpmult", "32", json!([{"type": 1, "name": "create", "options": [
+        {"name": "name", "value": "Weekend"}, {"name": "factor", "value": 1.5}, {"name": "for", "value": "event"}]}]))).await;
+    let mut replies = Vec::new();
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        replies = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.starts_with("REPLY r"))
+            .cloned()
+            .collect();
+        if replies.len() == 3 {
+            break;
+        }
+    }
+    let reply = |id: &str| {
+        replies
+            .iter()
+            .find(|r| r.starts_with(&format!("REPLY {id} ")))
+            .cloned()
+            .unwrap_or_default()
+    };
+    assert!(reply("r2").contains("<@800>"), "{replies:?}");
+    assert!(reply("r3").contains("Only staff"), "{replies:?}");
+    assert!(reply("r4").contains("Weekend"), "{replies:?}");
+    let factor: f64 =
+        sqlx::query_scalar("SELECT factor::float8 FROM discord_multipliers WHERE name='Weekend'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(factor, 1.5);
 }
 
 /// A fake Gateway: sends what the test hands it and reports what the bot sends. `{"close": code}`
@@ -441,7 +730,13 @@ async fn gateway(e: &Env, calls: &Calls) {
         json!([{"id": "900", "name": "Test Server"}])
     );
     // Saving registers the slash commands on that server.
-    assert_eq!(wait_for("COMMANDS").await, "COMMANDS app1 900 2");
+    assert_eq!(
+        wait_for("COMMANDS").await,
+        format!(
+            "COMMANDS app1 900 {}",
+            sver::discord::commands::definitions().len()
+        )
+    );
     taken();
 
     // /health for staff, refused for members, and the commands only answer on the home server.

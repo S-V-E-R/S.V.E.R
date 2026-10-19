@@ -4,7 +4,7 @@
 //!
 //! The connection resumes after a drop and identifies afresh after a restart. Events go to
 //! `dispatch` on their own task, so a slow handler never delays a heartbeat.
-use super::{bot_token, call, commands, home};
+use super::{bot_token, call, commands, home, levels, quests};
 use crate::App;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Method;
@@ -71,6 +71,7 @@ async fn lead(app: &App) -> Result<(), sqlx::Error> {
     }
     let (events, received) = mpsc::channel(1024);
     let handler = tokio::spawn(handle(app.clone(), received));
+    let ticker = tokio::spawn(ticker(app.clone()));
     let keeper = async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -110,7 +111,35 @@ async fn lead(app: &App) -> Result<(), sqlx::Error> {
         tokio::time::sleep(Duration::from_secs(wait)).await;
     }
     handler.abort();
+    ticker.abort();
     Ok(())
+}
+
+/// Every minute, while this process runs the bot: voice XP and achievement posts.
+async fn ticker(app: App) {
+    let mut every = tokio::time::interval(Duration::from_secs(60));
+    every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        every.tick().await;
+        // While disconnected nobody's voice state is current, so nothing is credited.
+        let connected: bool =
+            sqlx::query_scalar("SELECT coalesce((SELECT connected FROM discord_gateway),false)")
+                .fetch_one(&app.db)
+                .await
+                .unwrap_or(false);
+        if connected {
+            minute(&app).await;
+        }
+    }
+}
+pub async fn minute(app: &App) {
+    logged("voice_minute", levels::minute(app).await);
+    logged("achievements", quests::announce(app).await);
+}
+fn logged(what: &str, result: crate::profiles::Res<()>) {
+    if result.is_err() {
+        eprintln!("discord_event={what} outcome=retry");
+    }
 }
 
 fn jitter(below: u64) -> u64 {
@@ -301,7 +330,15 @@ pub async fn dispatch(app: &App, kind: &str, data: Value) {
             }
         }
         "RESUMED" => status(app, true, None).await,
-        "GUILD_CREATE" | "GUILD_UPDATE" => home::guild_seen(app, &data).await,
+        "GUILD_CREATE" | "GUILD_UPDATE" => {
+            home::guild_seen(app, &data).await;
+            if kind == "GUILD_CREATE" {
+                logged("voice", levels::guild_create(app, &data).await);
+            }
+        }
+        "MESSAGE_CREATE" => logged("message", levels::message(app, &data).await),
+        "MESSAGE_REACTION_ADD" => logged("reaction", levels::reaction(app, &data).await),
+        "VOICE_STATE_UPDATE" => logged("voice", levels::voice_state(app, &data).await),
         "INTERACTION_CREATE" => {
             // Each interaction gets its own task: Discord wants an answer within 3 seconds.
             let app = app.clone();
