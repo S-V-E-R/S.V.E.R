@@ -227,7 +227,7 @@
   {
    "kind": "npm",
    "name": "@types/node",
-   "version": "24.19.1",
+   "version": "24.19.2",
    "license": "MIT",
    "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node",
    "text": "ff82c90f84945c60"
@@ -307,7 +307,7 @@
   {
    "kind": "npm",
    "name": "framer-motion",
-   "version": "14.0.0",
+   "version": "14.2.0",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "aac842346e3368e0"
@@ -363,7 +363,7 @@
   {
    "kind": "npm",
    "name": "motion-dom",
-   "version": "14.0.0",
+   "version": "14.2.0",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "bb59eb35f694a158"
@@ -371,7 +371,7 @@
   {
    "kind": "npm",
    "name": "motion-utils",
-   "version": "14.0.0",
+   "version": "14.1.1",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "bb59eb35f694a158"
@@ -379,7 +379,7 @@
   {
    "kind": "npm",
    "name": "motion",
-   "version": "14.0.0",
+   "version": "14.2.0",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "bb59eb35f694a158"
@@ -2315,7 +2315,7 @@
   {
    "kind": "rust",
    "name": "serde_json",
-   "version": "1.0.151",
+   "version": "1.0.154",
    "license": "MIT OR Apache-2.0",
    "url": "https://github.com/serde-rs/json",
    "text": "30fefc3a7d6a0041"
@@ -2371,7 +2371,7 @@
   {
    "kind": "rust",
    "name": "sha2",
-   "version": "0.11.0",
+   "version": "0.11.1",
    "license": "MIT OR Apache-2.0",
    "url": "https://github.com/RustCrypto/hashes",
    "text": "535a6aa345e8622e"
@@ -2699,7 +2699,7 @@
   {
    "kind": "rust",
    "name": "tokio",
-   "version": "1.53.2",
+   "version": "1.53.3",
    "license": "MIT",
    "url": "https://github.com/tokio-rs/tokio",
    "text": "3e1bef82aa0dfee4"
@@ -2875,7 +2875,7 @@
   {
    "kind": "rust",
    "name": "uuid",
-   "version": "1.27.0",
+   "version": "1.28.0",
    "license": "Apache-2.0 OR MIT",
    "url": "https://github.com/uuid-rs/uuid",
    "text": "11cd7e6caed4b237"
