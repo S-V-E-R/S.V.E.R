@@ -186,14 +186,15 @@ async fn thumbnail(
     {
         return Err(Fail::bad("Choose a frame in the recording."));
     }
-    enqueue(
-        &mut *app.db.acquire().await?,
-        &id,
-        "THUMBNAIL",
-        Some(&format!("{id}:thumb")),
-        json!({"offset_ms":input.offset_ms}),
-    )
-    .await?;
+    // The choice replaces a queued automatic thumbnail rather than being dropped by it.
+    let queued = sqlx::query("INSERT INTO video_jobs(id,video_id,kind,object_key,input) VALUES($1,$2,'THUMBNAIL',$3,$4) ON CONFLICT(kind,object_key) DO UPDATE SET input=EXCLUDED.input,available_at=now(),attempts=0 WHERE video_jobs.lease_until IS NULL OR video_jobs.lease_until<=now()")
+        .bind(profiles::new_id()).bind(&id).bind(format!("{id}:thumb")).bind(json!({"offset_ms":input.offset_ms}))
+        .execute(&app.db).await?.rows_affected();
+    if queued == 0 {
+        return Err(Fail::bad(
+            "A thumbnail is being made right now. Try again in a minute.",
+        ));
+    }
     Ok(Json(json!({"queued":true})))
 }
 #[derive(Deserialize, Default)]
