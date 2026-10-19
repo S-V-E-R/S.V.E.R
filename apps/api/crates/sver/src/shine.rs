@@ -177,7 +177,7 @@ async fn save(
             (Some(name), Some(url)) if usable => {
                 sqlx::query("UPDATE charity_streams SET charity_name=$2,donate_url=$3 WHERE broadcast_id=$1 AND status='none'")
                     .bind(&broadcast).bind(name).bind(url).execute(&mut *tx).await?;
-                sync(&mut tx, &user.id).await?;
+                sync(&mut tx, Some(&user.id)).await?;
             }
             _ => {
                 sqlx::query("DELETE FROM charity_streams WHERE broadcast_id=$1 AND status='none'")
