@@ -356,7 +356,10 @@ pub async fn dispatch(app: &App, kind: &str, data: Value) {
                 logged("message", levels::message(app, &data).await);
             }
         }
-        "MESSAGE_UPDATE" | "MESSAGE_DELETE" | "MESSAGE_DELETE_BULK" | "GUILD_MEMBER_ADD"
+        "MESSAGE_UPDATE"
+        | "MESSAGE_DELETE"
+        | "MESSAGE_DELETE_BULK"
+        | "GUILD_MEMBER_ADD"
         | "GUILD_MEMBER_REMOVE" => {
             moderation::event(app, kind, &data).await;
         }

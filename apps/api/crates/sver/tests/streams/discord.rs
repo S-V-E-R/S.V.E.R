@@ -787,7 +787,8 @@ async fn gateway(e: &Env, calls: &Calls) {
     // Refused intents stop the bot with the fix shown to staff.
     to_bot.send(json!({"close": 4014})).unwrap();
     let mut problem = None;
-    for _ in 0..100 {
+    // Up to 20 seconds: the full suite runs beside other heavy tests.
+    for _ in 0..400 {
         problem = sqlx::query_scalar::<_, Option<String>>("SELECT problem FROM discord_gateway")
             .fetch_one(&e.app.db)
             .await

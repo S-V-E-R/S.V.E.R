@@ -215,6 +215,9 @@ pub async fn command(app: &App, i: &Interaction) -> Option<Value> {
 /// The answer to an interaction that was deferred: it edits the deferred message (`edit`), or
 /// arrives as a new private message.
 async fn follow(app: &App, i: &Interaction, reply: &Value, edit: bool) {
+    if edit {
+        return commands::finish(app, i, reply["data"].clone(), None).await;
+    }
     let application: Option<String> =
         sqlx::query_scalar("SELECT application_id FROM discord_gateway")
             .fetch_optional(&app.db)
@@ -226,12 +229,7 @@ async fn follow(app: &App, i: &Interaction, reply: &Value, edit: bool) {
         return;
     };
     let hook = format!("/webhooks/{application}/{}", i.token);
-    if edit {
-        let path = format!("{hook}/messages/@original");
-        call(app, Method::PATCH, &path, Some(reply["data"].clone())).await;
-    } else {
-        call(app, Method::POST, &hook, Some(reply["data"].clone())).await;
-    }
+    call(app, Method::POST, &hook, Some(reply["data"].clone())).await;
 }
 
 /// Buttons, menus and forms (custom ids `mod:<area>:<action>:<id>`); moderators only.
@@ -292,20 +290,20 @@ async fn upload(app: &App, channel: &str, mut body: Value, name: &str, text: &st
     };
     body["allowed_mentions"] = json!({"parse": []});
     body["attachments"] = json!([{"id": 0, "filename": name}]);
-    let boundary = format!("sver{}", uuid::Uuid::new_v4().simple());
-    let form = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n{body}\r\n\
-         --{boundary}\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"{name}\"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{text}\r\n--{boundary}--\r\n"
-    );
+    let Ok(file) = reqwest::multipart::Part::text(text.to_string())
+        .file_name(name.to_string())
+        .mime_str("text/plain; charset=utf-8")
+    else {
+        return false;
+    };
+    let form = reqwest::multipart::Form::new()
+        .text("payload_json", body.to_string())
+        .part("files[0]", file);
     let sent = app
         .http
         .post(format!("{}/channels/{channel}/messages", api()))
         .header("Authorization", format!("Bot {token}"))
-        .header(
-            "Content-Type",
-            format!("multipart/form-data; boundary={boundary}"),
-        )
-        .body(form)
+        .multipart(form)
         .send()
         .await;
     sent.is_ok_and(|r| r.status().is_success())
