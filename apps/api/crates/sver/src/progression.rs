@@ -146,15 +146,19 @@ pub async fn award_watch(app: &App) -> Res<()> {
         .await?;
     complete_orders(app).await
 }
-/// 2 XP for a chat message, at most once a minute (inside the message's transaction).
-pub(crate) async fn chatted(tx: &mut PgConnection, user: &str) -> Res<()> {
+/// 2 XP for a chat message while watching that channel, at most once a minute (inside the
+/// message's transaction).
+pub(crate) async fn chatted(tx: &mut PgConnection, channel: &str, user: &str) -> Res<()> {
     sqlx::query(
-        "INSERT INTO xp_days(user_id,day,source,xp) VALUES($1,current_date,'chat',2)
+        "INSERT INTO xp_days(user_id,day,source,xp) SELECT $1,current_date,'chat',2
+        WHERE EXISTS(SELECT 1 FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id
+          WHERE b.owner_id=$3 AND l.viewer_key='u:'||$1 AND l.level IN ('counted','trusted') AND l.expires_at>now())
         ON CONFLICT(user_id,day,source) DO UPDATE SET xp=least($2,xp_days.xp+2),updated_at=now()
         WHERE xp_days.updated_at<=now()-interval '60 seconds'",
     )
     .bind(user)
     .bind(CHAT_CAP)
+    .bind(channel)
     .execute(tx)
     .await?;
     Ok(())
@@ -181,7 +185,11 @@ const KINDS: [(&str, &str, [i32; 5]); 10] = [
         "Watch {n} minutes of live streams",
         [15, 30, 45, 60, 90],
     ),
-    ("chat", "Chat in {n} different channels", [1, 2, 3, 4, 5]),
+    (
+        "chat",
+        "Chat in {n} channels while watching",
+        [1, 2, 3, 4, 5],
+    ),
     ("follow", "Follow {n} new channels", [1, 1, 2, 2, 3]),
     (
         "surge",
@@ -236,8 +244,9 @@ const ORDER_EV: [i64; 5] = [10, 15, 20, 30, 50];
 /// Today's progress for order `o`, from the records each type names (UTC day).
 const PROGRESS: &str = "CASE o.kind
     WHEN 'watch' THEN coalesce((SELECT minutes FROM xp_days WHERE user_id=o.user_id AND day=o.day AND source='watch'),0)
-    WHEN 'chat' THEN (SELECT count(DISTINCT channel_id) FROM chat_messages WHERE author_id=o.user_id AND channel_id<>o.user_id AND created_at>=o.day::timestamp AT TIME ZONE 'UTC' AND deleted_at IS NULL)
-    WHEN 'follow' THEN (SELECT count(*) FROM follows WHERE follower_id=o.user_id AND created_at>=o.day::timestamp AT TIME ZONE 'UTC')
+    WHEN 'chat' THEN (SELECT count(DISTINCT m.channel_id) FROM chat_messages m WHERE m.author_id=o.user_id AND m.channel_id<>o.user_id AND m.created_at>=o.day::timestamp AT TIME ZONE 'UTC' AND m.deleted_at IS NULL
+        AND EXISTS(SELECT 1 FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id WHERE b.owner_id=m.channel_id AND l.viewer_key='u:'||o.user_id AND l.level IN ('counted','trusted') AND m.created_at BETWEEN l.created_at AND l.expires_at))
+    WHEN 'follow' THEN (SELECT count(*) FROM engagement WHERE user_id=o.user_id AND first_followed_at>=o.day::timestamp AT TIME ZONE 'UTC')
     WHEN 'surge' THEN (SELECT count(*) FROM surge_awards WHERE user_id=o.user_id AND day=o.day)
     WHEN 'rally' THEN (SELECT count(*) FROM rallies WHERE user_id=o.user_id AND minute>=extract(epoch FROM o.day::timestamp AT TIME ZONE 'UTC')::bigint/60)
     WHEN 'poll' THEN (SELECT count(*) FROM poll_votes WHERE user_id=o.user_id AND created_at>=o.day::timestamp AT TIME ZONE 'UTC')
@@ -298,10 +307,12 @@ async fn has_faction(db: &mut PgConnection, user: &str) -> Res<bool> {
             .await?,
     )
 }
-/// Creates today's 3 orders if they don't exist yet. Call it in a transaction: the per-person lock
-/// keeps two first views at once (two tabs) from mixing two draws into repeated order types.
+/// Creates today's 3 orders if they don't exist yet (under a per-user lock, so two first views
+/// can't mix two draws).
 async fn ensure_orders(db: &mut PgConnection, user: &str) -> Res<()> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('daily-orders:'||$1,0))")
+    let mut tx = sqlx::Connection::begin(db).await?;
+    let db = &mut *tx;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('orders:'||$1))")
         .bind(user)
         .execute(&mut *db)
         .await?;
@@ -323,6 +334,7 @@ async fn ensure_orders(db: &mut PgConnection, user: &str) -> Res<()> {
             .bind(user).bind(slot).bind(KINDS[kind].0).bind(rarity).bind(KINDS[kind].2[rarity as usize])
             .execute(&mut *db).await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 /// Each minute: orders whose progress reached the target are marked done and paid, each in its
@@ -376,9 +388,10 @@ async fn pay_order(app: &App, user: &str, slot: i16) -> Res<()> {
     // ponytail: "where the order was done" = the channel of the latest playback or chat
     // today; an order finished with no channel activity (only Beacons, say) pays XP only.
     let channel: Option<String> = sqlx::query_scalar("SELECT a.channel FROM (
-                SELECT b.owner_id AS channel,l.expires_at AS at FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id WHERE l.viewer_key='u:'||$1 AND l.expires_at>=current_date
+                SELECT b.owner_id AS channel,l.expires_at AS at FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id WHERE l.viewer_key='u:'||$1 AND l.level IN ('counted','trusted') AND l.expires_at>=current_date
                 UNION ALL SELECT channel_id,created_at FROM chat_messages WHERE author_id=$1 AND channel_id IS NOT NULL AND created_at>=current_date
             ) a WHERE a.channel<>$1 AND NOT EXISTS(SELECT 1 FROM channel_restrictions r WHERE r.channel_id=a.channel AND r.user_id=$1 AND r.kind='ban')
+            AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE (k.blocker_id=a.channel AND k.blocked_id=$1) OR (k.blocker_id=$1 AND k.blocked_id=a.channel))
             ORDER BY a.at DESC LIMIT 1")
             .bind(&user).fetch_optional(&mut *tx).await?;
     if let Some(channel) = &channel {

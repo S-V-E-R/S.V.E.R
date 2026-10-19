@@ -18,18 +18,21 @@ export function DailyOrders() {
     if (r.ok) setData(r.data);
   }, []);
   useLoad(load);
+  // Progress moves while you watch: refresh each minute while visible, and on coming back.
   useEffect(() => {
     const refresh = () => { if (!document.hidden) void load(); };
-    const timer = setInterval(refresh, 60000);
+    const timer = setInterval(refresh, 60_000);
     document.addEventListener("visibilitychange", refresh);
-    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+    window.addEventListener("focus", refresh);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh); };
   }, [load]);
+  const [error, setError] = useState("");
   async function reroll(slot: number) {
     if (busy) return;
     setBusy(true);
     const r = await send<Orders>("POST", `/api/me/orders/${slot}/reroll`);
     setBusy(false);
-    if (r.ok) setData(r.data);
+    if (r.ok) { setData(r.data); setError(""); } else setError(r.error);
   }
   if (!data || (!data.orders.length && !data.verify)) return null;
   return <section className="side-section daily-orders frame" aria-labelledby="side-orders">
@@ -41,6 +44,7 @@ export function DailyOrders() {
         <span className="xp-bar" aria-hidden="true"><span style={{ width: `${Math.round(100 * o.progress / o.target)}%` }} /></span>
         {data.can_reroll && !o.done && <button type="button" className="link-button order-reroll" disabled={busy} onClick={() => void reroll(o.slot)}>Reroll<span className="sr-only"> {o.label}</span></button>}
       </li>)}</ul>}
+    {error && <p role="alert" className="side-empty">{error}</p>}
     {!data.verify && <p className="side-empty">{data.week ?? 0} done this week · milestones at {(data.milestones ?? [7, 14, 21]).join(", ")}</p>}
   </section>;
 }

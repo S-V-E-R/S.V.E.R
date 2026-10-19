@@ -451,6 +451,13 @@ pub async fn exercise(e: &Env) {
         .0,
         StatusCode::OK
     );
+    let told: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id='rt-owner' AND kind='good_works')",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert!(told, "the streamer hears the staff decision");
     {
         let mut db = e.app.db.acquire().await.unwrap();
         let channel = sver::shine::channel(&mut db, "rt-owner").await.unwrap();

@@ -122,8 +122,8 @@ pub async fn exercise(e: &Env) {
     };
     assert_eq!(
         progression().await["xp"],
-        12,
-        "2 for chat (once) + 10 for a minute watched"
+        10,
+        "10 for a minute watched; chat before watching earns no XP"
     );
     e.sql("UPDATE broadcasts SET started_at=now()-interval '12 minutes' WHERE id='ev-b'")
         .await;
@@ -133,7 +133,7 @@ pub async fn exercise(e: &Env) {
     let mine = progression().await;
     assert_eq!(
         (&mine["xp"], &mine["level"], &mine["next_xp"]),
-        (&json!(62), &json!(1), &json!(100)),
+        (&json!(60), &json!(1), &json!(100)),
         "{mine}"
     );
     let (_, studio) = call(e, "GET", "/api/me/stream", Some(&owner), Value::Null).await;
@@ -173,7 +173,7 @@ pub async fn exercise(e: &Env) {
         "{today}"
     );
     let mine = progression().await;
-    assert_eq!(mine["level"], 2, "62 + 40 XP");
+    assert_eq!(mine["level"], 2, "60 + 40 XP");
     assert_eq!(mine["frame"], 0);
     assert!(mine["title"].is_string(), "{mine}");
     let token = viewer.as_str();
@@ -492,5 +492,29 @@ pub async fn exercise(e: &Env) {
     assert_eq!(balance(e, "ev-viewer").await, 600);
     e.sql("DELETE FROM channel_restrictions WHERE channel_id='ev-owner'")
         .await;
+
+    // Refollowing a channel followed before never completes "follow a new channel".
+    e.sql("UPDATE engagement SET first_followed_at=now()-interval '2 days' WHERE user_id='ev-viewer' AND channel_id='ev-owner'").await;
+    follow(e, &viewer, "DELETE").await;
+    follow(e, &viewer, "PUT").await;
+    e.sql("UPDATE daily_orders SET kind='follow',target=1 WHERE user_id='ev-viewer' AND day=current_date AND slot=2").await;
+    assert_eq!(orders().await["orders"][2]["progress"], 0, "a refollow");
+    // Weekly milestones at 7, 14 and 21; 21 in a week earns Order Keeper.
+    e.sql("INSERT INTO daily_orders(user_id,day,slot,kind,rarity,target,completed_at,xp)
+        SELECT 'ev-viewer',d::date,s,'watch',0,1,now(),40 FROM generate_series(date_trunc('week',current_date),date_trunc('week',current_date)+interval '6 days','1 day') d, generate_series(0,2) s
+        WHERE d::date<>current_date").await;
+    e.sql("UPDATE daily_orders SET kind='watch',target=1 WHERE user_id='ev-viewer' AND day=current_date AND completed_at IS NULL").await;
+    sver::engagement::award_watch(&e.app).await.unwrap();
+    let milestones: Vec<i16> = sqlx::query_scalar(
+        "SELECT orders FROM order_milestones WHERE user_id='ev-viewer' ORDER BY orders",
+    )
+    .fetch_all(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(milestones, vec![7, 14, 21]);
+    sver::achievements::award(&e.app).await.unwrap();
+    let keeper: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_achievements WHERE user_id='ev-viewer' AND key='order_keeper')")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert!(keeper);
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id='ev-b'").await;
 }
