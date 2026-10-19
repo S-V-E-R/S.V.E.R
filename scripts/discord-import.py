@@ -71,6 +71,11 @@ def ts(value):
     return f"{literal(value)}::timestamp AT TIME ZONE 'UTC'" if value else "NULL"
 
 
+def ts_or_now(value):
+    """For columns that must have a time: the legacy value, or now when it's missing."""
+    return ts(value) if value else "now()"
+
+
 def rows(db, sql):
     db.row_factory = sqlite3.Row
     return [dict(r) for r in db.execute(sql).fetchall()]
@@ -149,7 +154,7 @@ def quests(db):
         key = rename.get(a["achievement"], a["achievement"])
         # The legacy bot marked them all announced; they aren't posted again.
         out.append("INSERT INTO discord_achievements(discord_user,key,unlocked_at,announced_at) VALUES("
-                   f"{literal(a['user_id'])},{literal(key)},{ts(a['unlocked_at'])},{ts(a['unlocked_at'])}) ON CONFLICT DO NOTHING;")
+                   f"{literal(a['user_id'])},{literal(key)},{ts_or_now(a['unlocked_at'])},{ts_or_now(a['unlocked_at'])}) ON CONFLICT DO NOTHING;")
     # Each voice minute (and watched minute) was recorded twice by the legacy bot: keep the rows with
     # a source, which are the ones its XP engine wrote.
     points = rows(db, "SELECT discord_id, faction, type, amount, created_at, json_extract(metadata,'$.source') AS source FROM faction_contributions")
@@ -162,7 +167,7 @@ def quests(db):
             continue
         kept += 1
         out.append("INSERT INTO discord_points(discord_user,faction,kind,points,at) VALUES("
-                   f"{literal(p['discord_id'])},{literal(p['faction'])},{literal(kind)},{max(0, int(p['amount'] or 0))},{ts(p['created_at'])});")
+                   f"{literal(p['discord_id'])},{literal(p['faction'])},{literal(kind)},{max(0, int(p['amount'] or 0))},{ts_or_now(p['created_at'])});")
     return out, f"quests {len(defs)}, progress {len(progress)}, achievements {len(unlocked)}, faction points {kept} of {len(points)}"
 
 

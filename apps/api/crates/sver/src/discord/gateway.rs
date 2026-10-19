@@ -121,7 +121,15 @@ async fn ticker(app: App) {
     every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         every.tick().await;
-        minute(&app).await;
+        // While disconnected nobody's voice state is current, so nothing is credited.
+        let connected: bool =
+            sqlx::query_scalar("SELECT coalesce((SELECT connected FROM discord_gateway),false)")
+                .fetch_one(&app.db)
+                .await
+                .unwrap_or(false);
+        if connected {
+            minute(&app).await;
+        }
     }
 }
 pub async fn minute(app: &App) {

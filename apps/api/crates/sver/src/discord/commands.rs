@@ -173,10 +173,12 @@ pub async fn interaction(app: &App, raw: Value) {
         2 => command(app, &i).await,
         _ => None,
     };
-    if let Some(reply) = reply {
+    if let Some(reply) = reply.filter(|r| *r != ANSWERED) {
         respond(app, &i, reply).await;
     }
 }
+/// What a command returns when it has answered on its own (a spawned slow answer).
+pub const ANSWERED: Value = Value::Null;
 
 async fn command(app: &App, i: &Interaction) -> Option<Value> {
     if let Some(reply) = super::levels::command(app, i).await {

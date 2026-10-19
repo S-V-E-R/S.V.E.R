@@ -287,10 +287,11 @@ async fn complete(app: &App, user: &str, q: &Quest) -> Res<()> {
     // Milestones at 5, 10, 25, 50 and 100 completions: 10 XP per completion, and a post.
     let total: i64 = sqlx::query_scalar("SELECT count(*) FROM discord_quest_progress WHERE discord_user=$1 AND completed_at IS NOT NULL")
         .bind(user).fetch_one(&app.db).await?;
-    if [5, 10, 25, 50, 100].contains(&total) {
-        let first = sqlx::query("INSERT INTO discord_quest_milestones(discord_user,completions) VALUES($1,$2) ON CONFLICT DO NOTHING")
-            .bind(user).bind(total as i32).execute(&app.db).await?.rows_affected() == 1;
-        if first {
+    // Every milestone reached and not yet paid, so two quests finishing at once can't skip one.
+    let reached: Vec<i32> = sqlx::query_scalar("INSERT INTO discord_quest_milestones(discord_user,completions) SELECT $1,m FROM unnest(ARRAY[5,10,25,50,100]) m WHERE m<=$2 ON CONFLICT DO NOTHING RETURNING completions")
+        .bind(user).bind(total as i32).fetch_all(&app.db).await?;
+    for total in reached.into_iter().map(i64::from) {
+        {
             levels::award(app, m(), 10 * total, Source::Milestone).await?;
             if let Some(channel) = home::id(&home::settings(app).await, "factions_channel") {
                 let line = format!("🏆 <@{user}> has completed **{total} quests**!");
@@ -388,7 +389,7 @@ async fn achievements(app: &App, i: &Interaction) -> Value {
         })
         .collect();
     embed(
-        json!({"title": format!("{name}'s achievements ({}/{})", keys.len(), ACHIEVEMENTS.len()),
+        json!({"title": format!("{name}'s achievements ({}/{})", ACHIEVEMENTS.iter().filter(|a| keys.iter().any(|k| k == a.0)).count(), ACHIEVEMENTS.len()),
             "description": lines.join("\n"), "color": 0x8b_9bb4}),
         false,
     )

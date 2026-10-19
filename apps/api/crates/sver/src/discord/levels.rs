@@ -3,7 +3,7 @@
 //! with its roles, and `/rank`, `/leaderboard`, `/profile`, `/xpmult` and `/ranks`.
 use super::{
     call, card,
-    commands::{Interaction, MANAGE_GUILD, defer, embed, finish, private},
+    commands::{ANSWERED, Interaction, MANAGE_GUILD, defer, embed, finish, private, respond},
     home, quests, role, send,
 };
 use crate::{App, profiles::Res};
@@ -342,22 +342,38 @@ pub async fn minute(app: &App) -> Res<()> {
         if company <= 1 || quiet || afk.as_deref() == Some(channel.as_str()) {
             continue;
         }
-        let m = || Member {
-            user: &user,
-            roles: &roles,
-            channel: Some(&channel),
-        };
-        count(app, &user, Counter::Voice, 1).await?;
-        award(app, m(), 3, Source::Voice).await?;
-        quests::bump(app, &user, "voice_minutes", 1).await?;
-        if everyone
+        let watching = everyone
             .iter()
-            .any(|e| e.1 == channel && e.0 != user && e.2)
+            .any(|e| e.1 == channel && e.0 != user && e.2);
+        // One member's failure never costs the others their minute.
+        if voice_minute(app, &user, &roles, &channel, watching)
+            .await
+            .is_err()
         {
-            count(app, &user, Counter::Watch, 1).await?;
-            award(app, m(), 2, Source::Watching).await?;
-            quests::bump(app, &user, "stream_watch", 1).await?;
+            eprintln!("discord_event=voice_credit outcome=failed");
         }
+    }
+    Ok(())
+}
+async fn voice_minute(
+    app: &App,
+    user: &str,
+    roles: &[String],
+    channel: &str,
+    watching: bool,
+) -> Res<()> {
+    let m = || Member {
+        user,
+        roles,
+        channel: Some(channel),
+    };
+    count(app, user, Counter::Voice, 1).await?;
+    award(app, m(), 3, Source::Voice).await?;
+    quests::bump(app, user, "voice_minutes", 1).await?;
+    if watching {
+        count(app, user, Counter::Watch, 1).await?;
+        award(app, m(), 2, Source::Watching).await?;
+        quests::bump(app, user, "stream_watch", 1).await?;
     }
     Ok(())
 }
@@ -421,9 +437,9 @@ pub async fn promote(app: &App, user: &str) -> Res<()> {
         .bind(target.rank)
         .execute(&mut *tx)
         .await?;
-    tx.commit().await?;
     let faction = faction(app, user).await?;
     let Some(guild) = home::guild(app).await else {
+        tx.commit().await?;
         return Ok(());
     };
     let old = ladder
@@ -431,6 +447,8 @@ pub async fn promote(app: &App, user: &str) -> Res<()> {
         .find(|r| r.rank == held)
         .and_then(|r| r.role(faction.as_deref()));
     let new = target.role(faction.as_deref());
+    // The row stays locked through the swap, so a promotion right behind this one waits and
+    // swaps from the rank this one gave (never leaving two rank roles).
     if old != new {
         if let Some(old) = old {
             role(app, &guild, user, &old, false).await;
@@ -439,6 +457,7 @@ pub async fn promote(app: &App, user: &str) -> Res<()> {
             role(app, &guild, user, new, true).await;
         }
     }
+    tx.commit().await?;
     // The first rank comes with the first XP; promotions after it are announced.
     let settings = home::settings(app).await;
     if held > 0
@@ -532,8 +551,11 @@ pub async fn command(app: &App, i: &Interaction) -> Option<Value> {
         "ranks" => {
             let app = app.clone();
             let i = Interaction::parse(&i.raw)?;
-            tokio::spawn(async move { ranks(&app, &i).await });
-            defer(true)
+            tokio::spawn(async move {
+                respond(&app, &i, defer(true)).await;
+                ranks(&app, &i).await
+            });
+            ANSWERED
         }
         _ => return None,
     })
