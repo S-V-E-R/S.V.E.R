@@ -18,21 +18,34 @@ use serde_json::{Value, json};
 const WEEKLY: &[(&str, &str)] = &[
     (
         "accounts_total",
-        "Accounts at the end of the week (deleted ones excluded)",
+        "Accounts open at the end of the week (accounts deleted later still count for the weeks they existed)",
     ),
     ("accounts_new", "Accounts created that week"),
-    ("channels_streamed", "Channels that went live that week"),
+    ("channels_streamed", "Channels live at any point that week"),
     (
         "hours_streamed",
-        "Hours of broadcasts that started that week",
+        "Hours creators were live that week, counted in the week they happened (a stream that runs past Sunday splits across weeks); hidden until 10 creators streamed, so no one's hours show",
+    ),
+    (
+        "hours_always_on",
+        "Hours of S.V.E.R's own 24/7 channel (SVER Plays) that week",
     ),
     (
         "rotation_reach",
         "Percent of streams live 10+ minutes that the fair rotation put in first place",
     ),
-    ("faction_myria", "Myria members"),
-    ("faction_aetheron", "Aetheron members"),
-    ("faction_glint", "Glint members"),
+    (
+        "faction_myria",
+        "Myria members at the end of the week, shown exactly: the member directory is public",
+    ),
+    (
+        "faction_aetheron",
+        "Aetheron members at the end of the week, shown exactly: the member directory is public",
+    ),
+    (
+        "faction_glint",
+        "Glint members at the end of the week, shown exactly: the member directory is public",
+    ),
 ];
 const MONTHLY: &[(&str, &str)] = &[
     (
@@ -75,15 +88,17 @@ pub async fn compute(app: &App) -> Res<()> {
     let mut tx = app.db.begin().await?;
     sqlx::query("INSERT INTO public_stats(period,metric,value) SELECT to_char(w,'IYYY-\"W\"IW'),m.metric,m.value FROM generate_series(date_trunc('week',now())-interval '11 weeks',date_trunc('week',now()),interval '1 week') w
         CROSS JOIN LATERAL (VALUES
-          ('accounts_total',(SELECT count(*) FROM users WHERE created_at<w+interval '1 week' AND deleted_at IS NULL)::float8),
+          ('accounts_total',(SELECT count(*) FROM users WHERE created_at<w+interval '1 week' AND (deleted_at IS NULL OR deleted_at>=w+interval '1 week'))::float8),
           ('accounts_new',(SELECT count(*) FROM users WHERE created_at>=w AND created_at<w+interval '1 week')::float8),
-          ('channels_streamed',(SELECT count(DISTINCT owner_id) FROM broadcasts WHERE confirmed_live_at>=w AND confirmed_live_at<w+interval '1 week')::float8),
-          ('hours_streamed',(SELECT coalesce(sum(extract(epoch FROM coalesce(ended_at,now())-started_at)),0)/3600 FROM broadcasts WHERE confirmed_live_at>=w AND confirmed_live_at<w+interval '1 week')::float8),
+          ('channels_streamed',(SELECT count(DISTINCT owner_id) FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w)::float8),
+          ('hours_streamed',(SELECT coalesce(sum(extract(epoch FROM least(coalesce(ended_at,now()),w+interval '1 week')-greatest(confirmed_live_at,w))),0)/3600 FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w AND NOT EXISTS(SELECT 1 FROM plays_runtime p WHERE p.channel_id=owner_id))::float8),
+          ('hours_streamed_base',(SELECT count(DISTINCT owner_id) FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w AND NOT EXISTS(SELECT 1 FROM plays_runtime p WHERE p.channel_id=owner_id))::float8),
+          ('hours_always_on',(SELECT coalesce(sum(extract(epoch FROM least(coalesce(ended_at,now()),w+interval '1 week')-greatest(confirmed_live_at,w))),0)/3600 FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w AND EXISTS(SELECT 1 FROM plays_runtime p WHERE p.channel_id=owner_id))::float8),
           ('rotation_reach_base',(SELECT count(*) FROM broadcasts WHERE confirmed_live_at>=w AND confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())-confirmed_live_at>=interval '10 minutes')::float8),
           ('rotation_reach',(SELECT CASE WHEN count(*)=0 THEN 0 ELSE 100.0*count(f.broadcast_id)/count(*) END FROM broadcasts b LEFT JOIN rotation_firsts f ON f.broadcast_id=b.id WHERE b.confirmed_live_at>=w AND b.confirmed_live_at<w+interval '1 week' AND coalesce(b.ended_at,now())-b.confirmed_live_at>=interval '10 minutes')::float8),
-          ('faction_myria',(SELECT count(*) FROM faction_members WHERE faction='myria' AND joined_at<w+interval '1 week')::float8),
-          ('faction_aetheron',(SELECT count(*) FROM faction_members WHERE faction='aetheron' AND joined_at<w+interval '1 week')::float8),
-          ('faction_glint',(SELECT count(*) FROM faction_members WHERE faction='glint' AND joined_at<w+interval '1 week')::float8)
+          ('faction_myria',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='myria' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8),
+          ('faction_aetheron',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='aetheron' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8),
+          ('faction_glint',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='glint' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8)
         ) m(metric,value)
         ON CONFLICT(period,metric) DO UPDATE SET value=EXCLUDED.value,computed_at=now()")
         .execute(&mut *tx).await?;
@@ -117,8 +132,14 @@ async fn rows(app: &App) -> Res<Vec<(String, String, f64)>> {
             .await?,
     )
 }
-/// The published figures with the privacy rules applied.
+/// The published figures with the privacy rules applied. The current week and month are marked
+/// `complete: false` (they're still filling up).
 async fn figures(app: &App) -> Res<(Vec<Value>, Vec<Value>)> {
+    let now = chrono::Utc::now();
+    let (this_week, this_month) = (
+        now.format("%G-W%V").to_string(),
+        now.format("%Y-%m").to_string(),
+    );
     let all = rows(app).await?;
     let get = |period: &str, metric: &str| {
         all.iter()
@@ -128,17 +149,27 @@ async fn figures(app: &App) -> Res<(Vec<Value>, Vec<Value>)> {
     let mut periods: Vec<&String> = all.iter().map(|r| &r.0).collect();
     periods.dedup();
     let mut weekly = Vec::new();
-    for period in periods.iter().filter(|p| p.contains('W')) {
-        let mut row = json!({"period": period});
+    let weeks: Vec<&String> = periods
+        .iter()
+        .copied()
+        .filter(|p| p.contains('W'))
+        .collect();
+    // Only the 12 weeks compute() refreshes; older rows were frozen under older definitions.
+    for period in &weeks[weeks.len().saturating_sub(12)..] {
+        let mut row = json!({"period": period, "complete": **period != this_week});
         for (metric, _) in WEEKLY {
             let value = get(period, metric).unwrap_or(0.0);
-            // Counts under 10 are "fewer than 10"; the reach percentage needs 10 streams behind it.
-            let base = if *metric == "rotation_reach" {
-                get(period, "rotation_reach_base").unwrap_or(0.0)
-            } else {
-                value
+            // Counts under 10 are "fewer than 10"; the reach percentage needs 10 streams behind it,
+            // creators' hours 10 creators. The 24/7 channel is S.V.E.R's own, so it always shows.
+            let base = match *metric {
+                "rotation_reach" | "hours_streamed" => {
+                    get(period, &format!("{metric}_base")).unwrap_or(0.0)
+                }
+                // Faction membership is public in each faction's member directory.
+                "hours_always_on" | "faction_myria" | "faction_aetheron" | "faction_glint" => 10.0,
+                _ => value,
             };
-            row[*metric] = if base < 10.0 && *metric != "hours_streamed" {
+            row[*metric] = if base < 10.0 {
                 Value::Null
             } else {
                 json!((value * 10.0).round() / 10.0)
@@ -158,7 +189,8 @@ async fn figures(app: &App) -> Res<(Vec<Value>, Vec<Value>)> {
         since.get_or_insert(period);
         // Fewer than 10 creators paid: fold this month into the next, so no one's pay shows.
         if paid >= 10.0 {
-            let mut row = json!({"period": period, "from": since});
+            let mut row =
+                json!({"period": period, "from": since, "complete": **period != this_month});
             for (i, (metric, _)) in MONTHLY.iter().enumerate() {
                 row[*metric] = json!(carried[i].round());
             }
@@ -173,6 +205,10 @@ async fn figures(app: &App) -> Res<(Vec<Value>, Vec<Value>)> {
 /// GET /api/open-data
 async fn open_data(State(app): State<App>) -> Res<Json<Value>> {
     let (weekly, monthly) = figures(&app).await?;
+    let updated: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT max(computed_at) FROM public_stats")
+            .fetch_one(&app.db)
+            .await?;
     let notes: Value = WEEKLY
         .iter()
         .chain(MONTHLY)
@@ -180,19 +216,21 @@ async fn open_data(State(app): State<App>) -> Res<Json<Value>> {
         .collect::<serde_json::Map<_, _>>()
         .into();
     Ok(Json(
-        json!({"weekly": weekly, "monthly": monthly, "notes": notes}),
+        json!({"weekly": weekly, "monthly": monthly, "notes": notes, "updated": updated}),
     ))
 }
 /// GET /api/open-data/{weekly|monthly}.csv: the same numbers as the charts.
 async fn csv(State(app): State<App>, Path(name): Path<String>) -> Res<impl IntoResponse> {
     let (weekly, monthly) = figures(&app).await?;
-    let (rows, metrics) = match name.as_str() {
-        "weekly.csv" => (weekly, WEEKLY),
-        "monthly.csv" => (monthly, MONTHLY),
+    // A monthly row can combine several months: `from` is the first, `period` the last.
+    let (rows, metrics, lead) = match name.as_str() {
+        "weekly.csv" => (weekly, WEEKLY, &["period", "complete"][..]),
+        "monthly.csv" => (monthly, MONTHLY, &["period", "from", "complete"][..]),
         _ => return Err(Fail::missing()),
     };
     let mut out = format!(
-        "period,{}\n",
+        "{},{}\n",
+        lead.join(","),
         metrics.iter().map(|m| m.0).collect::<Vec<_>>().join(",")
     );
     for row in rows {
@@ -203,11 +241,14 @@ async fn csv(State(app): State<App>, Path(name): Path<String>) -> Res<impl IntoR
                 v => v.to_string(),
             })
             .collect();
-        out.push_str(&format!(
-            "{},{}\n",
-            row["period"].as_str().unwrap_or(""),
-            cells.join(",")
-        ));
+        let leading: Vec<String> = lead
+            .iter()
+            .map(|c| match &row[*c] {
+                Value::String(s) => s.clone(),
+                v => v.to_string(),
+            })
+            .collect();
+        out.push_str(&format!("{},{}\n", leading.join(","), cells.join(",")));
     }
     Ok(([(header::CONTENT_TYPE, "text/csv; charset=utf-8")], out))
 }

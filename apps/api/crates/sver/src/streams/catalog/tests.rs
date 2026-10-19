@@ -78,8 +78,8 @@ async fn choices(app: &App, query: &str) -> Value {
     serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
 }
 
-#[tokio::test]
-async fn refresh_preserves_local_choices_through_outages_and_staff_changes() {
+/// A migrated schema of its own on the local test database: (admin pool, app pool, schema).
+async fn isolated() -> (sqlx::PgPool, sqlx::PgPool, String) {
     let url = std::env::var("DATABASE_URL").expect("use scripts/dev.ps1 test");
     let parsed = url::Url::parse(&url).unwrap();
     assert!(
@@ -115,6 +115,12 @@ async fn refresh_preserves_local_choices_through_outages_and_staff_changes() {
         .run(&db)
         .await
         .unwrap();
+    (admin, db, schema)
+}
+
+#[tokio::test]
+async fn refresh_preserves_local_choices_through_outages_and_staff_changes() {
+    let (admin, db, schema) = isolated().await;
     let app = App::new(db.clone(), crate::Config::from_env().unwrap())
         .await
         .unwrap();
@@ -181,6 +187,114 @@ async fn refresh_preserves_local_choices_through_outages_and_staff_changes() {
         let cursor:String=sqlx::query_scalar("SELECT cursor FROM game_catalog_sync").fetch_one(&app.db).await.unwrap();
         assert_eq!(cursor,"");
     }).await;
+    server.abort();
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    result.unwrap();
+}
+
+fn cover(red: u8) -> Vec<u8> {
+    let image = image::RgbImage::from_fn(600, 900, |x, y| {
+        image::Rgb([red, (x % 256) as u8, (y % 256) as u8])
+    });
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .unwrap();
+    out.into_inner()
+}
+fn item(appid: i64, name: &str, tags: &[u64], descriptors: &[i64]) -> Value {
+    json!({"appid":appid,"success":1,"visible":true,"type":0,"name":name,"content_descriptorids":descriptors,
+        "tags":tags.iter().enumerate().map(|(i,t)| json!({"tagid":t,"weight":1000-i})).collect::<Vec<_>>()})
+}
+
+#[tokio::test]
+async fn steam_games_arrive_classified_and_categories_get_stored_art() {
+    let (admin, db, schema) = isolated().await;
+    let app = App::new(db.clone(), crate::Config::from_env().unwrap())
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let files = base.clone();
+    let wikidata = Arc::new(Mutex::new(json!({"results":{"bindings":[]}})));
+    let page = wikidata.clone();
+    let router = Router::new()
+        .route("/IStoreService/GetAppList/v1/", get(|| async {
+            Json(json!({"response":{"apps":[{"appid":20},{"appid":99},{"appid":500},{"appid":600},{"appid":730}],"have_more_results":false,"last_appid":730}}))
+        }))
+        .route("/IStoreBrowseService/GetItems/v1/", get(|| async {
+            Json(json!({"response":{"store_items":[
+                item(20, "Synthetic Wander", &[19, 21, 492], &[]),
+                item(99, "Synthetic Adult", &[1663], &[3]),
+                item(500, "Synthetic Racer", &[19, 699], &[]),
+                item(600, "Synthetic Farm", &[87918], &[]),
+                item(730, "Counter-Strike 2", &[1663, 9], &[2, 5]),
+            ]}}))
+        }))
+        .route("/sparql", get(move || {
+            let body = page.lock().unwrap().clone();
+            async move { Json(body) }
+        }))
+        .route("/steam/apps/730/library_600x900.jpg", get(|| async { cover(1) }))
+        .route("/grid/grids/steam/500", get(move || {
+            let files = files.clone();
+            async move { Json(json!({"success":true,"data":[{"url":"https://elsewhere.test/x.png"},{"url":format!("{files}/files/racer.png")}]})) }
+        }))
+        .route("/files/racer.png", get(|| async { cover(2) }));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let result = tokio::spawn(async move {
+        steam::tick_at(&app, &base, "test-key").await.unwrap();
+        let rows: Vec<(String, Option<String>, bool)> = sqlx::query_as("SELECT source_id,suggested_genre,mature FROM game_catalog ORDER BY source_id").fetch_all(&app.db).await.unwrap();
+        assert_eq!(rows, vec![
+            ("steam500".into(), Some("sports_racing".into()), false),
+            ("steam600".into(), Some("cozy_sandbox".into()), false),
+            ("steam730".into(), Some("fps_battle_royale".into()), true),
+        ], "unclassifiable and adult-only games stay out");
+        let linked: Option<String> = sqlx::query_scalar("SELECT category_id FROM game_catalog WHERE source_id='steam730'").fetch_one(&app.db).await.unwrap();
+        assert_eq!(linked.as_deref(), Some("counter-strike-2"), "the seeded category is linked by title");
+        let choice = choices(&app, "q=racer").await;
+        assert_eq!(choice["categories"][0]["id"], "steam500");
+        let mut tx = app.db.begin().await.unwrap();
+        assert_eq!(select(&mut tx, "steam500").await.unwrap(), "steam500");
+        tx.commit().await.unwrap();
+        // Wikidata knows two of them: the chosen one keeps its category, the unused one is taken over.
+        let mut racer = game("Q200", "Synthetic Racer", "racing video game", "");
+        racer["steam"] = json!({"value":"500"});
+        *wikidata.lock().unwrap() = json!({"results":{"bindings":[racer, game("Q300","Synthetic Farm","farming simulation game","")]}});
+        tick_at(&app, &format!("{base}/sparql")).await.unwrap();
+        let merged: Vec<(String, Option<String>, Option<i64>)> = sqlx::query_as("SELECT source_id,category_id,steam_app_id FROM game_catalog WHERE source_id IN ('Q200','Q300','steam500','steam600') ORDER BY source_id").fetch_all(&app.db).await.unwrap();
+        assert_eq!(merged, vec![
+            ("Q200".into(), Some("steam500".into()), None),
+            ("Q300".into(), None, Some(600)),
+            ("steam500".into(), Some("steam500".into()), Some(500)),
+        ]);
+        // Art: Steam's cover first, else SteamGridDB (only from its file host). Never Art or Coding.
+        sqlx::query("UPDATE stream_categories SET image_manual=true WHERE id='minecraft'").execute(&app.db).await.unwrap();
+        let sources = art::Sources { steam: &base, grid: &format!("{base}/grid"), grid_files: &format!("{base}/files/"), grid_key: "test-key" };
+        for _ in 0..4 {
+            art::tick_at(&app, &sources).await.unwrap();
+        }
+        let art: Vec<(String, String)> = sqlx::query_as("SELECT id,image_key FROM stream_categories WHERE image_key IS NOT NULL ORDER BY id").fetch_all(&app.db).await.unwrap();
+        assert_eq!(art.iter().map(|a| a.0.as_str()).collect::<Vec<_>>(), ["counter-strike-2", "steam500"]);
+        assert!(art.iter().all(|a| a.1.starts_with("categories/") && a.1.ends_with("@600")));
+        let site: i64 = sqlx::query_scalar("SELECT count(*) FROM media_objects WHERE kind='category_art' AND owner_id IS NULL AND delete_after IS NULL").fetch_one(&app.db).await.unwrap();
+        assert_eq!(site, 4, "two sizes each, kept");
+        let tried: Option<bool> = sqlx::query_scalar("SELECT image_checked_at IS NULL FROM stream_categories WHERE id='art'").fetch_one(&app.db).await.unwrap();
+        assert_eq!(tried, Some(true), "non-game categories are never searched by name");
+        let response = crate::router(app.clone())
+            .oneshot(Request::builder().uri("/api/discovery/browse").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let browse: Value = serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        let tile = browse["genres"].as_array().unwrap().iter().flat_map(|g| g["categories"].as_array().unwrap()).find(|c| c["id"] == "counter-strike-2").unwrap().clone();
+        assert!(tile["image"]["300"].as_str().unwrap().ends_with("/300.webp"));
+        assert!(tile["image"]["600"].as_str().unwrap().ends_with("/600.webp"));
+    })
+    .await;
     server.abort();
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))

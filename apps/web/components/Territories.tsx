@@ -3,7 +3,8 @@ import { Crest } from "./Crest";
 import { factionOf } from "../lib/factions";
 import { contest, type War } from "../lib/war";
 
-export type BrowseCategory = { id: string; name: string; live: number };
+/** `image`: the category's cover art by width (300, 600), or null. */
+export type BrowseCategory = { id: string; name: string; live: number; image?: Record<string, string> | null };
 export type BrowseGenre = { id: string; name: string; home: string | null; live: number; categories: BrowseCategory[] };
 
 /** Holder of each genre this week, from the war (docs/FACTIONS.md). */
@@ -35,7 +36,10 @@ export function TerritoryGrid({ genres, war, viewerFaction, limit, href, shelf }
     const f = factionOf(holder);
     const ground = war?.genres.find(w => w.id === g.id);
     const contested = !!ground && contest(ground).contested;
-    return <li key={c.id}><Link href={href(g, c)} className={contested ? "territory-tile contested" : "territory-tile"} data-theme={f?.slug ?? undefined}>
+    const art = c.image?.["300"];
+    return <li key={c.id}><Link href={href(g, c)} className={`territory-tile${contested ? " contested" : ""}${art ? " has-art" : ""}`} data-theme={f?.slug ?? undefined}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- media CDN image, already sized */}
+      {art && <img className="territory-art" src={art} srcSet={Object.entries(c.image!).map(([w, url]) => `${url} ${w}w`).join(", ")} sizes="(max-width: 700px) 45vw, 180px" alt="" loading="lazy" decoding="async" />}
       <span className="territory-crest">{f && <Crest faction={f.slug} initial="" size={30} label={`Held by ${f.name}`} />}</span>
       <h3>{c.name}</h3>
       <span className="territory-turf">{turf(holder, viewerFaction)}{contested && <strong className="contested-tag">Contested</strong>}</span>

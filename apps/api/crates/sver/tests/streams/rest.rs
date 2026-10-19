@@ -378,9 +378,35 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{set}");
+    // A new link waits for staff: until it's approved, viewers see no banner, label or button.
+    assert_eq!(set["link"]["status"], "pending", "{set}");
+    assert_eq!(set["streams"], json!([]));
+    {
+        let mut db = e.app.db.acquire().await.unwrap();
+        let channel = sver::shine::channel(&mut db, "rt-owner").await.unwrap();
+        assert!(channel["live"].is_null(), "{channel}");
+    }
+    let admin = staff(e, "rt-staff", "RtStaff").await;
+    let link = |action: &str, note: &str| {
+        let body = json!({"url": "https://redcross.example/give", "action": action, "note": note});
+        let token = admin.clone();
+        async move {
+            call(e, "POST", "/api/admin/shine/links", Some(&token), body)
+                .await
+                .0
+        }
+    };
+    assert_eq!(
+        link("reject", "").await,
+        StatusCode::BAD_REQUEST,
+        "a reason is required"
+    );
+    assert_eq!(link("approve", "").await, StatusCode::OK);
+    let (_, set) = call(e, "GET", "/api/me/shine", Some(&owner), Value::Null).await;
+    assert_eq!(set["link"]["status"], "approved");
     assert_eq!(
         set["streams"][0]["live"], true,
-        "the live stream became a charity stream"
+        "approval makes the live stream a charity stream at once"
     );
     let charity = set["streams"][0]["id"].as_str().unwrap().to_string();
     {
@@ -404,7 +430,6 @@ pub async fn exercise(e: &Env) {
     let (status, submitted) = call(e, "POST", &submit_path, Some(&owner), raised).await;
     assert_eq!(status, StatusCode::OK, "{submitted}");
     assert_eq!(submitted["streams"][0]["status"], "submitted");
-    let admin = staff(e, "rt-staff", "RtStaff").await;
     let (_, queue) = call(e, "GET", "/api/admin/shine", Some(&admin), Value::Null).await;
     assert!(
         queue["items"]
@@ -460,6 +485,52 @@ pub async fn exercise(e: &Env) {
     let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM moderation_actions WHERE target_type='charity_stream' AND target_id=$1")
         .bind(&charity).fetch_one(&e.app.db).await.unwrap();
     assert_eq!(audited, 2);
+    // The streamer hears each decision.
+    let notices: Vec<String> = sqlx::query_scalar("SELECT payload->>'title' FROM notifications WHERE user_id='rt-owner' AND kind='good_works' ORDER BY created_at")
+        .fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(
+        notices,
+        [
+            "Charity link approved",
+            "Good Works badge added",
+            "Good Works badge removed"
+        ]
+    );
+    // An approved link works at once for anyone; a rejected one shows the streamer why.
+    let (_, mate_set) = call(
+        e,
+        "PUT",
+        "/api/me/shine",
+        Some(&mate),
+        json!({"charity_name": "Red Cross", "charity_url": "https://redcross.example/give"}),
+    )
+    .await;
+    assert_eq!(mate_set["link"]["status"], "approved", "{mate_set}");
+    call(
+        e,
+        "PUT",
+        "/api/me/shine",
+        Some(&mate),
+        json!({"charity_name": "Totally Real Fund", "charity_url": "https://fund.example/pay"}),
+    )
+    .await;
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/admin/shine/links",
+        Some(&admin),
+        json!({"url": "https://fund.example/pay", "action": "reject", "note": "Not a registered charity's page"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, mate_set) = call(e, "GET", "/api/me/shine", Some(&mate), Value::Null).await;
+    assert_eq!(
+        (&mate_set["link"]["status"], &mate_set["link"]["note"]),
+        (
+            &json!("rejected"),
+            &json!("Not a registered charity's page")
+        )
+    );
     let unbalanced: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM (SELECT unit FROM ledger_entries GROUP BY unit HAVING sum(amount)<>0) u",
     )
