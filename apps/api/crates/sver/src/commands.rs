@@ -175,26 +175,33 @@ async fn try_respond(app: &App, channel: &str, user: &auth::User, body: &str) ->
 pub async fn tick(app: &App) -> Res<()> {
     let due: Vec<(String, String)> = sqlx::query_as("UPDATE chat_timers t SET last_sent_at=now() FROM broadcasts b
         WHERE b.owner_id=t.channel_id AND b.state='LIVE' AND t.enabled
-          AND coalesce(t.last_sent_at, b.started_at) <= now()-make_interval(mins=>t.every_minutes)
-          AND EXISTS(SELECT 1 FROM chat_messages m WHERE m.channel_id=t.channel_id AND m.squad_id IS NULL AND m.created_at>coalesce(t.last_sent_at, b.started_at))
-          AND t.id=(SELECT t2.id FROM chat_timers t2 WHERE t2.channel_id=t.channel_id AND t2.enabled AND coalesce(t2.last_sent_at, b.started_at) <= now()-make_interval(mins=>t2.every_minutes) ORDER BY t2.last_sent_at NULLS FIRST, t2.created_at LIMIT 1)
+          AND greatest(t.last_sent_at, b.started_at) <= now()-make_interval(mins=>t.every_minutes)
+          AND EXISTS(SELECT 1 FROM chat_messages m WHERE m.channel_id=t.channel_id AND m.squad_id IS NULL AND m.created_at>greatest(t.last_sent_at, b.started_at))
+          AND t.id=(SELECT t2.id FROM chat_timers t2 WHERE t2.channel_id=t.channel_id AND t2.enabled AND greatest(t2.last_sent_at, b.started_at) <= now()-make_interval(mins=>t2.every_minutes) ORDER BY t2.last_sent_at NULLS FIRST, t2.created_at LIMIT 1)
         RETURNING t.channel_id,t.body")
         .fetch_all(&app.db)
         .await?;
+    // One channel's failure never stops the others (their timers are already stamped).
     for (channel, body) in due {
-        let text = fill(app, &channel, None, &body).await?;
-        say(app, &channel, &text).await?;
+        if async { say(app, &channel, &fill(app, &channel, None, &body).await?).await }
+            .await
+            .is_err()
+        {
+            eprintln!("commands_event=timer outcome=dropped");
+        }
     }
     // Quips (off by default): at most every 30 minutes while live, only after chat since the last.
     let quips: Vec<String> = sqlx::query_scalar("UPDATE chat_settings s SET bot_quip_at=now() FROM broadcasts b
         WHERE b.owner_id=s.channel_id AND b.state='LIVE' AND s.bot_quips
-          AND coalesce(s.bot_quip_at, b.started_at) <= now()-interval '30 minutes'
-          AND EXISTS(SELECT 1 FROM chat_messages m WHERE m.channel_id=s.channel_id AND m.squad_id IS NULL AND m.created_at>coalesce(s.bot_quip_at, b.started_at))
+          AND greatest(s.bot_quip_at, b.started_at) <= now()-interval '30 minutes'
+          AND EXISTS(SELECT 1 FROM chat_messages m WHERE m.channel_id=s.channel_id AND m.squad_id IS NULL AND m.created_at>greatest(s.bot_quip_at, b.started_at))
         RETURNING s.channel_id")
         .fetch_all(&app.db)
         .await?;
     for channel in quips {
-        crate::bot::quip(app, &channel).await?;
+        if crate::bot::quip(app, &channel).await.is_err() {
+            eprintln!("commands_event=quip outcome=dropped");
+        }
     }
     Ok(())
 }
