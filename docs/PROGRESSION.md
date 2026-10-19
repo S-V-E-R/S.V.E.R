@@ -65,6 +65,7 @@ Lights and Shine Moments ([SUPPORT.md](SUPPORT.md) "Shine", Question 4), achieve
 - **Faction rank titles (Q2): the 22-rank ladder from the main S.V.E.R Discord** (Initiate … Overlord, Novice … Sovereign, Spark … Inferno; Private … Commander without a faction), spread evenly over levels 1–100 (levels 1, 6, 10, 15 … 95, 100). Shown on the player card and the user card (chat hover). Switching faction keeps the level and shows the new faction's name for it.
 - **Daily orders (Q3): XP plus Engagement Valor**, 10 / 15 / 20 / 30 / 50 by rarity, in the channel of the viewer's latest playback or chat that day (where they were when it finished; never their own channel or one that banned them). An order finished with no channel activity pays XP only. The amount and channel are kept on the order (`daily_orders.ev`, `ev_channel`); the sidebar shows them.
 - **Lights and Shine Moments (Q4): built with Progression** on October 10, 2026 ([SUPPORT.md](SUPPORT.md) "Shine", `lights.rs`, migration 0088).
+- **Orders pass (October 17, 2026, performance):** each minute's pass evaluates only open orders that could have moved since the last finished pass: their kind's records changed, or the order was drawn or rerolled since (`daily_orders.drawn_at`, migration 0126). A pass where a payment failed keeps the old mark, so that order is checked again. The first pass after a restart checks every open order.
 
 ## Review fixes (October 17, 2026)
 
