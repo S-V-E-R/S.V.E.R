@@ -2,7 +2,7 @@
 import { FormEvent, useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
 
-type Field = { key: string; kind: "text" | "forum" | "voice" | "category" | "texts" | "given" | "role" | "toggle" | "zone"; group: string; label: string };
+type Field = { key: string; kind: "text" | "forum" | "voice" | "category" | "texts" | "given" | "role" | "toggle" | "zone" | "number" | "words" | "roles" | "optin"; group: string; label: string };
 type Channel = { id: string; name: string; type: number; parent: string | null };
 type Role = { id: string; name: string; givable: boolean };
 type Health = {
@@ -40,8 +40,10 @@ export default function DiscordAdmin() {
     // The fields show once the server's channels and roles are loaded; before that, save the server alone.
     const shown = view.home && view.home.guild_id === guild;
     for (const f of shown ? view.fields : []) {
-      if (f.kind === "toggle") settings[f.key] = form.get(f.key) === "on";
-      else if (f.kind === "texts") settings[f.key] = form.getAll(f.key).map(String).filter(Boolean);
+      if (f.kind === "toggle" || f.kind === "optin") settings[f.key] = form.get(f.key) === "on";
+      else if (f.kind === "texts" || f.kind === "roles") settings[f.key] = form.getAll(f.key).map(String).filter(Boolean);
+      else if (f.kind === "words") settings[f.key] = String(form.get(f.key) ?? "").split("\n").map(w => w.trim()).filter(Boolean);
+      else if (f.kind === "number") { const v = String(form.get(f.key) ?? "").trim(); settings[f.key] = v ? Number(v) : null; }
       else { const v = String(form.get(f.key) ?? ""); settings[f.key] = v || null; }
     }
     const r = await send<View>("PUT", "/api/admin/discord", { guild_id: guild, settings });
@@ -55,7 +57,14 @@ export default function DiscordAdmin() {
   const label = (f: Field) => `${f.label}${message.field === f.key ? " (check this)" : ""}`;
   const input = (f: Field) => {
     const value = home?.settings[f.key];
-    if (f.kind === "toggle") return <label key={f.key} className="field checkbox"><input type="checkbox" name={f.key} defaultChecked={value !== false} /> <span>{label(f)}</span></label>;
+    if (f.kind === "toggle" || f.kind === "optin") return <label key={f.key} className="field checkbox"><input type="checkbox" name={f.key} defaultChecked={f.kind === "optin" ? value === true : value !== false} /> <span>{label(f)}</span></label>;
+    if (f.kind === "number") return <label key={f.key} className="field narrow"><span>{label(f)}</span><input type="number" name={f.key} min={0} max={10000000} step={1} defaultValue={typeof value === "number" ? value : ""} placeholder="Off" /></label>;
+    if (f.kind === "words") return <label key={f.key} className="field"><span>{label(f)} (one per line)</span><textarea name={f.key} rows={4} defaultValue={Array.isArray(value) ? value.map(String).join("\n") : ""} /></label>;
+    if (f.kind === "roles") {
+      const picked = Array.isArray(value) ? value.map(String) : [];
+      return <label key={f.key} className="field"><span>{label(f)}</span>
+        <select name={f.key} multiple size={Math.min(6, Math.max(2, home?.roles.length ?? 2))} defaultValue={picked}>{(home?.roles ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>;
+    }
     if (f.kind === "zone") return <label key={f.key} className="field narrow"><span>{label(f)}</span><input name={f.key} list="zones" defaultValue={typeof value === "string" ? value : ""} placeholder="America/New_York" /></label>;
     if (f.kind === "given" || f.kind === "role") return <label key={f.key} className="field narrow"><span>{label(f)}</span>
       <select name={f.key} defaultValue={typeof value === "string" ? value : ""}><option value="">None</option>
@@ -72,7 +81,7 @@ export default function DiscordAdmin() {
   };
 
   return <section className="panel section"><h1>Discord bot</h1>
-    <p className="intro">The community bot on the S.V.E.R Discord server. Pick the server, then its channels and roles. Roles the bot gives must sit below its own role in Discord (Server Settings → Roles).</p>
+    <p className="intro">The community bot on the S.V.E.R Discord server. Pick the server, then its channels and roles. Roles the bot gives must sit below its own role in Discord (Server Settings → Roles). Automod and safety numbers and word lists are private tuning: an empty one turns its check off.</p>
     <h2>Health</h2>
     <ul className="list">
       <li><strong>Connection:</strong> {!h.enabled ? "Off on this server (DISCORD_GATEWAY isn't set)." : h.gateway?.connected ? `Connected as ${h.gateway.bot_name ?? "the bot"} since ${when(h.gateway.connected_at)}.` : `Not connected.${h.gateway?.problem ? ` ${h.gateway.problem}` : ""}`}</li>

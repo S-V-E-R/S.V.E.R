@@ -171,13 +171,88 @@ def quests(db):
     return out, f"quests {len(defs)}, progress {len(progress)}, achievements {len(unlocked)}, faction points {kept} of {len(points)}"
 
 
-SECTIONS = [home, levels, quests]
+def moderation(db):
+    """Strikes (warnings), the escalation ladder, and the automod and safety settings, merged into
+    the home server's settings. The tuning stays out of this file: it's read from the legacy rows."""
+    db.row_factory = sqlite3.Row
+    guild = db.execute("SELECT guild_id FROM guild_config").fetchone()[0]
+
+    def one(table):
+        row = db.execute(f"SELECT * FROM {table} WHERE guild_id=?", (guild,)).fetchone()
+        return dict(row) if row else {}
+
+    def listed(row, column):
+        return [str(w) for w in json.loads(row.get(column) or "[]") if str(w).strip()]
+
+    settings = {}
+    for row in db.execute("SELECT * FROM warning_escalation WHERE guild_id=?", (guild,)):
+        settings[f"{row['action']}_at"] = row["strike_count"]
+        if row["action"] == "mute" and row["duration_ms"]:
+            settings["mute_minutes"] = row["duration_ms"] // 60000
+    a = one("automod_config")
+    if a:
+        def number(key, column, scale=1):
+            if a.get(column):
+                settings[key] = int(round(a[column] * scale))
+        number("new_account_days", "new_account_days")
+        number("quarantine_hours", "media_quarantine_hours")
+        settings["nsfw"] = bool(a.get("nsfw_filter_enabled"))
+        number("mass_spam_count", "mass_spam_threshold")
+        number("mass_spam_seconds", "mass_spam_window")
+        if a.get("spam_enabled"):
+            # The legacy bot read the velocity columns first, then the older ones.
+            settings["spam_count"] = a.get("spam_velocity_messages") or a.get("spam_threshold")
+            settings["spam_seconds"] = a.get("spam_velocity_seconds") or (a.get("spam_window_ms") or 0) // 1000
+        if a.get("caps_enabled"):
+            number("caps_percent", "caps_threshold", 100)
+            number("caps_length", "caps_min_length")
+        if a.get("dupes_enabled"):
+            number("dupes_count", "dupes_threshold")
+            settings["dupes_seconds"] = (a.get("dupes_window_ms") or 0) // 1000
+        if a.get("raid_enabled"):
+            number("raid_joins", "raid_join_threshold")
+            number("raid_seconds", "raid_window_seconds")
+        settings["link_block"] = bool(a.get("links_enabled"))
+        settings["dm_on_action"] = bool(a.get("dm_on_action"))
+        for key, column in {"allowed_links": "links_whitelist", "banned_words": "banned_words",
+                            "immune": "immune_roles"}.items():
+            if listed(a, column):
+                settings[key] = listed(a, column)
+    s = one("safety_config")
+    if s:
+        for key, column in {"nudges": "nudge_enabled", "dogpile": "dogpile_enabled",
+                            "support_guard": "support_guardrails_enabled", "early_warning": "ews_enabled"}.items():
+            settings[key] = bool(s.get(column))
+        for key, column in {"nudge_count": "nudge_threshold", "nudge_hours": "nudge_window_hours",
+                            "dogpile_users": "dogpile_user_threshold", "dogpile_seconds": "dogpile_window_seconds",
+                            "support_minutes": "support_unanswered_minutes"}.items():
+            if s.get(column):
+                settings[key] = int(s[column])
+        for key, column in {"nudge_words": "nudge_words", "distress_words": "ews_distress_words",
+                            "aggression_words": "ews_aggression_words"}.items():
+            if listed(s, column):
+                settings[key] = listed(s, column)
+    settings = {k: v for k, v in settings.items() if v not in (None, 0)}
+    statements = [f"UPDATE discord_home SET settings=settings||{literal(json.dumps(settings))}::jsonb;"]
+    warnings = db.execute("SELECT * FROM warnings WHERE guild_id=? ORDER BY id", (guild,)).fetchall()
+    for w in warnings:
+        # The legacy bot recorded automod strikes under its own id; here automod is no moderator.
+        moderator = "NULL" if w["source"] == "automod" else literal(w["moderator_id"])
+        statements.append(
+            "INSERT INTO discord_cases(user_id,moderator_id,action,reason,active,created_at) VALUES("
+            f"{literal(w['user_id'])},{moderator},'warn',{literal(w['reason'] or '')},"
+            f"{'true' if w['active'] else 'false'},{ts_or_now(w['created_at'])});")
+    return statements, f"moderation settings: {len(settings)}, warnings: {len(warnings)}"
+
+
+SECTIONS = [home, levels, quests, moderation]
 
 
 def main():
     if len(sys.argv) != 2:
         sys.exit("usage: discord-import.py LEGACY_SQLITE_FILE")
     db = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+    sys.stdout.reconfigure(encoding="utf-8")  # psql reads UTF-8, whatever the console uses.
     print("-- Legacy Discord bot import (docs/DISCORD_BOT.md). Apply with psql -1.")
     for section in SECTIONS:
         statements, summary = section(db)

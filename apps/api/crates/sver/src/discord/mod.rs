@@ -8,12 +8,14 @@
 //! `discord_grants`), so roles a server's moderators hand out by hand are never touched.
 //!
 //! The community bot on the S.V.E.R home server (docs/DISCORD_BOT.md) adds a Gateway connection
-//! (`gateway`), slash commands (`commands`) and the staff settings for that server (`home`).
+//! (`gateway`), slash commands (`commands`), the staff settings for that server (`home`) and
+//! moderation (`moderation`).
 pub mod card;
 pub mod commands;
 pub mod gateway;
 pub mod home;
 pub mod levels;
+pub mod moderation;
 pub mod quests;
 
 /// Gives (or takes back) a role on a server; false when Discord refused.
@@ -495,7 +497,7 @@ pub async fn tick(app: &App) -> Res<()> {
     for channel in due {
         sweep(app, &channel).await?;
     }
-    Ok(())
+    moderation::tick(app).await
 }
 
 type Due = (

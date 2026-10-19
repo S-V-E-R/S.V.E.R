@@ -18,6 +18,7 @@ pub struct Interaction {
     /// 2 command, 3 button or menu, 4 autocomplete, 5 form.
     pub kind: u64,
     pub guild: Option<String>,
+    pub channel: Option<String>,
     pub user: String,
     pub roles: Vec<String>,
     pub permissions: u64,
@@ -35,6 +36,7 @@ impl Interaction {
             token: raw["token"].as_str()?.into(),
             kind: raw["type"].as_u64()?,
             guild: raw["guild_id"].as_str().map(String::from),
+            channel: raw["channel_id"].as_str().map(String::from),
             user: user.into(),
             roles: raw["member"]["roles"]
                 .as_array()
@@ -127,6 +129,7 @@ pub fn definitions() -> Vec<Value> {
     ];
     all.extend(super::levels::definitions());
     all.extend(super::quests::definitions());
+    all.extend(super::moderation::definitions());
     all
 }
 
@@ -171,6 +174,7 @@ pub async fn interaction(app: &App, raw: Value) {
     }
     let reply = match i.kind {
         2 => command(app, &i).await,
+        3 | 5 if i.custom_id().starts_with("mod:") => super::moderation::component(app, &i).await,
         _ => None,
     };
     if let Some(reply) = reply.filter(|r| *r != ANSWERED) {
@@ -191,6 +195,7 @@ async fn command(app: &App, i: &Interaction) -> Option<Value> {
         "help" => help(i),
         "health" if i.staff() => health(app).await,
         "health" => private("Only staff can use that."),
+        "mod" | "modpanel" | "ticket" => return super::moderation::command(app, i).await,
         _ => private("That command isn't available right now."),
     })
 }

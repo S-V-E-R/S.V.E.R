@@ -4,7 +4,7 @@
 //!
 //! The connection resumes after a drop and identifies afresh after a restart. Events go to
 //! `dispatch` on their own task, so a slow handler never delays a heartbeat.
-use super::{bot_token, call, commands, home, levels, quests};
+use super::{bot_token, call, commands, home, levels, moderation, quests};
 use crate::App;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Method;
@@ -294,6 +294,16 @@ async fn status(app: &App, connected: bool, problem: Option<&str>) {
 }
 
 async fn handle(app: App, mut received: mpsc::Receiver<(String, Value)>) {
+    // Message and member events go through moderation in order on their own task, so a flood of
+    // them never holds up the rest. It ends once this task drops its sender.
+    // ponytail: an unbounded queue; cap it if a flood ever outruns the database.
+    let (queue, mut queued) = mpsc::unbounded_channel::<(String, Value)>();
+    let worker = app.clone();
+    tokio::spawn(async move {
+        while let Some((kind, data)) = queued.recv().await {
+            dispatch(&worker, &kind, data).await;
+        }
+    });
     let mut seen = tokio::time::Instant::now() - Duration::from_secs(60);
     while let Some((kind, data)) = received.recv().await {
         // The staff page shows when the last event arrived, to the nearest half minute.
@@ -303,7 +313,11 @@ async fn handle(app: App, mut received: mpsc::Receiver<(String, Value)>) {
                 .execute(&app.db)
                 .await;
         }
-        dispatch(&app, &kind, data).await;
+        if moderation::QUEUED.contains(&kind.as_str()) {
+            let _ = queue.send((kind, data));
+        } else {
+            dispatch(&app, &kind, data).await;
+        }
     }
 }
 
@@ -336,7 +350,19 @@ pub async fn dispatch(app: &App, kind: &str, data: Value) {
                 logged("voice", levels::guild_create(app, &data).await);
             }
         }
-        "MESSAGE_CREATE" => logged("message", levels::message(app, &data).await),
+        // Moderation first: a message it removed earns no XP.
+        "MESSAGE_CREATE" => {
+            if !moderation::event(app, kind, &data).await {
+                logged("message", levels::message(app, &data).await);
+            }
+        }
+        "MESSAGE_UPDATE"
+        | "MESSAGE_DELETE"
+        | "MESSAGE_DELETE_BULK"
+        | "GUILD_MEMBER_ADD"
+        | "GUILD_MEMBER_REMOVE" => {
+            moderation::event(app, kind, &data).await;
+        }
         "MESSAGE_REACTION_ADD" => logged("reaction", levels::reaction(app, &data).await),
         "VOICE_STATE_UPDATE" => logged("voice", levels::voice_state(app, &data).await),
         "INTERACTION_CREATE" => {
