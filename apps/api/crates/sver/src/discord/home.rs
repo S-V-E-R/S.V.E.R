@@ -37,6 +37,8 @@ pub enum Kind {
     Roles,
     /// A switch that's off unless staff turn it on.
     OptIn,
+    /// Text or voice channels mapped to war genres: {channel id: genre id}.
+    Genres,
 }
 impl Kind {
     fn name(self) -> &'static str {
@@ -54,6 +56,7 @@ impl Kind {
             Self::Words => "words",
             Self::Roles => "roles",
             Self::OptIn => "optin",
+            Self::Genres => "genres",
         }
     }
     /// Discord channel types each kind accepts.
@@ -63,6 +66,7 @@ impl Kind {
             Self::Forum => &[0, 5, 15],
             Self::Voice => &[2, 13],
             Self::Category => &[4],
+            Self::Genres => &[0, 2, 5, 13],
             _ => &[],
         }
     }
@@ -257,6 +261,31 @@ pub const FIELDS: &[(&str, Kind, &str, &str)] = &[
     ("aetheron", Kind::Given, "Factions", "Aetheron role"),
     ("glint", Kind::Given, "Factions", "Glint role"),
     ("factions_on", Kind::Toggle, "Factions", "Faction system"),
+    (
+        "channel_genres",
+        Kind::Genres,
+        "Factions",
+        "Influence channels (channel → genre)",
+    ),
+    (
+        "sver_wolfsworn",
+        Kind::Given,
+        "S.V.E.R sync",
+        "Wolfsworn role",
+    ),
+    (
+        "sver_greycloak",
+        Kind::Given,
+        "S.V.E.R sync",
+        "Greycloak role",
+    ),
+    ("sver_founder", Kind::Given, "S.V.E.R sync", "Founder role"),
+    (
+        "sver_streamer",
+        Kind::Given,
+        "S.V.E.R sync",
+        "Streamer role",
+    ),
 ];
 
 fn field(key: &str) -> Option<(&'static str, Kind)> {
@@ -397,8 +426,12 @@ async fn view(app: &App) -> Res<Value> {
         .iter()
         .map(|(key, kind, group, label)| json!({"key": key, "kind": kind.name(), "group": group, "label": label}))
         .collect();
-    let mut out =
-        json!({"health": health(app).await?, "guilds": guilds, "fields": fields, "home": null});
+    let genres: Vec<Value> = crate::factions::genres(&mut *app.db.acquire().await?)
+        .await?
+        .into_iter()
+        .map(|(id, name)| json!({"id": id, "name": name}))
+        .collect();
+    let mut out = json!({"health": health(app).await?, "guilds": guilds, "fields": fields, "genres": genres, "home": null});
     if let Some((guild, settings)) = home {
         let (channels, roles) = match lists(app, &guild).await {
             Ok(Lists {
@@ -437,6 +470,7 @@ async fn save(State(app): State<App>, jar: CookieJar, Json(input): Json<Save>) -
         return Err(Fail::field("guild_id", "Pick a server the bot is in."));
     }
     let l = lists(&app, &input.guild_id).await?;
+    let genres = crate::factions::genres(&mut *app.db.acquire().await?).await?;
     let mut clean = Map::new();
     for (key, value) in input.settings {
         let (name, kind) =
@@ -471,6 +505,12 @@ async fn save(State(app): State<App>, jar: CookieJar, Json(input): Json<Save>) -
             Kind::Texts => value
                 .as_array()
                 .is_some_and(|a| a.len() <= 50 && a.iter().all(channel_ok)),
+            Kind::Genres => value.as_object().is_some_and(|m| {
+                m.len() <= 100
+                    && m.iter().all(|(channel, genre)| {
+                        channel_ok(&json!(channel)) && genres.iter().any(|g| *genre == g.0.as_str())
+                    })
+            }),
             Kind::Given | Kind::Role => l
                 .roles
                 .iter()
@@ -485,6 +525,7 @@ async fn save(State(app): State<App>, jar: CookieJar, Json(input): Json<Save>) -
                 Kind::Number => "Enter a whole number.",
                 Kind::Words => "One entry per line, up to 200 characters each.",
                 Kind::Roles => "Pick the server's roles.",
+                Kind::Genres => "Map the server's text or voice channels to war genres.",
                 _ => "Pick one of the server's channels of that kind.",
             };
             return Err(Fail::field(name, why));

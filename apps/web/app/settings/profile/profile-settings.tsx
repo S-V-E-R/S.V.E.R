@@ -222,8 +222,21 @@ export function Links({ me, onSaved }: { me: Me; onSaved: () => void }) {
   </Section>;
 }
 
+type DiscordRank = { linked: boolean; shown: boolean; rank: { name: string; level: number } | null };
+
 export function Card({ me, onSaved }: { me: Me; onSaved: () => void }) {
   const [state, setState] = useState<SaveState>({});
+  const [discord, setDiscord] = useState<DiscordRank | null>(null);
+  const loadDiscord = useCallback(async () => {
+    const r = await send<DiscordRank>("GET", "/api/me/discord-rank");
+    if (r.ok) setDiscord(r.data);
+  }, []);
+  useLoad(loadDiscord);
+  async function showRank(value: boolean) {
+    const result = await send<DiscordRank>("PUT", "/api/me/discord-rank", { shown: value });
+    if (result.ok) setDiscord(result.data);
+    setState(result.ok ? { saved: value ? "Your Discord rank now shows on your page." : "Your Discord rank is hidden." } : result);
+  }
   async function toggle(value: boolean) {
     const result = await send("PUT", "/api/me/card-settings", { show_linked_accounts: value });
     setState(result.ok ? { saved: value ? "Your linked accounts now show on your user card." : "Your linked accounts are hidden." } : result);
@@ -232,6 +245,8 @@ export function Card({ me, onSaved }: { me: Me; onSaved: () => void }) {
   return <Section title="User card" intro="Your user card appears when people tap your name in lists, the Wall and chat.">
     <label className="checkbox"><input type="checkbox" checked={me.show_linked_accounts} onChange={e => toggle(e.target.checked)} /> Show my linked Twitch and Discord accounts on my user card</label>
     <p className="muted small-print">Off unless you turn it on. Shows as &ldquo;Also known as&rdquo;; Discord names show as text only. <Link href="/account">Manage linked accounts</Link>.</p>
+    {discord && <label className="checkbox"><input type="checkbox" checked={discord.shown} disabled={!discord.linked} onChange={e => showRank(e.target.checked)} /> Show my rank on the S.V.E.R Discord server on my page{discord.rank ? ` (${discord.rank.name}, level ${discord.rank.level})` : ""}</label>}
+    {discord && !discord.linked && <p className="muted small-print">Link Discord on your <Link href="/account">account page</Link> to show your Discord rank.</p>}
     <Status state={state} />
   </Section>;
 }

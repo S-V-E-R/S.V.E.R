@@ -552,6 +552,7 @@ pub async fn channel(
             "creator_tier": crate::tiers::tier_of(&mut db, &user.id).await?,
             "shine": crate::shine::channel(&mut db, &user.id).await?,
             "supporter": crate::supporters::marks(&mut db, &user.id).await?,
+            "discord_rank": crate::discord::sync::shown_rank(&mut db, &user.id).await?,
     });
     if let (Some(c), Some(p)) = (channel.as_object_mut(), persona.as_object()) {
         c.extend(p.clone());

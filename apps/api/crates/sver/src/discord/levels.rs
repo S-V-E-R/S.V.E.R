@@ -375,7 +375,8 @@ async fn voice_minute(
         award(app, m(), 2, Source::Watching).await?;
         quests::bump(app, user, "stream_watch", 1).await?;
     }
-    Ok(())
+    let minute = chrono::Utc::now().timestamp() / 60;
+    super::factions::influence(app, user, channel, &format!("{user}:{minute}")).await
 }
 
 /// One rank of the ladder.

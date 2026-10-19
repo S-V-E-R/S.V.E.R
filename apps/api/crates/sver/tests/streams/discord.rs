@@ -306,7 +306,10 @@ pub async fn exercise(e: &Env) {
     gateway(e, &calls).await;
     // SAFETY: only this test reads this variable.
     unsafe { std::env::set_var("DISCORD_CDN", format!("http://{address}")) };
+    // The seeded holidays stay off here, so a run on one of their dates sees no multiplier.
+    e.sql("UPDATE discord_holidays SET active=false").await;
     levels(e, &calls).await;
+    factions(e).await;
     super::discord_moderation::exercise(e).await;
 }
 
@@ -573,6 +576,528 @@ async fn levels(e: &Env, calls: &Calls) {
             .await
             .unwrap();
     assert_eq!(factor, 1.5);
+}
+
+/// Every call as "METHOD path body", against members 910 (linked, holds role 66 by hand) and 912
+/// (linked, unverified); anyone else isn't in the server.
+async fn fake_home(
+    State(calls): State<Calls>,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    body: String,
+) -> (StatusCode, Json<Value>) {
+    let path = uri.path().to_string();
+    calls
+        .lock()
+        .unwrap()
+        .push(format!("{method} {path} {body}"));
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    let answer = match (method.as_str(), parts.as_slice()) {
+        ("GET", ["users", "@me"]) => json!({"id": "500"}),
+        ("GET", ["guilds", "900", "members", "500"]) => json!({"roles": ["30"]}),
+        ("GET", ["guilds", "900", "members", "910"]) => {
+            json!({"user": {"id": "910"}, "roles": ["66"], "nick": null})
+        }
+        ("GET", ["guilds", "900", "members", "912"]) => json!({"user": {"id": "912"}, "roles": []}),
+        ("GET", ["guilds", "900", "members", _]) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"code": 10007})));
+        }
+        ("GET", ["guilds", "900", "channels"]) => json!([
+            {"id": "10", "name": "general", "type": 0}, {"id": "11", "name": "voice", "type": 2},
+            {"id": "14", "name": "category", "type": 4}, {"id": "15", "name": "off-topic", "type": 0}]),
+        ("GET", ["guilds", "900", "roles"]) => json!([
+            {"id": "900", "name": "@everyone", "position": 0, "permissions": "0"},
+            {"id": "61", "name": "Myria", "position": 1}, {"id": "62", "name": "Aetheron", "position": 1},
+            {"id": "63", "name": "Glint", "position": 1}, {"id": "64", "name": "Wolfsworn", "position": 1},
+            {"id": "65", "name": "Founder", "position": 1}, {"id": "66", "name": "Level 1", "position": 1},
+            {"id": "67", "name": "Level 5", "position": 1}, {"id": "69", "name": "Admin", "position": 9},
+            {"id": "30", "name": "S.V.E.R", "position": 5, "managed": true, "permissions": "268435456"}]),
+        ("POST", ["channels", _, "messages"]) => json!({"id": "m1"}),
+        _ => json!({}),
+    };
+    (StatusCode::OK, Json(answer))
+}
+
+/// Factions and the S.V.E.R sync (docs/DISCORD_BOT.md "Factions in Discord", "Account link and
+/// sync"): influence, `/faction join`, seasons, holidays, territories, role and level sync,
+/// nicknames and the Discord rank on profiles. The tuning here is the repo's example values.
+async fn factions(e: &Env) {
+    use sver::discord::{
+        commands::interaction, factions, gateway::dispatch, gateway::minute, sync,
+    };
+    let calls: Calls = Arc::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let service = Router::new().fallback(fake_home).with_state(calls.clone());
+    tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
+    // SAFETY: only the Discord tests read these variables, one at a time.
+    unsafe { std::env::set_var("DISCORD_API", format!("http://{address}")) };
+    let taken = || std::mem::take(&mut *calls.lock().unwrap());
+    let has = |c: &[String], needle: &str| c.iter().any(|l| l.contains(needle));
+    let count = |sql: &'static str| async move {
+        sqlx::query_scalar::<_, i64>(sql)
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    // A command or button and its logged answer: the reply, or for a deferred one ("thinking…"
+    // or a deferred update) the edit that follows it. Each interaction's token is its id.
+    let ask = async |id: &str, user: &str, staff: bool, kind: u64, data: Value| {
+        interaction(&e.app, json!({"id": id, "token": id, "type": kind, "guild_id": "900", "channel_id": "10",
+            "member": {"user": {"id": user}, "permissions": if staff { "32" } else { "0" }, "roles": []}, "data": data}))
+            .await;
+        let edit = format!("PATCH /webhooks/app1/{id}/messages/@original");
+        for _ in 0..200 {
+            let found = {
+                let log = calls.lock().unwrap();
+                let reply = log
+                    .iter()
+                    .find(|l| l.starts_with(&format!("POST /interactions/{id}/")))
+                    .cloned();
+                match reply {
+                    Some(r) if r.contains(r#""type":5"#) || r.contains(r#""type":6"#) => {
+                        log.iter().find(|l| l.starts_with(&edit)).cloned()
+                    }
+                    other => other,
+                }
+            };
+            if let Some(answer) = found {
+                return answer;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        String::new()
+    };
+    let sub = |name: &str, sub: &str, options: Value| json!({"name": name, "options": [{"type": 1, "name": sub, "options": options}]});
+    // Background syncs after a command settle before the next look.
+    let settle = || tokio::time::sleep(std::time::Duration::from_millis(400));
+
+    // Staff map channels to genres: the server's text or voice channels, real genres only.
+    let staff = super::bans::staff(e, "fx-staff", "FxStaff").await;
+    let put = async |settings: Value| {
+        super::chat::call(
+            e,
+            "PUT",
+            "/api/admin/discord",
+            Some(&staff),
+            json!({"guild_id": "900", "settings": settings}),
+        )
+        .await
+    };
+    for bad in [
+        json!({"channel_genres": {"10": "no_such_genre"}}),
+        json!({"channel_genres": {"14": "fighting"}}),
+        json!({"channel_genres": {"99": "fighting"}}),
+    ] {
+        let (status, body) = put(bad.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        assert_eq!(body["field"], "channel_genres", "{bad}");
+    }
+    let (status, view) = put(json!({"channel_genres": {"10": "fighting", "11": "fighting"}, "rank_up": "10", "factions_channel": "10",
+        "myria": "61", "aetheron": "62", "glint": "63", "sver_wolfsworn": "64", "sver_founder": "65"}))
+    .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert!(
+        view["genres"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g["id"] == "fighting")
+    );
+
+    // A S.V.E.R war week with territories.
+    e.sql("INSERT INTO faction_seasons(number,starts_at,ends_at,next_starts_at) VALUES(1,now()-interval '1 hour',now()+interval '30 days',now()+interval '37 days')").await;
+    e.sql("INSERT INTO faction_weeks(season_id,starts_at,ends_at) SELECT id,now()-interval '1 hour',now()+interval '6 days' FROM faction_seasons").await;
+    e.sql("INSERT INTO faction_territories(season_id,genre,holder) SELECT s.id,g.id,g.home FROM faction_seasons s,faction_genres g").await;
+    linked(e, "910", "fx-linked", "glint").await;
+    linked(e, "911", "fx-away", "myria").await;
+    linked(e, "912", "fx-unverified", "myria").await;
+    e.sql("UPDATE users SET email_verified=false WHERE id='fx-unverified'")
+        .await;
+
+    // Influence: a voice minute in a mapped voice channel, for a linked and verified member.
+    e.sql(r#"UPDATE discord_home SET settings=settings||'{"leveling":true}'"#)
+        .await;
+    let voice = |user: &str| json!({"guild_id": "900", "user_id": user, "channel_id": "11", "member": {"roles": []}});
+    dispatch(&e.app, "VOICE_STATE_UPDATE", voice("910")).await;
+    dispatch(&e.app, "VOICE_STATE_UPDATE", voice("913")).await;
+    e.sql("UPDATE discord_voice SET credited_at=now()-interval '2 minutes'")
+        .await;
+    minute(&e.app).await;
+    assert_eq!(
+        count("SELECT count(*) FROM faction_influence WHERE source='discord' AND user_id='fx-linked' AND points=1").await,
+        1
+    );
+    e.sql("DELETE FROM discord_voice").await;
+    // Chat in a mapped channel too, up to the daily cap; replays, unmapped channels, unverified and
+    // unlinked members earn nothing.
+    let say = |id: String, user: &str, channel: &str| json!({"id": id, "guild_id": "900", "channel_id": channel, "content": "for the war", "author": {"id": user}, "member": {"roles": []}});
+    for n in 0..12 {
+        dispatch(&e.app, "MESSAGE_CREATE", say(format!("fx{n}"), "910", "10")).await;
+    }
+    dispatch(&e.app, "MESSAGE_CREATE", say("fx0".into(), "910", "10")).await;
+    dispatch(&e.app, "MESSAGE_CREATE", say("fx-off".into(), "910", "15")).await;
+    dispatch(&e.app, "MESSAGE_CREATE", say("fx-unv".into(), "912", "10")).await;
+    dispatch(&e.app, "MESSAGE_CREATE", say("fx-unl".into(), "913", "10")).await;
+    let (rows, points): (i64, i64) = sqlx::query_as("SELECT count(*),coalesce(sum(points),0)::bigint FROM faction_influence WHERE source='discord'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!((rows, points), (13, 10), "the cap is 10");
+    assert_eq!(
+        count("SELECT count(*) FROM faction_influence WHERE source='discord' AND (user_id<>'fx-linked' OR genre<>'fighting' OR faction<>'glint')").await,
+        0
+    );
+    settle().await;
+    taken();
+
+    // /faction join: an unlinked member chooses; switching asks first.
+    let join = |f: &str| sub("faction", "join", json!([{"name": "faction", "value": f}]));
+    let reply = ask("j1", "913", false, 2, join("myria")).await;
+    assert!(reply.contains("Welcome to **Myria**"), "{reply}");
+    let c = taken();
+    for call in [
+        "PUT /guilds/900/members/913/roles/61",
+        "DELETE /guilds/900/members/913/roles/62",
+        "DELETE /guilds/900/members/913/roles/63",
+    ] {
+        assert!(has(&c, call), "{call} in {c:#?}");
+    }
+    assert_eq!(count("SELECT count(*) FROM discord_achievements WHERE discord_user='913' AND key='faction_joined'").await, 1);
+    let reply = ask("j2", "913", false, 2, join("glint")).await;
+    assert!(
+        reply.contains("fac:join:glint") && reply.contains("Switch from **Myria**"),
+        "{reply}"
+    );
+    assert!(
+        !has(&taken(), "/roles/63"),
+        "nothing changes before the confirm"
+    );
+    let reply = ask(
+        "j3",
+        "913",
+        false,
+        3,
+        json!({"custom_id": "fac:cancel", "component_type": 2}),
+    )
+    .await;
+    assert!(reply.contains("Nothing changed"), "{reply}");
+    let reply = ask(
+        "j4",
+        "913",
+        false,
+        3,
+        json!({"custom_id": "fac:join:glint", "component_type": 2}),
+    )
+    .await;
+    assert!(
+        reply.contains("Welcome to **Glint**") && reply.contains(r#""components":[]"#),
+        "{reply}"
+    );
+    let c = taken();
+    assert!(
+        has(&c, "PUT /guilds/900/members/913/roles/63")
+            && has(&c, "DELETE /guilds/900/members/913/roles/61"),
+        "{c:#?}"
+    );
+    assert_eq!(
+        count("SELECT count(*) FROM discord_members WHERE discord_user='913' AND faction='glint'")
+            .await,
+        1
+    );
+    // A linked member's S.V.E.R faction wins.
+    let reply = ask("j5", "910", false, 2, join("myria")).await;
+    assert!(
+        reply.contains("comes from your S.V.E.R account") && reply.contains("Glint"),
+        "{reply}"
+    );
+    assert_eq!(
+        count("SELECT count(*) FROM discord_members WHERE discord_user='910' AND faction='glint'")
+            .await,
+        1
+    );
+    settle().await;
+    taken();
+
+    // Seasons: points inside the window count; the winner gets 1.5× for 14 days when it ends.
+    let reply = ask(
+        "s1",
+        "42",
+        true,
+        2,
+        sub(
+            "season",
+            "start",
+            json!([{"name": "name", "value": "Autumn"}, {"name": "days", "value": 30}]),
+        ),
+    )
+    .await;
+    assert!(reply.contains("Season 1, **Autumn**"), "{reply}");
+    let reply = ask(
+        "s2",
+        "42",
+        false,
+        2,
+        sub(
+            "season",
+            "start",
+            json!([{"name": "name", "value": "Mine"}, {"name": "days", "value": 3}]),
+        ),
+    )
+    .await;
+    assert!(reply.contains("Only staff"), "{reply}");
+    e.sql("UPDATE discord_seasons SET starts_at=now()-interval '1 day'")
+        .await;
+    e.sql("INSERT INTO discord_points(discord_user,faction,kind,points,at) VALUES('913','myria','chat',50,now()),('910','glint','chat',20,now()),('912','aetheron','chat',1000,now()-interval '2 days')").await;
+    let reply = ask(
+        "s3",
+        "913",
+        false,
+        2,
+        sub("faction", "leaderboard", json!([])),
+    )
+    .await;
+    assert!(
+        reply.contains("<@913>") && !reply.contains("<@912>"),
+        "only this season: {reply}"
+    );
+    let reply = ask("s4", "913", false, 2, sub("faction", "stats", json!([]))).await;
+    assert!(
+        reply.contains("Season 1: Autumn") && !reply.contains("1,0"),
+        "before the season: {reply}"
+    );
+    minute(&e.app).await;
+    assert_eq!(
+        count("SELECT count(*) FROM discord_seasons WHERE ended_at IS NULL").await,
+        1,
+        "not due yet"
+    );
+    e.sql("UPDATE discord_seasons SET ends_at=now()-interval '1 second'")
+        .await;
+    taken();
+    minute(&e.app).await;
+    assert_eq!(
+        count("SELECT count(*) FROM discord_seasons WHERE winner='myria' AND ended_at IS NOT NULL")
+            .await,
+        1
+    );
+    assert_eq!(count("SELECT count(*) FROM discord_multipliers WHERE kind='faction' AND target='myria' AND factor=1.5 AND ends_at BETWEEN now()+interval '13 days' AND now()+interval '15 days'").await, 1);
+    let c = taken();
+    assert!(
+        c.iter()
+            .any(|l| l.starts_with("POST /channels/10/messages") && l.contains("**Myria** wins")),
+        "{c:#?}"
+    );
+    minute(&e.app).await;
+    assert!(!has(&taken(), "wins"), "announced once");
+
+    // A holiday runs once on its day: the multiplier until midnight UTC, points, a post.
+    e.sql("INSERT INTO discord_holidays(faction,name,month,day,factor,points) VALUES('glint','Test Day',extract(month FROM now() AT TIME ZONE 'UTC'),extract(day FROM now() AT TIME ZONE 'UTC'),2,7)").await;
+    minute(&e.app).await;
+    minute(&e.app).await;
+    let c = taken();
+    assert_eq!(
+        c.iter().filter(|l| l.contains("Test Day")).count(),
+        1,
+        "{c:#?}"
+    );
+    assert_eq!(count("SELECT count(*) FROM discord_multipliers WHERE name='Test Day' AND target='glint' AND ends_at>now() AND ends_at<=now()+interval '1 day'").await, 1);
+    assert_eq!(
+        count("SELECT count(*) FROM discord_points WHERE kind='holiday' AND points=7").await,
+        count("SELECT count(*) FROM discord_members WHERE faction='glint'").await
+    );
+    let reply = ask("h1", "42", true, 2, sub("holiday", "list", json!([]))).await;
+    assert!(
+        reply.contains("Test Day") && reply.contains("Winter Luminance"),
+        "{reply}"
+    );
+    let reply = ask("h2", "42", true, 2, sub("holiday", "create", json!([{"name": "name", "value": "Bad"}, {"name": "faction", "value": "glint"},
+        {"name": "month", "value": 2}, {"name": "day", "value": 30}, {"name": "factor", "value": 2}, {"name": "points", "value": 1}]))).await;
+    assert!(reply.contains("a real date"), "{reply}");
+
+    // Territories: the first look records; a change of hands is posted once.
+    factions::territory_posts(&e.app).await.unwrap();
+    assert!(!has(&taken(), "taken control"));
+    e.sql("UPDATE faction_territories SET holder='glint' WHERE genre='fighting'")
+        .await;
+    factions::territory_posts(&e.app).await.unwrap();
+    factions::territory_posts(&e.app).await.unwrap();
+    let c = taken();
+    assert_eq!(
+        c.iter()
+            .filter(|l| l.contains("**Glint** has taken control of **Fighting**!"))
+            .count(),
+        1,
+        "{c:#?}"
+    );
+    let reply = ask("t1", "913", false, 2, json!({"name": "territories"})).await;
+    assert!(reply.contains("**Fighting** · Glint"), "{reply}");
+
+    // Role sync: Wolfsworn and the level band; the band role 910 already holds isn't the bot's.
+    let reply = ask(
+        "l1",
+        "42",
+        true,
+        2,
+        sub(
+            "levelroles",
+            "add",
+            json!([{"name": "level", "value": 1}, {"name": "role", "value": "66"}]),
+        ),
+    )
+    .await;
+    assert!(reply.contains("<@&66>"), "{reply}");
+    let reply = ask(
+        "l2",
+        "42",
+        true,
+        2,
+        sub(
+            "levelroles",
+            "add",
+            json!([{"name": "level", "value": 5}, {"name": "role", "value": "69"}]),
+        ),
+    )
+    .await;
+    assert!(reply.contains("below the bot"), "{reply}");
+    ask(
+        "l3",
+        "42",
+        true,
+        2,
+        sub(
+            "levelroles",
+            "add",
+            json!([{"name": "level", "value": 5}, {"name": "role", "value": "67"}]),
+        ),
+    )
+    .await;
+    let reply = ask(
+        "n1",
+        "910",
+        false,
+        2,
+        sub(
+            "link",
+            "nickname",
+            json!([{"name": "state", "value": "on"}]),
+        ),
+    )
+    .await;
+    assert!(reply.contains("follows your S.V.E.R username"), "{reply}");
+    let reply = ask("n2", "913", false, 2, sub("link", "sver", json!([]))).await;
+    assert!(
+        reply.contains("/account") && reply.contains("isn't linked"),
+        "{reply}"
+    );
+    let reply = ask("n3", "910", false, 2, sub("link", "status", json!([]))).await;
+    assert!(reply.contains("linked to **fx-linked**"), "{reply}");
+    settle().await;
+    e.sql("INSERT INTO platform_subscriptions(user_id,tier,paid_through) VALUES('fx-linked',1,now()+interval '1 month')").await;
+    e.sql("UPDATE discord_members SET sver_level=NULL WHERE discord_user='910'")
+        .await;
+    taken();
+    sync::all(&e.app).await.unwrap();
+    let c = taken();
+    assert!(has(&c, "PUT /guilds/900/members/910/roles/64"), "{c:#?}");
+    assert!(!has(&c, "/members/910/roles/66"), "already held: {c:#?}");
+    assert!(
+        has(&c, r#"PATCH /guilds/900/members/910 {"nick":"fx-linked"}"#),
+        "{c:#?}"
+    );
+    assert!(
+        !has(&c, "PATCH /guilds/900/members/912"),
+        "nickname is opt-in"
+    );
+    assert!(!has(&c, "/members/911/roles"), "not in the server");
+    assert!(
+        !has(&c, "reached **Level"),
+        "the first level seen is only recorded"
+    );
+    assert_eq!(count("SELECT count(*) FROM discord_achievements WHERE discord_user='910' AND key='sver_subscriber'").await, 1);
+    // Level 5 and a lapsed subscription: the new band is given, the bot's grant taken back, the
+    // band role it never gave left alone, and the level-up announced.
+    e.sql(
+        "INSERT INTO xp_days(user_id,day,source,xp) VALUES('fx-linked',current_date,'watch',800)",
+    )
+    .await;
+    e.sql("UPDATE platform_subscriptions SET paid_through=now()-interval '1 minute' WHERE user_id='fx-linked'").await;
+    sync::one(&e.app, "910").await.unwrap();
+    let c = taken();
+    assert!(has(&c, "PUT /guilds/900/members/910/roles/67"), "{c:#?}");
+    assert!(has(&c, "DELETE /guilds/900/members/910/roles/64"), "{c:#?}");
+    assert!(
+        !has(&c, "DELETE /guilds/900/members/910/roles/66"),
+        "{c:#?}"
+    );
+    assert!(
+        c.iter().any(|l| l.starts_with("POST /channels/10/messages")
+            && l.contains("<@910> reached **Level 5** on S.V.E.R!")),
+        "{c:#?}"
+    );
+    // Leaving strips every role, so the grants end; rejoining brings the faction, rank and synced
+    // roles back.
+    let member = json!({"guild_id": "900", "user": {"id": "910", "username": "fx"}, "joined_at": "2026-01-01T00:00:00Z"});
+    dispatch(&e.app, "GUILD_MEMBER_REMOVE", member.clone()).await;
+    assert_eq!(
+        count("SELECT count(*) FROM discord_home_grants WHERE discord_user='910'").await,
+        0
+    );
+    taken();
+    dispatch(&e.app, "GUILD_MEMBER_ADD", member).await;
+    settle().await;
+    let c = taken();
+    for role in ["63", "431", "67"] {
+        assert!(
+            has(&c, &format!("PUT /guilds/900/members/910/roles/{role} ")),
+            "{role} in {c:#?}"
+        );
+    }
+    assert_eq!(
+        count("SELECT count(*) FROM discord_home_grants WHERE discord_user='910' AND role='67'")
+            .await,
+        1
+    );
+    // Unlinked: everything the sync gave is taken back.
+    e.sql("DELETE FROM identities WHERE subject='910'").await;
+    sync::all(&e.app).await.unwrap();
+    assert!(has(&taken(), "DELETE /guilds/900/members/910/roles/67"));
+    assert_eq!(
+        count("SELECT count(*) FROM discord_home_grants WHERE discord_user='910'").await,
+        0
+    );
+
+    // The Discord rank on S.V.E.R: only for a linked account, and only when its owner shows it.
+    let (status, _) = e
+        .request(
+            "PUT",
+            "/api/me/discord-rank",
+            json!({"shown": true}),
+            true,
+            true,
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    e.sql(
+        "INSERT INTO identities(provider,subject,user_id) VALUES('discord','914','stream-owner')",
+    )
+    .await;
+    e.sql("INSERT INTO discord_xp(discord_user,total) VALUES('914',600)")
+        .await;
+    e.sql("INSERT INTO discord_members(discord_user,faction) VALUES('914','aetheron')")
+        .await;
+    let mine = e.call("GET", "/api/me/discord-rank", Value::Null).await;
+    assert_eq!(
+        mine,
+        json!({"linked": true, "shown": false, "rank": {"name": "Seeker", "level": 2, "faction": "aetheron"}})
+    );
+    let channel = || e.call("GET", "/api/channels/Streamer", Value::Null);
+    assert_eq!(channel().await["channel"]["discord_rank"], Value::Null);
+    e.call("PUT", "/api/me/discord-rank", json!({"shown": true}))
+        .await;
+    assert_eq!(channel().await["channel"]["discord_rank"]["name"], "Seeker");
+    e.call("PUT", "/api/me/discord-rank", json!({"shown": false}))
+        .await;
+    assert_eq!(channel().await["channel"]["discord_rank"], Value::Null);
 }
 
 /// A fake Gateway: sends what the test hands it and reports what the bot sends. `{"close": code}`
