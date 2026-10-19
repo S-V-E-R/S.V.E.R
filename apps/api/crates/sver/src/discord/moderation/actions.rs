@@ -167,8 +167,8 @@ impl Act {
 }
 
 /// Why `by` may not act on `user` (or Discord couldn't say): the bot itself, themselves, a
-/// protected role, staff (staff permissions or the mod team role), or someone whose highest role
-/// is at or above theirs.
+/// protected role, the server's owner, staff (staff permissions or the mod team role), or someone
+/// whose highest role is at or above theirs.
 async fn untouchable(app: &App, h: &Home, user: &str, by: Option<&By>) -> Res<Option<String>> {
     let bot: Option<String> = sqlx::query_scalar("SELECT bot_id FROM discord_gateway")
         .fetch_optional(&app.db)
@@ -197,17 +197,16 @@ async fn untouchable(app: &App, h: &Home, user: &str, by: Option<&By>) -> Res<Op
             "<@{user}> has a protected role (<@&{role}>) and can't be moderated."
         )));
     }
-    let Some((200, roles)) = call(
-        app,
-        Method::GET,
-        &format!("/guilds/{}/roles", h.guild),
-        None,
-    )
-    .await
+    let Some((200, guild)) = call(app, Method::GET, &format!("/guilds/{}", h.guild), None).await
     else {
         return Ok(Some("Discord didn't answer. Try again in a minute.".into()));
     };
-    let roles = roles.as_array().cloned().unwrap_or_default();
+    if guild["owner_id"] == user {
+        return Ok(Some(format!(
+            "<@{user}> owns the server and can't be moderated."
+        )));
+    }
+    let roles = guild["roles"].as_array().cloned().unwrap_or_default();
     // A member's roles, @everyone (whose id is the server's) included.
     let held = |ids: &[String]| -> Vec<Value> {
         roles
@@ -1164,14 +1163,19 @@ pub(super) async fn command(app: &App, h: &Home, i: &Interaction) -> Res<Value> 
             let Some(m) = length else {
                 return Ok(private("Give a length, like 2h or 7d."));
             };
+            // Under the member's ban lock, and only while the case is still open: the timed lift
+            // claims a ban before it takes the lock.
+            let mut lock = ban_lock(app, user).await?;
             let active: Option<(i64, String)> = sqlx::query_as("SELECT id,action FROM discord_cases WHERE user_id=$1 AND action IN ('ban','mute')
                 AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at>now()) ORDER BY id DESC LIMIT 1")
-                .bind(user).fetch_optional(&app.db).await?;
+                .bind(user).fetch_optional(&mut *lock).await?;
             if active.as_ref().is_some_and(|a| a.1 == "ban") && !who.can(BAN) {
                 return Ok(needs(BAN));
             }
-            let changed: Option<(String, chrono::DateTime<Utc>)> = sqlx::query_as("UPDATE discord_cases SET expires_at=now()+make_interval(mins=>$2) WHERE id=$1 RETURNING action,expires_at")
-                .bind(active.map(|a| a.0)).bind(m as i32).fetch_optional(&app.db).await?;
+            let changed: Option<(String, chrono::DateTime<Utc>)> = sqlx::query_as("UPDATE discord_cases SET expires_at=now()+make_interval(mins=>$2) WHERE id=$1
+                AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at>now()) RETURNING action,expires_at")
+                .bind(active.map(|a| a.0)).bind(m as i32).fetch_optional(&mut *lock).await?;
+            lock.commit().await?;
             match changed {
                 Some((action, at)) => {
                     if action == "mute" {
