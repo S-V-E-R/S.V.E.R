@@ -370,7 +370,11 @@ mod tests {
                         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "-_".contains(c)),
                 "{here}: bad name"
             );
-            let d = o["description"].as_str().unwrap_or_default().chars().count();
+            let d = o["description"]
+                .as_str()
+                .unwrap_or_default()
+                .chars()
+                .count();
             assert!((1..=100).contains(&d), "{here}: description is {d} long");
             match o["type"].as_u64() {
                 // A command (no type), a subcommand or a group: its own options.

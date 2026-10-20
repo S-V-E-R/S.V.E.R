@@ -258,8 +258,10 @@ async fn rsvp(app: &App, i: &Interaction, id: i64, status: &str) -> Res<Value> {
     }
     sqlx::query("INSERT INTO discord_event_rsvps(event_id,discord_user,status) VALUES($1,$2,$3) ON CONFLICT(event_id,discord_user) DO UPDATE SET status=$3,at=now()")
         .bind(id).bind(&i.user).bind(status).execute(&app.db).await?;
-    // Going counts once per event, however often someone switches (the legacy bot paid every time).
+    // Going counts once per event, however often someone switches (the legacy bot paid every time),
+    // and never for the event's own host, or anyone could pay themselves by making events.
     let first = status == "going"
+        && e.created_by != i.user
         && sqlx::query("UPDATE discord_event_rsvps SET counted=true WHERE event_id=$1 AND discord_user=$2 AND NOT counted")
             .bind(id).bind(&i.user).execute(&app.db).await?.rows_affected() == 1;
     if first {

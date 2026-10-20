@@ -580,6 +580,23 @@ pub async fn exercise(e: &Env) {
         &["POST /channels/157/messages", "Game night", "event:rsvp:"],
     );
     let event: i64 = count("SELECT id FROM discord_events WHERE title='Game night'").await;
+    // The host going to their own event earns nothing.
+    e.sql("INSERT INTO discord_members(discord_user,faction) VALUES('960','glint') ON CONFLICT(discord_user) DO UPDATE SET faction='glint'").await;
+    let own = ask(
+        "rs-host",
+        "960",
+        MEMBER,
+        3,
+        button(&format!("event:rsvp:{event}:going")),
+        true,
+    )
+    .await;
+    assert!(own.contains(r#""type":7"#), "{own}");
+    assert_eq!(
+        count("SELECT count(*) FROM discord_points WHERE discord_user='960' AND kind='event'")
+            .await,
+        0
+    );
     e.sql("INSERT INTO discord_members(discord_user,faction) VALUES('961','myria') ON CONFLICT(discord_user) DO UPDATE SET faction='myria'").await;
     for (n, status) in ["going", "maybe", "going", "going"].iter().enumerate() {
         let r = ask(
