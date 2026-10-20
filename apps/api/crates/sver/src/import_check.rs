@@ -202,8 +202,8 @@ async fn import(
             .bind(id).bind(account).bind(profiles.get(id).copied()).bind(exception).bind(json!(identities))
             .execute(&mut *tx).await.map_err(|_| "Legacy metadata preservation failed")?;
     }
-    // Preserve deferred providers such as Kick without enabling their sign-in adapters.
-    report.active_identities = sqlx::query("INSERT INTO identities(provider,subject,user_id) SELECT lower(value->>'provider'),value->>'providerUserId',value->>'userId' FROM jsonb_array_elements($1) WHERE lower(value->>'provider') IN ('google','twitch','discord')")
+    // Every legacy identity is preserved; those with a sign-in adapter are active.
+    report.active_identities = sqlx::query("INSERT INTO identities(provider,subject,user_id) SELECT lower(value->>'provider'),value->>'providerUserId',value->>'userId' FROM jsonb_array_elements($1) WHERE lower(value->>'provider') IN ('google','twitch','discord','kick')")
         .bind(json!(snapshot.identities)).execute(&mut *tx).await.map_err(|_| "Linked identity import failed; import rolled back")?.rows_affected() as usize;
     let same: bool = sqlx::query_scalar("SELECT bool_and(u.id=d.account->>'id' AND u.email=d.account->>'email' AND u.username=d.account->>'username' AND u.password_hash IS NOT DISTINCT FROM d.account->>'passwordHash' AND u.email_verified=(d.account->>'emailVerified')::boolean AND u.date_of_birth IS NOT DISTINCT FROM (d.account->>'dateOfBirth')::timestamp::date AND u.created_at=(d.account->>'createdAt')::timestamptz AND u.deleted_at IS NOT DISTINCT FROM (d.account->>'deletedAt')::timestamptz AND u.legacy_deletion_hold=(d.account->>'deletedAt' IS NOT NULL)) FROM users u JOIN legacy_account_data d ON d.user_id=u.id")
         .fetch_one(&mut *tx).await.map_err(|_| "Account preservation check failed")?;

@@ -51,6 +51,15 @@ pub fn providers_from_env() -> std::result::Result<Vec<Provider>, String> {
             "identify email",
             true,
         ),
+        // The legacy app's Kick keys and callback (OAuth 2.1, PKCE required).
+        (
+            "kick",
+            "https://id.kick.com/oauth/authorize",
+            "https://id.kick.com/oauth/token",
+            "https://api.kick.com/public/v1/users",
+            "user:read",
+            true,
+        ),
     ] {
         let client_id =
             std::env::var(format!("{}_CLIENT_ID", name.to_uppercase())).unwrap_or_default();
@@ -272,7 +281,8 @@ async fn exchange(app: &App, p: &Provider, code: &str, verifier: &str) -> Result
         .json()
         .await
         .map_err(|_| Error::unavailable())?;
-    let body = if p.name == "twitch" {
+    // Twitch and Kick wrap the one user in `data`.
+    let body = if p.name == "twitch" || p.name == "kick" {
         body["data"]
             .as_array()
             .filter(|a| a.len() == 1)
@@ -282,13 +292,20 @@ async fn exchange(app: &App, p: &Provider, code: &str, verifier: &str) -> Result
     } else {
         body
     };
-    let subject = body[if p.name == "google" { "sub" } else { "id" }]
-        .as_str()
-        .filter(|s| !s.is_empty() && s.len() <= 255)
-        .ok_or_else(|| Error::bad("Provider identity is missing."))?
-        .to_owned();
+    // Kick's id is a number.
+    let subject = match &body[match p.name.as_str() {
+        "google" => "sub",
+        "kick" => "user_id",
+        _ => "id",
+    }] {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) if p.name == "kick" => n.as_u64().map(|n| n.to_string()),
+        _ => None,
+    }
+    .filter(|s| !s.is_empty() && s.len() <= 255)
+    .ok_or_else(|| Error::bad("Provider identity is missing."))?;
     let email = body["email"].as_str().map(sec::email).transpose()?;
-    // Twitch Helix does not expose an email-verification flag. Send our own verification link.
+    // Twitch Helix and Kick don't expose an email-verification flag. Send our own verification link.
     let verified = match p.name.as_str() {
         "google" => body["email_verified"] == true,
         "discord" => body["verified"] == true,
@@ -298,12 +315,10 @@ async fn exchange(app: &App, p: &Provider, code: &str, verifier: &str) -> Result
         subject,
         email,
         verified,
-        username: body[if p.name == "twitch" {
-            "login"
-        } else if p.name == "discord" {
-            "username"
-        } else {
-            "name"
+        username: body[match p.name.as_str() {
+            "twitch" => "login",
+            "discord" => "username",
+            _ => "name",
         }]
         .as_str()
         .map(str::to_owned),
@@ -322,7 +337,7 @@ pub async fn callback(
         Ok((jar, target)) => (jar, Redirect::to(&target)).into_response(),
         Err(error) => {
             let provider = match name.as_str() {
-                "google" | "twitch" | "discord" => name.as_str(),
+                "google" | "twitch" | "discord" | "kick" => name.as_str(),
                 _ => "unknown",
             };
             eprintln!(
@@ -468,7 +483,7 @@ async fn complete(
         let email = identity.email.ok_or_else(|| {
             Error::bad("Allow email access at the provider, or sign up with email.")
         })?;
-        if name != "twitch" && !identity.verified {
+        if name != "twitch" && name != "kick" && !identity.verified {
             return Err(Error::bad(
                 "Verify your email with the provider first, or sign up with email.",
             ));
