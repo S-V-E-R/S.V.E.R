@@ -538,6 +538,115 @@ pub async fn exercise(e: &Env) {
             &json!("Not a registered charity's page")
         )
     );
+
+    // ---- An integrity hold stops payday and Early Pay until staff lift it ----
+    let held = creator(e, "rt-held", "RtHeld").await;
+    e.sql("INSERT INTO ledger_transactions(id,kind,reference) VALUES('fund-rt-held','test','fund-rt-held')").await;
+    e.sql("INSERT INTO ledger_entries(transaction_id,account,unit,amount) VALUES('fund-rt-held','usd:earnings:rt-held','usd',10000),('fund-rt-held','usd:stripe','usd',-10000)").await;
+    e.sql("INSERT INTO integrity_cases(id,broadcast_id,owner_id,evidence) VALUES('rt-held-case','rt-held-b','rt-held','{}')").await;
+    let hold = |on: bool| {
+        call(
+            e,
+            "POST",
+            "/api/admin/integrity/rt-held-case/hold",
+            Some(&admin),
+            json!({"hold": on, "note": "Reviewing paid traffic"}),
+        )
+    };
+    let early = || {
+        call(
+            e,
+            "POST",
+            "/api/me/payouts/early",
+            Some(&held),
+            json!({"method": "standard"}),
+        )
+    };
+    let runs = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM payout_runs WHERE user_id='rt-held'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    // Held while the case is open.
+    assert_eq!(hold(true).await.0, StatusCode::OK);
+    assert_eq!(early().await.0, StatusCode::FORBIDDEN);
+    let (_, s) = call(
+        e,
+        "GET",
+        "/api/me/payouts/summary",
+        Some(&held),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(s["held"], true);
+    // Still held once the case is closed as actioned: payday skips them.
+    let (status, decided) = call(
+        e,
+        "POST",
+        "/api/admin/integrity/rt-held-case/decision",
+        Some(&admin),
+        json!({"outcome": "action", "note": "Paid bot traffic", "hold_payouts": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{decided}");
+    let second = Utc.with_ymd_and_hms(2026, 10, 23, 16, 0, 0).unwrap();
+    sver::payouts::payday(&e.app, second).await.unwrap();
+    assert_eq!(early().await.0, StatusCode::FORBIDDEN);
+    assert_eq!(runs().await, 0, "a held creator is never paid");
+    // A run reserved before the hold whose transfer was never sent stays pending while held.
+    e.sql("INSERT INTO payout_runs(id,user_id,kind,amount_cents,fee_cents,created_at) VALUES('rt-held-run','rt-held','payday',100,0,now()-interval '10 minutes')").await;
+    let run_status = || async {
+        sqlx::query_scalar::<_, String>("SELECT status FROM payout_runs WHERE id='rt-held-run'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    sver::payouts::resume(&e.app).await.unwrap();
+    assert_eq!(
+        transfers_for("rt-held-run"),
+        0,
+        "resume sends nothing while held"
+    );
+    assert_eq!(run_status().await, "pending");
+    // Staff can't act on their own case while another admin can.
+    staff(e, "rt-staff2", "RtStaff2").await;
+    e.sql("INSERT INTO integrity_cases(id,broadcast_id,owner_id,evidence) VALUES('rt-own-case','rt-own-b','rt-staff','{}')").await;
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/admin/integrity/rt-own-case/hold",
+        Some(&admin),
+        json!({"hold": false, "note": "Mine"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // With a second case holding, lifting one still leaves them held.
+    e.sql("INSERT INTO integrity_cases(id,broadcast_id,owner_id,evidence,hold_payouts) VALUES('rt-held-case2','rt-held-b2','rt-held','{}',true)").await;
+    let (status, lifted) = hold(false).await;
+    assert_eq!(status, StatusCode::OK, "{lifted}");
+    assert_eq!(lifted["payouts_held"], true, "another case still holds");
+    assert_eq!(early().await.0, StatusCode::FORBIDDEN);
+    // Lifting the last hold (audited) pays them again, the resumed run included.
+    e.sql("UPDATE integrity_cases SET hold_payouts=false WHERE id='rt-held-case2'")
+        .await;
+    let (status, paid) = early().await;
+    assert_eq!(status, StatusCode::OK, "{paid}");
+    assert_eq!(paid["held"], false);
+    e.sql("UPDATE payout_runs SET attempted_at=NULL WHERE id='rt-held-run'")
+        .await;
+    sver::payouts::resume(&e.app).await.unwrap();
+    assert_eq!(run_status().await, "paid");
+    let third = Utc.with_ymd_and_hms(2026, 11, 6, 16, 0, 0).unwrap();
+    sver::payouts::payday(&e.app, third).await.unwrap();
+    assert_eq!(runs().await, 3, "the resumed run, Early Pay and payday");
+    assert_eq!(earnings(e, "rt-held").await, 0, "paid in full");
+    let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM moderation_actions WHERE action IN ('integrity_payouts_held','integrity_payouts_released') AND target_id='rt-held'")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(audited, 2);
+
     let unbalanced: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM (SELECT unit FROM ledger_entries GROUP BY unit HAVING sum(amount)<>0) u",
     )

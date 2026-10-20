@@ -457,7 +457,7 @@ pub async fn tick(app: &App) -> Res<()> {
         .execute(&app.db)
         .await?;
     sqlx::query(
-        "DELETE FROM integrity_cases WHERE status<>'OPEN' AND decided_at<now()-interval '1 year'",
+        "DELETE FROM integrity_cases WHERE status<>'OPEN' AND NOT hold_payouts AND decided_at<now()-interval '1 year'",
     )
     .execute(&app.db)
     .await?;
@@ -516,8 +516,8 @@ pub struct Decision {
     pause_tier: bool,
 }
 /// POST /api/admin/integrity/{id}/decision: staff only. Dismissing records nothing against the
-/// streamer; "action" records payout and tier holds for Module 6. Strikes go through the user's
-/// standing page so they keep the normal appeal path.
+/// streamer and clears any payout hold; "action" keeps or lifts the payout hold and records the
+/// tier pause. Strikes go through the user's standing page so they keep the normal appeal path.
 pub async fn decide(
     State(app): State<App>,
     jar: CookieJar,
@@ -532,10 +532,13 @@ pub async fn decide(
         _ => return Err(Fail::field("outcome", "Choose dismiss or action.")),
     };
     let mut tx = app.db.begin().await?;
-    let owner: String = sqlx::query_scalar("UPDATE integrity_cases SET status=$2,hold_payouts=$3,pause_tier=$4,note=$5,decided_by=$6,decided_at=now() WHERE id=$1 AND status='OPEN' RETURNING owner_id")
+    let (owner, open, was_held, self_review) = lock_case(&mut tx, &id, &actor.id).await?;
+    if open != "OPEN" {
+        return Err(Fail::conflict("This case has already been decided."));
+    }
+    sqlx::query("UPDATE integrity_cases SET status=$2,hold_payouts=$3,pause_tier=$4,note=$5,decided_by=$6,decided_at=now() WHERE id=$1")
         .bind(&id).bind(status).bind(hold).bind(pause).bind(&note).bind(&actor.id)
-        .fetch_optional(&mut *tx).await?
-        .ok_or_else(|| Fail::conflict("This case has already been decided."))?;
+        .execute(&mut *tx).await?;
     safety::audit(
         &mut tx,
         Some(&actor.id),
@@ -545,17 +548,127 @@ pub async fn decide(
         &[],
         &note,
         json!({"case_id": id, "outcome": status, "hold_payouts": hold, "pause_tier": pause}),
-        false,
+        self_review,
     )
     .await?;
+    if hold != was_held {
+        audit_hold(&mut tx, &actor.id, &owner, &id, hold, &note, self_review).await?;
+    }
+    let held = payouts_held(&mut tx, &owner).await?;
     tx.commit().await?;
-    Ok(Json(json!({"status": status})))
+    Ok(Json(json!({"status": status, "payouts_held": held})))
+}
+
+/// Locks a case, then the owner's payouts so a payout already starting finishes first and none
+/// starts after a hold change commits. Returns (owner, status, hold_payouts, self_review): staff
+/// can't decide their own case while another admin can, as with appeals.
+async fn lock_case(
+    tx: &mut PgConnection,
+    id: &str,
+    actor: &str,
+) -> Res<(String, String, bool, bool)> {
+    let (owner, status, held): (String, String, bool) = sqlx::query_as(
+        "SELECT owner_id,status,hold_payouts FROM integrity_cases WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(Fail::missing)?;
+    let mut self_review = false;
+    if owner == actor {
+        let other: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM staff_roles r JOIN users u ON u.id=r.user_id WHERE r.role='admin' AND u.mfa_enabled AND u.deleted_at IS NULL AND u.id<>$1)").bind(actor).fetch_one(&mut *tx).await?;
+        if other {
+            return Err(Fail::denied("Another admin must act on your own case."));
+        }
+        self_review = true;
+    }
+    crate::ledger::lock(tx, &format!("payout:{owner}")).await?;
+    Ok((owner, status, held, self_review))
+}
+async fn audit_hold(
+    tx: &mut PgConnection,
+    actor: &str,
+    owner: &str,
+    id: &str,
+    hold: bool,
+    note: &str,
+    self_review: bool,
+) -> Res<()> {
+    let action = if hold {
+        "integrity_payouts_held"
+    } else {
+        "integrity_payouts_released"
+    };
+    safety::audit(
+        tx,
+        Some(actor),
+        action,
+        "user",
+        owner,
+        &[],
+        note,
+        json!({"case_id": id}),
+        self_review,
+    )
+    .await
+}
+/// Whether any of the owner's cases still holds payouts.
+async fn payouts_held(tx: &mut PgConnection, owner: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM integrity_cases WHERE owner_id=$1 AND hold_payouts)",
+    )
+    .bind(owner)
+    .fetch_one(tx)
+    .await?)
+}
+
+#[derive(Deserialize)]
+pub struct Hold {
+    hold: bool,
+    note: Option<String>,
+}
+/// POST /api/admin/integrity/{id}/hold: staff only. Holds or lifts the streamer's payouts on an
+/// open or actioned case; payday, Early Pay and resumed payouts skip them while any case holds.
+pub async fn hold(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Json(input): Json<Hold>,
+) -> Res<Json<Value>> {
+    let actor = safety::staff_write(&app, &jar).await?;
+    let note = safety::note(input.note.as_deref(), "note", true)?;
+    let mut tx = app.db.begin().await?;
+    let (owner, status, _, self_review) = lock_case(&mut tx, &id, &actor.id).await?;
+    if status == "DISMISSED" {
+        return Err(Fail::conflict("This case was dismissed."));
+    }
+    sqlx::query("UPDATE integrity_cases SET hold_payouts=$2 WHERE id=$1")
+        .bind(&id)
+        .bind(input.hold)
+        .execute(&mut *tx)
+        .await?;
+    audit_hold(
+        &mut tx,
+        &actor.id,
+        &owner,
+        &id,
+        input.hold,
+        &note,
+        self_review,
+    )
+    .await?;
+    let held = payouts_held(&mut tx, &owner).await?;
+    tx.commit().await?;
+    Ok(Json(
+        json!({"hold_payouts": input.hold, "payouts_held": held}),
+    ))
 }
 
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/admin/integrity", get(admin_cases))
         .route("/api/admin/integrity/{id}/decision", post(decide))
+        .route("/api/admin/integrity/{id}/hold", post(hold))
 }
 
 #[cfg(test)]

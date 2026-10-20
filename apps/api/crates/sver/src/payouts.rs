@@ -50,10 +50,14 @@ async fn account(db: &mut PgConnection, user: &str) -> Res<Option<String>> {
     .fetch_optional(db)
     .await?)
 }
-/// An open staff integrity case can hold payouts.
+/// Staff can hold payouts on an open or actioned integrity case (dismissing clears the hold).
 async fn held(db: &mut PgConnection, user: &str) -> Res<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM integrity_cases WHERE owner_id=$1 AND status='OPEN' AND hold_payouts)")
-        .bind(user).fetch_one(db).await?)
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM integrity_cases WHERE owner_id=$1 AND hold_payouts)",
+    )
+    .bind(user)
+    .fetch_one(db)
+    .await?)
 }
 /// Whole cents payable now: earnings (rounded down only here) less payouts still pending.
 async fn available(db: &mut PgConnection, user: &str) -> Res<i64> {
@@ -255,7 +259,17 @@ pub async fn resume(app: &App) -> Res<()> {
             .find(|t| t["metadata"]["sver_payout"].as_str() == Some(id.as_str()));
         let result = match existing {
             Some(transfer) => finish(app, &id, &user, &account, &kind, cents, fee, transfer).await,
-            None => execute(app, &id, &user, &account, &kind, cents, fee).await,
+            // Never sent yet: an integrity hold keeps it pending until staff lift the hold.
+            None => {
+                let mut tx = app.db.begin().await?;
+                ledger::lock(&mut tx, &format!("payout:{user}")).await?;
+                if held(&mut tx, &user).await? {
+                    eprintln!("payout_event=resume outcome=held");
+                    continue;
+                }
+                tx.commit().await?;
+                execute(app, &id, &user, &account, &kind, cents, fee).await
+            }
         };
         if result.is_err() {
             eprintln!("payout_event=resume outcome=failed kind={kind}");
@@ -372,7 +386,7 @@ async fn early(
     };
     if held(&mut tx, &user.id).await? {
         return Err(Fail::denied(
-            "Payouts are on hold while a staff review is open.",
+            "Payouts are on hold for a staff review of your streams.",
         ));
     }
     let (limit, today) = early_limit(&mut tx, &user.id).await?;

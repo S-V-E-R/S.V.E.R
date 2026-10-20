@@ -84,7 +84,7 @@ The page only reads. Every action happens on its own page.
 
 **Integrity**
 
-- **Viewbot cases** (`/admin/integrity`): flagged broadcasts with their count history and signals, and actions that can be appealed ([LIVE_STREAMS.md](LIVE_STREAMS.md)). A streamer with an open case isn't promoted to a higher tier ([SUPPORT.md](SUPPORT.md)).
+- **Viewbot cases** (`/admin/integrity`): flagged broadcasts with their count history and signals, and actions that can be appealed ([LIVE_STREAMS.md](LIVE_STREAMS.md)). A streamer with an open case isn't promoted to a higher tier ([SUPPORT.md](SUPPORT.md)). Staff can hold a streamer's payouts on an open or actioned case and lift the hold later, each with a note and audited; while held, payday and Early Pay skip them.
 
 **Content**
 
