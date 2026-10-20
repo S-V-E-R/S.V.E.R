@@ -156,6 +156,28 @@ pub async fn exercise(e: &Env) {
             .unwrap()["body"],
         "Hello from an app"
     );
+    // Linked chat reaches the topic live too, marked with its platform.
+    sver::linked_chat::post_system(
+        &e.app,
+        "stream-owner",
+        "bot",
+        "bot",
+        "Channel bot",
+        "From outside",
+    )
+    .await
+    .unwrap();
+    let heard = next_json(&mut late).await;
+    assert_eq!(
+        (
+            heard["topic"].as_str(),
+            heard["data"]["message"]["body"].as_str(),
+            heard["data"]["message"]["outside"]["platform"].as_str()
+        ),
+        (Some("chat:streamer"), Some("From outside"), Some("bot"))
+    );
+    e.sql("DELETE FROM outside_chat_messages WHERE body='From outside'")
+        .await;
 
     // The person's own topics, only with their own token.
     late.send(send(json!({"type":"method","id":9,"method":"subscribe","params":{"topics":["user:streamer:notifications"]}}))).await.unwrap();

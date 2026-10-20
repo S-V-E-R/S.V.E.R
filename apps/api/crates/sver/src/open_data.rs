@@ -50,7 +50,7 @@ const WEEKLY: &[(&str, &str)] = &[
 const MONTHLY: &[(&str, &str)] = &[
     (
         "creators_cents",
-        "Subscriptions, gift subs and tributes: the creators' share, in cents",
+        "Subscriptions, gift subs and tributes: the creators' share, in cents, less refunds and chargebacks",
     ),
     (
         "platform_cents",
@@ -59,11 +59,11 @@ const MONTHLY: &[(&str, &str)] = &[
     ("payouts_cents", "Payouts sent to creators, in cents"),
     (
         "wall_cents",
-        "Wall seats sold, in cents (all of it goes to S.V.E.R)",
+        "Wall seats sold, in cents, less refunds (all of it goes to S.V.E.R)",
     ),
     (
         "supporters_cents",
-        "Platform supporter subscriptions, in cents (all of it goes to S.V.E.R)",
+        "Platform supporter subscriptions, in cents, less refunds (all of it goes to S.V.E.R)",
     ),
     (
         "ads_cents",
@@ -103,21 +103,33 @@ pub async fn compute(app: &App) -> Res<()> {
         ON CONFLICT(period,metric) DO UPDATE SET value=EXCLUDED.value,computed_at=now()")
         .execute(&mut *tx).await?;
     // Money in tenths of a cent: card payments at their price, Valor at 1 cent each; the creators'
-    // share is what reached earnings accounts. ponytail: refunds and chargebacks aren't netted
-    // out; subtract them if they become material.
+    // share is what reached earnings accounts. Refunds and chargebacks of card payments (and a won
+    // dispute's money coming back) count in the month they happen, found by payment intent: they
+    // post the original payment's pairs scaled, so their cash and earnings entries are the net.
     sqlx::query("INSERT INTO public_stats(period,metric,value) SELECT to_char(m,'YYYY-MM'),x.metric,x.value FROM generate_series(date_trunc('month',now())-interval '11 months',date_trunc('month',now()),interval '1 month') m
         CROSS JOIN LATERAL (SELECT
           coalesce(sum(CASE WHEN t.kind IN ('sub_payment','gift_purchase') THEN (t.detail->>'cents')::bigint*10 ELSE (t.detail->>'valor')::bigint*10 END),0)::float8 AS gross,
           coalesce(sum((SELECT sum(e.amount) FROM ledger_entries e WHERE e.transaction_id=t.id AND e.account LIKE 'usd:earnings:%' AND e.amount>0)),0)::float8 AS creators
           FROM ledger_transactions t WHERE t.kind IN ('sub_payment','gift_purchase','tribute','valor_sub','valor_gift') AND t.created_at>=m AND t.created_at<m+interval '1 month') money
+        CROSS JOIN LATERAL (SELECT
+          coalesce(sum(r.cash) FILTER (WHERE r.of IN ('sub_payment','gift_purchase')),0)::float8 AS card,
+          coalesce(sum(r.creators) FILTER (WHERE r.of IN ('sub_payment','gift_purchase')),0)::float8 AS creators,
+          coalesce(sum(r.cash) FILTER (WHERE r.of='wall_purchase'),0)::float8 AS wall,
+          coalesce(sum(r.cash) FILTER (WHERE r.of='platform_sub'),0)::float8 AS supporters
+          FROM (SELECT o.kind AS of,
+              (SELECT coalesce(sum(e.amount),0) FROM ledger_entries e WHERE e.transaction_id=t.id AND e.account='usd:stripe') AS cash,
+              (SELECT coalesce(sum(e.amount),0) FROM ledger_entries e WHERE e.transaction_id=t.id AND e.account LIKE 'usd:earnings:%') AS creators
+            FROM ledger_transactions t
+            JOIN LATERAL (SELECT o.kind FROM ledger_transactions o WHERE o.kind IN ('sub_payment','gift_purchase','wall_purchase','platform_sub') AND o.detail->>'payment_intent'=t.detail->>'payment_intent' LIMIT 1) o ON true
+            WHERE t.kind IN ('refund','dispute','dispute_won') AND t.created_at>=m AND t.created_at<m+interval '1 month') r) back
         CROSS JOIN LATERAL (VALUES
-          ('creators_cents',money.creators/10),
-          ('platform_cents',(money.gross-money.creators)/10),
+          ('creators_cents',(money.creators+back.creators)/10),
+          ('platform_cents',(money.gross+back.card-money.creators-back.creators)/10),
           ('payouts_cents',(SELECT coalesce(sum(amount_cents),0) FROM payout_runs WHERE status='paid' AND completed_at>=m AND completed_at<m+interval '1 month')::float8),
           ('creators_paid',(SELECT count(DISTINCT user_id) FROM payout_runs WHERE status='paid' AND completed_at>=m AND completed_at<m+interval '1 month')::float8),
-          ('supporters_cents',(SELECT coalesce(sum((detail->>'cents')::bigint),0) FROM ledger_transactions WHERE kind='platform_sub' AND created_at>=m AND created_at<m+interval '1 month')::float8),
+          ('supporters_cents',(SELECT coalesce(sum((detail->>'cents')::bigint),0) FROM ledger_transactions WHERE kind='platform_sub' AND created_at>=m AND created_at<m+interval '1 month')::float8+back.supporters/10),
           ('ads_cents',(SELECT coalesce(sum((detail->>'value')::bigint),0)/10 FROM ledger_transactions WHERE kind='ad_impression' AND created_at>=m AND created_at<m+interval '1 month')::float8),
-          ('wall_cents',(SELECT coalesce(sum((detail->>'cents')::bigint),0) FROM ledger_transactions WHERE kind='wall_purchase' AND created_at>=m AND created_at<m+interval '1 month')::float8)
+          ('wall_cents',(SELECT coalesce(sum((detail->>'cents')::bigint),0) FROM ledger_transactions WHERE kind='wall_purchase' AND created_at>=m AND created_at<m+interval '1 month')::float8+back.wall/10)
         ) x(metric,value)
         ON CONFLICT(period,metric) DO UPDATE SET value=EXCLUDED.value,computed_at=now()")
         .execute(&mut *tx).await?;

@@ -131,6 +131,9 @@ struct Media {
     account: Value,
     /// What GET /v1/checkout/sessions/{id} returns.
     session: Value,
+    /// POSTs to this path are declined (402), and every POST's idempotency key is kept.
+    decline: Option<String>,
+    keys: Vec<String>,
     /// Board webhooks received: (signature header, body); `hook_fail` answers 500.
     hooks: Vec<(String, String)>,
     hook_fail: bool,
@@ -213,6 +216,22 @@ async fn stripe(
     if path == "/v1/transfers" && m.down_transfers > 0 {
         m.down_transfers -= 1;
         return stripe_error();
+    }
+    if method == axum::http::Method::POST {
+        let key = headers
+            .get("idempotency-key")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        m.keys.push(key.to_owned());
+        if m.decline.as_deref() == Some(path.as_str()) {
+            return (
+                StatusCode::PAYMENT_REQUIRED,
+                Json(
+                    json!({"error": {"type": "card_error", "message": "Your card was declined."}}),
+                ),
+            )
+                .into_response();
+        }
     }
     // Only calls that create something are logged (and number the synthetic ids).
     if method == axum::http::Method::POST {

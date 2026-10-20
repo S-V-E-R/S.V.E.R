@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-img-element -- already-sized, immutable media bucket variants */
-export type ChannelEmote = { id: string; code: string; image: { "28": string; "56": string; "112": string }; tier?: number | null; provider?: OutsideProvider };
+/** `owner` and `faction` are set on another channel's signature emote (`username/Code`). */
+export type ChannelEmote = { id: string; code: string; image: { "28": string; "56": string; "112": string }; tier?: number | null; provider?: OutsideProvider; owner?: string; faction?: string | null };
 export type OutsideProvider = "7tv" | "bttv" | "ffz";
 export const providerNames: Record<OutsideProvider, string> = { "7tv": "7TV", bttv: "BTTV", ffz: "FFZ" };
 /** Channel emotes are square; 7TV, BTTV and FFZ emotes keep their own width at the same height. */

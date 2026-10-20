@@ -326,6 +326,9 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut data = e.payload.clone();
                     match data["type"].as_str() {
+                        // Linked chat (docs/LINKED_CHAT.md): an outside message arrives whole and has
+                        // no S.V.E.R author to block; hiding it later sends a delete.
+                        Some("message") if !data["message"]["outside"].is_null() => {}
                         Some("message") => {
                             let Ok(message) = crate::chat::fresh(&app, &data, &hidden).await else { return; };
                             let Some(message) = message else { continue; };

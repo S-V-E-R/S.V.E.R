@@ -167,9 +167,9 @@ function SkillsTab({ username, account }: { username: string; account: string | 
 
 /** Signature emotes of channels the viewer follows; they work in any chat as username/Code. */
 function SignatureTab({ onEmote }: { onEmote: (code: string) => void }) {
-  const [emotes, setEmotes] = useState<(ChannelEmote & { owner?: string })[] | null>(null);
+  const [emotes, setEmotes] = useState<ChannelEmote[] | null>(null);
   const load = useCallback(async () => {
-    const r = await send<{ emotes: (ChannelEmote & { owner?: string })[] }>("GET", "/api/me/signature-emotes");
+    const r = await send<{ emotes: ChannelEmote[] }>("GET", "/api/me/signature-emotes");
     setEmotes(r.ok ? r.data.emotes : []);
   }, []);
   useLoad(load);

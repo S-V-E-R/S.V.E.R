@@ -277,6 +277,21 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK
     );
     assert_eq!(founder(e, "su-wolf").await, None);
+    // A declined charge changes nothing, and trying again gets a fresh idempotency key (Stripe
+    // keeps a declined answer under the old one).
+    e.fake.lock().unwrap().decline = Some("/v1/subscriptions/sub_su-wolf".into());
+    let (code, _) = call(
+        e,
+        "POST",
+        "/api/supporters/change",
+        Some(&wolf),
+        json!({"tier": "greycloak"}),
+    )
+    .await;
+    assert_ne!(code, StatusCode::OK);
+    assert_eq!(plan(e, "su-wolf").await.0, 1, "still Wolfsworn");
+    let declined_key = e.fake.lock().unwrap().keys.last().unwrap().clone();
+    e.fake.lock().unwrap().decline = None;
     let (code, changed) = call(
         e,
         "POST",
@@ -285,6 +300,11 @@ pub async fn exercise(e: &Env) {
         json!({"tier": "greycloak"}),
     )
     .await;
+    assert_ne!(
+        e.fake.lock().unwrap().keys.last().unwrap(),
+        &declined_key,
+        "a new key for the retry"
+    );
     assert_eq!(code, StatusCode::OK, "{changed}");
     let (path, form) = last_stripe(e);
     assert!(

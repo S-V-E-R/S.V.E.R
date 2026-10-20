@@ -202,6 +202,12 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 
 .chat-emote { display: inline-block; width: 28px; height: 28px; vertical-align: middle; object-fit: contain; }
 .chat-emote.chat-emote-wide { width: auto; max-width: 112px; }
+/* Another channel's signature emote: the owner's crest and name on hover or focus. */
+.signature-emote { position: relative; display: inline-block; vertical-align: middle; line-height: 0; border-radius: 0; }
+.signature-emote:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.signature-card { position: fixed; z-index: 50; transform: translateY(-100%); display: flex; align-items: center; gap: 8px; padding: 6px 10px; line-height: 1.3; font-size: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--ink); pointer-events: none; }
+.signature-card[data-below] { transform: none; }
+.signature-card > span { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 
 /* Notifications list (go-live alerts). */
 .notifications li { gap: 12px; align-items: center; justify-content: flex-start; }

@@ -583,6 +583,78 @@ async fn open_data(e: &Env) {
         csv.starts_with("period,complete,accounts_total,") && csv.contains("fewer than 10"),
         "{csv}"
     );
+    // Refunds and chargebacks come off the month they happen in, by category.
+    let month = || async {
+        let rows: Vec<(String, f64)> = sqlx::query_as("SELECT metric,value FROM public_stats WHERE period=to_char(now(),'YYYY-MM') AND metric IN ('creators_cents','platform_cents','wall_cents')")
+            .fetch_all(&e.app.db).await.unwrap();
+        let get = |m: &str| rows.iter().find(|r| r.0 == m).map(|r| r.1).unwrap_or(0.0);
+        (
+            get("creators_cents"),
+            get("platform_cents"),
+            get("wall_cents"),
+        )
+    };
+    let before = month().await;
+    let mut tx = e.app.db.begin().await.unwrap();
+    for (kind, reference, intent, entries) in [
+        // A $10 subscription with a $7 creator share, then $4 of it refunded.
+        (
+            "sub_payment",
+            "od-pay",
+            "pi_od",
+            vec![
+                ("usd:stripe", 10_000),
+                ("usd:sales", -10_000),
+                ("usd:earnings:od-0", 7_000),
+                ("usd:platform", -7_000),
+            ],
+        ),
+        (
+            "refund",
+            "od-refund",
+            "pi_od",
+            vec![
+                ("usd:stripe", -4_000),
+                ("usd:sales", 4_000),
+                ("usd:earnings:od-0", -2_800),
+                ("usd:platform", 2_800),
+            ],
+        ),
+        // A $25 Wall seat refunded in full.
+        (
+            "wall_purchase",
+            "od-wall",
+            "pi_od_wall",
+            vec![("usd:stripe", 25_000), ("usd:wall", -25_000)],
+        ),
+        (
+            "refund",
+            "od-wall-refund",
+            "pi_od_wall",
+            vec![("usd:stripe", -25_000), ("usd:wall", 25_000)],
+        ),
+    ] {
+        let entries: Vec<(&str, &str, i64)> =
+            entries.into_iter().map(|(a, n)| (a, "usd", n)).collect();
+        let cents = entries[0].2.abs() / 10;
+        sver::ledger::post(
+            &mut tx,
+            kind,
+            reference,
+            json!({"payment_intent": intent, "cents": cents}),
+            &entries,
+        )
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+    sver::open_data::compute(&e.app).await.unwrap();
+    let after = month().await;
+    assert_eq!(
+        (after.0 - before.0, after.1 - before.1, after.2 - before.2),
+        (420.0, 180.0, 0.0),
+        "creators keep $4.20, S.V.E.R $1.80, and the refunded seat nets to nothing"
+    );
     let (_, csv) = get_text(e, "/api/open-data/monthly.csv").await;
     assert!(
         csv.starts_with(

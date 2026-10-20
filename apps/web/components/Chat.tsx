@@ -10,6 +10,7 @@ import { Crest } from "./FactionIdentity";
 import { GuildChatBadge } from "./Guilds";
 import { CREATOR_TIERS, type Chip } from "../lib/types";
 import { EmoteImage, type ChannelEmote } from "./Emote";
+import { SignatureEmote } from "./SignatureEmote";
 import { ChatDock } from "./ChatDock";
 import { GifImage, GifPicker, type Gif, type GifAccess } from "./GifPicker";
 import "../styles/teams.css";
@@ -43,7 +44,7 @@ function MessageBody({ message, account, emotes }: { message: Message; account: 
     const name = match[1] && message.mentions.find(name => name.toLowerCase() === match[1].toLowerCase());
     if (!name && !emote) continue;
     parts.push(message.body.slice(cursor, match.index));
-    if (emote) parts.push(<EmoteImage key={match.index} emote={emote} />);
+    if (emote) parts.push(emote.owner ? <SignatureEmote key={match.index} emote={emote} owner={emote.owner} /> : <EmoteImage key={match.index} emote={emote} />);
     else if (name) {
       const link = <Link href={`/${name}`}>{match[0]}</Link>;
       parts.push(name.toLowerCase() === account?.toLowerCase() ? <mark key={match.index} className="chat-mention">{link}</mark> : <span key={match.index}>{link}</span>);
