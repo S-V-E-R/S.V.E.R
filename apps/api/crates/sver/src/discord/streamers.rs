@@ -201,16 +201,19 @@ pub async fn online(app: &App, platform: &str, id: &str, live: Live, may_post: b
             &live,
             None,
         ));
-        // Back within 10 minutes: the same post turns live again.
         let resumed =
             offline_at.is_some_and(|t| t > Utc::now() - Duration::minutes(RESUME_MINUTES));
-        if let (true, Some(m), Some(c)) = (resumed, &old, &old_channel)
-            && matches!(call(app, Method::PATCH, &format!("/channels/{c}/messages/{m}"), Some(body.clone())).await, Some((s, _)) if s < 300)
-        {
-            continue;
-        }
-        // Any older post is replaced.
+        let recent = posted_at.is_some_and(|t| t > Utc::now() - Duration::hours(POST_EVERY_HOURS));
+        let fresh = may_post && !recent;
         if let (Some(m), Some(c)) = (&old, &old_channel) {
+            // Back within 10 minutes, or no new post allowed yet (the platform's throttle or the
+            // 6-hour rule): the same post turns live again, an edit that pings nobody.
+            if (resumed || !fresh)
+                && matches!(call(app, Method::PATCH, &format!("/channels/{c}/messages/{m}"), Some(body.clone())).await, Some((s, _)) if s < 300)
+            {
+                continue;
+            }
+            // Otherwise the older post is replaced.
             call(
                 app,
                 Method::DELETE,
@@ -221,8 +224,7 @@ pub async fn online(app: &App, platform: &str, id: &str, live: Live, may_post: b
             sqlx::query("UPDATE discord_stream_accounts SET message_id=NULL,post_channel=NULL WHERE discord_user=$1 AND platform=$2")
                 .bind(&user).bind(platform).execute(&app.db).await?;
         }
-        let recent = posted_at.is_some_and(|t| t > Utc::now() - Duration::hours(POST_EVERY_HOURS));
-        if !may_post || recent {
+        if !fresh {
             continue;
         }
         if let Some(id) = send(app, to, body).await {
@@ -752,12 +754,14 @@ pub async fn youtube_poll(app: &App) -> Res<()> {
         .fetch_all(&app.db).await?;
     for chunk in channels.chunks(10) {
         let mut videos = Vec::new();
+        let mut read = Vec::new();
         for c in chunk {
-            // A feed that can't be read leaves everything as it was this round.
-            let Some(recent) = youtube_recent(app, c).await else {
-                return Ok(());
-            };
-            videos.extend(recent);
+            // A feed that can't be read (a closed channel, a hiccup) leaves that channel as it was
+            // this round; the others are still checked.
+            if let Some(recent) = youtube_recent(app, c).await {
+                videos.extend(recent);
+                read.push(c);
+            }
         }
         let mut live: HashMap<String, Live> = HashMap::new();
         if !videos.is_empty() {
@@ -799,7 +803,7 @@ pub async fn youtube_poll(app: &App) -> Res<()> {
                 );
             }
         }
-        for c in chunk {
+        for c in read {
             reconcile(app, "youtube", c, live.remove(c), true).await?;
         }
     }
@@ -1807,6 +1811,10 @@ pub async fn milestones(app: &App) -> Res<()> {
         FROM discord_stream_accounts a WHERE a.platform='sver' AND a.platform_id IS NOT NULL")
         .fetch_all(&app.db).await?;
     for (user, followers) in rows {
+        // The first look at an account records where it already is without a post, so linking
+        // a channel with 500 followers doesn't announce that it "just hit" 500.
+        let first = sqlx::query("INSERT INTO discord_milestones(discord_user,kind,value) VALUES($1,'followers',0) ON CONFLICT DO NOTHING")
+            .bind(&user).execute(&app.db).await?.rows_affected() == 1;
         let reached: Vec<i32> = MILESTONES
             .iter()
             .filter(|m| **m <= followers)
@@ -1814,7 +1822,7 @@ pub async fn milestones(app: &App) -> Res<()> {
             .collect();
         let new: Vec<i32> = sqlx::query_scalar("INSERT INTO discord_milestones(discord_user,kind,value) SELECT $1,'followers',v FROM unnest($2::int[]) v ON CONFLICT DO NOTHING RETURNING value")
             .bind(&user).bind(&reached).fetch_all(&app.db).await?;
-        let Some(top) = new.into_iter().max() else {
+        let Some(top) = new.into_iter().max().filter(|_| !first) else {
             continue;
         };
         let faction = levels::faction(app, &user).await?;

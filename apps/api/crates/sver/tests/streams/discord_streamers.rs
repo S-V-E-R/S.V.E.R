@@ -76,6 +76,10 @@ async fn fake(
             json!({"items": [{"id": "UCtube"}]})
         }
         ("GET", ["yt", "channels"]) => json!({"items": []}),
+        // A closed channel's feed is gone.
+        ("GET", ["feed"]) if query.contains("UCgone") => {
+            return (StatusCode::NOT_FOUND, Json(json!("")));
+        }
         ("GET", ["feed"]) => json!("<feed><entry><yt:videoId>v1</yt:videoId></entry></feed>"),
         ("GET", ["yt", "videos"]) => {
             json!({"items": [{"id": "v1", "snippet": {"channelId": "UCtube", "title": "Tube live",
@@ -232,6 +236,22 @@ pub async fn exercise(e: &Env) {
         .await;
     minute().await;
     taken();
+    // Past the 10 minutes but inside the 6 hours: the "was live" post turns live again; it isn't
+    // deleted with nothing in its place.
+    e.sql("UPDATE discord_stream_accounts SET offline_at=now()-interval '30 minutes' WHERE discord_user='920'").await;
+    e.sql(broadcast("ds-b4", "ds-streamer", "sent")).await;
+    minute().await;
+    let c = taken();
+    find(
+        &c,
+        &["PATCH /channels/40/messages/m1", "dsstreamer is LIVE!"],
+    );
+    none(&c, "DELETE /channels/40/messages/m1");
+    none(&c, "POST /channels/40/messages");
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now() WHERE id='ds-b4'")
+        .await;
+    minute().await;
+    taken();
     // "Was live" posts go 4 hours after the end.
     e.sql("UPDATE discord_stream_accounts SET offline_at=now()-interval '5 hours' WHERE discord_user='920'").await;
     minute().await;
@@ -324,6 +344,8 @@ pub async fn exercise(e: &Env) {
         "{tube}"
     );
     taken();
+    // A closed channel, polled before UCtube, doesn't stop the others being checked.
+    e.sql("INSERT INTO discord_stream_accounts(discord_user,platform,handle,platform_id) VALUES('925','youtube','gone','UCgone')").await;
     set_live("kick", true);
     set_live("youtube", true);
     streamers::kick_poll(&e.app).await.unwrap();
@@ -518,7 +540,10 @@ pub async fn exercise(e: &Env) {
         ],
     );
 
-    // Follower milestones: every threshold reached is recorded, the highest posted, once.
+    // Follower milestones: every threshold reached is recorded, the highest posted, once. The first
+    // look only records where the account already is.
+    streamers::milestones(&e.app).await.unwrap();
+    none(&taken(), "just hit");
     for n in 0..12 {
         let id = format!("ds-fan{n}");
         sqlx::query("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES($1,$1||'@example.test',$1,true,'1990-01-01')")
