@@ -164,13 +164,7 @@ pub async fn exercise(e: &Env) {
     };
     let sub = |name: &str, sub: &str, options: Value| json!({"name": name, "options": [{"type": 1, "name": sub, "options": options}]});
     let opt = |name: &str, value: Value| json!({"name": name, "value": value});
-    let link = |platform: &str, name: &str| {
-        sub(
-            "alerts",
-            "link",
-            json!([opt("platform", json!(platform)), opt("name", json!(name))]),
-        )
-    };
+    let link = |platform: &str| sub("alerts", "link", json!([opt("platform", json!(platform))]));
 
     e.sql(r#"UPDATE discord_home SET settings=settings||'{"go_live": "40", "now_live": "41", "announcements": "42", "clips": "43", "lfg": "44", "stream_promo": "45", "zone": "America/New_York"}'"#).await;
     e.sql("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES('ds-streamer','ds@example.test','dsstreamer',true,'1990-01-01'),('ds-outsider','dso@example.test','dsoutsider',true,'1990-01-01')").await;
@@ -261,22 +255,28 @@ pub async fn exercise(e: &Env) {
         0
     );
 
-    // Twitch: linked by name (checked with Twitch), subscribed to its go-live events, posted on
+    // Twitch: only the member's own channel, proven through S.V.E.R (their Discord linked to an
+    // account that signed in with that Twitch); then subscribed to its go-live events, posted on
     // EventSub (once, though the poll sees it too), and cleared by the poll.
-    let linked = ask(
-        "st1",
-        "920",
-        false,
-        2,
-        link("twitch", "https://twitch.tv/streamy"),
-    )
-    .await;
+    let outside = ask("st0", "923", false, 2, link("twitch")).await;
+    assert!(
+        outside.contains("link your Discord to S.V.E.R first"),
+        "{outside}"
+    );
+    let unproven = ask("st1", "920", false, 2, link("twitch")).await;
+    assert!(
+        unproven.contains("Connect Twitch under sign-in methods"),
+        "{unproven}"
+    );
+    // Someone linked it without proof before (the legacy bot): its proven owner takes it.
+    e.sql("INSERT INTO discord_stream_accounts(discord_user,platform,handle,platform_id) VALUES('926','twitch','streamy','t-1')").await;
+    e.sql("INSERT INTO identities(provider,subject,user_id,handle) VALUES('twitch','t-1','ds-streamer','streamy')").await;
+    let linked = ask("st2", "920", false, 2, link("twitch")).await;
     assert!(
         linked.contains("streamy") && linked.contains("is linked"),
         "{linked}"
     );
-    let bad = ask("st2", "920", false, 2, link("twitch", "nobody")).await;
-    assert!(bad.contains("wasn't found"), "{bad}");
+    assert_eq!(count("SELECT count(*) FROM discord_stream_accounts WHERE platform_id='t-1' AND discord_user<>'920'").await, 0);
     minute().await;
     let c = taken();
     find(
@@ -324,25 +324,17 @@ pub async fn exercise(e: &Env) {
         .unwrap();
     assert_eq!(count("SELECT cardinality(eventsub)::int8 FROM discord_stream_accounts WHERE platform='twitch'").await, 1);
 
-    // Kick and YouTube aren't offered until their keys are set; then they're polled.
-    let kick = ask("st3", "920", false, 2, link("kick", "kicker")).await;
-    assert!(kick.contains("aren't available yet"), "{kick}");
+    // Kick and YouTube can't be linked: S.V.E.R can't confirm those channels yet. Accounts the
+    // legacy bot linked are still polled once the keys are set.
+    let kick = ask("st3", "920", false, 2, link("kick")).await;
+    assert!(kick.contains("can't be linked yet"), "{kick}");
     // SAFETY: as above.
     unsafe {
         std::env::set_var("KICK_CLIENT_ID", "test-kick");
         std::env::set_var("KICK_CLIENT_SECRET", "test-only-secret");
         std::env::set_var("YOUTUBE_API_KEY", "test-only-key");
     }
-    let kick = ask("st4", "920", false, 2, link("kick", "Kicker")).await;
-    assert!(
-        kick.contains("kicker") && kick.contains("is linked"),
-        "{kick}"
-    );
-    let tube = ask("st5", "920", false, 2, link("youtube", "@tuber")).await;
-    assert!(
-        tube.contains("@tuber") && tube.contains("is linked"),
-        "{tube}"
-    );
+    e.sql("INSERT INTO discord_stream_accounts(discord_user,platform,handle,platform_id) VALUES('920','kick','kicker','kicker'),('920','youtube','@tuber','UCtube')").await;
     taken();
     // A closed channel, polled before UCtube, doesn't stop the others being checked.
     e.sql("INSERT INTO discord_stream_accounts(discord_user,platform,handle,platform_id) VALUES('925','youtube','gone','UCgone')").await;
@@ -398,7 +390,17 @@ pub async fn exercise(e: &Env) {
     ask("st7", "920", false, 2, sub("alerts", "on", json!([]))).await;
     taken();
 
-    // Auto-detect: streaming on Twitch links it once and says how to undo it; unlinking is final.
+    // Auto-detect: streaming on your own, proven Twitch channel links it once and says how to undo
+    // it; unlinking is final. A status pointing at a channel that isn't proven yours links nothing.
+    e.sql("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES('ds-auto','dsa@example.test','dsauto',true,'1990-01-01')").await;
+    e.sql("INSERT INTO identities(provider,subject,user_id,handle) VALUES('discord','922','ds-auto',NULL),('twitch','t-2','ds-auto','autostream')").await;
+    let pretender = json!({"guild_id": "900", "user": {"id": "927"},
+        "activities": [{"type": 1, "url": "https://www.twitch.tv/autostream"}]});
+    dispatch(&e.app, "PRESENCE_UPDATE", pretender).await;
+    assert_eq!(
+        count("SELECT count(*) FROM discord_stream_accounts WHERE discord_user='927'").await,
+        0
+    );
     let streaming = json!({"guild_id": "900", "user": {"id": "922"},
         "activities": [{"type": 1, "url": "https://www.twitch.tv/autostream"}]});
     dispatch(&e.app, "PRESENCE_UPDATE", streaming.clone()).await;
@@ -539,6 +541,7 @@ pub async fn exercise(e: &Env) {
             "/clips/ds-clip",
         ],
     );
+    none(&c, "Views");
 
     // Follower milestones: every threshold reached is recorded, the highest posted, once. The first
     // look only records where the account already is.
@@ -640,8 +643,8 @@ pub async fn exercise(e: &Env) {
     assert!(joined.contains("You're in"), "{joined}");
     find(&taken(), &["PUT /channels/th1/thread-members/921"]);
 
-    // The streamer panel: staff post and pin it; its buttons open the link form, and S.V.E.R's
-    // explains the automatic link.
+    // The streamer panel: staff post and pin it; its buttons link the proven account at once (an
+    // older panel's Kick button says why not), and S.V.E.R's explains the automatic link.
     let panel = ask("pa1", "920", false, 2, json!({"name": "streamerpanel"})).await;
     assert!(panel.contains("Only staff"), "{panel}");
     let panel = ask("pa2", "920", true, 2, json!({"name": "streamerpanel"})).await;
@@ -656,23 +659,15 @@ pub async fn exercise(e: &Env) {
         ],
     );
     find(&c, &["PUT /channels/40/pins/"]);
+    none(&c, "str:link:kick");
     let open = json!({"custom_id": "str:link:kick", "component_type": 2});
     let open = ask("pa3", "921", false, 3, open).await;
-    assert!(
-        open.contains(r#""type":9"#) && open.contains("str:modal:kick"),
-        "{open}"
-    );
+    assert!(open.contains("can't be linked yet"), "{open}");
     let sver_button = json!({"custom_id": "str:link:sver", "component_type": 2});
     let sver_button = ask("pa4", "921", false, 3, sver_button).await;
     assert!(
         sver_button.contains("dsoutsider") && sver_button.contains("is linked"),
         "{sver_button}"
-    );
-    let typed = json!({"custom_id": "str:modal:kick", "components": [{"type": 1, "components": [{"type": 4, "custom_id": "name", "value": "kicker"}]}]});
-    let typed = ask("pa5", "921", false, 5, typed).await;
-    assert!(
-        typed.contains("kicker") && typed.contains("is linked"),
-        "{typed}"
     );
 
     // SAFETY: as above.

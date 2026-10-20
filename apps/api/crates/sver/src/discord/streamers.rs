@@ -423,20 +423,15 @@ fn twitch_live(s: &Value) -> Live {
         viewers: s["viewer_count"].as_i64(),
     }
 }
-/// A Twitch user by login: (id, login).
-async fn twitch_user(app: &App, login: &str) -> Option<(String, String)> {
-    let (200, body) = crate::linked_chat::helix(
-        app,
-        Method::GET,
-        &format!("/users?login={}", encode(login)),
-        None,
-    )
-    .await?
+/// A Twitch account's current login, by its id.
+async fn twitch_login(app: &App, id: &str) -> Option<String> {
+    let (200, body) =
+        crate::linked_chat::helix(app, Method::GET, &format!("/users?id={}", encode(id)), None)
+            .await?
     else {
         return None;
     };
-    let u = &body["data"][0];
-    Some((u["id"].as_str()?.into(), u["login"].as_str()?.into()))
+    body["data"][0]["login"].as_str().map(String::from)
 }
 
 /// A go-live EventSub notification or revocation, from `linked_chat`'s webhook.
@@ -817,50 +812,27 @@ fn bare(name: &str) -> &str {
     let name = name.trim().trim_end_matches('/');
     name.rsplit('/').next().unwrap_or(name).trim()
 }
-/// A platform name checked with its platform: (handle, platform id), or why it can't be linked.
-async fn look_up(app: &App, platform: &str, name: &str) -> Result<(String, String), String> {
-    let name = bare(name);
-    let simple = !name.is_empty()
-        && name.len() <= 100
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "_-.@".contains(c));
-    if !simple {
-        return Err(format!(
-            "That doesn't look like a {} name.",
-            platform_name(platform)
-        ));
-    }
-    let unavailable = || format!("{} alerts aren't available yet.", platform_name(platform));
-    match platform {
-        "twitch" => match twitch_user(app, name).await {
-            Some((id, login)) => Ok((login, id)),
-            None if app.config.providers.iter().all(|p| p.name != "twitch") => Err(unavailable()),
-            None => Err(format!("Twitch user \"{name}\" wasn't found.")),
-        },
-        "kick" => {
-            if kick_keys().is_none() {
-                return Err(unavailable());
-            }
-            let slug = name.to_lowercase();
-            match kick_channels(app, std::slice::from_ref(&slug)).await {
-                Some(c) if c.iter().any(|c| c["slug"] == slug.as_str()) => Ok((slug.clone(), slug)),
-                Some(_) => Err(format!("Kick channel \"{name}\" wasn't found.")),
-                None => Err("Kick didn't answer. Try again in a minute.".into()),
-            }
-        }
-        "youtube" => {
-            if youtube_key().is_none() {
-                return Err(unavailable());
-            }
-            match youtube_channel(app, name).await {
-                Some(id) if name.starts_with("UC") => Ok((format!("channel/{id}"), id)),
-                Some(id) => Ok((format!("@{}", name.trim_start_matches('@')), id)),
-                None => Err(format!("YouTube channel \"{name}\" wasn't found.")),
-            }
-        }
-        _ => Err("Pick Twitch, YouTube or Kick.".into()),
-    }
+/// The member's own Twitch account, as S.V.E.R confirmed it: their Discord is linked to a S.V.E.R
+/// account that signed in with Twitch or linked Twitch for chat. (login, Twitch id).
+///
+/// Alerts need that proof (Joe, October 20, 2026), so nobody can link a channel that isn't theirs.
+/// S.V.E.R can't confirm YouTube or Kick channels yet, so those can't be linked until it can;
+/// accounts the legacy bot linked are kept.
+async fn proven_twitch(app: &App, discord: &str) -> Res<Option<(String, String)>> {
+    let found: Option<(Option<String>, String)> = sqlx::query_as("SELECT coalesce(t.handle,l.handle),coalesce(t.subject,l.subject)
+        FROM identities d JOIN channel_users u ON u.id=d.user_id AND u.eligible AND u.deleted_at IS NULL
+        LEFT JOIN identities t ON t.user_id=u.id AND t.provider='twitch'
+        LEFT JOIN linked_chat_accounts l ON l.owner_id=u.id AND l.platform='twitch'
+        WHERE d.provider='discord' AND d.subject=$1 AND coalesce(t.subject,l.subject) IS NOT NULL LIMIT 1")
+        .bind(discord).fetch_optional(&app.db).await?;
+    let Some((handle, id)) = found else {
+        return Ok(None);
+    };
+    let login = match handle.filter(|h| !h.is_empty()) {
+        Some(h) => h,
+        None => twitch_login(app, &id).await.unwrap_or_else(|| id.clone()),
+    };
+    Ok(Some((login, id)))
 }
 async fn save(app: &App, user: &str, platform: &str, handle: &str, id: &str) -> Res<()> {
     let old: Option<(Option<String>, Vec<String>)> = sqlx::query_as(
@@ -908,18 +880,39 @@ async fn link_command(app: App, i: Interaction) -> Res<Value> {
         .option("platform")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let name = i.option("name").and_then(Value::as_str).unwrap_or_default();
-    link(&app, &i.user, platform, name).await
+    link(&app, &i.user, platform).await
 }
-async fn link(app: &App, user: &str, platform: &str, name: &str) -> Res<Value> {
+async fn link(app: &App, user: &str, platform: &str) -> Res<Value> {
     if platform == "sver" {
         return sver_link(app, user).await;
     }
-    let (handle, id) = match look_up(app, platform, name).await {
-        Ok(found) => found,
-        Err(why) => return Ok(private(why)),
+    if platform != "twitch" {
+        return Ok(private(format!(
+            "{name} channels can't be linked yet. Go-live posts need proof the channel is yours, and S.V.E.R can't confirm {name} accounts yet.",
+            name = platform_name(platform)
+        )));
+    }
+    if sync::linked(app, user).await?.is_none() {
+        return Ok(private(format!(
+            "To prove the channel is yours, link your Discord to S.V.E.R first: sign in with Discord, or connect it under sign-in methods at {}/account. Then connect Twitch there too, and run `/alerts link` again.",
+            app.config.origin
+        )));
+    }
+    let Some((handle, id)) = proven_twitch(app, user).await? else {
+        return Ok(private(format!(
+            "Connect Twitch under sign-in methods at {}/account to prove the channel is yours, then run `/alerts link` again.",
+            app.config.origin
+        )));
     };
+    // The proven owner takes the channel from anyone who linked it without proof.
+    let others: Vec<(String, Vec<String>)> = sqlx::query_as("DELETE FROM discord_stream_accounts WHERE platform=$1 AND platform_id=$2 AND discord_user<>$3 RETURNING discord_user,eventsub")
+        .bind(platform).bind(&id).bind(user).fetch_all(&app.db).await?;
     save(app, user, platform, &handle, &id).await?;
+    if let Some((_, subs)) = others.into_iter().find(|o| !o.1.is_empty()) {
+        // Ours now carries the subscriptions, so the next pass doesn't make them twice.
+        sqlx::query("UPDATE discord_stream_accounts SET eventsub=$3 WHERE discord_user=$1 AND platform=$2 AND cardinality(eventsub)=0")
+            .bind(user).bind(platform).bind(&subs).execute(&app.db).await?;
+    }
     Ok(private(format!(
         "{} **{handle}** is linked. When you go live on {}, a post goes up in the go-live channel. `/alerts off` stops the posts.",
         platform_emoji(platform),
@@ -1070,7 +1063,11 @@ pub async fn presence(app: &App, d: &Value) -> Res<()> {
     if skip || login.is_empty() {
         return Ok(());
     }
-    let Ok((handle, id)) = look_up(app, "twitch", login).await else {
+    // Only the member's own, proven channel: a status pointing at someone else's links nothing.
+    let Some((handle, id)) = proven_twitch(app, user)
+        .await?
+        .filter(|(h, _)| h.eq_ignore_ascii_case(login))
+    else {
         return Ok(());
     };
     save(app, user, "twitch", &handle, &id).await?;
@@ -1098,11 +1095,11 @@ async fn panel(app: App, i: Interaction) -> Res<Value> {
     };
     let button = |p: &str, style: u8| json!({"type": 2, "style": style, "label": platform_name(p), "emoji": {"name": platform_emoji(p)}, "custom_id": format!("str:link:{p}")});
     let body = json!({"embeds": [{"title": "🎮 Link your streaming account", "color": 0x9b_59b6,
-        "description": "Get a post in the go-live channel whenever you go live. Pick your platform below.\n\n**Platforms:** S.V.E.R, Twitch, YouTube, Kick",
+        "description": format!("Get a post in the go-live channel whenever you go live. Link your Discord to S.V.E.R first ({}/account, sign-in methods); for Twitch, connect Twitch there too, so we know the channel is yours. Then pick your platform below.", app.config.origin),
         "fields": [
             {"name": "🔔 Go-live posts", "value": "Your stream is announced automatically.", "inline": true},
-            {"name": "⚡ Auto-detect", "value": "Streaming on Twitch? It's picked up from your Discord status.", "inline": true}]}],
-        "components": [{"type": 1, "components": [button("sver", 2), button("twitch", 1), button("youtube", 4), button("kick", 3)]}],
+            {"name": "⚡ Auto-detect", "value": "Streaming on your own Twitch channel? It's picked up from your Discord status.", "inline": true}]}],
+        "components": [{"type": 1, "components": [button("sver", 2), button("twitch", 1)]}],
         "allowed_mentions": {"parse": []}});
     let Some(m) = send(&app, &to, body).await else {
         return Ok(private(
@@ -1115,12 +1112,9 @@ async fn panel(app: App, i: Interaction) -> Res<Value> {
     )))
 }
 
-async fn modal_link(app: App, i: Interaction) -> Res<Value> {
+async fn button_link(app: App, i: Interaction) -> Res<Value> {
     let platform = i.custom_id().rsplit(':').next().unwrap_or_default();
-    let name = i.data["components"][0]["components"][0]["value"]
-        .as_str()
-        .unwrap_or_default();
-    link(&app, &i.user, platform, name).await
+    link(&app, &i.user, platform).await
 }
 /// Buttons and forms whose id starts with `str:`.
 pub async fn component(app: &App, i: &Interaction) -> Option<Value> {
@@ -1129,20 +1123,10 @@ pub async fn component(app: &App, i: &Interaction) -> Option<Value> {
     if !PLATFORMS.contains(&platform) {
         return None;
     }
+    // The S.V.E.R button explains the automatic link (the legacy one opened the wrong form); the
+    // others link the proven account at once (older panels' YouTube and Kick buttons say why not).
     if id.starts_with("str:link:") {
-        // The S.V.E.R button explains the automatic link (the legacy one opened the wrong form).
-        if platform == "sver" {
-            return Some(answer(sver_link(app, &i.user).await));
-        }
-        return Some(
-            json!({"type": 9, "data": {"custom_id": format!("str:modal:{platform}"),
-            "title": format!("Link {}", platform_name(platform)),
-            "components": [{"type": 1, "components": [{"type": 4, "custom_id": "name", "style": 1, "required": true, "max_length": 100,
-                "label": format!("Your {} name", platform_name(platform))}]}]}}),
-        );
-    }
-    if id.starts_with("str:modal:") {
-        later(app, i, true, modal_link);
+        later(app, i, true, button_link);
         return Some(ANSWERED);
     }
     None
@@ -1751,8 +1735,9 @@ async fn spotlight(app: &App, now: DateTime<Utc>) -> Res<()> {
     Ok(())
 }
 
-/// Sunday 18:00 UTC: the most-watched public S.V.E.R clip of the week in the clips channel (a forum
-/// gets a post of its own).
+/// Sunday 18:00 UTC: a clip of the week in the clips channel (a forum gets a post of its own),
+/// drawn fairly from the week's public S.V.E.R clips. Never the most watched: nothing on S.V.E.R is
+/// ranked by viewers (Joe, October 20, 2026), so the post shows no view count either.
 async fn clip_of_the_week(app: &App, now: DateTime<Utc>) -> Res<()> {
     let settings = home::settings(app).await;
     let Some(to) = home::id(&settings, "clips") else {
@@ -1761,12 +1746,12 @@ async fn clip_of_the_week(app: &App, now: DateTime<Utc>) -> Res<()> {
     if !weekly(app, now, "clip", Weekday::Sun, 18).await? {
         return Ok(());
     }
-    let clip: Option<(String, String, i64, String, Option<String>)> = sqlx::query_as("SELECT v.id,v.title,v.views,u.display_name,v.faction FROM videos v JOIN channel_users u ON u.id=v.owner_id AND u.eligible
+    let clip: Option<(String, String, String, Option<String>)> = sqlx::query_as("SELECT v.id,v.title,u.display_name,v.faction FROM videos v JOIN channel_users u ON u.id=v.owner_id AND u.eligible
         WHERE v.kind='CLIP' AND v.status='READY' AND v.approval='APPROVED' AND v.visibility='PUBLIC' AND NOT v.mature AND v.created_at>now()-interval '7 days'
             AND NOT EXISTS(SELECT 1 FROM video_holds h WHERE h.video_id=v.id)
-        ORDER BY v.views DESC,v.created_at LIMIT 1")
+        ORDER BY random() LIMIT 1")
         .fetch_optional(&app.db).await?;
-    let Some((id, title, views, by, faction)) = clip else {
+    let Some((id, title, by, faction)) = clip else {
         return Ok(());
     };
     let url = format!("{}/clips/{id}", app.config.origin);
@@ -1775,8 +1760,7 @@ async fn clip_of_the_week(app: &App, now: DateTime<Utc>) -> Res<()> {
         .map(|f| levels::emoji(Some(f)))
         .unwrap_or_default();
     let post = json!({"embeds": [{"title": "🎬 Clip of the Week", "description": title, "url": url, "color": levels::color(faction.as_deref()),
-            "fields": [{"name": "By", "value": format!("{by} {badge}"), "inline": true},
-                {"name": "Views", "value": views.to_string(), "inline": true}],
+            "fields": [{"name": "By", "value": format!("{by} {badge}"), "inline": true}],
             "footer": {"text": "S.V.E.R bot • React 👍 if you enjoyed it"}}],
         "components": [{"type": 1, "components": [{"type": 2, "style": 5, "label": "▶️ Watch the clip", "url": url}]}],
         "allowed_mentions": {"parse": []}});
@@ -1878,9 +1862,9 @@ pub fn definitions() -> Vec<Value> {
     let factions = json!([{"name": "Myria", "value": "myria"}, {"name": "Aetheron", "value": "aetheron"}, {"name": "Glint", "value": "glint"}]);
     vec![
         json!({"name": "alerts", "description": "Go-live posts for your streams.", "options": [
-            {"type": 1, "name": "link", "description": "Link a streaming account", "options": [
-                {"type": 3, "name": "platform", "description": "The platform", "required": true, "choices": platforms},
-                {"type": 3, "name": "name", "description": "Your name there (not needed for S.V.E.R)", "max_length": 100}]},
+            {"type": 1, "name": "link", "description": "Link your own streaming account (proven through S.V.E.R)", "options": [
+                {"type": 3, "name": "platform", "description": "The platform", "required": true, "choices": [
+                    {"name": "S.V.E.R", "value": "sver"}, {"name": "Twitch", "value": "twitch"}]}]},
             {"type": 1, "name": "unlink", "description": "Unlink a streaming account", "options": [
                 {"type": 3, "name": "platform", "description": "The platform", "required": true, "choices": platforms}]},
             {"type": 1, "name": "on", "description": "Turn your go-live posts on"},
