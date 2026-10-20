@@ -2,6 +2,8 @@
 //! unread, blocks, under-18 rules, reports with a sealed and audited excerpt, and expiry.
 use super::chat::{call, person};
 use super::*;
+use futures_util::StreamExt;
+use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
 pub async fn exercise(e: &Env) {
     let a = person(e, "dm-a", "DmAlpha", true).await;
@@ -274,7 +276,110 @@ pub async fn exercise(e: &Env) {
     ] {
         e.sql(statement).await;
     }
+    let (c, d) = notify_after_clear(e).await;
+    socket_ends_with_session(e, &c, &d).await;
+    e.sql("DELETE FROM dm_conversations").await;
     private_mode(e).await;
+}
+
+async fn charlie_to_delta(e: &Env, token: &str, body: &str) {
+    e.sql("DELETE FROM rate_limits WHERE key LIKE 'dm:%'").await;
+    let (status, sent) = call(
+        e,
+        "POST",
+        "/api/dms/DmDelta",
+        Some(token),
+        json!({"body": body}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+}
+/// "Delete for me" while messages are unread doesn't silence the next one, and the notification
+/// opens the conversation.
+async fn notify_after_clear(e: &Env) -> (String, String) {
+    let c = person(e, "dm-c", "DmCharlie", true).await;
+    let d = person(e, "dm-d", "DmDelta", true).await;
+    e.sql("INSERT INTO follows(follower_id,following_id) VALUES('dm-c','dm-d'),('dm-d','dm-c')")
+        .await;
+    let notes = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT payload::text FROM notifications WHERE user_id='dm-d' AND kind='dm' ORDER BY created_at",
+        )
+        .fetch_all(&e.app.db)
+        .await
+        .unwrap()
+    };
+    charlie_to_delta(e, &c, "one").await;
+    assert_eq!(notes().await.len(), 1);
+    call(e, "DELETE", "/api/dms/DmCharlie", Some(&d), Value::Null).await;
+    charlie_to_delta(e, &c, "two").await;
+    let after = notes().await;
+    assert_eq!(after.len(), 2, "{after:?}");
+    assert!(after[1].contains("/messages?with=DmCharlie"), "{after:?}");
+    (c, d)
+}
+/// An open DM socket ends with its session: after signing out everywhere, nothing more arrives.
+async fn socket_ends_with_session(e: &Env, c: &str, d: &str) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = sver::router(e.app.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let mut request = format!("ws://{address}/api/dms/socket")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", e.app.config.origin.parse().unwrap());
+    request
+        .headers_mut()
+        .insert("cookie", format!("sver_dev={d}").parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    // DM sockets listen on their own hub, not the site-wide chat bus.
+    e.app.chat.publish(
+        "dm:dm-d",
+        None,
+        1,
+        json!({"type": "dm", "with": "DmCharlie", "message": {"body": "from the chat bus"}}),
+    );
+    charlie_to_delta(e, c, "while signed in").await;
+    let live = super::chat::next_json(&mut socket).await;
+    assert_eq!(
+        (&live["type"], &live["message"]["body"]),
+        (&json!("dm"), &json!("while signed in"))
+    );
+    // The event carries what the conversation list needs, so the page doesn't refetch it.
+    assert_eq!(
+        (&live["with"], &live["message"]["sender"]),
+        (&json!("DmCharlie"), &json!("DmCharlie"))
+    );
+    assert!(live["message"]["created_at"].is_string(), "{live}");
+    e.sql("DELETE FROM sessions WHERE user_id='dm-d'").await;
+    charlie_to_delta(e, c, "after signing out").await;
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), socket.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                assert!(
+                    !text.contains("after signing out"),
+                    "delivered after sign-out"
+                )
+            }
+            Ok(Some(Ok(Message::Close(frame)))) => {
+                assert_eq!(frame.map(|f| u16::from(f.code)), Some(4001));
+                break;
+            }
+            Ok(Some(Ok(_))) => {}
+            Ok(Some(Err(_)) | None) => break,
+            Err(_) => panic!("the socket stayed open after sign-out"),
+        }
+    }
+    server.abort();
 }
 
 /// Private mode: device keys, envelopes the server can't read, and franking-verified reports.
@@ -331,6 +436,12 @@ async fn private_mode(e: &Env) {
         .0,
         StatusCode::BAD_REQUEST
     );
+    // A new device needs a recently confirmed sign-in, so a stolen session alone can't add one.
+    e.sql("UPDATE sessions SET authenticated_at=now()-interval '1 hour' WHERE user_id='dm-pa'")
+        .await;
+    assert_eq!(add(&a, 1).await.0, StatusCode::FORBIDDEN);
+    e.sql("UPDATE sessions SET authenticated_at=now() WHERE user_id='dm-pa'")
+        .await;
     let a_dev = add(&a, 1).await.1["id"].as_str().unwrap().to_string();
     let b_dev = add(&b, 2).await.1["id"].as_str().unwrap().to_string();
     e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='dm-pb'")

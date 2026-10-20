@@ -36,9 +36,20 @@ pub(super) async fn war_data(db: &mut PgConnection, app: &App, at: DateTime<Utc>
     data["week"]=week.map_or(Value::Null,|w|json!({"id":w.id,"starts_at":w.starts_at,"ends_at":w.ends_at,"completed":w.completed_at.is_some()}));
     let counts:Vec<(String,i64)>=sqlx::query_as("SELECT holder,count(*) FROM faction_territories WHERE season_id=$1 AND holder IS NOT NULL GROUP BY holder")
         .bind(season.id).fetch_all(&mut *db).await?;
-    let held:Vec<(String,i64)>=sqlx::query_as("SELECT g->>'holder',count(*) FROM faction_weeks w CROSS JOIN LATERAL jsonb_array_elements(w.result->'genres') g WHERE w.season_id=$1 AND g->>'holder' IS NOT NULL GROUP BY 1")
+    let held:Vec<(String,i64)>=sqlx::query_as("SELECT h,count(*) FROM faction_weeks w CROSS JOIN LATERAL jsonb_array_elements(w.result->'genres') g CROSS JOIN LATERAL (SELECT CASE WHEN g ? 'previous_holder' THEN g->>'previous_holder' ELSE g->>'holder' END AS h) x WHERE w.season_id=$1 AND h IS NOT NULL GROUP BY 1")
         .bind(season.id).fetch_all(&mut *db).await?;
-    data["scoreboard"]=json!(FACTIONS.iter().map(|f|json!({"faction":f,"territories":counts.iter().find(|(a,_)|a==f).map_or(0,|(_,n)|*n),"genre_weeks":held.iter().find(|(a,_)|a==f).map_or(0,|(_,n)|*n)})).collect::<Vec<_>>());
+    // The Hill counts as extra territories at the season's end, so the scoreboard counts it too.
+    let hill: Option<String> = sqlx::query_scalar("SELECT t.holder FROM faction_territories t JOIN faction_seasons s ON s.id=t.season_id AND s.hill=t.genre WHERE t.season_id=$1")
+        .bind(season.id).fetch_optional(&mut *db).await?.flatten();
+    let territories = |f: &str| {
+        counts.iter().find(|(a, _)| a == f).map_or(0, |(_, n)| *n)
+            + if hill.as_deref() == Some(f) {
+                super::skirmish::HILL_BONUS
+            } else {
+                0
+            }
+    };
+    data["scoreboard"]=json!(FACTIONS.iter().map(|f|json!({"faction":f,"territories":territories(f),"genre_weeks":held.iter().find(|(a,_)|a==f).map_or(0,|(_,n)|*n)})).collect::<Vec<_>>());
     let previous:Option<Vec<String>>=sqlx::query_scalar("SELECT winners FROM faction_seasons WHERE finished_at IS NOT NULL AND number<$1 ORDER BY number DESC LIMIT 1")
         .bind(season.number).fetch_optional(&mut *db).await?;
     data["previous_winners"] = json!(previous.unwrap_or_default());
@@ -47,10 +58,9 @@ pub(super) async fn war_data(db: &mut PgConnection, app: &App, at: DateTime<Utc>
     Ok(data)
 }
 pub async fn war(State(app): State<App>) -> Res<Json<Value>> {
+    engine::catch_up(&app).await?;
     let mut tx = app.db.begin().await?;
-    engine::lock(&mut tx).await?;
     let at = engine::now(&mut tx).await?;
-    engine::advance(&mut tx, &app.config.factions, at).await?;
     let data = war_data(&mut tx, &app, at).await?;
     tx.commit().await?;
     Ok(Json(data))
@@ -64,10 +74,9 @@ pub async fn hub(
         return Err(Fail::missing());
     }
     let viewer = profiles::viewer(&app, &jar).await?;
+    engine::catch_up(&app).await?;
     let mut tx = app.db.begin().await?;
-    engine::lock(&mut tx).await?;
     let at = engine::now(&mut tx).await?;
-    engine::advance(&mut tx, &app.config.factions, at).await?;
     let mut data = war_data(&mut tx, &app, at).await?;
     data["faction"] = json!(faction);
     data["is_member"] = json!(match &viewer {

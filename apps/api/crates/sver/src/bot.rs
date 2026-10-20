@@ -380,8 +380,10 @@ pub async fn surge_level(app: &App, channel: &str, level: i16) -> Res<()> {
 }
 /// Every few seconds: greets recent events on live channels; anything else is dropped.
 pub async fn drain(app: &App) -> Res<()> {
-    let events: Vec<(String, String, String, i32, Option<String>, bool)> = sqlx::query_as("DELETE FROM bot_events e RETURNING e.channel_id,e.kind,e.name,e.count,e.faction,
-        e.created_at>now()-interval '2 minutes' AND EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=e.channel_id AND b.state='LIVE')")
+    let events: Vec<(String, String, String, i32, Option<String>, bool)> = sqlx::query_as("WITH batch AS (DELETE FROM bot_events e WHERE id IN (SELECT id FROM bot_events ORDER BY id LIMIT 500)
+        RETURNING e.id,e.channel_id,e.kind,e.name,e.count,e.faction,
+        e.created_at>now()-interval '2 minutes' AND EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=e.channel_id AND b.state='LIVE') AS live)
+        SELECT channel_id,kind,name,count,faction,live FROM batch ORDER BY id")
         .fetch_all(&app.db)
         .await?;
     for (channel, kind, name, count, faction, live) in events {
@@ -395,7 +397,8 @@ pub async fn drain(app: &App) -> Res<()> {
             "milestone" => Event::Milestone,
             _ => Event::Raid,
         };
-        announce(
+        // One channel's failure never drops the rest of the batch (it is already deleted).
+        if announce(
             app,
             &channel,
             event,
@@ -403,7 +406,11 @@ pub async fn drain(app: &App) -> Res<()> {
             count.into(),
             faction.as_deref(),
         )
-        .await?;
+        .await
+        .is_err()
+        {
+            eprintln!("bot_event=announce outcome=dropped");
+        }
     }
     Ok(())
 }
@@ -457,7 +464,8 @@ pub async fn automod(app: &App, channel: &str, user: &auth::User, body: &str) ->
         return Ok(());
     };
     let mut broken = rule(body, caps, repeats, spam);
-    if broken.is_none() && repeats {
+    // Short lines (gg, F, an emote) are often said twice on purpose; only longer ones are repeats.
+    if broken.is_none() && repeats && body.trim().chars().count() >= 10 {
         let same: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_messages WHERE channel_id=$1 AND author_id=$2 AND squad_id IS NULL AND created_at>now()-interval '30 seconds' AND lower(body)=lower($3))")
             .bind(channel).bind(&user.id).bind(body.trim()).fetch_one(&app.db).await?;
         broken = same.then_some("repeats");
@@ -496,7 +504,7 @@ pub async fn automod(app: &App, channel: &str, user: &auth::User, body: &str) ->
     moderation::log(
         &mut tx,
         channel,
-        &user.id,
+        channel,
         Role::Owner,
         "automod_timeout",
         Some(&user.id),

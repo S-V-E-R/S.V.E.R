@@ -392,7 +392,8 @@ pub async fn exercise(e: &Env) {
     );
     assert_eq!(mine(e, &outsider).await["mine"]["tier"], 2);
 
-    // A full refund of a subscription payment reverses the streamer's share and ends benefits.
+    // A full refund of a subscription payment reverses the streamer's share. Refunding an older
+    // month leaves the later paid month; refunding the latest payment ends benefits and renewal.
     let before = balance(e, "usd:earnings:stream-owner").await;
     let refund = json!({"id": "evt_sb_refund", "type": "charge.refunded", "data": {"object": {
         "payment_intent": "pi_in_sb_1", "amount": 999, "amount_refunded": 999}}});
@@ -401,6 +402,14 @@ pub async fn exercise(e: &Env) {
         balance(e, "usd:earnings:stream-owner").await - before,
         -share(999)
     );
+    assert_eq!(
+        mine(e, &gifter).await["mine"]["tier"],
+        3,
+        "the later month stays"
+    );
+    let latest = json!({"id": "evt_sb_refund_3", "type": "charge.refunded", "data": {"object": {
+        "payment_intent": "pi_in_sb_3", "amount": 1_500, "amount_refunded": 1_500}}});
+    assert_eq!(event(e, latest).await, StatusCode::OK);
     assert_eq!(mine(e, &gifter).await["mine"], Value::Null);
 
     let unbalanced: i64 = sqlx::query_scalar(

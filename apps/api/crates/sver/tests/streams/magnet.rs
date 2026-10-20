@@ -601,6 +601,23 @@ pub async fn exercise(e: &Env) {
             .iter()
             .any(|m| m["body"] == "hello co-stream")
     );
+    // A co-stream member labeled mature closes the shared chat to under-18 accounts, whichever
+    // member's page they post from.
+    let young = person(e, "mg-young", "MgYoung", true).await;
+    e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='mg-young'")
+        .await;
+    e.sql("INSERT INTO stream_settings(owner_id,title,mature) VALUES('mg-sq-guest','Guest stream',true) ON CONFLICT(owner_id) DO UPDATE SET mature=true").await;
+    let (status, refused) = call(
+        e,
+        "POST",
+        "/api/squads/mg-squad/chat",
+        Some(&young),
+        json!({"id": id(), "body": "hi all"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    e.sql("UPDATE stream_settings SET mature=false WHERE owner_id='mg-sq-guest'")
+        .await;
     let (_, room) = get(e, "/api/magnet/global/chat", Some(&banned)).await;
     assert_eq!(
         (&room["co_stream"], &room["can_send"]),
@@ -871,6 +888,21 @@ async fn genre_lane(e: &Env) {
         !candidates.contains(&"mg-g-r".to_string()),
         "a restricted channel is never a candidate"
     );
+    // A category that just changed hasn't settled: the stream waits before joining a genre lane, so
+    // hopping categories can't collect a first-time turn on every lane.
+    e.sql("UPDATE stream_settings SET category_changed_at=now() WHERE owner_id='mg-gb'")
+        .await;
+    let mut db = e.app.db.acquire().await.unwrap();
+    let hopped: Vec<String> = sver::magnet::candidates(&mut db, "art", &e.app.config.magnet)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.1.broadcast)
+        .collect();
+    drop(db);
+    assert!(!hopped.contains(&"mg-g-b".to_string()), "{hopped:?}");
+    e.sql("UPDATE stream_settings SET category_changed_at=now()-interval '11 minutes' WHERE owner_id='mg-gb'")
+        .await;
     // Faction lanes: only that faction's members' streams, whatever their genre.
     e.sql("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES('mg-ga','glint',now(),now()) ON CONFLICT(user_id) DO UPDATE SET faction='glint'").await;
     let mut db = e.app.db.acquire().await.unwrap();

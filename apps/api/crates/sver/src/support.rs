@@ -49,10 +49,19 @@ pub async fn can_earn(db: &mut PgConnection, owner: &str) -> Res<bool> {
 
 // ---- Wallet and Valor packs ----
 
+/// What an account spends by card this calendar month (UTC), for the under-18 cap: checkouts
+/// (open ones too, since they expire after 30 minutes, so two tabs can't pass the cap), renewals
+/// already charged, and renewals of card subscriptions still due before the month ends, so a
+/// purchase can't leave a later renewal over the cap.
 async fn month_cents(db: &mut PgConnection, user: &str) -> Res<i64> {
-    // Open sessions count too (they expire after 30 minutes), so two tabs can't pass the cap.
-    Ok(sqlx::query_scalar("SELECT COALESCE(sum(amount_cents),0)::bigint FROM checkout_sessions WHERE user_id=$1 AND status IN ('open','paid') AND created_at>=date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'")
-        .bind(user).fetch_one(db).await?)
+    Ok(sqlx::query_scalar("WITH m AS (SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS start) SELECT ( \
+        (SELECT COALESCE(sum(amount_cents),0) FROM checkout_sessions, m WHERE user_id=$1 AND status IN ('open','paid') AND created_at>=m.start) \
+        + (SELECT COALESCE(sum(amount_cents),0) FROM sub_invoices, m WHERE user_id=$1 AND renewal AND created_at>=m.start) \
+        + (SELECT COALESCE(sum(amount_cents),0) FROM platform_invoices, m WHERE user_id=$1 AND renewal AND created_at>=m.start) \
+        + (SELECT COALESCE(sum(($2::bigint[])[tier]),0) FROM channel_subs, m WHERE user_id=$1 AND stripe_subscription IS NOT NULL AND NOT cancel_at_period_end AND paid_through>=now() AND paid_through<m.start+interval '1 month') \
+        + (SELECT COALESCE(sum(($3::bigint[])[coalesce(pending_tier,tier)]),0) FROM platform_subscriptions, m WHERE user_id=$1 AND stripe_subscription IS NOT NULL AND NOT cancel_at_period_end AND paid_through>=now() AND paid_through<m.start+interval '1 month') \
+        )::bigint")
+        .bind(user).bind(&crate::subs::PRICES[..]).bind(&crate::supporters::PRICES[..]).fetch_one(db).await?)
 }
 
 /// Credits the buyer's paid checkouts by asking Stripe directly, so a late or failed webhook
@@ -76,7 +85,7 @@ async fn reconcile(app: &App, user: &str) -> Res<()> {
             session["status"].as_str(),
             session["payment_status"].as_str(),
         ) {
-            (_, Some("paid")) => paid(&mut tx, &session).await?,
+            (_, Some("paid" | "no_payment_required")) => paid(&mut tx, &session).await?,
             (Some("expired"), _) => {
                 process(app, &mut tx, "checkout.session.expired", &session).await?
             }
@@ -92,7 +101,7 @@ pub async fn wallet(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
     reconcile(&app, &user.id).await?;
     let mut db = app.db.acquire().await?;
     let valor = ledger::balance(&mut db, &format!("valor:{}", user.id), "valor").await?;
-    let minor = age(&mut db, &user.id).await?.is_some_and(|a| a < 18);
+    let minor = age(&mut db, &user.id).await?.is_none_or(|a| a < 18);
     let guardian: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM guardian_consents WHERE user_id=$1)")
             .bind(&user.id)
@@ -117,8 +126,9 @@ pub async fn wallet(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
 }
 
 /// Card purchases by an account aged 13 to 17 need a guardian's one-time confirmation and stay
-/// under the monthly cap. The caller holds the buyer's checkout lock.
-// ponytail: monthly renewals and upgrade prorations aren't counted toward the cap.
+/// under the monthly cap. An account with no date of birth on file (some imported accounts) is
+/// treated the same way, as everywhere else on the site where age matters. The caller holds the
+/// buyer's checkout lock.
 pub(crate) async fn card_gate(
     tx: &mut PgConnection,
     user: &str,
@@ -126,34 +136,35 @@ pub(crate) async fn card_gate(
     consent: bool,
 ) -> Res<()> {
     match age(tx, user).await? {
-        Some(a) if a < 13 => Err(Fail::denied("You can't make purchases on this account.")),
-        Some(a) if a < 18 => {
-            let confirmed: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM guardian_consents WHERE user_id=$1)",
-            )
+        Some(a) if a >= 18 => return Ok(()),
+        Some(a) if a < 13 => {
+            return Err(Fail::denied("You can't make purchases on this account."));
+        }
+        // 13 to 17, or not on file.
+        _ => {}
+    }
+    let confirmed: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM guardian_consents WHERE user_id=$1)")
             .bind(user)
             .fetch_one(&mut *tx)
             .await?;
-            if !confirmed && !consent {
-                return Err(Fail::field(
-                    "guardian_consent",
-                    "A parent or guardian must confirm they are the cardholder and consent to this purchase.",
-                ));
-            }
-            if month_cents(tx, user).await? + cents > MINOR_CAP_CENTS {
-                return Err(Fail::field(
-                    "cents",
-                    "Accounts under 18 can spend up to $50 a month. Choose a smaller purchase or wait until next month.",
-                ));
-            }
-            sqlx::query("INSERT INTO guardian_consents(user_id) VALUES($1) ON CONFLICT DO NOTHING")
-                .bind(user)
-                .execute(tx)
-                .await?;
-            Ok(())
-        }
-        _ => Ok(()),
+    if !confirmed && !consent {
+        return Err(Fail::field(
+            "guardian_consent",
+            "A parent or guardian must confirm they are the cardholder and consent to this purchase.",
+        ));
     }
+    if month_cents(tx, user).await? + cents > MINOR_CAP_CENTS {
+        return Err(Fail::field(
+            "cents",
+            "Accounts under 18 can spend up to $50 a month. Choose a smaller purchase or wait until next month.",
+        ));
+    }
+    sqlx::query("INSERT INTO guardian_consents(user_id) VALUES($1) ON CONFLICT DO NOTHING")
+        .bind(user)
+        .execute(tx)
+        .await?;
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -430,8 +441,12 @@ pub async fn webhook(State(app): State<App>, headers: HeaderMap, body: Bytes) ->
 
 async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -> Res<()> {
     match kind {
+        // A subscription that starts with a free trial (keeping a gifted month) needs no payment.
         "checkout.session.completed" | "checkout.session.async_payment_succeeded"
-            if object["payment_status"] == "paid" =>
+            if matches!(
+                object["payment_status"].as_str(),
+                Some("paid" | "no_payment_required")
+            ) =>
         {
             paid(tx, object).await
         }
@@ -445,8 +460,10 @@ async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -
             Ok(())
         }
         "charge.refunded" => refunded(app, tx, object).await,
-        "charge.dispute.created" => disputed(tx, object, false).await,
-        "charge.dispute.closed" if object["status"] == "won" => disputed(tx, object, true).await,
+        "charge.dispute.created" => disputed(app, tx, object, false).await,
+        "charge.dispute.closed" if object["status"] == "won" => {
+            disputed(app, tx, object, true).await
+        }
         "account.updated" => sync_account(tx, object).await,
         "invoice.paid" => {
             crate::subs::invoice_paid(app, tx, object).await?;
@@ -456,10 +473,12 @@ async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -
             crate::subs::subscription_changed(tx, kind, object).await?;
             crate::supporters::subscription_changed(tx, kind, object).await
         }
-        // A lost dispute of a platform payment also revokes a Founder spot it claimed.
+        // A lost dispute takes back what the payment bought: a Wall tile, an ad campaign, a Founder spot.
         "charge.dispute.closed" if object["status"] == "lost" => {
             match object["payment_intent"].as_str() {
                 Some(intent) => {
+                    crate::seats::taken_back(tx, intent).await?;
+                    crate::adnet::taken_back(tx, intent).await?;
                     crate::supporters::reversed(app, tx, intent, "Payment lost to a dispute").await
                 }
                 None => Ok(()),
@@ -527,6 +546,16 @@ fn checkout_pairs(
         },
         // A Wall seat is S.V.E.R's own sale; no creator share (docs/WALL.md).
         "wall" => vec![("usd:stripe".into(), "usd:wall".into(), "usd", cents * 10)],
+        // An ad campaign is prepaid; verified impressions move it on (docs/ADVERTISERS.md).
+        "ad" => vec![(
+            "usd:stripe".into(),
+            format!(
+                "usd:ads:prepaid:{}",
+                detail["campaign"].as_str().unwrap_or_default()
+            ),
+            "usd",
+            cents * 10,
+        )],
         _ => vec![
             (
                 format!("valor:{}", user.unwrap_or("unclaimed")),
@@ -578,6 +607,9 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
         return Ok(());
     }
     let subscription = matches!(kind.as_str(), "sub" | "platform");
+    if !subscription && object["payment_status"] != "paid" {
+        return Ok(());
+    }
     if !subscription && object["amount_total"].as_i64() != Some(cents.into()) {
         return Err(Fail::bad("Checkout amount doesn't match."));
     }
@@ -597,6 +629,9 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
     if kind == "wall" {
         crate::seats::paid(tx, id, &detail, intent).await?;
     }
+    if kind == "ad" {
+        crate::adnet::paid(tx, id, &detail, intent).await?;
+    }
     let cents = i64::from(cents);
     let pairs = checkout_pairs(
         &kind,
@@ -610,6 +645,7 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
         match kind.as_str() {
             "gift" => "gift_purchase",
             "wall" => "wall_purchase",
+            "ad" => "ad_purchase",
             _ => "valor_purchase",
         },
         &format!("checkout:{id}"),
@@ -624,6 +660,7 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
 /// The credited payment behind a charge: its intent, cents and the pairs it posted. An unknown
 /// payment of ours (by its metadata) waits for the checkout event; anything else isn't ours.
 async fn payment_of(
+    app: &App,
     tx: &mut PgConnection,
     object: &Value,
 ) -> Res<Option<(String, i64, Vec<Pair>)>> {
@@ -671,6 +708,19 @@ async fn payment_of(
     if object["metadata"]["sver_user"].is_string() {
         return Err(Fail::conflict("Purchase not credited yet."));
     }
+    // A subscription charge carries no metadata of its own; ask Stripe which invoice it paid, and
+    // if that's one of ours whose invoice.paid hasn't been processed yet, wait for it (the webhook
+    // fails and Stripe retries) rather than dropping the refund or dispute.
+    let paid_invoice = stripe::get(
+        &app.http,
+        &app.config.stripe,
+        &format!("invoice_payments?payment[type]=payment_intent&payment[payment_intent]={intent}&expand[]=data.invoice"),
+    )
+    .await?;
+    let meta = &paid_invoice["data"][0]["invoice"]["parent"]["subscription_details"]["metadata"];
+    if meta["sver_user"].is_string() {
+        return Err(Fail::conflict("Subscription payment not credited yet."));
+    }
     Ok(None)
 }
 
@@ -678,7 +728,7 @@ async fn payment_of(
 /// is cumulative, so each event posts only the increase over earlier refund events. A full refund
 /// of a subscription payment also ends its benefits.
 async fn refunded(app: &App, tx: &mut PgConnection, object: &Value) -> Res<()> {
-    let Some((intent, cents, pairs)) = payment_of(tx, object).await? else {
+    let Some((intent, cents, pairs)) = payment_of(app, tx, object).await? else {
         return Ok(());
     };
     if cents <= 0 {
@@ -700,9 +750,12 @@ async fn refunded(app: &App, tx: &mut PgConnection, object: &Value) -> Res<()> {
         |amount| -(amount * refunded / cents - amount * before / cents),
     )
     .await?;
+    // An ad campaign reacts to partial refunds too (adnet.rs tells its own refunds apart).
+    crate::adnet::refunded(tx, &intent, refunded).await?;
     if refunded == cents {
-        crate::subs::refunded_in_full(tx, &intent).await?;
+        crate::subs::refunded_in_full(app, tx, &intent).await?;
         crate::supporters::reversed(app, tx, &intent, "Payment refunded in full").await?;
+        crate::seats::taken_back(tx, &intent).await?;
     }
     Ok(())
 }
@@ -712,15 +765,27 @@ async fn refunded(app: &App, tx: &mut PgConnection, object: &Value) -> Res<()> {
 /// it back.
 // ponytail: a dispute on an already-refunded charge reverses twice and Stripe's dispute fee isn't
 // posted; handle both when payouts reconcile against Stripe balance transactions.
-async fn disputed(tx: &mut PgConnection, object: &Value, won: bool) -> Res<()> {
+async fn disputed(app: &App, tx: &mut PgConnection, object: &Value, won: bool) -> Res<()> {
     let Some(id) = object["id"].as_str() else {
         return Ok(());
     };
-    let Some((intent, cents, pairs)) = payment_of(tx, object).await? else {
+    let Some((intent, cents, pairs)) = payment_of(app, tx, object).await? else {
         return Ok(());
     };
     if cents <= 0 {
         return Ok(());
+    }
+    // Winning posts back only what the dispute took; if its reversal was never posted, neither is this.
+    if won {
+        let reversed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM ledger_transactions WHERE reference=$1)",
+        )
+        .bind(format!("dispute:{id}"))
+        .fetch_one(&mut *tx)
+        .await?;
+        if !reversed {
+            return Ok(());
+        }
     }
     let amount = object["amount"].as_i64().unwrap_or(cents).min(cents);
     let sign = if won { 1 } else { -1 };
@@ -733,6 +798,7 @@ async fn disputed(tx: &mut PgConnection, object: &Value, won: bool) -> Res<()> {
         |value| sign * (value * amount / cents),
     )
     .await?;
+    crate::adnet::disputed(tx, &intent, won).await?;
     Ok(())
 }
 

@@ -1,7 +1,9 @@
 //! Linked chat (docs/LINKED_CHAT.md): signed Twitch EventSub webhooks become outside messages in
-//! S.V.E.R chat, never counted, hidden by platform deletes, S.V.E.R mutes and banned words.
+//! S.V.E.R chat, live on open sockets, never counted, hidden by platform deletes and clears, S.V.E.R
+//! mutes and banned words, and deleted after 7 days.
 use super::*;
 use hmac::{Hmac, KeyInit, Mac};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 const PATH: &str = "/api/integrations/twitch/eventsub";
 
@@ -51,6 +53,21 @@ fn chat(message_id: &str, sender: &str, text: &str) -> Value {
             "chatter_user_name":format!("Name {sender}"),"message_id":message_id,"message":{"text":text},
             "badges":[{"set_id":"moderator","id":"1"}]}})
 }
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+/// A guest's chat socket on the Streamer channel, past its snapshot.
+async fn watch(e: &Env, address: SocketAddr) -> (Socket, Value) {
+    let mut request = format!("ws://{address}/api/chat/ws?channel=streamer")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", e.app.config.origin.parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let snapshot = super::chat::next_json(&mut socket).await;
+    assert_eq!(snapshot["type"], "snapshot");
+    (socket, snapshot)
+}
 async fn outside(e: &Env) -> Vec<Value> {
     let read = e
         .call("GET", "/api/channels/Streamer/chat", Value::Null)
@@ -73,6 +90,18 @@ pub async fn exercise(e: &Env) {
             .fetch_one(&e.app.db).await.unwrap()
     };
     let before = counts().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = sver::router(e.app.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let (mut watching, _) = watch(e, address).await;
 
     // Only Twitch's signature gets in; the verification challenge is echoed.
     assert_eq!(
@@ -98,6 +127,21 @@ pub async fn exercise(e: &Env) {
         .await
         .0,
         StatusCode::NO_CONTENT
+    );
+    // Viewers with chat open get it as it arrives, not only after a reload.
+    let live = super::chat::next_json(&mut watching).await;
+    assert_eq!(
+        (
+            &live["type"],
+            &live["message"]["body"],
+            &live["message"]["outside"]["platform"]
+        ),
+        (
+            &json!("message"),
+            &json!("hello from twitch"),
+            &json!("twitch")
+        ),
+        "{live}"
     );
     assert_eq!(
         webhook(
@@ -141,6 +185,34 @@ pub async fn exercise(e: &Env) {
             .await
             .unwrap();
     assert_eq!(status, "connected");
+    // Once connected, a message doesn't write the status again; a reconnecting link recovers on
+    // the next message.
+    let status_at = || async {
+        sqlx::query_as::<_, (String, chrono::DateTime<chrono::Utc>)>(
+            "SELECT status,status_at FROM linked_chat_accounts WHERE owner_id='stream-owner'",
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    e.sql("UPDATE linked_chat_accounts SET status_at=now()-interval '1 hour' WHERE owner_id='stream-owner'").await;
+    let connected = status_at().await;
+    webhook(e, "notification", chat("m1b", "tw-v", "still here"), true).await;
+    assert_eq!(status_at().await, connected);
+    e.sql("UPDATE linked_chat_accounts SET status='reconnecting' WHERE owner_id='stream-owner'")
+        .await;
+    webhook(e, "notification", chat("m1c", "tw-v", "and again"), true).await;
+    assert_eq!(status_at().await.0, "connected");
+    e.sql("DELETE FROM outside_chat_messages WHERE id IN ('twitch:m1b','twitch:m1c')")
+        .await;
+    assert_eq!(
+        super::chat::next_json(&mut watching).await["message"]["id"],
+        "twitch:m1b"
+    );
+    assert_eq!(
+        super::chat::next_json(&mut watching).await["message"]["id"],
+        "twitch:m1c"
+    );
 
     // The channel's banned words apply to how outside messages are shown.
     e.sql("INSERT INTO chat_settings(channel_id,banned_words) VALUES('stream-owner',ARRAY['zonkword']) ON CONFLICT(channel_id) DO UPDATE SET banned_words=ARRAY['zonkword']").await;
@@ -158,14 +230,35 @@ pub async fn exercise(e: &Env) {
     // A delete on Twitch removes it here; moderators hide messages and mute senders on S.V.E.R only.
     webhook(e, "notification", json!({"subscription":{"type":"channel.chat.message_delete","condition":{"broadcaster_user_id":"tw-owner"}},"event":{"message_id":"m1"}}), true).await;
     assert!(outside(e).await.is_empty());
+    assert_eq!(
+        super::chat::next_json(&mut watching).await,
+        json!({"type":"delete","id":"twitch:m1"})
+    );
+    drop(watching);
     webhook(e, "notification", chat("m3", "tw-x", "first"), true).await;
     webhook(e, "notification", chat("m4", "tw-y", "second"), true).await;
+    // A hide reaches viewers who loaded the message with their chat, not only later arrivals.
+    let (mut late, snapshot) = watch(e, address).await;
+    assert!(
+        snapshot["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == "twitch:m3"),
+        "{snapshot}"
+    );
     e.call(
         "POST",
         "/api/channels/Streamer/chat/outside/twitch:m3/hide",
         Value::Null,
     )
     .await;
+    assert_eq!(
+        super::chat::next_json(&mut late).await,
+        json!({"type":"delete","id":"twitch:m3"})
+    );
+    drop(late);
+    server.abort();
     let left = outside(e).await;
     assert_eq!(left.len(), 1);
     assert_eq!(left[0]["id"], "twitch:m4");
@@ -194,6 +287,156 @@ pub async fn exercise(e: &Env) {
     webhook(e, "notification", chat("m6", "tw-y", "back"), true).await;
     assert_eq!(outside(e).await.len(), 1);
 
+    // A ban or timeout on Twitch clears that chatter's messages here too, and /clear clears all.
+    webhook(e, "notification", chat("m8", "tw-z", "spam"), true).await;
+    webhook(e, "notification", chat("m9", "tw-z", "more spam"), true).await;
+    webhook(e, "notification", chat("m10", "tw-w", "fine"), true).await;
+    assert_eq!(outside(e).await.len(), 4);
+    let clear = |kind: &str, event: Value| json!({"subscription":{"type":kind,"condition":{"broadcaster_user_id":"tw-owner","user_id":"tw-owner"}},"event":event});
+    webhook(
+        e,
+        "notification",
+        clear(
+            "channel.chat.clear_user_messages",
+            json!({"broadcaster_user_id":"tw-owner","target_user_id":"tw-z","target_user_login":"tw-z_login","target_user_name":"Name tw-z"}),
+        ),
+        true,
+    )
+    .await;
+    let left: Vec<String> = outside(e)
+        .await
+        .iter()
+        .map(|m| m["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(left, ["twitch:m6", "twitch:m10"]);
+    webhook(
+        e,
+        "notification",
+        clear(
+            "channel.chat.clear",
+            json!({"broadcaster_user_id":"tw-owner"}),
+        ),
+        true,
+    )
+    .await;
+    assert!(outside(e).await.is_empty(), "a clear there clears here");
+
+    // Viewers report outside messages to staff; the sender isn't a S.V.E.R account, so staff
+    // remove the message (or dismiss) but can't strike anyone for it.
+    let viewer = super::chat::person(e, "lc-viewer", "LcViewer", true).await;
+    let staff = super::chat::person(e, "lc-staff", "LcStaff", true).await;
+    e.sql("UPDATE users SET mfa_enabled=true,mfa_secret='synthetic' WHERE id='lc-staff'")
+        .await;
+    e.sql("UPDATE sessions SET mfa_verified=true WHERE user_id='lc-staff'")
+        .await;
+    e.sql("INSERT INTO staff_roles(user_id,role) VALUES('lc-staff','admin')")
+        .await;
+    webhook(e, "notification", chat("m11", "tw-r", "rude words"), true).await;
+    let report = |id: &str| {
+        let (id, viewer) = (id.to_string(), viewer.clone());
+        async move {
+            super::chat::call(e, "POST", "/api/reports", Some(&viewer),
+                json!({"target_type":"outside_message","target_id":id,"reason":"harassment","note":""})).await
+        }
+    };
+    assert_eq!(report("twitch:m11").await.0, StatusCode::OK);
+    let snapshot: Value = sqlx::query_scalar("SELECT snapshot FROM reports WHERE target_type='outside_message' AND target_id='twitch:m11'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(
+        (
+            &snapshot["value"]["body"],
+            &snapshot["value"]["platform"],
+            &snapshot["value"]["sender"]
+        ),
+        (&json!("rude words"), &json!("twitch"), &json!("Name tw-r"))
+    );
+    let act = |body: Value| {
+        let staff = staff.clone();
+        async move {
+            super::chat::call(
+                e,
+                "POST",
+                "/api/admin/reports/outside_message/twitch:m11/actions",
+                Some(&staff),
+                body,
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        act(json!({"action":"remove_content","note":"rude","strike":{"reason":"harassment","severity":"STANDARD"}})).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, done) = act(json!({"action":"remove_content","note":"rude"})).await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert!(outside(e).await.is_empty(), "staff removal hides it here");
+    // The bot's lines are the channel's own, not outside messages.
+    sver::linked_chat::post_system(&e.app, "stream-owner", "bot", "bot", "PYRE", "Welcome")
+        .await
+        .unwrap();
+    let bot: String =
+        sqlx::query_scalar("SELECT id FROM outside_chat_messages WHERE platform='bot'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(report(&bot).await.0, StatusCode::NOT_FOUND);
+    e.sql("DELETE FROM outside_chat_messages WHERE platform='bot'")
+        .await;
+
+    // Twitch giving up on our endpoint (our own outage) only needs subscribing again; access
+    // removed on Twitch needs linking again.
+    let account = || async {
+        sqlx::query_as::<_, (String, Vec<String>)>(
+            "SELECT status,subscriptions FROM linked_chat_accounts WHERE owner_id='stream-owner'",
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    let revoke = |id: &str, why: &str| json!({"subscription":{"id":id,"status":why,"type":"channel.chat.message","condition":{"broadcaster_user_id":"tw-owner","user_id":"tw-owner"}}});
+    e.sql("UPDATE linked_chat_accounts SET status='connected',subscriptions=ARRAY['sub-msg','sub-del'] WHERE owner_id='stream-owner'").await;
+    assert_eq!(
+        webhook(
+            e,
+            "revocation",
+            revoke("sub-msg", "notification_failures_exceeded"),
+            true
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(account().await, ("reconnecting".into(), vec![]));
+    // The streamer's own chat view reads the notice from the status endpoint.
+    let status = e
+        .call("GET", "/api/me/linked-chat/status", Value::Null)
+        .await;
+    assert_eq!(
+        status["accounts"][0],
+        json!({"platform":"twitch","enabled":true,"status":"reconnecting","detail":"Twitch chat disconnected, reconnecting."})
+    );
+    e.sql("UPDATE linked_chat_accounts SET status='connected',subscriptions=ARRAY['sub-new'] WHERE owner_id='stream-owner'").await;
+    webhook(
+        e,
+        "revocation",
+        revoke("sub-del", "notification_failures_exceeded"),
+        true,
+    )
+    .await;
+    assert_eq!(
+        account().await,
+        ("connected".into(), vec!["sub-new".into()]),
+        "a late notice for a replaced subscription changes nothing"
+    );
+    webhook(
+        e,
+        "revocation",
+        revoke("sub-new", "authorization_revoked"),
+        true,
+    )
+    .await;
+    assert_eq!(account().await, ("revoked".into(), vec![]));
+
     // Unlinking deletes the tokens; messages for an unlinked account are ignored.
     e.call("DELETE", "/api/me/linked-chat/twitch", Value::Null)
         .await;
@@ -203,7 +446,7 @@ pub async fn exercise(e: &Env) {
         .unwrap();
     assert_eq!(linked, 0);
     webhook(e, "notification", chat("m7", "tw-v", "anyone?"), true).await;
-    assert_eq!(outside(e).await.len(), 1);
+    assert!(outside(e).await.is_empty());
 
     // After a stream, Studio compares S.V.E.R chat with each linked platform's chat; the
     // streamer's own messages and the bot's lines don't count.
@@ -233,6 +476,32 @@ pub async fn exercise(e: &Env) {
         stream["linked"],
         json!({"twitch": {"messages": 2, "chatters": 2}})
     );
+
+    // Outside messages and bot lines are kept 7 days; a mute for an ended stream is gone from
+    // Studio, then from the table.
+    e.sql("INSERT INTO outside_chat_mutes(channel_id,platform,sender_id,broadcast_id) VALUES('stream-owner','twitch','tw-old','lc-b')").await;
+    let mine = e.call("GET", "/api/me/linked-chat", Value::Null).await;
+    assert!(
+        mine["mutes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["sender_id"] != "tw-old"),
+        "{mine}"
+    );
+    e.sql("UPDATE outside_chat_messages SET expires_at=now()-interval '1 second' WHERE id IN ('lc-o1','lc-o4')").await;
+    sver::linked_chat::expire(&e.app).await.unwrap();
+    let kept: Vec<String> = sqlx::query_scalar("SELECT id FROM outside_chat_messages ORDER BY id")
+        .fetch_all(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(kept, ["lc-o2", "lc-o3"]);
+    let mutes: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM outside_chat_mutes WHERE sender_id='tw-old'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(mutes, 0);
     e.sql("DELETE FROM chat_messages WHERE id LIKE 'lc-m%'")
         .await;
     e.sql("DELETE FROM outside_chat_messages").await;

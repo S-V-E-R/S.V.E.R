@@ -100,7 +100,7 @@ pub(crate) async fn chatted(
     if channel == user {
         return Ok(());
     }
-    crate::progression::chatted(&mut *tx, user).await?;
+    crate::progression::chatted(&mut *tx, channel, user).await?;
     if t.chat_points <= 0 {
         return Ok(());
     }
@@ -118,10 +118,11 @@ pub(crate) async fn followed(
     channel: &str,
     user: &str,
 ) -> Res<()> {
-    sqlx::query("INSERT INTO engagement(channel_id,user_id,balance,earned,follow_bonus)
-        SELECT $1,$2,$3,$3,true FROM users u WHERE u.id=$2 AND u.email_verified AND $1<>$2
+    // first_followed_at also drives the "follow a new channel" order (unfollow and refollow never counts).
+    sqlx::query("INSERT INTO engagement(channel_id,user_id,balance,earned,follow_bonus,first_followed_at)
+        SELECT $1,$2,$3,$3,true,now() FROM users u WHERE u.id=$2 AND u.email_verified AND $1<>$2
             AND NOT EXISTS(SELECT 1 FROM channel_restrictions r WHERE r.channel_id=$1 AND r.user_id=$2 AND r.kind='ban')
-        ON CONFLICT(channel_id,user_id) DO UPDATE SET balance=engagement.balance+$3, earned=engagement.earned+$3, follow_bonus=true
+        ON CONFLICT(channel_id,user_id) DO UPDATE SET balance=engagement.balance+$3, earned=engagement.earned+$3, follow_bonus=true, first_followed_at=now()
         WHERE NOT engagement.follow_bonus")
         .bind(channel).bind(user).bind(t.follow_bonus)
         .execute(tx).await?;

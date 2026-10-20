@@ -274,6 +274,28 @@ pub async fn exercise(e: &Env) {
     let (status, capped) = buy(e, &teen, 99, false).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{capped}");
     assert_eq!(capped["field"], "cents");
+    // Renewals count too: one charged this month, and one still due before the month ends.
+    for statement in [
+        "DELETE FROM checkout_sessions WHERE user_id='sp-teen'",
+        "INSERT INTO sub_invoices(id,channel_id,user_id,tier,amount_cents,share_tenths,renewal) VALUES('in_sp_renewed','sp-buyer','sp-teen',3,2499,0,true)",
+        "INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,stripe_subscription) VALUES('sp-buyer','sp-teen',3,date_trunc('month',now())+interval '1 month'-interval '1 minute','sub_sp_due') ON CONFLICT(channel_id,user_id) DO UPDATE SET tier=3,paid_through=EXCLUDED.paid_through,stripe_subscription='sub_sp_due',cancel_at_period_end=false",
+    ] {
+        e.sql(statement).await;
+    }
+    assert_eq!(
+        buy(e, &teen, 99, false).await.0,
+        StatusCode::BAD_REQUEST,
+        "$24.99 renewed + $24.99 due + 99¢ is over $50"
+    );
+    e.sql(
+        "UPDATE channel_subs SET cancel_at_period_end=true WHERE stripe_subscription='sub_sp_due'",
+    )
+    .await;
+    assert_eq!(
+        buy(e, &teen, 99, false).await.0,
+        StatusCode::OK,
+        "a cancelled subscription won't renew"
+    );
     let (_, wallet) = call(e, "GET", "/api/me/wallet", Some(&teen), Value::Null).await;
     assert_eq!(wallet["minor"], true);
     assert_eq!(wallet["guardian_confirmed"], true);

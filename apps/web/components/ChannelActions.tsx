@@ -17,7 +17,7 @@ export function ChannelActions({ username, displayName, viewer, path }: { userna
   const [menu, setMenu] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [error, setError] = useState("");
-  if (viewer.is_owner) return <div className="channel-actions"><Link className="button small" href="/settings/profile">Edit profile</Link><Link className="button small quiet" href="/studio/channel">Creator Studio</Link><ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} /><TakeDownLink target={{ target_type: "profile", target_id: username }} /></div>;
+  if (viewer.is_owner) return <div className="channel-actions"><Link className="button small" href="/settings/profile">Edit profile</Link><Link className="button small quiet" href="/studio/channel">Creator Studio</Link><ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} /></div>;
   if (!viewer.signed_in) return <div className="channel-actions"><Link className="button small" href="/login" data-from={path}>Log in to follow</Link><ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} /><TakeDownLink target={{ target_type: "profile", target_id: username }} /></div>;
   async function follow() {
     const result = await send<{ following: boolean }>(following ? "DELETE" : "PUT", `/api/follows/${encodeURIComponent(username)}`);

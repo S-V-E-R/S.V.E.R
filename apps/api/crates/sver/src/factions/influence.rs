@@ -14,6 +14,7 @@ enum Source {
     Chat,
     Support,
     Raid,
+    Discord,
 }
 impl Source {
     fn index(self) -> usize {
@@ -23,14 +24,16 @@ impl Source {
             Self::Chat => 2,
             Self::Support => 3,
             Self::Raid => 4,
+            Self::Discord => 5,
         }
     }
     fn name(self) -> &'static str {
-        ["stream", "watch", "chat", "support", "raid"][self.index()]
+        ["stream", "watch", "chat", "support", "raid", "discord"][self.index()]
     }
     fn daily_cap(self, tuning: &Tuning) -> i64 {
         match self {
             Self::Raid => tuning.raid_daily_cap,
+            Self::Discord => tuning.discord_daily_cap,
             _ => tuning.daily_caps[self.index()],
         }
     }
@@ -89,6 +92,7 @@ async fn award(
         Source::Chat => tuning.chat_points,
         Source::Support => tuning.supporter_points,
         Source::Raid => tuning.raid_points,
+        Source::Discord => tuning.discord_points,
         Source::Stream | Source::Watch => {
             let last: Option<DateTime<Utc>> = sqlx::query_scalar(
                 "SELECT last_at FROM faction_time_credit WHERE user_id=$1 AND source=$2",
@@ -128,7 +132,10 @@ async fn award(
     if matches!(input.source, Source::Chat) {
         points = points.min((tuning.chat_hourly_cap - hourly).max(0));
     }
-    if points <= 0 {
+    // A capped raid or chat is still recorded (0 points), so retrying the same event on another
+    // day can't earn. Time-based sources have no event to replay and aren't recorded.
+    let points = points.max(0);
+    if points == 0 && !matches!(input.source, Source::Raid | Source::Chat | Source::Discord) {
         return Ok(0);
     }
     sqlx::query("INSERT INTO faction_influence(event_key,user_id,faction,week_id,genre,source,points,happened_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
@@ -147,10 +154,11 @@ pub(crate) async fn watch(
     elapsed_ms: i64,
     at: DateTime<Utc>,
 ) -> Res<i64> {
-    let Some((_, genre)) = crate::streams::influence_context(db, broadcast).await? else {
+    let Some((owner, genre)) = crate::streams::influence_context(db, broadcast).await? else {
         return Ok(0);
     };
-    if !crate::integrity::trusted(db, broadcast, Some(user)).await? {
+    // Watching your own stream never counts, whatever playback says.
+    if owner == user || !crate::integrity::trusted(db, broadcast, Some(user)).await? {
         return Ok(0);
     }
     let event = format!("{user}:{broadcast}:{}", at.timestamp_micros());
@@ -251,10 +259,13 @@ pub(crate) async fn chat(
     let Some((_, genre)) = crate::streams::influence_context(db, &broadcast).await? else {
         return Ok(0);
     };
-    if !crate::integrity::trusted(db, &broadcast, Some(user)).await? {
+    // Chatting in your own channel never counts.
+    if owner == user || !crate::integrity::trusted(db, &broadcast, Some(user)).await? {
         return Ok(0);
     }
     let at = engine::now(db).await?;
+    // The message's id, scoped to its sender.
+    let event = format!("{user}:{message}");
     award(
         db,
         &app.config.factions,
@@ -262,7 +273,33 @@ pub(crate) async fn chat(
             user,
             genre: &genre,
             source: Source::Chat,
-            event: message,
+            event: &event,
+            elapsed_ms: 0,
+            raided: false,
+        },
+        at,
+    )
+    .await
+}
+/// Chat or a voice minute on the S.V.E.R Discord server, in a channel staff mapped to `genre`, by
+/// the linked account `user` (docs/DISCORD_BOT.md "Influence"). `event` is the message id, or the
+/// member and minute for voice. The war's usual rules apply, with the Discord daily cap.
+pub(crate) async fn discord(
+    app: &App,
+    db: &mut PgConnection,
+    user: &str,
+    genre: &str,
+    event: &str,
+) -> Res<i64> {
+    let at = engine::now(db).await?;
+    award(
+        db,
+        &app.config.factions,
+        Award {
+            user,
+            genre,
+            source: Source::Discord,
+            event,
             elapsed_ms: 0,
             raided: false,
         },

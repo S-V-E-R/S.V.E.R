@@ -70,7 +70,7 @@ export function HypeChat({ lane, account, upNext }: { lane: string; account: str
         {m.origin && <span className="badge magnet-badge">MAGNet</span>}: <span className="chat-body">{m.body}</span>
       </li>)}
     </ol>
-    {!account ? <p className="muted"><Link href="/login">Sign in</Link> to chat.</p>
+    {!account ? <p className="chat-signin panel"><Link href="/login">Log in</Link> or <Link href="/signup">enlist</Link> to chat.</p>
       : state?.holding ? <p className="muted">Chat resumes when MAGNet moves on.</p>
         : <form onSubmit={submit} className="chat-form">
           <label htmlFor="hype-input" className="sr-only">Message</label>

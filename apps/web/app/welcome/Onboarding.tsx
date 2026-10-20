@@ -282,6 +282,7 @@ function Ready({ slug, followed, username }: { slug: FactionSlug | null; followe
     <nav className="ready-links" aria-label="Where to next">
       <Link href="/">Watch a stream</Link>
       <Link href="/studio/stream">Start streaming</Link>
+      <Link href="/settings/profile/setup">Make your page yours</Link>
       <Link href={`/${username}`}>Your channel</Link>
       <Link href="/factions">{f ? `${f.name} and the factions` : "The factions"}</Link>
     </nav>

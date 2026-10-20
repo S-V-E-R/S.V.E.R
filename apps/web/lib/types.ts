@@ -3,18 +3,35 @@ export type Sizes = Record<string, string> | null;
 export type Chip = { username: string | null; display_name: string; avatar: Sizes; linked: boolean; deleted: boolean; live?: boolean; faction?: Faction | null; guild?: { slug: string; name: string; tag: string; image: string | null } | null; name_style?: string | null };
 export type Link = { platform: string; url: string };
 export type Song = { provider: "youtube" | "soundcloud"; media_id: string; title: string | null; artist: string | null; thumbnail: string | null; volume: number } | null;
-export type Viewer = { signed_in: boolean; is_owner: boolean; following: boolean; alerts?: boolean; blocked: boolean; interaction_blocked: boolean; can_message?: boolean };
+export type Viewer = { signed_in: boolean; is_owner: boolean; following: boolean; alerts?: boolean; blocked: boolean; interaction_blocked: boolean; can_message?: boolean; relationship?: Relationship };
+/** The signed-in visitor's own ties to a channel (docs/PROFILES.md "Persona pass"). */
+export type Relationship = { loyalty: string | null; following_since: string | null; on_their_council: boolean; on_your_council: boolean };
 export type Reply = { id: string; author: Chip; body: string | null; status: string; status_label: string | null; created_at: string; can_delete: boolean; can_report: boolean };
-export type Post = Reply & { pinned_position: number | null; like_count: number; liked: boolean; reply_count: number; replies: Reply[]; more_replies: boolean; can_pin: boolean };
+export type Post = Reply & { sticker?: string | null; first_to_sign?: boolean; pinned_position: number | null; like_count: number; liked: boolean; reply_count: number; replies: Reply[]; more_replies: boolean; can_pin: boolean };
 export type WallViewer = { can_post: boolean; reason: string | null; is_owner: boolean; can_react?: boolean };
 export type Occurrence = { start_at: string; end_at: string; label: string; kind: "weekly" | "event"; live: boolean };
 /** Shine on a channel (docs/SUPPORT.md): the live charity banner, Good Works badges and past charity streams. */
 export type Shine = { live: { name: string; url: string } | null; badges: { charity: string; raised_cents: number; verified_at: string }[]; history: { charity: string; url: string; started_at: string; raised_cents: number | null }[] };
 /** Creator tier names, by tier (docs/SUPPORT.md "Creator tiers"). */
 export const CREATOR_TIERS = ["Scout", "Trailblazer", "Pioneer", "Pathfinder"];
+/** A page block: About text, a panel, quotes, a game shelf or an answered prompt. */
+export type PageBlock = { type: "ABOUT" | "PANEL" | "QUOTES" | "GAME_SHELF" | "PROMPT"; enabled: boolean; config: { body?: string; title?: string; quotes?: { text: string; attribution: string }[]; games?: string[]; question?: string; answer?: string } };
+export const HOME_SECTIONS = ["about_me", "war_council", "wall", "up_next", "videos", "shine", "achievements", "activity"] as const;
+export type HomeSection = typeof HOME_SECTIONS[number];
+export const SECTION_NAMES: Record<HomeSection, string> = { about_me: "About me", war_council: "War Council", wall: "Wall", up_next: "Up next", videos: "Latest videos", shine: "Shine", achievements: "Achievements", activity: "Recent activity" };
+/** Who someone is on their page: level, title, frame, showcase, Currently, layout and theme (docs/PROFILES.md "Persona pass"). */
+export type Persona = {
+  level?: number; title?: string; frame?: number;
+  showcase?: { key: string; name: string; description?: string; earned_at: string | null }[];
+  currently?: { verb: string; label: string; text: string } | null;
+  streaming_category?: string | null; streamed?: boolean; has_videos?: boolean; has_beacons?: boolean;
+  song_why?: string; theme_variant?: string | null; layout?: "stream" | "persona"; home_order?: HomeSection[];
+};
 export type Channel = {
-  channel: { plays?: boolean; board?: boolean; username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[]; creator_tier?: number; shine?: Shine; supporter?: import("../components/Supporter").SupporterMarks };
-  tabs: { wall: boolean; schedule: boolean; about: boolean; fan_art: boolean };
+  channel: { plays?: boolean; board?: boolean; username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[]; creator_tier?: number; shine?: Shine; supporter?: import("../components/Supporter").SupporterMarks; discord_rank?: { name: string; level: number; faction: Faction | null } | null } & Persona;
+  tabs: { wall: boolean; schedule: boolean; about: boolean; fan_art: boolean; videos?: boolean; beacons?: boolean };
+  /** About me blocks, shown on Home (docs/PROFILES.md "Persona pass"). */
+  blocks?: PageBlock[];
   fan_art_enabled: boolean;
   /** Owner-editable header copy with defaults resolved (docs/PROFILES.md, P9). */
   header: { label: string | null; welcome: string | null; intro_title: string; intro_body: string; vibe: string };

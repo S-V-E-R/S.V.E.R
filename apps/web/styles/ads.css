@@ -1,0 +1,25 @@
+/* Ads (docs/ADVERTISERS.md): always labelled, framed like the rest of the site, light on the page. */
+.ad { position: relative; display: grid; gap: .5rem; padding: .75rem; border: 1px solid var(--line, #333); background: var(--panel, #111); }
+.ad img, .ad video { width: 100%; height: auto; display: block; }
+.ad-label { font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted, #aaa); }
+.ad-link { justify-self: start; }
+.ad-site { max-width: 960px; margin: 1.5rem auto; }
+.ad-site img { aspect-ratio: 16 / 9; object-fit: cover; }
+/* Ad breaks never cover the stream (docs/ADS.md): it shrinks to the top-left, the ad takes the
+   bottom-right corner, and the note sits in the strip below the stream. */
+.live-player.ad-on { aspect-ratio: 16 / 9; }
+.live-player.ad-on > video { position: absolute; top: 0; left: 0; width: 68%; height: 68%; aspect-ratio: auto; object-fit: contain; }
+.live-player.ad-on.focused > video { max-height: none; }
+.ad.ad-break { position: absolute; right: 0; bottom: 0; width: 32%; padding: 6px; gap: 4px; z-index: 3; background: var(--surface); border: 1px solid var(--line); }
+.ad.ad-break .ad-label { font-size: .7rem; }
+.ad.ad-break .ad-link { font-size: .75rem; min-height: 32px; }
+.ad-break-note { position: absolute; left: 0; bottom: 0; width: 68%; height: 32%; padding: 10px 14px; display: grid; align-content: start; gap: 4px; font-size: .85rem; color: var(--ink-muted); overflow: auto; }
+.ad-break-note p { margin: 0; }
+.ad-break-note strong { color: var(--ink); }
+.ad-break-note .link-button { justify-self: start; min-height: 32px; padding: 0; background: none; border: 0; box-shadow: none; color: var(--ink-muted); text-decoration: underline; font: inherit; letter-spacing: 0; text-transform: none; }
+@media (max-width: 650px) {
+  .ad.ad-break .ad-link { display: none; }
+  .ad-break-note { font-size: .75rem; padding: 6px 8px; }
+}
+.ad-feed-card { height: 100%; align-content: center; }
+.ad-feed-card video, .ad-feed-card img { max-height: 70vh; width: auto; margin: 0 auto; aspect-ratio: 9 / 16; }

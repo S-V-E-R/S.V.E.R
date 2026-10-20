@@ -1,5 +1,7 @@
 # Ads, ad revenue sharing and Ad Valor (Phase 4)
 
+**October 16, 2026: until a third-party provider is worth it, S.V.E.R runs its own network of approved ads with guaranteed delivery; see [ADVERTISERS.md](ADVERTISERS.md).** The split and Ad Valor below carry over to it.
+
 Decided by Joe on October 10, 2026: **design first, no ads yet.** This spec, the split and a test-data ledger are built; no ad provider is chosen, no ad is shown and no ad money moves. Joe picks the provider, and approves going live, before any of the "Before ads go live" list starts.
 
 ## What ads are on S.V.E.R
@@ -7,6 +9,8 @@ Decided by Joe on October 10, 2026: **design first, no ads yet.** This spec, the
 - **Ad breaks, never pre-rolls.** An ad plays only during a break in a live stream. A viewer who opens a stream is never made to wait for an ad first.
 - **Who sees them:** signed-in and guest viewers of channels that can earn (docs/SUPPORT.md "Who can earn"). Subscribers of a channel never see ads on it. Accounts under 18 see only ads the provider marks as suitable for teens, or none if the provider can't promise that.
 - **What the streamer controls:** whether ads run at all (off by default), and when a break starts (manually, from Creator Studio or the Stream Deck/API later). There is no automatic mid-stream break.
+- **Ad breaks never get in the way** (Joe, October 16, 2026). Nothing covers the stream or stops it. During a break, the stream shrinks to the top-left of the player and keeps playing, muted, with captions switched on for the break when the stream has them. The ad plays in the bottom-right corner, labelled "Ad", and a note says when the stream comes back to full size. Chat, rallies, the board and every other control keep working. Streamers are told to turn on captions in OBS so muted viewers can follow along.
+- **Turning ads off.** Any viewer can turn ads off, from the break itself or from Settings → Preferences ("Show me ads"). Before it happens they're told what it costs: no ads anywhere on S.V.E.R and no Ad Valor. An account with ads off is never served an ad in any placement (`users.ads_off`), so it earns nothing from ads. Guests turn ads off for their browser. Streamers still earn from everyone else.
 - **Nothing buys visibility.** Ads never change MAGNet, browse order, faction influence or creator tiers.
 
 ## The split

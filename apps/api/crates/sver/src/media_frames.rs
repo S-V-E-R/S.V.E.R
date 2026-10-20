@@ -277,9 +277,10 @@ pub async fn flag(db: &mut PgConnection, source: &str, removed: &str) -> Res<()>
         return Ok(());
     }
     eprintln!("frames_event=match outcome=reported kind={kind}");
-    // One alert covers a batch of matches: skip it while an earlier one is still undelivered.
+    // One alert covers a batch of matches: skip it while an earlier one from the last hour is still
+    // undelivered (a stuck job can't silence alerts for longer).
     let pending: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM staff_push_jobs WHERE delivered_at IS NULL)",
+        "SELECT EXISTS(SELECT 1 FROM staff_push_jobs WHERE delivered_at IS NULL AND created_at>now()-interval '1 hour')",
     )
     .fetch_one(&mut *db)
     .await?;

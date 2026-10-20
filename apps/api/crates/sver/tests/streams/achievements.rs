@@ -97,4 +97,21 @@ pub async fn exercise(e: &Env) {
     let (_, card) = call(e, "GET", "/api/users/Streamer/card", None, Value::Null).await;
     assert_eq!(card["showcase"][0]["key"], "first_light", "{card}");
     assert_eq!(card["frame"], 1);
+
+    // One pass grants every level reached and leaves an earned one as it was.
+    e.sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO xp_days(user_id,day,source,xp) VALUES('ach-fan',current_date,'chat',{})",
+        sver::progression::xp_for(25)
+    )))
+    .await;
+    e.sql("INSERT INTO user_achievements(user_id,key,earned_at) VALUES('ach-fan','level_10',now()-interval '3 days')").await;
+    sver::achievements::award(&e.app).await.unwrap();
+    let levels: Vec<(String, bool)> = sqlx::query_as("SELECT key,earned_at<now()-interval '1 day' FROM user_achievements WHERE user_id='ach-fan' AND key LIKE 'level_%' ORDER BY key")
+        .fetch_all(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        levels,
+        [("level_10".into(), true), ("level_25".into(), false)]
+    );
 }

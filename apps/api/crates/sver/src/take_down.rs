@@ -291,10 +291,37 @@ async fn attach(
         .fetch_one(&mut *db)
         .await?;
     let mut roots = vec![];
+    let mut found = vec![];
     for location in locations {
         let (media, target) = locate(app, db, location).await?;
         roots.extend(media);
-        if let Some(target) = target {
+        found.extend(target);
+    }
+    // A reported live stream brings its recording, so the broadcast can't come back as a VOD,
+    // clips or Highlights.
+    let mut recordings = vec![];
+    for target in found.iter().filter(|t| t.kind == "live_stream") {
+        let vod: Option<String> =
+            sqlx::query_scalar("SELECT id FROM videos WHERE broadcast_id=$1 AND kind='VOD'")
+                .bind(&target.id)
+                .fetch_optional(&mut *db)
+                .await?;
+        if let Some(vod) = vod
+            && let Some(recording) = safety::take_down::locate(db, "vod", &vod, None).await?
+        {
+            recordings.push(recording);
+        }
+    }
+    for recording in recordings {
+        if !found
+            .iter()
+            .any(|t| t.kind == recording.kind && t.id == recording.id)
+        {
+            found.push(recording);
+        }
+    }
+    for target in found {
+        {
             if crate::videos::review::is_video(&target.kind) {
                 crate::videos::review::hold(db, &target.id, "TAKE_DOWN", &id.to_string(), true)
                     .await?;
@@ -356,11 +383,8 @@ async fn submit(
     sec::reserve(&app, vec![format!("take-down:{ip}")], 10, 3600).await?;
     input.validate(&app)?;
     sec::turnstile(&app, &input.turnstile_token, "take_down", ip).await?;
-    let mut guard = app.db.begin().await?;
-    // ponytail: serialize removal mutations across workers; use per-content locks if queue volume warrants it.
-    sqlx::query("SELECT pg_advisory_xact_lock(1414087746)")
-        .execute(&mut *guard)
-        .await?;
+    // The request is on file, the requester notified and staff alerted before anything waits on
+    // the removal lock, so a slow removal elsewhere can never lose a request.
     let mut tx = app.db.begin().await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO take_down_requests(email_hash,details) VALUES($1,$2) RETURNING id",
@@ -379,19 +403,38 @@ async fn submit(
         .bind(&number)
         .execute(&mut *tx)
         .await?;
-    let roots = attach(&app, &mut tx, id, &input.locations).await?;
     event(&app, &mut tx, id, None, "received", "").await?;
     requester_notice(&app, &mut tx, id, &number, &input.email, "received").await?;
     alert_staff(&app, &mut tx, id).await?;
     tx.commit().await?;
+    // Then the named content is held, under the lock that serializes removal changes. If this
+    // fails, the request still stands and staff can locate the content from its page.
+    let mut guard = app.db.begin().await?;
+    // ponytail: serialize removal mutations across workers; use per-content locks if queue volume warrants it.
+    sqlx::query("SELECT pg_advisory_xact_lock(1414087746)")
+        .execute(&mut *guard)
+        .await?;
+    let mut tx = app.db.begin().await?;
+    let (roots, mut hidden) = match attach(&app, &mut tx, id, &input.locations).await {
+        Ok(roots) => {
+            tx.commit().await?;
+            (roots, true)
+        }
+        Err(_) => {
+            drop(tx);
+            eprintln!("take_down_event=attach outcome=failed");
+            (vec![], false)
+        }
+    };
+    guard.commit().await?;
     refresh_chat(&app, id).await;
-    let mut hidden = true;
+    // Storage deletes and cache purges run after the lock is released; the tick retries any
+    // that fail.
     for root in &roots {
         if media::removal::quarantine(&app, root).await.is_err() {
             hidden = false;
         }
     }
-    guard.commit().await?;
     Ok(Json(
         json!({"number":number,"status":"received","media_hidden":hidden,"message":"Your request has been received. Keep your request number to check its status."}),
     ))
@@ -416,7 +459,7 @@ async fn status(
     if input.number.len() > 40 {
         return Err(Fail::missing());
     }
-    let row: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('number',number,'status',CASE WHEN status='not_removed' AND resolved_at IS NULL THEN 'under_review' ELSE status END,'received_at',received_at,'resolved_at',resolved_at,'reason',CASE WHEN resolved_at IS NOT NULL THEN reason ELSE '' END) FROM take_down_requests WHERE number=$1 AND email_hash=$2")
+    let row: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('number',number,'status',CASE WHEN status='not_removed' AND resolved_at IS NULL THEN 'under_review' ELSE status END,'received_at',received_at,'resolved_at',resolved_at,'reason',CASE WHEN status='not_removed' AND resolved_at IS NOT NULL THEN reason ELSE '' END) FROM take_down_requests WHERE number=$1 AND email_hash=$2")
         .bind(input.number.trim().to_uppercase()).bind(email_hash(&app,&email)).fetch_optional(&app.db).await?;
     Ok(Json(row.ok_or_else(|| {
         Fail::bad("No request matches that number and email.")
@@ -635,7 +678,14 @@ async fn decide(
             if kind != "live_stream" {
                 safety::take_down::remove(&mut tx, kind, target).await?;
             }
-            owners.push(owner.clone());
+            // A channel link is only a pointer: its owner is struck only for images actually
+            // removed (from remove_media above). Content an earlier request already removed was
+            // already sanctioned.
+            let earlier: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM take_down_targets t JOIN take_down_requests r ON r.id=t.request_id WHERE t.kind=$1 AND t.target_id=$2 AND r.status='removed' AND r.id<>$3)")
+                .bind(kind).bind(target).bind(id).fetch_one(&mut *tx).await?;
+            if kind != "profile" && !earlier {
+                owners.push(owner.clone());
+            }
         }
         owners.sort();
         owners.dedup();
@@ -683,6 +733,18 @@ async fn decide(
     sqlx::query("UPDATE take_down_requests SET status=$2,reason=$3,resolved_at=CASE WHEN $2='removed' THEN now() ELSE NULL END,minor=$4,preservation_reference=$5 WHERE id=$1")
         .bind(id).bind(new_status).bind(&reason).bind(minor).bind(sec::seal(&app,"take-down-preservation",&preservation)?).execute(&mut *tx).await?;
     event(&app, &mut tx, id, Some(&actor.id), new_status, &reason).await?;
+    safety::audit(
+        &mut tx,
+        Some(&actor.id),
+        &format!("take_down_{new_status}"),
+        "take_down_request",
+        &number,
+        &[],
+        &reason,
+        json!({"targets": targets.iter().map(|t| json!({"kind": t.0, "id": t.1})).collect::<Vec<_>>(), "media": roots.len(), "minor": minor}),
+        false,
+    )
+    .await?;
     if input.action != "dismiss" {
         requester_notice(&app, &mut tx, id, &number, &details.email, new_status).await?;
     }
@@ -777,7 +839,7 @@ pub async fn tick(app: &App) -> Res<()> {
     for id in expired {
         notice_result(&mut tx, &id, "expired", false).await?;
     }
-    let overdue: Vec<i64> = sqlx::query_scalar("UPDATE take_down_requests SET last_alert_at=now() WHERE resolved_at IS NULL AND received_at<=now()-interval '24 hours' AND last_alert_at<=now()-interval '1 hour' RETURNING id")
+    let overdue: Vec<i64> = sqlx::query_scalar("UPDATE take_down_requests SET last_alert_at=now() WHERE resolved_at IS NULL AND status<>'not_removed' AND received_at<=now()-interval '24 hours' AND last_alert_at<=now()-interval '1 hour' RETURNING id")
         .fetch_all(&mut *tx).await?;
     for id in overdue {
         alert_staff(app, &mut tx, id).await?;
@@ -870,6 +932,18 @@ async fn add_location(
         &input.location,
     )
     .await?;
+    safety::audit(
+        &mut tx,
+        Some(&actor.id),
+        "take_down_content_located",
+        "take_down_request",
+        &number,
+        &[],
+        "",
+        json!({"location": input.location}),
+        false,
+    )
+    .await?;
     tx.commit().await?;
     refresh_chat(&app, id).await;
     for root in roots {
@@ -888,10 +962,22 @@ async fn evidence(
     let actor = safety::staff_write(&app, &jar).await?;
     let mut tx = app.db.begin().await?;
     let id:Option<i64>=sqlx::query_scalar("SELECT r.id FROM take_down_requests r JOIN take_down_media m ON m.request_id=r.id WHERE r.number=$1 AND m.root=$2")
-        .bind(number).bind(media::removal::root_of_key(&key)).fetch_optional(&mut *tx).await?;
+        .bind(&number).bind(media::removal::root_of_key(&key)).fetch_optional(&mut *tx).await?;
     let id = id.ok_or_else(Fail::missing)?;
     let bytes = media::removal::evidence(&app, &key).await?;
     event(&app, &mut tx, id, Some(&actor.id), "evidence_viewed", &key).await?;
+    safety::audit(
+        &mut tx,
+        Some(&actor.id),
+        "take_down_evidence_viewed",
+        "take_down_request",
+        &number,
+        &[],
+        "",
+        json!({"key": key}),
+        false,
+    )
+    .await?;
     tx.commit().await?;
     Ok((
         [

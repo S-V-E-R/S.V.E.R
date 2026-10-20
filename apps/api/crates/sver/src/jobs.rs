@@ -81,6 +81,12 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::seats::tick(app).await.is_err() {
         eprintln!("wall_event=maintenance outcome=retry");
     }
+    if crate::adnet::tick(app).await.is_err() {
+        eprintln!("adnet_event=maintenance outcome=retry");
+    }
+    if crate::adserve::tick(app).await.is_err() {
+        eprintln!("adserve_event=maintenance outcome=retry");
+    }
     if crate::open_data::tick(app).await.is_err() {
         eprintln!("open_data_event=compute outcome=retry");
     }
@@ -144,6 +150,9 @@ pub async fn tick(app: &App) -> Result<()> {
         .await?;
     }
     crate::chat::expire(app).await?;
+    if crate::linked_chat::expire(app).await.is_err() {
+        eprintln!("linked_chat_event=expiry outcome=retry");
+    }
     Ok(())
 }
 

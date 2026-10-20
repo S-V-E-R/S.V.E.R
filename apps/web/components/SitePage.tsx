@@ -14,13 +14,15 @@ export default function SitePage({ path, title, intro, children, policy = false,
   policy?: boolean;
   wide?: boolean;
 }) {
+  // Day in October 2026 each policy last changed (Terms and Privacy: the no-AI-training promise).
+  const updated = ({ "/dmca": 3, "/terms": 20, "/privacy": 20 } as Record<string, number>)[path] ?? 4;
   return <div className={`site-page ${policy ? "policy-page" : "info-page"}`}>
     <header className="site-page-heading">
       <div className="eyebrow">S.V.E.R / {policy ? "POLICIES" : "COMMUNITY & SUPPORT"}</div>
       <h1>{title}</h1>
       <p className="site-intro">{intro}</p>
       {policy && <>
-        <p className="site-updated">Last updated <time dateTime={path === "/dmca" ? "2026-10-03" : "2026-10-04"}>October {path === "/dmca" ? "3" : "4"}, 2026</time> · Effective <time dateTime={path === "/take-it-down" ? "2026-10-04" : "2026-10-03"}>October {path === "/take-it-down" ? "4" : "3"}, 2026</time></p>
+        <p className="site-updated">Last updated <time dateTime={`2026-10-${String(updated).padStart(2, "0")}`}>October {updated}, 2026</time> · Effective <time dateTime={path === "/take-it-down" ? "2026-10-04" : "2026-10-03"}>October {path === "/take-it-down" ? "4" : "3"}, 2026</time></p>
         <nav className="site-links policy-tabs" aria-label="Policies">{policyLinks.map(([href, label]) =>
           <Link key={href} href={href} aria-current={path === href ? "page" : undefined}>{label}</Link>)}</nav>
       </>}

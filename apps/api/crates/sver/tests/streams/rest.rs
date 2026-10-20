@@ -215,6 +215,85 @@ pub async fn exercise(e: &Env) {
     assert_eq!(s["history"].as_array().unwrap().len(), 3);
     assert_eq!(s["available_cents"], 0);
 
+    // ---- A transfer whose answer is lost is never paid twice ----
+    // $10.00 earned; Early Pay standard is 75% = $7.50.
+    let transfers_for = |run: &str| {
+        e.fake
+            .lock()
+            .unwrap()
+            .transfers
+            .iter()
+            .filter(|t| t["metadata"]["sver_payout"].as_str() == Some(run))
+            .count()
+    };
+    // rt-lost: Stripe makes the transfer but its answer is lost. rt-down: Stripe is down and makes none.
+    for (who, name, made) in [("rt-lost", "RtLost", true), ("rt-down", "RtDown", false)] {
+        let token = creator(e, who, name).await;
+        sqlx::query("INSERT INTO ledger_transactions(id,kind,reference) VALUES('fund-'||$1,'test','fund-'||$1)")
+            .bind(who)
+            .execute(&e.app.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO ledger_entries(transaction_id,account,unit,amount) VALUES('fund-'||$1,'usd:earnings:'||$1,'usd',10000),('fund-'||$1,'usd:stripe','usd',-10000)")
+            .bind(who)
+            .execute(&e.app.db)
+            .await
+            .unwrap();
+        {
+            let mut fake = e.fake.lock().unwrap();
+            if made {
+                fake.lost_transfers = 1;
+            } else {
+                fake.down_transfers = 1;
+            }
+        }
+        let (status, paid) = call(
+            e,
+            "POST",
+            "/api/me/payouts/early",
+            Some(&token),
+            json!({"method": "standard"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{paid}");
+        let run = paid["history"][0]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            paid["history"][0]["status"], "pending",
+            "unknown result stays pending"
+        );
+        assert_eq!(earnings(e, who).await, 10_000, "nothing posted yet");
+        assert_eq!(transfers_for(&run), usize::from(made));
+        // The pending run still counts: no second Early Pay today, and payday leaves it alone.
+        assert_eq!(
+            call(
+                e,
+                "POST",
+                "/api/me/payouts/early",
+                Some(&token),
+                json!({"method": "standard"})
+            )
+            .await
+            .0,
+            StatusCode::CONFLICT
+        );
+        // Five minutes on, the jobs loop finishes it: the made transfer is found, the missing one sent.
+        sqlx::query("UPDATE payout_runs SET created_at=now()-interval '10 minutes' WHERE id=$1")
+            .bind(&run)
+            .execute(&e.app.db)
+            .await
+            .unwrap();
+        sver::payouts::resume(&e.app).await.unwrap();
+        sver::payouts::resume(&e.app).await.unwrap();
+        let status: String = sqlx::query_scalar("SELECT status FROM payout_runs WHERE id=$1")
+            .bind(&run)
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "paid");
+        assert_eq!(transfers_for(&run), 1, "exactly one transfer for the run");
+        assert_eq!(earnings(e, who).await, 10_000 - 7_500, "posted once");
+    }
+
     // ---- A merged co-stream pools money among its live members ----
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,alert_state)
         VALUES('rt-l1','rt-owner','rt-l1',1,'LIVE','s','v','c',now()-interval '5 minutes',now(),now(),'skipped'),('rt-l2','rt-mate','rt-l2',1,'LIVE','s','v','c',now()-interval '5 minutes',now(),now(),'skipped')").await;
@@ -299,9 +378,35 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{set}");
+    // A new link waits for staff: until it's approved, viewers see no banner, label or button.
+    assert_eq!(set["link"]["status"], "pending", "{set}");
+    assert_eq!(set["streams"], json!([]));
+    {
+        let mut db = e.app.db.acquire().await.unwrap();
+        let channel = sver::shine::channel(&mut db, "rt-owner").await.unwrap();
+        assert!(channel["live"].is_null(), "{channel}");
+    }
+    let admin = staff(e, "rt-staff", "RtStaff").await;
+    let link = |action: &str, note: &str| {
+        let body = json!({"url": "https://redcross.example/give", "action": action, "note": note});
+        let token = admin.clone();
+        async move {
+            call(e, "POST", "/api/admin/shine/links", Some(&token), body)
+                .await
+                .0
+        }
+    };
+    assert_eq!(
+        link("reject", "").await,
+        StatusCode::BAD_REQUEST,
+        "a reason is required"
+    );
+    assert_eq!(link("approve", "").await, StatusCode::OK);
+    let (_, set) = call(e, "GET", "/api/me/shine", Some(&owner), Value::Null).await;
+    assert_eq!(set["link"]["status"], "approved");
     assert_eq!(
         set["streams"][0]["live"], true,
-        "the live stream became a charity stream"
+        "approval makes the live stream a charity stream at once"
     );
     let charity = set["streams"][0]["id"].as_str().unwrap().to_string();
     {
@@ -325,7 +430,6 @@ pub async fn exercise(e: &Env) {
     let (status, submitted) = call(e, "POST", &submit_path, Some(&owner), raised).await;
     assert_eq!(status, StatusCode::OK, "{submitted}");
     assert_eq!(submitted["streams"][0]["status"], "submitted");
-    let admin = staff(e, "rt-staff", "RtStaff").await;
     let (_, queue) = call(e, "GET", "/api/admin/shine", Some(&admin), Value::Null).await;
     assert!(
         queue["items"]
@@ -347,6 +451,13 @@ pub async fn exercise(e: &Env) {
         .0,
         StatusCode::OK
     );
+    let told: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id='rt-owner' AND kind='good_works')",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert!(told, "the streamer hears the staff decision");
     {
         let mut db = e.app.db.acquire().await.unwrap();
         let channel = sver::shine::channel(&mut db, "rt-owner").await.unwrap();
@@ -381,6 +492,161 @@ pub async fn exercise(e: &Env) {
     let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM moderation_actions WHERE target_type='charity_stream' AND target_id=$1")
         .bind(&charity).fetch_one(&e.app.db).await.unwrap();
     assert_eq!(audited, 2);
+    // The streamer hears each decision.
+    let notices: Vec<String> = sqlx::query_scalar("SELECT payload->>'title' FROM notifications WHERE user_id='rt-owner' AND kind='good_works' ORDER BY created_at")
+        .fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(
+        notices,
+        [
+            "Charity link approved",
+            "Good Works badge added",
+            "Good Works badge removed"
+        ]
+    );
+    // An approved link works at once for anyone; a rejected one shows the streamer why.
+    let (_, mate_set) = call(
+        e,
+        "PUT",
+        "/api/me/shine",
+        Some(&mate),
+        json!({"charity_name": "Red Cross", "charity_url": "https://redcross.example/give"}),
+    )
+    .await;
+    assert_eq!(mate_set["link"]["status"], "approved", "{mate_set}");
+    call(
+        e,
+        "PUT",
+        "/api/me/shine",
+        Some(&mate),
+        json!({"charity_name": "Totally Real Fund", "charity_url": "https://fund.example/pay"}),
+    )
+    .await;
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/admin/shine/links",
+        Some(&admin),
+        json!({"url": "https://fund.example/pay", "action": "reject", "note": "Not a registered charity's page"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, mate_set) = call(e, "GET", "/api/me/shine", Some(&mate), Value::Null).await;
+    assert_eq!(
+        (&mate_set["link"]["status"], &mate_set["link"]["note"]),
+        (
+            &json!("rejected"),
+            &json!("Not a registered charity's page")
+        )
+    );
+
+    // ---- An integrity hold stops payday and Early Pay until staff lift it ----
+    let held = creator(e, "rt-held", "RtHeld").await;
+    e.sql("INSERT INTO ledger_transactions(id,kind,reference) VALUES('fund-rt-held','test','fund-rt-held')").await;
+    e.sql("INSERT INTO ledger_entries(transaction_id,account,unit,amount) VALUES('fund-rt-held','usd:earnings:rt-held','usd',10000),('fund-rt-held','usd:stripe','usd',-10000)").await;
+    e.sql("INSERT INTO integrity_cases(id,broadcast_id,owner_id,evidence) VALUES('rt-held-case','rt-held-b','rt-held','{}')").await;
+    let hold = |on: bool| {
+        call(
+            e,
+            "POST",
+            "/api/admin/integrity/rt-held-case/hold",
+            Some(&admin),
+            json!({"hold": on, "note": "Reviewing paid traffic"}),
+        )
+    };
+    let early = || {
+        call(
+            e,
+            "POST",
+            "/api/me/payouts/early",
+            Some(&held),
+            json!({"method": "standard"}),
+        )
+    };
+    let runs = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM payout_runs WHERE user_id='rt-held'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    // Held while the case is open.
+    assert_eq!(hold(true).await.0, StatusCode::OK);
+    assert_eq!(early().await.0, StatusCode::FORBIDDEN);
+    let (_, s) = call(
+        e,
+        "GET",
+        "/api/me/payouts/summary",
+        Some(&held),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(s["held"], true);
+    // Still held once the case is closed as actioned: payday skips them.
+    let (status, decided) = call(
+        e,
+        "POST",
+        "/api/admin/integrity/rt-held-case/decision",
+        Some(&admin),
+        json!({"outcome": "action", "note": "Paid bot traffic", "hold_payouts": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{decided}");
+    let second = Utc.with_ymd_and_hms(2026, 10, 23, 16, 0, 0).unwrap();
+    sver::payouts::payday(&e.app, second).await.unwrap();
+    assert_eq!(early().await.0, StatusCode::FORBIDDEN);
+    assert_eq!(runs().await, 0, "a held creator is never paid");
+    // A run reserved before the hold whose transfer was never sent stays pending while held.
+    e.sql("INSERT INTO payout_runs(id,user_id,kind,amount_cents,fee_cents,created_at) VALUES('rt-held-run','rt-held','payday',100,0,now()-interval '10 minutes')").await;
+    let run_status = || async {
+        sqlx::query_scalar::<_, String>("SELECT status FROM payout_runs WHERE id='rt-held-run'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    sver::payouts::resume(&e.app).await.unwrap();
+    assert_eq!(
+        transfers_for("rt-held-run"),
+        0,
+        "resume sends nothing while held"
+    );
+    assert_eq!(run_status().await, "pending");
+    // Staff can't act on their own case while another admin can.
+    staff(e, "rt-staff2", "RtStaff2").await;
+    e.sql("INSERT INTO integrity_cases(id,broadcast_id,owner_id,evidence) VALUES('rt-own-case','rt-own-b','rt-staff','{}')").await;
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/admin/integrity/rt-own-case/hold",
+        Some(&admin),
+        json!({"hold": false, "note": "Mine"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // With a second case holding, lifting one still leaves them held.
+    e.sql("INSERT INTO integrity_cases(id,broadcast_id,owner_id,evidence,hold_payouts) VALUES('rt-held-case2','rt-held-b2','rt-held','{}',true)").await;
+    let (status, lifted) = hold(false).await;
+    assert_eq!(status, StatusCode::OK, "{lifted}");
+    assert_eq!(lifted["payouts_held"], true, "another case still holds");
+    assert_eq!(early().await.0, StatusCode::FORBIDDEN);
+    // Lifting the last hold (audited) pays them again, the resumed run included.
+    e.sql("UPDATE integrity_cases SET hold_payouts=false WHERE id='rt-held-case2'")
+        .await;
+    let (status, paid) = early().await;
+    assert_eq!(status, StatusCode::OK, "{paid}");
+    assert_eq!(paid["held"], false);
+    e.sql("UPDATE payout_runs SET attempted_at=NULL WHERE id='rt-held-run'")
+        .await;
+    sver::payouts::resume(&e.app).await.unwrap();
+    assert_eq!(run_status().await, "paid");
+    let third = Utc.with_ymd_and_hms(2026, 11, 6, 16, 0, 0).unwrap();
+    sver::payouts::payday(&e.app, third).await.unwrap();
+    assert_eq!(runs().await, 3, "the resumed run, Early Pay and payday");
+    assert_eq!(earnings(e, "rt-held").await, 0, "paid in full");
+    let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM moderation_actions WHERE action IN ('integrity_payouts_held','integrity_payouts_released') AND target_id='rt-held'")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(audited, 2);
+
     let unbalanced: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM (SELECT unit FROM ledger_entries GROUP BY unit HAVING sum(amount)<>0) u",
     )

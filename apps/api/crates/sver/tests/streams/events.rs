@@ -193,7 +193,8 @@ pub async fn exercise(e: &Env) {
             .len(),
         2
     );
-    e.app.chat.publish(
+    // Whispers come from the DM hub, not the chat bus.
+    e.app.dms.publish(
         "dm:stream-owner",
         None,
         1,

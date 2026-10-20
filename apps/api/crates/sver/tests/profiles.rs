@@ -332,6 +332,7 @@ async fn profiles_acceptance() {
             follows_council_and_blocks(&env).await;
             song(&env).await;
             wall(&env).await;
+            persona_pass(&env).await;
             studio_sections(&env, &media_dir).await;
             parity_additions(&env, &media_dir).await;
             parts_picker(&env).await;
@@ -419,8 +420,14 @@ async fn identity_and_channel(env: &Env, media_dir: &std::path::Path) {
     assert_eq!(channel["channel"]["display_name"], "Alice_Plays");
     assert_eq!(channel["viewer"]["signed_in"], false);
     assert!(channel["channel"].get("email").is_none());
-    // The Schedule tab always exists: an empty schedule is a 200 with no items, not a 404.
-    assert_eq!(channel["tabs"]["schedule"], true);
+    // Someone who has never streamed or set a schedule has no Schedule tab (docs/PROFILES.md
+    // "Persona pass"), but the schedule is still a 200 with no items, not a 404.
+    assert_eq!(channel["tabs"]["schedule"], false);
+    assert_eq!(
+        channel["channel"]["layout"], "persona",
+        "never streamed: persona first"
+    );
+    assert_eq!(channel["channel"]["home_order"][0], "about_me");
     let schedule = env
         .anon
         .ok("GET", "/api/channels/Alice_Plays/schedule", Value::Null)
@@ -1801,7 +1808,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         .clone();
     assert_eq!(
         header,
-        json!({"label": "Creator Page", "welcome": "Welcome to my page", "intro_title": "", "intro_body": "", "vibe": ""})
+        json!({"label": null, "welcome": null, "intro_title": "", "intro_body": "", "vibe": ""})
     );
     let mine = owner.ok("GET", "/api/me/header", Value::Null).await;
     let rev = mine["revision"].as_i64().unwrap();
@@ -1865,7 +1872,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         .ok("GET", "/api/channels/ParityHost", Value::Null)
         .await["header"]
         .clone();
-    assert_eq!(header["label"], "Creator Page", "blank means the default");
+    assert_eq!(header["label"], Value::Null, "blank shows no label");
     assert_eq!(header["intro_body"], "Kept");
 
     // P3: readiness steps, dismiss and restore, owner only.
@@ -4537,4 +4544,165 @@ fn text_rules() {
             || text::contains_url("visit https://example.com today")
     );
     assert!(!text::valid_mood("ab"));
+}
+
+/// The persona pass (docs/PROFILES.md "Persona pass", October 16, 2026): Currently, theme
+/// variants, Home order and layout, question blocks, stickers, first-to-sign and the visitor's
+/// relationship line.
+async fn persona_pass(env: &Env) {
+    let (owner_id, owner) = env.user("PersonaHost", true).await;
+    let (_, guest) = env.user("PersonaGuest", true).await;
+    sqlx::query("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES($1,'myria',now(),now())")
+        .bind(&owner_id)
+        .execute(&env.app.db)
+        .await
+        .unwrap();
+    let mine = owner.ok("GET", "/api/me/persona", Value::Null).await;
+    assert_eq!(mine["variants"], json!(["forge", "ash"]));
+    assert_eq!(mine["home_order"].as_array().unwrap().len(), 8);
+    // Another faction's variant, an unknown section or a made-up verb are refused.
+    for bad in [
+        json!({"theme_variant": "moon"}),
+        json!({"home_order": ["wall", "guestbook"]}),
+        json!({"currently_verb": "DANCING"}),
+    ] {
+        assert_eq!(
+            owner.status("PUT", "/api/me/persona", bad).await,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    owner
+        .ok(
+            "PUT",
+            "/api/me/persona",
+            json!({"theme_variant": "forge", "home_order": ["wall", "about_me"], "page_layout": "stream", "currently_verb": "PLAYING", "currently_text": "Celeste", "song_why": "It plays every reset"}),
+        )
+        .await;
+    let page = guest
+        .ok("GET", "/api/channels/PersonaHost", Value::Null)
+        .await;
+    let c = &page["channel"];
+    assert_eq!(c["theme_variant"], "forge");
+    assert_eq!(c["layout"], "stream");
+    assert_eq!(c["home_order"][0], "wall");
+    assert_eq!(c["home_order"][1], "about_me");
+    assert_eq!(
+        c["home_order"].as_array().unwrap().len(),
+        8,
+        "the rest follow"
+    );
+    assert_eq!(c["currently"]["label"], "Playing");
+    assert_eq!(c["currently"]["text"], "Celeste");
+    assert_eq!(c["song_why"], "It plays every reset");
+    assert_eq!(c["level"], 1);
+    assert!(c["title"].is_string());
+    assert_eq!(
+        page["tabs"]["videos"], false,
+        "no videos, no tab for visitors"
+    );
+
+    // Question blocks: a listed question, each once, shown on Home.
+    let blocks = owner.ok("GET", "/api/me/page-blocks", Value::Null).await;
+    let rev = blocks["revision"].clone();
+    assert_eq!(
+        owner
+            .status("PUT", "/api/me/blocks", json!({"revision": rev, "items": [{"type": "PROMPT", "config": {"question": "favorite_color", "answer": "Red"}}]}))
+            .await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        owner
+            .status(
+                "PUT",
+                "/api/me/blocks",
+                json!({"revision": rev, "items": [
+                {"type": "PROMPT", "config": {"question": "hot_take", "answer": "One"}},
+                {"type": "PROMPT", "config": {"question": "hot_take", "answer": "Two"}}]})
+            )
+            .await,
+        StatusCode::BAD_REQUEST,
+        "each question once"
+    );
+    owner
+        .ok("PUT", "/api/me/blocks", json!({"revision": rev, "items": [{"type": "PROMPT", "config": {"question": "hot_take", "answer": "Speedruns are art"}}]}))
+        .await;
+    let page = guest
+        .ok("GET", "/api/channels/PersonaHost", Value::Null)
+        .await;
+    assert_eq!(page["blocks"][0]["config"]["title"], "My hot take");
+    assert_eq!(page["blocks"][0]["config"]["answer"], "Speedruns are art");
+    // Saving the loaded block again (with its title) round-trips.
+    let loaded = owner.ok("GET", "/api/me/page-blocks", Value::Null).await;
+    owner
+        .ok(
+            "PUT",
+            "/api/me/blocks",
+            json!({"revision": loaded["revision"], "items": loaded["items"]}),
+        )
+        .await;
+
+    // Stickers from the fixed set only; the first signature by someone else is marked.
+    assert_eq!(
+        guest
+            .status(
+                "POST",
+                "/api/channels/PersonaHost/wall",
+                json!({"body": "hi", "sticker": "skull"})
+            )
+            .await,
+        StatusCode::BAD_REQUEST
+    );
+    owner
+        .ok(
+            "POST",
+            "/api/channels/PersonaHost/wall",
+            json!({"body": "Welcome!"}),
+        )
+        .await;
+    // Only the owner has posted: nobody is first to sign yet (and the page still loads).
+    let page = guest
+        .ok("GET", "/api/channels/PersonaHost", Value::Null)
+        .await;
+    assert_eq!(page["wall_preview"]["latest"][0]["first_to_sign"], false);
+    guest
+        .ok(
+            "POST",
+            "/api/channels/PersonaHost/wall",
+            json!({"body": "First!", "sticker": "torch"}),
+        )
+        .await;
+    let page = guest
+        .ok("GET", "/api/channels/PersonaHost", Value::Null)
+        .await;
+    let posts = page["wall_preview"]["latest"].as_array().unwrap();
+    let first = posts.iter().find(|p| p["body"] == "First!").unwrap();
+    assert_eq!(first["sticker"], "torch");
+    assert_eq!(first["first_to_sign"], true);
+    let own = posts.iter().find(|p| p["body"] == "Welcome!").unwrap();
+    assert_eq!(
+        own["first_to_sign"], false,
+        "the owner's own post never counts"
+    );
+
+    // The relationship line is about the visitor only.
+    guest
+        .ok("PUT", "/api/follows/PersonaHost", Value::Null)
+        .await;
+    let page = guest
+        .ok("GET", "/api/channels/PersonaHost", Value::Null)
+        .await;
+    let r = &page["viewer"]["relationship"];
+    assert!(r["following_since"].is_string(), "{r}");
+    assert!(
+        r["loyalty"].is_string(),
+        "following earns the follow bonus, so a loyalty rank shows"
+    );
+    assert_eq!(r["on_their_council"], false);
+    assert!(
+        owner
+            .ok("GET", "/api/channels/PersonaHost", Value::Null)
+            .await["viewer"]
+            .get("relationship")
+            .is_none()
+    );
 }

@@ -14,7 +14,7 @@ export function volumeMessages(provider: "youtube" | "soundcloud", volume: numbe
 
 /** Compact song card. The provider iframe is created only after the visitor clicks play; playback then starts
  *  at the owner's default volume. Nothing autoplays on page load (docs/PROFILES.md, "Profile song"). */
-export function SongPlayer({ song }: { song: NonNullable<Song> }) {
+export function SongPlayer({ song, why }: { song: NonNullable<Song>; why?: string }) {
   const [loaded, setLoaded] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -35,7 +35,7 @@ export function SongPlayer({ song }: { song: NonNullable<Song> }) {
       : <button type="button" className="song-start quiet" onClick={() => setLoaded(true)}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {song.thumbnail ? <img src={song.thumbnail} alt="" width={64} height={48} /> : <span className="song-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeLinecap="round"><path d="M4.5 9V2.5l5-1V8" /><circle cx="3.2" cy="9" r="1.3" /><circle cx="8.2" cy="8" r="1.3" /></svg></span>}
-        <span><strong>{title}</strong>{song.artist && <small>{song.artist}</small>}<small>Play on {song.provider === "youtube" ? "YouTube" : "SoundCloud"}</small></span>
+        <span><strong>{title}</strong>{song.artist && <small>{song.artist}</small>}{why && <small className="song-why">{why}</small>}<small className="song-play"><svg aria-hidden="true" width="10" height="10" viewBox="0 0 12 12"><path d="M3 2l7 4-7 4z" fill="currentColor" /></svg> Play</small></span>
       </button>}
   </section>;
 }

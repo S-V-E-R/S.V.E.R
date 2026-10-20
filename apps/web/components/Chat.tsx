@@ -73,6 +73,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
   }, [variant]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
+  const sending = useRef<{ id: string; body: string } | null>(null);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"connecting" | "live" | "polling">("connecting");
   const [role, setRole] = useState<string | null>(null);
@@ -134,6 +135,19 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     const timer = setInterval(() => { if (!document.hidden) void loadRole(); }, 15000);
     return () => clearInterval(timer);
   }, [role, loadRole]);
+  // The streamer's own chat says when a linked platform's chat is down (docs/LINKED_CHAT.md); never
+  // on the OBS overlay, which goes out on the video.
+  const [linkedDown, setLinkedDown] = useState<string[]>([]);
+  useEffect(() => {
+    if (role !== "owner" || squad || variant === "overlay") return;
+    const load = async () => {
+      const r = await send<{ accounts: { platform: string; enabled: boolean; status: string; detail: string | null }[] }>("GET", "/api/me/linked-chat/status");
+      if (r.ok) setLinkedDown(r.data.accounts.filter(a => a.enabled && (a.status === "reconnecting" || a.status === "revoked")).map(a => a.detail ?? `${PLATFORM_NAMES[a.platform] ?? a.platform} chat isn't connected.`));
+    };
+    void load();
+    const timer = setInterval(() => { if (!document.hidden) void load(); }, 30000);
+    return () => clearInterval(timer);
+  }, [role, squad, variant]);
   // Followers-only chat always ends by itself; clear the banner at its end time.
   useEffect(() => {
     if (!followersOnly) return;
@@ -156,11 +170,13 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     const fallback = () => {
       if (closed || poll) return;
       setMode("polling");
-      const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setAllowSignatures(r.data.allow_signatures ?? true); setGifs(r.data.gifs ?? null); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
+      const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setFollowersOnly(r.data.followers_only_until ?? null); setSubsOnly(!!r.data.subs_only); setAllowSignatures(r.data.allow_signatures ?? true); setGifs(r.data.gifs ?? null); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
       void load();
       poll = setInterval(() => { if (!document.hidden) void load(); }, 4000);
     };
-    const open = (attempt: number) => {
+    // Drops since the last good snapshot; a socket that keeps failing falls back to polling.
+    let attempt = 0;
+    const open = () => {
       const ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/chat/ws?${squad ? `squad=${encodeURIComponent(squad)}` : `channel=${encodeURIComponent(username)}`}`);
       socket.current = ws;
       let opened = false;
@@ -168,29 +184,33 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       ws.onmessage = event => {
         if (closed) return;
         const data = JSON.parse(event.data) as Event;
-        if (data.type === "snapshot") { merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); }
+        if (data.type === "snapshot") { attempt = 0; merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); }
         else if (data.type === "protect") setFollowersOnly(data.until);
         else if (data.type === "subs_only") setSubsOnly(data.on);
         else if (data.type === "emotes") { setEmotes(data.emotes); setEmotesVersion(v => v + 1); }
         else if (data.type === "pin") setPinned(data.pinned);
-        else if (data.type === "message" || data.type === "ack") merge([data.message]);
+        else if (data.type === "message" || data.type === "ack") {
+          merge([data.message]);
+          // The draft is cleared only once the server has the message (unless it was edited since).
+          if (data.type === "ack" && sending.current?.id === data.id) { const body = sending.current.body; setDraft(d => d === body ? "" : d); setReply(null); sending.current = null; }
+        }
         else if (data.type === "delete") remove(data.id);
         // The player on this page runs the raid countdown (LivePlayer listens for this).
         else if (data.type === "raid" || data.type === "raid_cancelled") window.dispatchEvent(new CustomEvent("sver:raid", { detail: { channel: username.toLowerCase(), raid: data.type === "raid" ? data.raid : null } }));
         // Board presses, joystick moves, board changes, polls and counters go to the player's effects and the CrowdSync panels.
         else if (data.type === "board_effect" || data.type === "board_input" || data.type === "board" || data.type === "poll" || data.type === "counters" || data.type === "rally" || data.type === "surge" || data.type === "board_state" || data.type === "board_result") window.dispatchEvent(new CustomEvent("sver:board", { detail: { channel: username.toLowerCase(), event: data } }));
         else if (data.type === "system") setNotice(data.text);
-        else setError(data.message);
+        else { if (data.id && sending.current?.id === data.id) sending.current = null; setError(data.message); }
       };
       ws.onclose = () => {
         socket.current = null;
         if (closed) return;
         // Never connected: fall back to polling. Dropped (including a server resync): reconnect and reload.
         if (!opened || attempt >= 5) fallback();
-        else { setMode("connecting"); retry = setTimeout(() => open(attempt + 1), 1000 * (attempt + 1)); }
+        else { attempt += 1; setMode("connecting"); retry = setTimeout(open, 1000 * attempt); }
       };
     };
-    open(0);
+    open();
     return () => { closed = true; clearInterval(poll); clearTimeout(retry); socket.current?.close(); };
   }, [path, username, squad, merge, remove]);
 
@@ -289,8 +309,9 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     const command = { id: crypto.randomUUID(), body, reply_to: reply?.id, ...(tribute ? { tribute } : {}), ...(highlight !== null ? { highlight: true } : {}) };
     // Tributes go over HTTP so a refusal (balance, channel can't earn) shows before anything moves.
     if (!pinDraft && !tribute && highlight === null && socket.current?.readyState === WebSocket.OPEN) {
+      // Kept until the ack, so a refusal (slow mode, rate) or a dropped socket doesn't lose the text.
+      sending.current = { id: command.id, body: draft };
       socket.current.send(JSON.stringify(command));
-      setDraft(""); setReply(null);
       return;
     }
     setBusy(true);
@@ -339,6 +360,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       {canPin && <button type="button" className="small quiet" onClick={() => changePin(null)}>Unpin</button>}
     </aside>}
     {notice && <p className="chat-system" role="status">{notice}</p>}
+    {linkedDown.map(text => <p key={text} className="chat-system" role="status">{text} <Link href="/studio/linked-chat">Linked chat settings</Link></p>)}
     {followersOnly && <p className="chat-system" role="status">Followers-only chat until {time(followersOnly)} (followers of at least 10 minutes can chat).{canPin && <> <button type="button" className="small quiet" onClick={() => protect(false)}>End now</button></>}</p>}
     {subsOnly ? <p className="chat-system" role="status">Subscriber-only chat.{canPin && <> <button type="button" className="small quiet" onClick={() => limitToSubs(false)}>Open to everyone</button></>}</p>
       : canPin && <p className="chat-system"><button type="button" className="small quiet" onClick={() => limitToSubs(true)}>Subscriber-only chat</button></p>}
@@ -362,6 +384,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute")}>Mute here for this stream</button>
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute-forever")}>Mute here permanently</button>
         </div></details>}
+        {account && role !== "owner" && <> <ReportButton target={{ target_type: "outside_message", target_id: m.id }} /></>}
       </li> : <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
         {m.skill && <span className="badge skill-badge">✨ {m.skill}</span>}
@@ -376,7 +399,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
         {m.author.username ? <PlayerCardButton username={m.author.username} className="chip-button faction-name chat-name" data={{ faction: m.author.faction ?? undefined, style: m.author.name_style ?? undefined, supporter: m.supporter?.tier }} title={`${LOYALTY[m.loyalty ?? 0]} in this channel`}><strong>{m.author.display_name}</strong></PlayerCardButton> : <strong>{m.author.display_name}</strong>}
-        {m.creator_tier ? <span className="badge tier-badge" title="Creator tier">{CREATOR_TIERS[m.creator_tier]}</span> : null}
+        {m.creator_tier ? <a href="/help/creator-tiers" target="_blank" rel="noopener" className="badge tier-badge" title={`${CREATOR_TIERS[m.creator_tier]} creator tier: see every tier`}>{CREATOR_TIERS[m.creator_tier]}</a> : null}
         {m.supporter && <SupporterBadge tier={m.supporter.tier} monthsSupported={m.supporter.months} />}
         {m.supporter?.founder ? <FounderMark number={m.supporter.founder} /> : null}
         {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber`}>{subBadge(m.sub.months)}</span>}
@@ -410,8 +433,8 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       {gifs && picking && <GifPicker access={gifs} account={account} onPick={sendGif} onClose={() => setPicking(false)} />}
       {canPin && <button type="button" className="quiet small" disabled={busy || !draft.trim()} onClick={event => submit(event, true)}>Send and pin</button>}
       {error && <p role="alert" className="error">{error}</p>}
-    </form> : <p className="muted"><Link href="/login">Sign in</Link> to chat.</p>}
-    <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
-      onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 500)); input.current?.focus(); }} />
+    </form> : <p className="chat-signin panel"><Link href="/login">Log in</Link> or <Link href="/signup">enlist</Link> to chat.</p>}
+    {account && <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
+      onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 500)); input.current?.focus(); }} />}
   </section>;
 }

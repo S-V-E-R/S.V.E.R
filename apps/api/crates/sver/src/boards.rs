@@ -164,12 +164,17 @@ pub fn validate(board: &Board) -> Res<()> {
         return Err(Fail::bad("A board has 1 to 4 screens."));
     }
     let mut ids = HashSet::new();
+    let mut names = HashSet::new();
     for screen in &board.screens {
         let name = screen.name.trim();
         if !(1..=30).contains(&name.chars().count()) {
             return Err(Fail::bad("Screen names are 1–30 characters."));
         }
         text::filter(name, "name")?;
+        // Groups route to a screen by name, so each name is unique.
+        if !names.insert(name.to_lowercase()) {
+            return Err(Fail::bad("Each screen needs its own name."));
+        }
         if screen.controls.len() > MAX_CONTROLS {
             return Err(Fail::bad("A screen has up to 24 controls."));
         }
@@ -804,7 +809,7 @@ async fn view(
     .bind(&channel)
     .fetch_one(&app.db)
     .await?;
-    let used: Value = sqlx::query_scalar("SELECT coalesce(jsonb_object_agg(control_id,n),'{}') FROM (SELECT control_id,count(*) AS n FROM board_presses WHERE channel_id=$1 AND broadcast_id=$2 GROUP BY 1) u")
+    let used: Value = sqlx::query_scalar("SELECT coalesce(jsonb_object_agg(control_id,n),'{}') FROM (SELECT control_id,count(*) AS n FROM board_presses WHERE channel_id=$1 AND broadcast_id=$2 AND outcome IS DISTINCT FROM 'released' GROUP BY 1) u")
         .bind(&channel)
         .bind(live.as_ref().map(|l| &l.0))
         .fetch_one(&app.db)
@@ -956,7 +961,7 @@ async fn press(
         return Ok(Json(json!({"repeat": true})));
     }
     if control.cooldown_seconds > 0 {
-        let ready: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT max(created_at)+make_interval(secs=>$4) FROM board_presses WHERE channel_id=$1 AND user_id=$2 AND control_id=$3")
+        let ready: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT max(created_at)+make_interval(secs=>$4) FROM board_presses WHERE channel_id=$1 AND user_id=$2 AND control_id=$3 AND outcome IS DISTINCT FROM 'released'")
             .bind(&channel).bind(&user.id).bind(&control.id).bind(f64::from(control.cooldown_seconds))
             .fetch_one(&mut *tx).await?;
         if let Some(ready) = ready.filter(|r| *r > Utc::now()) {
@@ -1011,7 +1016,17 @@ async fn press(
     }
     // Last, so a press refused for cooldown or balance doesn't use a slot (the tx rolls back on Busy).
     within_cap(&app, &channel, row.input_cap).await?;
+    let balance: i64 = sqlx::query_scalar(
+        "SELECT coalesce((SELECT balance FROM engagement WHERE channel_id=$1 AND user_id=$2),0)",
+    )
+    .bind(&channel)
+    .bind(&user.id)
+    .fetch_one(&mut *tx)
+    .await?;
     tx.commit().await?;
+    // The press is committed and charged: what follows is best effort and never reported as a
+    // failure (the client would press again and be charged twice).
+    let after = async {
     crate::surge::participated(&mut *app.db.acquire().await?, &channel, &user.id).await?;
     // The effect plays once: in the video when the overlay is connected, otherwise over the player.
     let (played, image, audio) = media(&app, &channel, &control.effect).await?;
@@ -1019,19 +1034,17 @@ async fn press(
         "label": control.label, "effect": played, "image": image, "audio": audio, "user": author, "text": text, "goal": goal,
         "stream_ms": stream_ms, "at": at, "overlay": row.overlay}));
     // Live events never name under-18 accounts.
-    let minor = crate::support::age(&mut *app.db.acquire().await?, &user.id)
-        .await?
-        .is_some_and(|a| a < 18);
+    // A missing date of birth counts as under 18, as everywhere else.
+    let minor = !crate::auth::is_adult(&mut *app.db.acquire().await?, &user.id).await?;
     crate::events::emit_after(&app, &channel, "board", json!({"type": "press", "id": input.id, "control": control.id,
         "label": control.label, "effect": control.effect, "user": if minor { Value::Null } else { json!(user.username) },
         "text": text, "goal": goal, "held": control.confirm})).await?;
-    let balance: i64 = sqlx::query_scalar(
-        "SELECT coalesce((SELECT balance FROM engagement WHERE channel_id=$1 AND user_id=$2),0)",
-    )
-    .bind(&channel)
-    .bind(&user.id)
-    .fetch_one(&app.db)
-    .await?;
+    Ok::<_, Fail>(())
+    }
+    .await;
+    if after.is_err() {
+        eprintln!("board_event=press_after outcome=partial");
+    }
     Ok(Json(
         json!({"balance": balance, "goal": goal, "held": control.confirm}),
     ))
@@ -1423,28 +1436,38 @@ async fn overlay_session(app: App, channel: String, digest: String, mut ws: WebS
     }
     let mut beat = tokio::time::interval(Duration::from_secs(10));
     beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
+    let mut beat_ok = true;
+    while beat_ok {
         tokio::select! {
             _ = beat.tick() => {
                 // Check in (so pages stop drawing effects) and stop if the token was replaced.
                 let still = sqlx::query("UPDATE boards SET overlay_seen_at=now() WHERE channel_id=$1 AND overlay_token_hash=$2")
                     .bind(&channel).bind(&digest).execute(&app.db).await;
-                if !matches!(still, Ok(r) if r.rows_affected() == 1) { return; }
+                beat_ok = matches!(still, Ok(r) if r.rows_affected() == 1);
             }
             event = events.recv() => match event {
                 Ok(e) if forward(&e, &channel, &test_room) => {
-                    if ws.send(Message::Text(e.payload.to_string().into())).await.is_err() { return; }
+                    if ws.send(Message::Text(e.payload.to_string().into())).await.is_err() { break; }
                 }
                 Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             },
             incoming = ws.recv() => match incoming {
-                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
             },
         }
     }
+    // Closed: pages draw effects again at once instead of waiting out the 30-second window.
+    let _ = sqlx::query(
+        "UPDATE boards SET overlay_seen_at=NULL WHERE channel_id=$1 AND overlay_token_hash=$2",
+    )
+    .bind(&channel)
+    .bind(&digest)
+    .execute(&app.db)
+    .await;
 }
+
 fn forward(e: &Arc<Event>, channel: &str, test_room: &str) -> bool {
     (e.channel == channel || e.channel == test_room)
         && matches!(

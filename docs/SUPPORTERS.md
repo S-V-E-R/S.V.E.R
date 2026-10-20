@@ -30,7 +30,7 @@ This reverses the "paid platform supporter subscription" entry under "Considered
 
 ## Founders
 
-- **Who gets one:** the first **500** accounts to pay a Greycloak month each get a numbered Founder mark, #001 to #500, in the order their first payment settles.
+- **Who gets one:** the first **500** accounts to pay a Greycloak month each get a numbered Founder mark, #001 to #500, in the order their first payment settles. A Greycloak month means a new Greycloak subscription or a Greycloak renewal: an upgrade from Wolfsworn charges only the prorated difference, so it claims a spot at its first full Greycloak renewal (decided October 16, 2026, after the money review).
 - **It's kept for good:** the mark stays after cancelling or downgrading. It shows on the user card, the profile and the player card. In chat, it shows only while the person is subscribed at either tier.
 - **The count is public:** `/supporters` shows "312 of 500 Founder spots claimed" from real data. When all 500 are taken, the page reads "All 500 Founder spots are claimed", and Greycloak carries on without them.
 - **Refunds:** if the payment that claimed a spot is refunded or lost to a dispute, the mark is revoked. The next new Greycloak gets the lowest free number. A spot is never sold or transferred.

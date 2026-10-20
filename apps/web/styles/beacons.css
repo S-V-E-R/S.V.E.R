@@ -75,7 +75,7 @@
 }
 /* Faction tabs above the feed (docs/BEACONS.md "Faction tab"). */
 .beacon-tabs { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin: 0 0 8px; }
-.beacon-tabs a { padding: 4px 10px; border-radius: 999px; color: var(--muted); text-decoration: none; }
-.beacon-tabs a[aria-current="page"] { color: var(--text); background: var(--surface-2, rgba(255,255,255,.08)); }
+.beacon-tabs a { padding: 10px 12px; min-height: 44px; display: inline-flex; align-items: center; color: var(--ink-muted); text-decoration: none; border-bottom: 2px solid transparent; }
+.beacon-tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
 .beacon-comments { max-height: 60vh; overflow-y: auto; }
 .beacon-comments input { flex: 1; min-width: 0; }

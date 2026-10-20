@@ -22,8 +22,9 @@ export default async function Page({ params }: { params: Promise<{ faction: stri
   if (!data) return <section className="panel"><h1>{f.name}</h1><p>This hub could not be loaded. Please try again.</p></section>;
   return <div className="faction-hub" data-theme={faction}>
     <RefreshFaction />
-    <header className="hub-header frame"><Crest faction={faction} size={150} /><div><p className="eyebrow">{f.title}</p><h1>{f.name}</h1><p className="faction-creed">{f.creed}</p><p>{f.belief}</p><Link className="button quiet" href="/choose-faction">{data.is_member ? "Your allegiance" : `Join ${f.name}`}</Link></div></header>
+    <header className="hub-header frame"><Crest faction={faction} size={150} /><div><p className="eyebrow">{f.title}</p><h1>{f.name}</h1><p className="faction-creed">{f.creed}</p><p>{f.belief}</p><Link className="button quiet" href="/choose-faction">{data.is_member ? "Changing sides" : `Join ${f.name}`}</Link></div></header>
     <WarStanding war={data} />
+    <section><h2>Live with {f.name}</h2><p className="muted">Every channel gets a turn. Picks rotate every 30 seconds; viewer count does not set the order. <Link href={`/magnet/${faction}`}>Watch the {f.name} MAGNet channel</Link>, which moves between {f.name} streams on its own.</p>{data.live.length ? <StreamShelf streams={data.live} /> : <div className="empty-state"><p>No {f.name} streams are live right now.</p><p><Link href="/browse">Browse everything that&apos;s live</Link></p></div>}</section>
     <section className="hub-lore panel" aria-labelledby="lore-h"><h2 id="lore-h">The story of {f.name}</h2>
       <p className="lore-line">{f.line}</p><p>{f.lore}</p>
       <blockquote className="lore-telling"><p>&ldquo;{f.telling}&rdquo;</p><footer>{f.name}&rsquo;s telling of the Ashfall</footer></blockquote>
@@ -31,7 +32,6 @@ export default async function Page({ params }: { params: Promise<{ faction: stri
       <h3>Founders</h3><ul className="lore-founders">{f.founders.map(p => <li key={p.name}><strong>{p.name}</strong> {p.story}</li>)}</ul>
       <p className="muted">{WORLD.line} <Link href="/factions#the-ashfall">Read about the Ashfall</Link></p>
     </section>
-    <section><h2>Live with {f.name}</h2><p className="muted">Every channel gets a turn. Picks rotate every 30 seconds; viewer count does not set the order. <Link href={`/magnet/${faction}`}>Watch the {f.name} MAGNet channel</Link>, which moves between {f.name} streams on its own.</p>{data.live.length ? <StreamShelf streams={data.live} /> : <p className="panel">No faction streams are live right now.</p>}</section>
     <section><h2>{f.name} clips and Beacons</h2><p className="muted">Made by {f.name} channels; each keeps the faction it was made under.</p>{clips.data?.clips.length ? <VideoGrid items={clips.data.clips} /> : <p className="panel">No clips from {f.name} channels yet.</p>}<Link href={`/beacons?faction=${faction}`}>Watch {f.name} Beacons</Link></section>
     <section><h2>Contributions</h2><div className="contribution-columns">{([["This week", data.weekly_leaders], ["This season", data.season_leaders]] as const).map(([label, leaders]) => <div className="panel" key={label}><h3>{label}</h3>{leaders.length ? <ol className="faction-leaders">{leaders.map(l => <li key={l.user.username}><UserChip user={l.user} /><strong>{l.influence.toLocaleString()}<small> influence</small></strong></li>)}</ol> : <p>No contributions yet.</p>}</div>)}</div><p className="muted">Influence belongs to the faction you represented when you earned it.</p></section>
     <section><h2>Genre standings</h2><GenreBoard genres={data.genres} /><Link href="/war-map">View the full war map</Link></section>

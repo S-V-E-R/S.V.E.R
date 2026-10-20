@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { PlayerEffects } from "./BoardEffects";
@@ -10,12 +11,13 @@ import { RecordedPlayer } from "./RecordedPlayer";
 import { LiveVideoTools } from "./LiveVideoTools";
 import { PlayerSettings, Uptime } from "./PlayerSettings";
 import { CaptionOverlay, type CaptionStyle } from "./CaptionOverlay";
+import { AdBreak } from "./Ads";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string; mature?: boolean } };
 type Live =
   | { live: false; hosting?: { username: string; display_name: string } }
-  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; started_at: string; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean; caption_style?: CaptionStyle };
+  | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; started_at: string; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean; caption_style?: CaptionStyle; ad_break?: { id: string; ends_at: string } | null };
 type Phase = "loading" | "playing" | "reconnecting" | "blocked" | "failed";
 
 let cachedBrowserId = "";
@@ -71,7 +73,7 @@ async function startWebRtc(video: HTMLVideoElement, url: string, onFatal: () => 
   pc.onconnectionstatechange = () => { if (pc.connectionState === "failed" || pc.connectionState === "disconnected") onFatal(); };
   try {
     await pc.setLocalDescription(await pc.createOffer());
-    const response = await fetch(url, { method: "POST", body: pc.localDescription?.sdp, headers: { "Content-Type": "application/sdp" } });
+    const response = await fetch(url, { method: "POST", body: pc.localDescription?.sdp, headers: { "Content-Type": "application/sdp" }, signal: AbortSignal.timeout(8000) });
     if (!response.ok) throw new Error("WebRTC playback was refused.");
     await pc.setRemoteDescription({ type: "answer", sdp: await response.text() });
   } catch (error) {
@@ -115,6 +117,7 @@ function playingWithin(video: HTMLVideoElement, ms: number) {
  * Uses native controls for keyboard, fullscreen, volume and captions.
  */
 export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, muted, onUnmute, followRaids = true, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; muted?: boolean; onUnmute?: () => void; followRaids?: boolean; children?: React.ReactNode }) {
+  const router = useRouter();
   const [live, setLive] = useState<Live | null>(null);
   const [lastRaid, setLastRaid] = useState<Raid | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
@@ -130,6 +133,15 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   // turning them on plays the stream over HLS, a few seconds further behind live.
   const captionsOn = useSyncExternalStore(onCaptions, captionsPreferred, () => false);
   const video = useRef<HTMLVideoElement>(null);
+  // During a streamer's ad break the stream keeps playing behind the ad, muted (docs/ADVERTISERS.md).
+  const [adOn, setAdOn] = useState(false);
+  useEffect(() => {
+    const element = video.current;
+    if (!element || !adOn) return;
+    const was = element.muted;
+    element.muted = true;
+    return () => { element.muted = was; };
+  }, [adOn]);
   // Guests pass a security check once per session before they count (viewer integrity).
   const [sitekey, setSitekey] = useState<string | null>(null);
   const token = useRef("");
@@ -175,7 +187,8 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const preferred = live?.live ? live.playback?.preferred ?? null : null;
   const isOwner = live?.live ? live.is_owner : false;
   const captioned = !!(live?.live && live.captions);
-  const wantCaptions = captioned && captionsOn;
+  // Captions come on for an ad break, so muted viewers keep following along (docs/ADS.md).
+  const wantCaptions = captioned && (captionsOn || adOn);
   const accepted = useSyncExternalStore(onMature, () => matureAccepted(username, !!signedIn), () => false);
   // A labeled stream waits behind the warning: nothing plays until the viewer chooses Watch.
   const warning = !!(live?.live && live.mature && live.mature_warn !== false && !live.is_owner && !accepted);
@@ -294,17 +307,20 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     </div>;
     return <>{counting ? raidBar : ended && !nested && <UpNext username={username} focused={focused} />}{children}</>;
   }
-  if (live.mature_blocked) return <div className="live-player"><p className="panel" role="status">This stream is labeled mature, so it isn&apos;t available on your account.</p>{!nested && <UpNext username={username} focused={focused} />}</div>;
+  // What's on shows whatever the player can do: title, category, LIVE and uptime.
+  const meta = <div className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching · <Uptime since={live.started_at} /></span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>}</div>;
+  if (live.mature_blocked) return <div className="live-player"><p className="panel" role="status">This stream is labeled mature, so it isn&apos;t available on your account.</p>{meta}{!nested && <UpNext username={username} focused={focused} />}</div>;
   if (warning) return <div className="live-player"><div className="panel mature-warning" role="dialog" aria-label="Mature stream">
     <p><span className="chip mature-tag">Mature</span> <strong>{live.title}</strong> is labeled mature: it may include violent or horror games, strong language or mature themes.</p>
-    <div className="row"><button type="button" onClick={() => acceptMature(username, !!signedIn)}>Watch</button><button type="button" className="quiet" onClick={() => history.back()}>Go back</button></div>
+    <div className="row"><button type="button" onClick={() => acceptMature(username, !!signedIn)}>Watch</button><button type="button" className="quiet" onClick={() => history.length > 1 ? history.back() : router.push("/")}>Go back</button></div>
   </div></div>;
-  if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p></div>;
+  if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p>{meta}</div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
-  return <div className={focused ? "live-player focused" : "live-player"}>
+  return <div className={`live-player${focused ? " focused" : ""}${adOn ? " ad-on" : ""}`}>
     {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} onPause={() => setPaused(true)} onPlay={() => setPaused(false)} aria-label={`${live.title}, live`} />}
     {!rewind && <PlayerEffects username={username} video={video} transport={transport} />}
     {!rewind && status && <p className="player-status" role="status">{status}</p>}
+    {!rewind && live.ad_break && !live.is_owner && <AdBreak key={live.ad_break.id} username={username} endsAt={live.ad_break.ends_at} muted={!!muted || autoMuted} signedIn={!!signedIn} captioned={!!captioned} onActive={setAdOn} />}
     {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
     {!rewind && paused && phase === "playing" && <button type="button" className="player-action" onClick={() => {
       const element = video.current;
@@ -320,7 +336,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} size={nested ? "compact" : "normal"} />}
     {raidBar}
-    <div className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching</span> <Uptime since={live.started_at} /> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>}
+    <div className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching · <Uptime since={live.started_at} /></span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>}
       {!rewind && <PlayerSettings username={username} broadcast={live.broadcast_id} video={video} transport={transport} browserId={browserId} />}
       {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</div>
   </div>;

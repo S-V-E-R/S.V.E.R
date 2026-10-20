@@ -439,6 +439,13 @@ pub enum Kind {
     WallTile,
     /// Not an image: only its upload limit is used (overlays.rs transcodes sounds).
     AlertSound,
+    /// Ad pictures (docs/ADVERTISERS.md): 16:9 for site placements, 9:16 for feed cards.
+    AdLandscape,
+    AdPortrait,
+    /// Not an image: an ad video, normalized by adnet.rs; only its name and limit are used here.
+    AdVideo,
+    /// Category cover art at 3:4 (streams/catalog/art.rs), fetched or uploaded by staff.
+    CategoryArt,
 }
 impl Kind {
     pub fn name(self) -> &'static str {
@@ -453,12 +460,21 @@ impl Kind {
             Kind::AlertImage => "alert_image",
             Kind::WallTile => "wall_tile",
             Kind::AlertSound => "alert_sound",
+            Kind::AdLandscape | Kind::AdPortrait => "ad_image",
+            Kind::AdVideo => "ad_video",
+            Kind::CategoryArt => "category_art",
         }
     }
     pub fn max_bytes(self) -> usize {
         match self {
-            Kind::Avatar | Kind::FanArt | Kind::SetupPhoto | Kind::WallTile => 5 * 1024 * 1024,
-            Kind::Banner => 10 * 1024 * 1024,
+            Kind::Avatar
+            | Kind::FanArt
+            | Kind::SetupPhoto
+            | Kind::WallTile
+            | Kind::AdLandscape
+            | Kind::AdPortrait => 5 * 1024 * 1024,
+            Kind::AdVideo => 11 * 1024 * 1024,
+            Kind::Banner | Kind::CategoryArt => 10 * 1024 * 1024,
             Kind::SponsorLogo => 2 * 1024 * 1024,
             Kind::SongThumb => 5 * 1024 * 1024,
             Kind::Emote | Kind::AlertSound => 1024 * 1024,
@@ -479,6 +495,9 @@ impl Kind {
                 Kind::AlertImage => "Alert images can be up to 2 MB.",
                 Kind::WallTile => "Wall pictures can be up to 5 MB.",
                 Kind::AlertSound => "Alert sounds can be up to 1 MB.",
+                Kind::AdLandscape | Kind::AdPortrait => "Ad pictures can be up to 5 MB.",
+                Kind::AdVideo => "Ad videos can be up to 11 MB.",
+                Kind::CategoryArt => "Category art can be up to 10 MB.",
             },
         )
     }
@@ -707,7 +726,84 @@ pub fn process(bytes: &[u8], kind: Kind, crop: Option<Crop>) -> Res<Processed> {
                 })
             }
         }
-        Kind::AlertSound => Err(Fail::bad("That isn't an image.")),
+        Kind::AlertSound | Kind::AdVideo => Err(Fail::bad("That isn't an image.")),
+        Kind::CategoryArt => {
+            // Centered 3:4; box art is usually 2:3, so a little of the top and bottom goes.
+            let crop = centered(width, height, 0.75);
+            if crop.width < CATEGORY_ART_WIDTHS[0] {
+                return Err(Fail::field(
+                    "file",
+                    "Use a picture at least 300 by 400 pixels.",
+                ));
+            }
+            let prefix = format!("categories/{}", content_hash(bytes, kind, &crop));
+            let cropped = image.crop_imm(crop.x, crop.y, crop.width, crop.height);
+            let mut variants = Vec::new();
+            // Never upscaled past the smallest size.
+            for w in CATEGORY_ART_WIDTHS {
+                if w > crop.width && w != CATEGORY_ART_WIDTHS[0] {
+                    break;
+                }
+                let resized = cropped.resize_exact(w, w * 4 / 3, FilterType::Lanczos3);
+                variants.push(Variant {
+                    key: format!("{prefix}/{w}.webp"),
+                    bytes: encode(&resized)?,
+                    width: w,
+                    height: w * 4 / 3,
+                });
+            }
+            let largest = variants.last().map_or(0, |v| v.width);
+            Ok(Processed {
+                stored: format!("{prefix}@{largest}"),
+                variants,
+                fingerprints,
+            })
+        }
+        Kind::AdLandscape | Kind::AdPortrait => {
+            let landscape = kind == Kind::AdLandscape;
+            let (across, down, widths) = if landscape {
+                (16, 9, crate::adnet::LANDSCAPE_WIDTHS)
+            } else {
+                (9, 16, crate::adnet::PORTRAIT_WIDTHS)
+            };
+            let largest = widths[widths.len() - 1];
+            let off_ratio =
+                (f64::from(width) * f64::from(down) - f64::from(height) * f64::from(across)).abs()
+                    > f64::from(height) * f64::from(across) * 0.01;
+            if width < largest || off_ratio {
+                return Err(Fail::field(
+                    "file",
+                    if landscape {
+                        "Use a 16:9 picture at least 1280 by 720 pixels."
+                    } else {
+                        "Use a 9:16 picture at least 720 by 1280 pixels."
+                    },
+                ));
+            }
+            let crop = Crop {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+            let prefix = format!("ads/{}", content_hash(bytes, kind, &crop));
+            let mut variants = Vec::new();
+            for w in widths {
+                let h = w * down / across;
+                let resized = image.resize_exact(*w, h, FilterType::Lanczos3);
+                variants.push(Variant {
+                    key: format!("{prefix}/{w}.webp"),
+                    bytes: encode(&resized)?,
+                    width: *w,
+                    height: h,
+                });
+            }
+            Ok(Processed {
+                stored: format!("{prefix}@{largest}"),
+                variants,
+                fingerprints,
+            })
+        }
         Kind::WallTile => {
             if width != height || width < 100 {
                 return Err(Fail::field(
@@ -858,6 +954,17 @@ pub async fn process_async(bytes: Vec<u8>, kind: Kind, crop: Option<Crop>) -> Re
         .map_err(|_| Fail::internal())?
 }
 
+/// Category art widths (3:4), served as `categories/{hash}/{width}.webp`.
+pub const CATEGORY_ART_WIDTHS: [u32; 2] = [300, 600];
+
+/// Public media is WebP images, plus MP4 video for ads.
+fn content_type(key: &str) -> &'static str {
+    if key.ends_with(".mp4") {
+        "video/mp4"
+    } else {
+        "image/webp"
+    }
+}
 /// Uploads every variant before the database change commits. On failure, removes what it wrote.
 pub async fn store(app: &App, processed: &Processed) -> Res<()> {
     let mut tx = app.db.begin().await?;
@@ -868,7 +975,13 @@ pub async fn store(app: &App, processed: &Processed) -> Res<()> {
             .config
             .media
             .storage
-            .put(&app.http, &variant.key, variant.bytes.clone())
+            .put_typed(
+                &app.http,
+                &variant.key,
+                variant.bytes.clone(),
+                content_type(&variant.key),
+                "public, max-age=31536000, immutable",
+            )
             .await
         {
             for key in written {
@@ -887,6 +1000,15 @@ pub async fn store(app: &App, processed: &Processed) -> Res<()> {
 pub async fn record(
     db: &mut PgConnection,
     owner: &str,
+    kind: Kind,
+    processed: &Processed,
+) -> Res<()> {
+    record_as(db, Some(owner), kind, processed).await
+}
+/// `record`, with `None` for site-owned files such as category art.
+pub async fn record_as(
+    db: &mut PgConnection,
+    owner: Option<&str>,
     kind: Kind,
     processed: &Processed,
 ) -> Res<()> {
@@ -1110,7 +1232,7 @@ pub async fn serve_local(State(app): State<App>, Path(key): Path<String>) -> Res
     match tokio::fs::read(dir.join(&key)).await {
         Ok(bytes) => (
             [
-                (header::CONTENT_TYPE, "image/webp"),
+                (header::CONTENT_TYPE, content_type(&key)),
                 (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
                 (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
             ],

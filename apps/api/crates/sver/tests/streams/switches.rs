@@ -30,7 +30,14 @@ pub async fn exercise(e: &Env) {
     let (status, view) = flip(true, json!("Spam wave")).await;
     assert_eq!(status, StatusCode::OK, "{view}");
     let (_, site) = call(e, "GET", "/api/site", None, Value::Null).await;
-    assert_eq!(site["paused"][0]["name"], "dms");
+    // Launch gates such as ad sales start off, so DMs joins the list rather than leading it.
+    assert!(
+        site["paused"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "dms")
+    );
     let (status, refused) = call(
         e,
         "POST",
@@ -51,9 +58,12 @@ pub async fn exercise(e: &Env) {
         .fetch_one(&e.app.db).await.unwrap();
     assert_eq!(audited, 1);
     assert_eq!(flip(false, json!("Over")).await.0, StatusCode::OK);
-    assert_eq!(
-        call(e, "GET", "/api/site", None, Value::Null).await.1["paused"],
-        json!([])
+    assert!(
+        !call(e, "GET", "/api/site", None, Value::Null).await.1["paused"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "dms")
     );
 
     // Sign-ups: no new account while it's off.

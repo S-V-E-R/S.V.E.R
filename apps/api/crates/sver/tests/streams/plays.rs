@@ -45,10 +45,36 @@ pub async fn exercise(e: &Env) {
         bridge(e, &sver::security::token(), true).await.0,
         StatusCode::NOT_FOUND
     );
-    assert_eq!(bridge(e, &key, true).await.0, StatusCode::OK);
+    // Only someone watching votes or keeps the AI off: the viewer has a counted session; a
+    // verified account without one, and a counted guest, don't.
+    let lurker = person(e, "plays-lurker", "GameLurker", true).await;
+    e.sql("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level,signed_in,verified) VALUES('plays-broadcast','u:plays-viewer',now()+interval '1 hour','counted',true,true),('plays-broadcast','b:plays-guest',now()+interval '1 hour','counted',false,false)").await;
+    let first = bridge(e, &key, true).await;
+    assert_eq!(first.0, StatusCode::OK);
+    assert_eq!(first.1["viewers"], 1, "guests never keep the AI off");
     let state = call(e, "GET", path, None, Value::Null).await.1;
     assert_eq!(state["connected"], true);
     assert_eq!(state["can_vote"], false);
+    let lurking = call(e, "GET", path, Some(&lurker), Value::Null).await.1;
+    assert_eq!(lurking["can_vote"], false);
+    assert!(lurking["why"].as_str().unwrap().contains("watching"));
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            path,
+            Some(&lurker),
+            json!({"command":"up","round":lurking["round"]})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN,
+        "a verified account that isn't watching can't vote"
+    );
+    assert_eq!(
+        call(e, "GET", path, Some(&viewer), Value::Null).await.1["can_vote"],
+        true
+    );
     assert!(!state.to_string().contains(&key));
     assert!(!state.to_string().contains("bridge_hash"));
     let vote = json!({"command":"up","round":state["round"]});
@@ -260,6 +286,6 @@ pub async fn exercise(e: &Env) {
         .await;
     assert_eq!(bridge(e, &key, true).await.1["live"], false);
     e.sql("DELETE FROM plays_runtime").await;
-    e.sql("DELETE FROM users WHERE id IN ('plays-host','plays-viewer','plays-unverified')")
+    e.sql("DELETE FROM users WHERE id IN ('plays-host','plays-viewer','plays-unverified','plays-lurker')")
         .await;
 }

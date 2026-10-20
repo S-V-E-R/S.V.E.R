@@ -5,6 +5,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 import { GamePicker } from "../../../components/GamePicker";
+import { StudioAds } from "../../../components/Ads";
 
 /** A new channel's language defaults to the browser's (then "other"). */
 const defaultLanguage = () => fromBrowser(typeof navigator === "undefined" ? [] : navigator.languages)[0] ?? "other";
@@ -62,7 +63,9 @@ export default function StreamStudio() {
       pending = true;
       try { await load(); } finally { pending = false; }
     }, 5000);
-    const hide = () => { if (document.hidden) { secretEpoch.current++; setSecret(null); setPassword(""); setCode(""); } };
+    // Only the shown key hides when the tab does; typed password and code stay, so a phone user can
+    // switch to their authenticator app and come back.
+    const hide = () => { if (document.hidden) { secretEpoch.current++; setSecret(null); } };
     document.addEventListener("visibilitychange", hide);
     return () => { active.current = false; clearInterval(timer); document.removeEventListener("visibilitychange", hide); };
   }, [load]);
@@ -109,6 +112,7 @@ export default function StreamStudio() {
     } finally { setBusy(false); }
   }
   async function stop() {
+    if (!window.confirm("Stop the stream and revoke your stream key? OBS disconnects now, and you'll need your password and authenticator to make a new key.")) return;
     setBusy(true); setSecret(null); setStatus({});
     const result = await send<{ disconnect_pending: boolean }>("POST", "/api/me/stream/stop");
     setStatus(result.ok ? { saved: result.data.disconnect_pending ? "Key revoked. OBS disconnection is pending; we'll keep retrying." : "Stream stopped and key revoked. Create a new key before broadcasting again." } : result);
@@ -123,6 +127,10 @@ export default function StreamStudio() {
   const health = broadcast?.health ?? {};
   const staleSignal = broadcast?.state === "LIVE" && (!broadcast.observed_at || seenAt - Date.parse(broadcast.observed_at) > 15000);
   const state = data.disconnect_pending ? "Disconnecting" : staleSignal ? "Signal not confirmed" : ({ STARTING: "Connecting", LIVE: "Live", RECONNECTING: "Reconnecting", ENDED: "Offline" }[broadcast?.state ?? "ENDED"] ?? "Offline");
+  const hasDetails = !!data.settings.title.trim() && !!data.settings.category_id;
+  const hasKey = !!data.credential && !data.credential.revoked;
+  const onAir = broadcast?.state === "LIVE" && !staleSignal && !data.disconnect_pending;
+  const plain = state === "Offline" ? (hasKey ? "OBS isn't connected yet. Press Start Streaming in OBS" : "OBS isn't connected yet") : state === "Live" ? "You're live" : state === "Connecting" ? "OBS is connecting…" : state === "Reconnecting" ? "Connection dropped. Waiting for OBS to reconnect" : state === "Signal not confirmed" ? "Connected, but no fresh video yet" : state;
   const usable = data.configured && data.eligible && !loadError;
   const count = Array.from(form.title.trim()).length;
   return <><span className="eyebrow">CREATOR STUDIO / BROADCAST</span><h1>Live stream</h1>
@@ -130,14 +138,11 @@ export default function StreamStudio() {
     {!data.configured && <p className="panel notice">Broadcasting is not available yet. You can prepare your stream details below.</p>}
     {!data.eligible && <p className="panel notice">Streaming needs a verified email, an authenticator and a channel in good standing. <Link href="/account">Account security</Link> · <Link href="/settings/standing">Account standing</Link></p>}
     <Status state={status} />
-    <Section title="On air">
-      <p role="status"><strong>{state}</strong>{broadcast?.state === "RECONNECTING" && broadcast.reconnect_deadline && <> — reconnect OBS before {new Date(broadcast.reconnect_deadline).toLocaleTimeString()} to continue this broadcast.</>}</p>
-      {broadcast?.state !== "LIVE" && broadcast?.state !== "RECONNECTING" && data.last_broadcast && data.last_broadcast.not_counted > 0 && <p className="muted">Last stream: {data.last_broadcast.not_counted.toLocaleString()} {data.last_broadcast.not_counted === 1 ? "viewer was" : "viewers were"} not counted. Viewer counts only include people whose playback passes our checks; automated or suspicious traffic is left out and never counts against you.</p>}
-      <p>Your stream starts when OBS connects. A dropped connection has 60 seconds to resume the same broadcast.</p>
-      {staleSignal && <p role="status">Fresh media has not been confirmed. Check the OBS connection; the last measurements below may be out of date.</p>}
-      {broadcast?.end_reason === "startup_timeout" && <p role="alert">Compatible media was not confirmed within 15 seconds. Check your OBS encoder settings and connection before trying again.</p>}
-      {data.credential && !data.credential.revoked && <button type="button" className="quiet danger-text" disabled={busy} onClick={stop}>Stop stream and revoke key</button>}
-    </Section>
+    <section className="panel go-live" aria-labelledby="go-live-title"><h2 id="go-live-title">Go live in three steps</h2><ol>
+      <li data-done={hasDetails ? "yes" : "no"}><strong>1. Title and category</strong><span>{hasDetails ? "Saved" : "Add them in Stream details below"}</span></li>
+      <li data-done={hasKey ? "yes" : "no"}><strong>2. Stream key</strong><span>{hasKey ? "Ready. Paste it into OBS" : "Create one in OBS connection below"}</span></li>
+      <li data-done={onAir ? "yes" : "no"}><strong>3. Start streaming in OBS</strong><span>{plain}</span></li>
+    </ol></section>
     <Section title="Stream details" intro="Choose a title and category before connecting OBS. You can change them while live.">
       <form onSubmit={save}>
         <label className="field"><span>Title</span><input required maxLength={280} value={form.title} disabled={busy || !data.eligible} aria-describedby="stream-title-count" onChange={event => setForm({ ...form, title: event.target.value })} /><small id="stream-title-count">{count}/140 characters</small></label>
@@ -152,7 +157,6 @@ export default function StreamStudio() {
         <div className="row"><button disabled={busy || !data.eligible || count < 1 || count > 140}>Save details</button><button type="button" className="quiet" disabled={busy} onClick={reloadDetails}>Reload saved details</button></div>
       </form>
     </Section>
-    <Editors />
     <Section title="OBS connection" intro="Use Custom in OBS's Stream settings. Keep your stream key private.">
       {(!data.settings.title.trim() || !data.settings.category_id) && <p role="alert">Save a title and category in Stream details first. Until then S.V.E.R refuses the connection and OBS only reports “Failed to connect to server”.</p>}
       <p>Viewing or replacing a key requires a sign-in confirmation from the last five minutes and a fresh authenticator or recovery code.</p>
@@ -183,6 +187,14 @@ export default function StreamStudio() {
         </>}
       </div>}
     </Section>
+    <Section title="On air">
+      <p role="status"><strong>{plain}</strong>{broadcast?.state === "RECONNECTING" && broadcast.reconnect_deadline && <> — reconnect OBS before {new Date(broadcast.reconnect_deadline).toLocaleTimeString()} to continue this broadcast.</>}</p>
+      {broadcast?.state !== "LIVE" && broadcast?.state !== "RECONNECTING" && data.last_broadcast && data.last_broadcast.not_counted > 0 && <p className="muted">Last stream: {data.last_broadcast.not_counted.toLocaleString()} {data.last_broadcast.not_counted === 1 ? "viewer was" : "viewers were"} not counted. Viewer counts only include people whose playback passes our checks; automated or suspicious traffic is left out and never counts against you.</p>}
+      <p>Your stream starts when OBS connects. A dropped connection has 60 seconds to resume the same broadcast.</p>
+      {staleSignal && <p role="status">Fresh media has not been confirmed. Check the OBS connection; the last measurements below may be out of date.</p>}
+      {broadcast?.end_reason === "startup_timeout" && <p role="alert">Compatible media was not confirmed within 15 seconds. Check your OBS encoder settings and connection before trying again.</p>}
+      {data.credential && !data.credential.revoked && <button type="button" className="quiet danger-text" disabled={busy} onClick={stop}>Stop stream and revoke key</button>}
+    </Section>
     <Section title="OBS setup and input health" intro="Use H.264 video and AAC audio, turn B-frames off, and set a one-second keyframe interval.">
       <p>Start testing at 6 Mbps video and 160 Kbps audio, up to 1080p60. The bitrate recommendation is provisional while delivery testing continues. Step-by-step OBS setup and fixes for common problems are in <Link href="/help#obs-setup">Help</Link>.</p>
       <dl className="setup">
@@ -198,6 +210,8 @@ export default function StreamStudio() {
       {!!broadcast?.scouts && <p className="muted">Scouted by {broadcast.scouts} {broadcast.scouts === 1 ? "viewer" : "viewers"}: they found you early and watched for 10 minutes.</p>}
       {broadcast?.observed_at && <p className="small-print">Last media observation: {new Date(broadcast.observed_at).toLocaleTimeString()}. Measurements update while OBS sends media.</p>}
     </Section>
+    <Editors />
+    <StudioAds />
   </>;
 }
 

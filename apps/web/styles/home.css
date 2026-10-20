@@ -40,7 +40,10 @@
 .rotation-faction { font-size: 12px; }
 .rotation-title { margin: 0; font-size: 17px; font-weight: 500; line-height: 1.35; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { font-size: 12px; padding: 2px 8px; border: 1px solid var(--line); color: var(--ink); }
+/* One chip style everywhere: tags are small, chips you can press are 44 px tall. */
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 10px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+a.chip, button.chip { min-height: 44px; padding: 0 12px; }
+a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .rotation-actions { display: flex; gap: 8px; margin-top: auto; }
 .rotation-actions .button { flex: 1 1 auto; min-height: 46px; font-size: 16px; }
 .rotation-next { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-dim); }
@@ -109,7 +112,6 @@
 .recent-channels a { display: flex; gap: 10px; align-items: center; }
 .recent-channels span span { display: block; }
 .browse-filters, .browse-genres, .browse-categories { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-.chip { padding: 4px 10px; border: 1px solid var(--line); text-decoration: none; }
 .chip[aria-current="page"] { border-color: var(--accent); color: var(--accent-light); }
 .search-form { display: flex; gap: 8px; margin: 8px 0 16px; max-width: 560px; }
 .search-form input { flex: 1; }
@@ -182,3 +184,51 @@
 .season-reveal-bar small b { font-weight: inherit; }
 .season-replay { min-height: 24px; padding: 0; background: none; border: 0; box-shadow: none; color: var(--accent); font: inherit; letter-spacing: 0; text-transform: none; text-decoration: underline; }
 .season-replay:hover:not(:disabled) { color: var(--accent-light); filter: none; }
+/* Home shelves: one row that scrolls sideways, so a row never ends with one stranded card. */
+.stream-grid.shelf, .territory-grid.shelf { grid-auto-flow: column; grid-template-columns: none; overflow-x: auto; scrollbar-width: thin; padding-bottom: 6px; scroll-snap-type: x proximity; }
+.stream-grid.shelf { grid-auto-columns: minmax(220px, 280px); }
+.territory-grid.shelf { grid-auto-columns: minmax(150px, 160px); }
+.stream-grid.shelf > *, .territory-grid.shelf > * { scroll-snap-align: start; }
+@media (max-width: 700px) { .stream-grid.shelf { grid-auto-columns: 72%; } .territory-grid.shelf { grid-auto-columns: 44%; } }
+/* Card footer: uptime, then the count, dimmer (nothing is ranked by size). */
+.stream-thumb .stream-uptime { left: 8px; right: auto; }
+.stream-thumb .stream-viewers { left: auto; right: 8px; color: var(--ink-dim); }
+/* Front-line crests read as buttons: pick a side. */
+.front-line-crests { align-items: center; flex-wrap: wrap; }
+.front-line-crests .pick-side { padding: 2px; border: 1px solid transparent; transition: transform .15s; }
+.front-line-crests .pick-side:hover, .front-line-crests .pick-side:focus-visible { border-color: var(--accent); transform: translateY(-2px); }
+.pick-side-caption { flex-basis: 100%; text-align: center; font: 700 11px/1 var(--font-label); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-muted); }
+.front-line-status .eyebrow { display: block; margin-bottom: 4px; }
+/* Tab and chip rows scroll sideways on phones instead of wrapping into walls. */
+@media (max-width: 700px) {
+  .genre-tabs, .chips.scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .genre-tabs > *, .chips.scroll > * { flex: none; }
+}
+/* Page titles: eyebrow, Cinzel title, optional lead (the war map's pattern). */
+/* MAGNet: lanes in two labelled groups, and the featured stream's turn. */
+.magnet-lanes { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 0 0 16px; }
+.lane-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.magnet-turn { height: 3px; margin: 8px 0 0; background: var(--line); }
+.magnet-turn span { display: block; height: 100%; background: var(--accent); transition: width .25s linear; }
+.magnet-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 8px 0 0; }
+.magnet-also { margin-top: 24px; }
+.magnet-also h2 { margin: 0 0 10px; }
+/* Browse: genres grouped by holder; tiles in the holder's color, contested ones hatched. */
+.genre-groups { display: flex; flex-wrap: wrap; gap: 10px 32px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
+.genre-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.genre-group .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--accent-light); }
+.genre-groups .genre-tabs { border-bottom: 0; margin-bottom: 0; }
+.territory-tile[data-theme] { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.territory-tile.contested { background-image: repeating-linear-gradient(135deg, transparent 0 10px, color-mix(in srgb, var(--accent) 10%, transparent) 10px 12px); }
+/* Cover art sits under a dark fade so the name and turf stay readable in every theme. */
+.territory-tile.has-art { overflow: hidden; }
+.territory-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.territory-tile.has-art::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 30%, rgba(0, 0, 0, .78) 56%, rgba(0, 0, 0, .94)); }
+.territory-tile.has-art { text-shadow: 0 1px 2px #000; }
+.territory-tile.has-art > :not(.territory-art) { z-index: 1; }
+.territory-tile.has-art h3, .territory-tile.has-art .territory-turf, .territory-tile.has-art .territory-live { position: relative; }
+.territory-tile.has-art .territory-live { color: rgba(255, 255, 255, .78); }
+.territory-tile.has-art h3 { color: #fff; }
+.territory-tile .contested-tag { display: block; margin-top: 2px; font: 700 11px/1.2 var(--font-label); letter-spacing: .1em; text-transform: uppercase; color: var(--accent-light); }
+@media (max-width: 700px) { .genre-groups, .magnet-lanes { flex-direction: column; flex-wrap: nowrap; gap: 6px; } }
+

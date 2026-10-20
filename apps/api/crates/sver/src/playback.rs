@@ -228,6 +228,15 @@ pub async fn is_live(db: &mut PgConnection, owner: &str) -> sqlx::Result<bool> {
         .fetch_one(db)
         .await
 }
+/// Which of these owners are live (the rule `live_sql` states), in one query.
+pub async fn live_among(
+    db: &mut PgConnection,
+    owners: &[String],
+) -> sqlx::Result<std::collections::HashSet<String>> {
+    let live: Vec<String> = sqlx::query_scalar("SELECT DISTINCT owner_id FROM broadcasts WHERE owner_id=ANY($1) AND state IN ('LIVE','RECONNECTING')")
+        .bind(owners).fetch_all(db).await?;
+    Ok(live.into_iter().collect())
+}
 
 async fn owner_id(app: &App, name: &str) -> Res<String> {
     let mut conn = app.db.acquire().await?;
@@ -341,6 +350,7 @@ pub async fn live(
         "captions": b.captions && hls.is_some(),
         "caption_style": {"size": b.caption_size.as_deref().unwrap_or("m"), "x": b.caption_x.unwrap_or(0.5), "y": b.caption_y.unwrap_or(0.85)},
         "raid": crate::raids::for_viewers(&app, &b.id, viewer.as_ref().map(|v| v.id.as_str())).await?,
+        "ad_break": crate::adserve::for_live(&app, &owner, viewer.as_ref().map(|v| v.id.as_str())).await?,
     })))
 }
 

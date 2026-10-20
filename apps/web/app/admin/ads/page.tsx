@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
@@ -31,6 +32,7 @@ export default function AdminAds() {
   }
   if (!view) return message ? <p role="alert" className="form-message error">{message}</p> : <p className="loading">Loading…</p>;
   return <><h1>Ads (test book)</h1>
+    <p><Link href="/admin/ads/network">Ad network: rate card, review and campaigns</Link></p>
     <p>Ads are designed, not live: no provider is chosen and no ad is shown. Test breaks capture who would be counted on a live channel; settling posts the tier split to the <code>adtest:</code> book, which never reaches payouts. Every action is audited.</p>
     <Section title="Start a test break"><form onSubmit={start} className="row">
       <UsernameInput label="Live channel" required />

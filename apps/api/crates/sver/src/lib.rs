@@ -13,7 +13,9 @@ use std::{sync::Arc, time::Duration};
 pub mod account;
 pub mod achievements;
 pub mod activity;
+pub mod adnet;
 pub mod ads;
+pub mod adserve;
 pub mod alerts;
 pub mod auth;
 pub mod bans;
@@ -49,6 +51,7 @@ pub mod outside_emotes;
 pub mod overlays;
 pub mod parts;
 pub mod payouts;
+pub mod persona;
 pub mod playback;
 pub mod plays;
 pub mod probe;
@@ -232,6 +235,8 @@ pub struct App {
     pub hashing: Arc<tokio::sync::Semaphore>,
     pub dummy_hash: Arc<String>,
     pub chat: chat::Hub,
+    /// Direct-message events (`dm:{user}`), apart from the busy chat bus.
+    pub dms: chat::Hub,
 }
 impl App {
     pub async fn new(db: PgPool, config: Config) -> Result<Self> {
@@ -247,6 +252,7 @@ impl App {
             hashing: Arc::new(tokio::sync::Semaphore::new(4)),
             dummy_hash: Arc::new(security::hash_sync(&security::token())?),
             chat: chat::Hub::default(),
+            dms: chat::Hub::default(),
         })
     }
 }
@@ -254,6 +260,14 @@ pub async fn connect(database_url: &str) -> std::result::Result<PgPool, String> 
     let db = PgPoolOptions::new()
         .max_connections(12)
         .acquire_timeout(Duration::from_secs(5))
+        // Days are UTC days (daily orders, XP caps, lights): `current_date` and `::date` must not
+        // follow whatever time zone the database server happens to use.
+        .after_connect(|conn, _| {
+            Box::pin(async move {
+                sqlx::query("SET TIME ZONE 'UTC'").execute(conn).await?;
+                Ok(())
+            })
+        })
         .connect(database_url)
         .await
         .map_err(|_| "Could not connect to the isolated database")?;
@@ -404,6 +418,8 @@ pub fn router(app: App) -> Router {
     Router::new()
         .merge(videos::routes())
         .merge(beacons::routes())
+        .merge(adnet::routes())
+        .merge(adserve::routes())
         .route(
             "/api/health",
             get(|| async { Json(json!({"status":"ok"})) }),
@@ -465,6 +481,8 @@ pub fn router(app: App) -> Router {
         .merge(money::routes())
         .merge(outside_emotes::routes())
         .merge(discord::routes())
+        .merge(discord::home::routes())
+        .merge(discord::sync::routes())
         .merge(overlays::routes())
         .merge(ravens_eye::routes())
         .merge(achievements::routes())
@@ -618,6 +636,10 @@ fn profile_routes() -> Router<App> {
         )
         .route("/api/me/setup/photos/{id}", delete(st::delete_setup_photo))
         .route("/api/me/header", get(st::my_header).put(st::save_header))
+        .route(
+            "/api/me/persona",
+            get(crate::persona::mine).put(crate::persona::save),
+        )
         .route(
             "/api/me/readiness",
             get(st::my_readiness).put(st::save_readiness),

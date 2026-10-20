@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use sqlx::PgConnection;
 
 /// Key, name, what earns it.
-pub const CATALOG: [(&str, &str, &str); 19] = [
+pub const CATALOG: [(&str, &str, &str); 21] = [
     ("first_follow", "First Follow", "Followed a channel"),
     (
         "voice",
@@ -30,7 +30,7 @@ pub const CATALOG: [(&str, &str, &str); 19] = [
     (
         "order_keeper",
         "Order Keeper",
-        "30 daily orders done in one week",
+        "Every daily order in a week (21)",
     ),
     ("legend", "Legend", "Legend loyalty rank in a channel"),
     ("level_10", "Level 10", "Reached level 10"),
@@ -54,6 +54,12 @@ pub const CATALOG: [(&str, &str, &str); 19] = [
         "Faithful",
         "Subscribed to a channel for 6 months",
     ),
+    ("signatory", "Signatory", "Signed someone's Wall"),
+    (
+        "council_of_war",
+        "Council of War",
+        "Filled all 8 War Council seats",
+    ),
 ];
 /// Chat name styles and the level each unlocks at (always in the faction's colors).
 pub const STYLES: [(&str, &str, i64); 5] = [
@@ -64,15 +70,15 @@ pub const STYLES: [(&str, &str, i64); 5] = [
     ("outlined", "Outlined", 50),
 ];
 
-/// Each achievement's rule: a query of user IDs that have earned it, with one bound number.
+/// The level achievements, granted together from one pass over `xp_days`.
+const LEVELS: [(&str, i64); 4] = [
+    ("level_10", 10),
+    ("level_25", 25),
+    ("level_50", 50),
+    ("level_100", 100),
+];
+/// Each other achievement's rule: a query of user IDs that have earned it, with one bound number.
 fn rules() -> Vec<(&'static str, &'static str, i64)> {
-    let level = |key, l| {
-        (
-            key,
-            "SELECT user_id FROM xp_days GROUP BY user_id HAVING sum(xp)>=$1",
-            progression::xp_for(l),
-        )
-    };
     vec![
         (
             "first_follow",
@@ -97,17 +103,13 @@ fn rules() -> Vec<(&'static str, &'static str, i64)> {
         (
             "order_keeper",
             "SELECT DISTINCT user_id FROM order_milestones WHERE orders>=$1",
-            30,
+            progression::MILESTONES[2].0 as i64,
         ),
         (
             "legend",
             "SELECT DISTINCT user_id FROM engagement WHERE earned>=$1",
             progression::LOYALTY[4].1,
         ),
-        level("level_10", 10),
-        level("level_25", 25),
-        level("level_50", 50),
-        level("level_100", 100),
         (
             "first_light",
             "SELECT DISTINCT owner_id FROM broadcasts WHERE confirmed_live_at IS NOT NULL AND $1=$1",
@@ -153,20 +155,45 @@ fn rules() -> Vec<(&'static str, &'static str, i64)> {
             "SELECT DISTINCT user_id FROM channel_subs WHERE months>=$1",
             6,
         ),
+        (
+            "signatory",
+            "SELECT DISTINCT author_id FROM wall_posts WHERE status='APPROVED' AND deleted_at IS NULL AND author_id<>wall_owner_id AND $1=$1",
+            0,
+        ),
+        (
+            "council_of_war",
+            "SELECT user_id FROM war_council GROUP BY user_id HAVING count(*)>=$1",
+            8,
+        ),
     ]
 }
 
-/// Every 10 minutes: grants every achievement whose rule now holds. Earned ones are kept.
+/// Every 10 minutes: grants every achievement whose rule now holds, skipping people who already
+/// have it. Earned ones are kept.
 pub async fn award(app: &App) -> Res<()> {
     for (key, sql, n) in rules() {
         sqlx::query(sqlx::AssertSqlSafe(format!(
-            "INSERT INTO user_achievements(user_id,key) SELECT s.u,$2 FROM ({sql}) s(u) WHERE s.u IS NOT NULL ON CONFLICT DO NOTHING"
+            "INSERT INTO user_achievements(user_id,key) SELECT s.u,$2 FROM ({sql}) s(u)
+            WHERE s.u IS NOT NULL AND NOT EXISTS(SELECT 1 FROM user_achievements a WHERE a.user_id=s.u AND a.key=$2) ON CONFLICT DO NOTHING"
         )))
         .bind(n)
         .bind(key)
         .execute(&app.db)
         .await?;
     }
+    let (keys, needs): (Vec<&str>, Vec<i64>) = LEVELS
+        .iter()
+        .map(|(key, level)| (*key, progression::xp_for(*level)))
+        .unzip();
+    sqlx::query("INSERT INTO user_achievements(user_id,key)
+        SELECT t.user_id,k.key FROM (SELECT user_id,sum(xp) AS xp FROM xp_days GROUP BY user_id HAVING sum(xp)>=$3) t
+        JOIN unnest($1::text[],$2::bigint[]) k(key,need) ON t.xp>=k.need
+        WHERE NOT EXISTS(SELECT 1 FROM user_achievements a WHERE a.user_id=t.user_id AND a.key=k.key) ON CONFLICT DO NOTHING")
+        .bind(&keys)
+        .bind(&needs)
+        .bind(needs[0])
+        .execute(&app.db)
+        .await?;
     Ok(())
 }
 
@@ -202,16 +229,19 @@ pub async fn frame(db: &mut PgConnection, user: &str, level: i64) -> Res<i64> {
     let newest = progression::frame(level);
     Ok(chosen.map_or(newest, |f| i64::from(f).min(newest)))
 }
-/// Up to 3 showcased achievements, for the profile and user card.
+/// Up to 3 showcased achievements, for the profile and user card, with when each was earned.
 pub async fn showcase(db: &mut PgConnection, user: &str) -> Res<Vec<Value>> {
-    let keys: Vec<String> =
-        sqlx::query_scalar("SELECT unnest(showcase) FROM user_cosmetics WHERE user_id=$1")
-            .bind(user)
-            .fetch_all(db)
-            .await?;
-    Ok(keys
-        .iter()
-        .filter_map(|k| name(k).map(|(n, _)| json!({"key": k, "name": n})))
+    let rows: Vec<(String, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT s.key,a.earned_at FROM user_cosmetics c CROSS JOIN LATERAL unnest(c.showcase) WITH ORDINALITY s(key,n) LEFT JOIN user_achievements a ON a.user_id=c.user_id AND a.key=s.key WHERE c.user_id=$1 ORDER BY s.n",
+    )
+    .bind(user)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(k, at)| {
+            name(&k).map(|(n, d)| json!({"key": k, "name": n, "description": d, "earned_at": at}))
+        })
         .collect())
 }
 

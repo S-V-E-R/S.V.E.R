@@ -584,13 +584,8 @@ All profile text is NFC-normalized and trimmed. Control characters, bidi overrid
 
 ## Visual direction
 - The game-client look from the homepage concept PDFs (see `AGENTS.md`): framed panels with code-drawn corner brackets, beveled buttons, Cinzel headings (self-hosted, no third-party font requests) and steel neutrals. **No glows, no gradients, no image frames.**
-- Theme colors follow the **viewer's** faction:
-  - Myria: ember
-  - Aetheron: violet
-  - Glint: gold on navy
-  - Neutral steel when signed out or when the viewer has no faction
-- Until Module 4, every viewer gets neutral steel. Channel owners' factions never recolor their page, and their imported legacy faction is ignored until Module 4.
-- Theme tokens are CSS variables set once at the layout level from the viewer's session, so profile components never hard-code faction colors.
+- **The channel area wears the owner's faction colors** (decided October 3, 2026), within the variant the owner picks (see "Persona pass"). Neutral steel when the owner has no faction. The rest of the site keeps the viewer's colors.
+- Theme tokens are CSS variables (`data-theme` on the channel wrapper), so profile components never hard-code faction colors.
 - Legacy elements are restyled, not copied. The War Council grid, wall cards, the song card and the sponsor and setup lists all use the frame style. The legacy `ProfileFrame` tier rings, animated borders and radial glows are ARCHIVE.
 - **Accessibility:**
   - Every control is keyboard operable with visible focus.
@@ -1273,8 +1268,8 @@ Acceptance:
 
 Rules:
 - The owner edits it in Studio → **Page header** (`/studio/channel/header`), saved with `GET`/`PUT /api/me/header` under the section revision "header":
-  - Page label pill: 0–24 characters, one line. Default "Creator Page".
-  - Welcome line: 0–80 characters, one line. Default "Welcome to my page".
+  - Page label pill: 0–24 characters, one line. No default: an empty label shows nothing (UI review, October 2026).
+  - Welcome line: 0–80 characters, one line. No default: an empty welcome line shows nothing (UI review, October 2026).
   - Intro card: a title (0–60, one line) and a body (0–500, up to 6 line breaks, plain text). Shown only when the body isn't empty; with no title, the heading is "About this page".
   - Page vibe: 0–24 characters, one line, shown as "Vibe: {text}" in the counts row. No default.
   - "Show the label and welcome line" toggle, default on.
@@ -1357,3 +1352,113 @@ Acceptance:
 - Account-wide ban mechanics, which level 3 escalates to, and username resets for impersonation: the Module 3 moderation pass.
 - Schedules, sponsors, page blocks, fan art and legacy username history are not imported in Module 2 (approved). They remain in the legacy dump for a later import if needed.
 - Whether follower/following lists need a per-user privacy toggle later.
+
+## Persona pass (Joe, October 16, 2026)
+
+Joe's goal: a profile is "a place to advertise your persona, a resemblance to MySpace, and a typical streaming profile, all gamified." The Fable profile review found the parts built but buried: pages read like forms under the stream chrome, and earned identity showed only on the user card. Joe approved the changes below. The creator-tier badge and the live viewer count stay on the page.
+
+### Header: who you are, at a glance
+
+The framed header carries the whole identity. Top to bottom:
+- **Banner.** Without one, the owner's crest and home city (UI review, October 16).
+- **Avatar with its earned frame** (`data-frame`, the same frames as the player card; [PROGRESSION.md](PROGRESSION.md)).
+- **Name line:** display name, then the level hex with the rank title (for example "Lv 12 · Ember Warden"), faction crest and name, supporter marks, creator-tier badge.
+- **Live mark.** While live, a red LIVE tag that links to `/{username}/live`, next to the name. Offline streamers show "Next stream Fri 8:00 PM" when one is scheduled. People who have never streamed show neither.
+- **Status line:** mood emoji, **Currently** (below), status text.
+- **Bio and links.**
+- **Profile song card.** On desktop it sits in the header's right column, on phones under the links. The button says "Play", not "Play on YouTube", and there's an optional 80-character "why this song" line under the title. It's still click-to-play, one iframe per page.
+- **Showcase strip.** Up to 3 showcased achievements as square tiles (name and date), then one "Season N champion" tile for each season won. It replaces the season banner. The strip is hidden from visitors when empty; the owner sees "Choose achievements to showcase".
+- **Actions:** Follow, Subscribe, Share, More.
+
+**Currently.** A verb from a fixed list (Playing, Listening to, Watching, Reading, Building, Learning) plus up to 60 characters, held to the same filters as status. While the owner is live, the header shows "Streaming {category}" in its place; that's derived, not stored. Both are optional.
+
+### Live, offline and non-streamer pages
+
+- **The player, rally meter and poll disclosure appear only while live.** Offline and never-streamed pages show none of them, and no "This stream can't be played here yet" panel.
+- **Layout choice** (owner, in the Persona editor):
+  - **Stream first** (default for anyone who has streamed): while live, the player sits under the header, as today.
+  - **Persona first** (default for everyone else): while live, a compact "Live now" card (title, category, Watch button) sits under the header instead of the player, and Home's sections come first. Watching happens on `/{username}/live`.
+- **Tabs:**
+  - Home, Wall and About when they have content.
+  - Videos and Beacons only when the channel has any (the owner always sees them).
+  - Schedule for anyone who has streamed or set a schedule.
+  - Fan art when on.
+  - Followers and Following leave the tab bar. They stay as the links in the counts row, as this spec always said ([Tabs](#tabs)).
+
+### Home: ordered by the owner
+
+- **Sections:**
+  - **About me:** the custom blocks, moved here from the About tab.
+  - **War Council.**
+  - **Wall.**
+  - **Up next:** the next 3 occurrences.
+  - **Latest videos:** the 3 newest public clips or Highlights.
+  - **Shine.**
+  - **Achievements.**
+  - **Recent activity.**
+- **Ordering:** the owner orders them in the Persona editor (`profiles.home_order`). Sections that are empty are hidden from visitors, as before.
+- **The About tab** keeps sponsors and streaming setup. It's hidden when it has neither.
+- **Owner prompts:** empty sections no longer show per-section prompts to the owner. They're gathered into one "Finish your page" panel at the top of the owner's own Home, linking to each step. The page readiness checklist (P3) gains intro, About me, Currently, song and showcase.
+- **Viewer relationship line.** Signed-in visitors who aren't the owner see one line at the top of Home, about only themselves and this channel. For example: "You're a Regular here · Following since March 2026 · You're on their War Council". It shows the loyalty rank only once they've earned Engagement Valor here, plus "They're on your War Council" when it applies. Never a comparison or a count of other people.
+
+### About me blocks: prompts added
+
+- **New block type `PROMPT`:** one question from a fixed list, with the owner's answer (up to 500 characters, the same filters as panels).
+- **The questions:**
+  - "Who I'd like to meet"
+  - "Games that made me"
+  - "My hot take"
+  - "Currently obsessed with"
+  - "Best stream moment"
+  - "What my chat calls me"
+- **Limit:** the existing block limit still applies, and each question can be used once.
+
+### Theme variants
+
+- **What the owner picks:** one of three variants of their faction's colors for their channel area (`profiles.theme_variant`).
+  - Myria: Ember (the default), Forge, Ash.
+  - Aetheron: Violet (the default), Moon, Deep.
+  - Glint: Gold (the default), Crown, Dawn.
+- **How it works:** each variant only changes `--accent`, `--accent-light`, `--accent-dark` and `--accent-deep`, and passes AA on the shared surfaces. Neutral has no variants.
+- **What stays out:** no custom CSS, backgrounds or fonts, for contrast and low-end PCs.
+
+### The Wall, signed
+
+- **Crest stamp:** each signature carries the author's faction crest as a small stamp in the post's corner.
+- **Sticker:** a signer can add one sticker from a fixed set of 8 SVGs (torch, crown, moon, flame, star, heart, GG, wave). No uploaded stickers.
+- **First to sign:** the oldest surviving approved post on a Wall gets a "First to sign" mark.
+- **Owner's own posts:** no LIVE badge and no take-down link on the owner's own posts on their own page.
+
+### Achievements added
+
+- **Signatory:** signed someone's Wall for the first time.
+- **Council of War:** filled all 8 War Council seats.
+
+Both are earned from records, like the rest of the catalog ([ACHIEVEMENTS.md](ACHIEVEMENTS.md)). Signing walls gives no XP or Engagement Valor, because it would be farmable; Joe left the "sign a Wall" daily order out.
+
+### One Persona editor, and a first-time setup
+
+- **The Persona editor** (`/settings/profile`, titled "Your page") merges Settings → Profile, Settings → Cosmetics, Studio → Page header and Studio → Song into one page. Its sections:
+  - **Look:** avatar, banner, theme variant, frame, name style.
+  - **Words:** display name, mood, Currently, status, bio, intro, page label, welcome line, vibe.
+  - **Sound:** the profile song.
+  - **Home:** layout choice and section order.
+  - **Links.**
+  - **User card.**
+  - **Username,** with "Claim an inactive username" as a disclosure.
+- **Preview and saving:** a preview of the header as visitors see it sits to the right on desktop (above the sections on smaller screens) and refreshes each time a section saves. Each section keeps its own Save and revision.
+- **Old addresses:** `/settings/cosmetics`, `/studio/channel/header` and `/studio/channel/song` redirect to their sections. War Council, Wall settings, schedule, sponsors, setup, blocks and fan art stay in Studio, and the editor links to them.
+- **First-time setup** (`/settings/profile/setup`): four steps with the same live preview, and Skip on each step.
+  1. Look: avatar, banner, theme variant.
+  2. Words: about me, mood, Currently.
+  3. Sound and people: song, and War Council picked from people you follow.
+  4. Links.
+  
+  Onboarding's Ready step and the "Finish your page" panel link to it, and it writes through the same endpoints.
+
+### Still never
+
+- Visitor counters, "last seen" and "on N councils" counts.
+- Custom HTML or CSS, uploaded backgrounds, image frames and glows.
+- Anything ranked by viewers, followers or money.
+- Paid supporter marks that look like earned frames or name styles ([SUPPORTERS.md](SUPPORTERS.md)).

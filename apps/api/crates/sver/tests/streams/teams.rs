@@ -351,6 +351,54 @@ pub async fn exercise(e: &Env) {
     e.sql("INSERT INTO schedule_events(id,user_id,title,start_at,end_at) VALUES('team-event','team-0','Build together',now()+interval '1 day',now()+interval '1 day 1 hour')").await;
     let page = ok(e, &fan, "GET", "/api/guilds/test_team_1", Value::Null).await;
     assert!(page["schedule"].to_string().contains("Build together"));
+    // Live state, blocks and schedules are read once for the whole guild.
+    let members = |page: &Value| -> Vec<(String, bool)> {
+        page["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                (
+                    m["user"]["username"].as_str().unwrap().to_owned(),
+                    m["live"].as_bool().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let listed = members(&page);
+    assert!(
+        listed.contains(&("TeamPerson0".into(), true)) && listed.iter().all(|m| m.1),
+        "{page}"
+    );
+    e.sql("INSERT INTO user_blocks(blocker_id,blocked_id) VALUES('team-0','team-fan')")
+        .await;
+    let page = ok(e, &fan, "GET", "/api/guilds/test_team_1", Value::Null).await;
+    assert!(
+        members(&page).iter().all(|m| m.0 != "TeamPerson0"),
+        "a block hides the member"
+    );
+    assert!(!page["schedule"].to_string().contains("Build together"));
+    e.sql("DELETE FROM user_blocks WHERE blocker_id='team-0'")
+        .await;
+    // Studio finds live guildmates in one call, never the viewer and never someone blocked.
+    let mates = |token: String| async move {
+        ok(e, &token, "GET", "/api/me/guilds/live", Value::Null).await["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["username"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let found = mates(b.clone()).await;
+    assert!(
+        found.contains(&"TeamPerson0".to_string()) && !found.contains(&"TeamPerson1".to_string()),
+        "{found:?}"
+    );
+    e.sql("INSERT INTO user_blocks(blocker_id,blocked_id) VALUES('team-1','team-0')")
+        .await;
+    assert!(!mates(b.clone()).await.contains(&"TeamPerson0".to_string()));
+    e.sql("DELETE FROM user_blocks WHERE blocker_id='team-1'")
+        .await;
     ok(e,&fan,"POST","/api/reports",json!({"target_type":"guild","target_id":guilds[1]["id"],"reason":"impersonation","note":"Synthetic report"})).await;
     assert!(
         ok(
@@ -453,6 +501,27 @@ pub async fn exercise(e: &Env) {
             .len(),
         4
     );
+    // Pages and shared chat never wait on the membership lock.
+    let mut held = e.app.db.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('squad-membership',0))")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let wait = std::time::Duration::from_secs(3);
+    assert!(
+        tokio::time::timeout(wait, ok(e, a, "GET", &path, Value::Null))
+            .await
+            .is_ok()
+    );
+    assert!(
+        tokio::time::timeout(
+            wait,
+            call(e, "GET", &format!("{path}/chat"), Some(&fan), Value::Null)
+        )
+        .await
+        .is_ok()
+    );
+    held.rollback().await.unwrap();
     // Any member's watch page finds the shared view; a channel outside it does not.
     let found = ok(
         e,
@@ -464,6 +533,29 @@ pub async fn exercise(e: &Env) {
     .await;
     assert_eq!(found["squad"]["id"], squad.as_str());
     assert_eq!(found["squad"]["members"].as_array().unwrap().len(), 4);
+    // Reads never wait on membership changes: with the membership lock held elsewhere, the
+    // co-stream page, a member's watch page and the shared chat still answer at once.
+    let mut holder = e.app.db.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('squad-membership',0))")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    for read in [
+        path.clone(),
+        format!("{path}/chat"),
+        "/api/channels/TeamPerson2/squad".to_string(),
+    ] {
+        let answered = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            call(e, "GET", &read, Some(&fan), Value::Null),
+        )
+        .await;
+        assert!(
+            answered.is_ok_and(|r| r.0 == StatusCode::OK),
+            "{read} waited on the membership lock"
+        );
+    }
+    holder.rollback().await.unwrap();
     assert!(
         ok(
             e,
@@ -628,6 +720,26 @@ pub async fn exercise(e: &Env) {
     );
     end(e, "team-0").await;
     assert_eq!(ok(e, c, "GET", &path, Value::Null).await["ended"], true);
+    // Studio's view repairs only the viewer's own co-stream; the worker repairs the rest.
+    e.sql("INSERT INTO squads(id,host_id,mode) VALUES('sq-stale','team-5','SEPARATE')")
+        .await;
+    e.sql("INSERT INTO squad_members(squad_id,user_id,broadcast_id) VALUES('sq-stale','team-5','team-0')").await;
+    let ended = |id: &str| {
+        let id = id.to_string();
+        async move {
+            sqlx::query_scalar::<_, bool>("SELECT ended_at IS NOT NULL FROM squads WHERE id=$1")
+                .bind(id)
+                .fetch_one(&e.app.db)
+                .await
+                .unwrap()
+        }
+    };
+    assert!(!ended(&squad).await, "reads don't repair");
+    ok(e, c, "GET", "/api/me/squads", Value::Null).await;
+    assert!(ended(&squad).await, "Studio repairs the viewer's own");
+    assert!(!ended("sq-stale").await, "and nobody else's");
+    sver::squads::tick(&e.app).await.unwrap();
+    assert!(ended("sq-stale").await);
     assert_eq!(
         call(e, "GET", &chat, None, Value::Null).await.0,
         StatusCode::CONFLICT

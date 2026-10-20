@@ -1,13 +1,15 @@
-import Link from "next/link";
+import { SideMenu, type MenuGroup } from "../../components/SideMenu";
 import { redirect } from "next/navigation";
 import { currentAccount } from "../session";
 import "../../styles/profiles.css";
+
+const MENU: MenuGroup[] = [[null, [["/settings/profile", "Your page"], ["/settings/notifications", "Notifications"], ["/settings/preferences", "Preferences"], ["/settings/blocked", "Blocked users"], ["/settings/reports", "My reports"], ["/settings/standing", "Account standing"], ["/settings/connections", "Connected apps"], ["/settings/developer", "Developer"], ["/account", "Account security"]]]];
 
 export const metadata = { title: "Settings | S.V.E.R", robots: { index: false, follow: false } };
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
   if (!(await currentAccount())) redirect("/login");
   return <div className="settings-page">
-    <nav className="settings-nav" aria-label="Settings"><Link href="/settings/profile">Profile</Link><Link href="/settings/notifications">Notifications</Link><Link href="/settings/preferences">Preferences</Link><Link href="/settings/cosmetics">Cosmetics</Link><Link href="/settings/blocked">Blocked users</Link><Link href="/settings/reports">My reports</Link><Link href="/settings/standing">Account standing</Link><Link href="/settings/connections">Connected apps</Link><Link href="/settings/developer">Developer</Link><Link href="/account">Account security</Link></nav>
+    <SideMenu label="Settings" groups={MENU} />
     <div className="settings-body">{children}</div>
   </div>;
 }

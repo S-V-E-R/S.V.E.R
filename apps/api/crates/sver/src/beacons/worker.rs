@@ -269,7 +269,7 @@ pub fn graph(frame: Option<(i64, i64, i64, i64)>, watermark: &str) -> String {
         None => "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black".into(),
     };
     format!(
-        "[0:v:0]{fit},setsar=1,format=yuv420p,split=2[clean][mark];[mark]{watermark},split=2[hd][wide];[wide]scale=720:1280[sd]"
+        "[0:V:0]{fit},setsar=1,format=yuv420p,split=2[clean][mark];[mark]{watermark},split=2[hd][wide];[wide]scale=720:1280[sd]"
     )
 }
 fn encode(args: &mut Vec<String>, label: &str, crf: &str, audio: bool, out: &Path) {
@@ -452,7 +452,7 @@ async fn store(app: &App, beacon: &str, key: &str, path: &Path, kind: &str) -> R
 /// Exact copies of removed media never publish (docs/TAKE_IT_DOWN.md): the source bytes are
 /// checked against the blocklist and against media held for a removal request.
 async fn blocked(db: &mut PgConnection, hashes: &[String]) -> Res<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM blocked_media_hashes WHERE hash=ANY($1)) OR EXISTS(SELECT 1 FROM media_removal_holds h JOIN media_fingerprints f USING(root) WHERE f.hashes && $1) OR EXISTS(SELECT 1 FROM beacons b WHERE b.hashes && $1 AND b.hidden AND b.status NOT IN ('DELETING','DELETED'))")
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM blocked_media_hashes WHERE hash=ANY($1)) OR EXISTS(SELECT 1 FROM media_removal_holds h JOIN media_fingerprints f USING(root) WHERE f.hashes && $1) OR EXISTS(SELECT 1 FROM beacons b WHERE b.hashes && $1 AND (b.hidden OR b.status='REMOVED') AND b.status NOT IN ('DELETING','DELETED'))")
         .bind(hashes).fetch_one(db).await?)
 }
 

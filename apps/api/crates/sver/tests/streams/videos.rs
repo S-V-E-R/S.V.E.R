@@ -1252,6 +1252,17 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
     .await
     .unwrap();
     assert_eq!(second, 0);
+    let magnet_chapters: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM video_chapters WHERE video_id=$1 AND source='MAGNET'",
+    )
+    .bind(video)
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        magnet_chapters, 1,
+        "one chapter for a moment featured by two lanes"
+    );
     while sver::videos::worker::run_one(&e.app, false).await.unwrap() {}
     // Count the approved cap before enqueueing any new media work.
     sqlx::query("UPDATE videos SET duration_ms=36000000 WHERE id=$1")
@@ -1389,6 +1400,20 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
         .await
         .unwrap();
     let cut=e.call("POST",&format!("/api/videos/{video}/cuts"),json!({"kind":"CLIP","title":"Recording-off moment","start_ms":122000,"end_ms":128000,"request_id":uuid::Uuid::new_v4().to_string()})).await;
+    // The live edge is counted before its newest upload finishes; a default clip snaps back to
+    // the last ready segment instead of failing.
+    sqlx::query("UPDATE videos SET duration_ms=130000 WHERE id=$1")
+        .bind(video)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    let edge=e.call("POST",&format!("/api/videos/{video}/cuts"),json!({"kind":"CLIP","title":"Live edge","start_ms":122000,"request_id":uuid::Uuid::new_v4().to_string()})).await;
+    assert_eq!(edge["end_ms"], 128000);
+    sqlx::query("UPDATE videos SET duration_ms=128000 WHERE id=$1")
+        .bind(video)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
     // A storage outage can leave an old segment queued after it leaves the window.
     // Keep its ownership until the queued upload completes, then collect it.
     let pending: String = sqlx::query_scalar(

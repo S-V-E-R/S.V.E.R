@@ -20,6 +20,8 @@ use tower::ServiceExt;
 
 #[path = "streams/achievements.rs"]
 mod achievements;
+#[path = "streams/adnet.rs"]
+mod adnet;
 #[path = "streams/ads.rs"]
 mod ads;
 #[path = "streams/alerts.rs"]
@@ -42,6 +44,10 @@ mod crowd;
 mod devapps;
 #[path = "streams/discord.rs"]
 mod discord;
+#[path = "streams/discord_moderation.rs"]
+mod discord_moderation;
+#[path = "streams/discord_streamers.rs"]
+mod discord_streamers;
 #[path = "streams/discovery.rs"]
 mod discovery;
 #[path = "streams/dms.rs"]
@@ -129,6 +135,11 @@ struct Media {
     /// Board webhooks received: (signature header, body); `hook_fail` answers 500.
     hooks: Vec<(String, String)>,
     hook_fail: bool,
+    /// Transfers Stripe made (GET /v1/transfers lists them). `lost_transfers`: the next transfers
+    /// are made but their response is lost (500); `down_transfers`: Stripe is down and makes none.
+    transfers: Vec<Value>,
+    lost_transfers: usize,
+    down_transfers: usize,
 }
 async fn board_hook(
     State(fake): State<Fake>,
@@ -186,9 +197,24 @@ async fn stripe(
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     body: String,
-) -> (StatusCode, Json<Value>) {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     let mut m = fake.lock().unwrap();
     let path = uri.path().to_string();
+    let stripe_error = || {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"type": "api_error"}})),
+        )
+            .into_response()
+    };
+    if path == "/v1/transfers" && method == axum::http::Method::GET {
+        return Json(json!({"data": m.transfers.clone()})).into_response();
+    }
+    if path == "/v1/transfers" && m.down_transfers > 0 {
+        m.down_transfers -= 1;
+        return stripe_error();
+    }
     if method == axum::http::Method::POST {
         let key = headers
             .get("idempotency-key")
@@ -201,7 +227,8 @@ async fn stripe(
                 Json(
                     json!({"error": {"type": "card_error", "message": "Your card was declined."}}),
                 ),
-            );
+            )
+                .into_response();
         }
     }
     // Only calls that create something are logged (and number the synthetic ids).
@@ -215,12 +242,23 @@ async fn stripe(
         m.stripe.push((path.clone(), format!("{body}{account}")));
     }
     let n = m.stripe.len();
-    let reply = Json(match path.as_str() {
+    Json(match path.as_str() {
         "/v1/checkout/sessions" => {
             json!({"id": format!("cs_test_{n}"), "url": format!("https://checkout.stripe.test/{n}")})
         }
         "/v1/accounts" => json!({"id": "acct_test_owner"}),
-        "/v1/transfers" => json!({"id": format!("tr_test_{n}")}),
+        "/v1/transfers" => {
+            let run = url::form_urlencoded::parse(body.as_bytes())
+                .find(|(k, _)| k == "metadata[sver_payout]")
+                .map(|(_, v)| v.into_owned());
+            let transfer = json!({"id": format!("tr_test_{n}"), "metadata": {"sver_payout": run}});
+            m.transfers.push(transfer.clone());
+            if m.lost_transfers > 0 {
+                m.lost_transfers -= 1;
+                return stripe_error();
+            }
+            transfer
+        }
         "/v1/payouts" => json!({"id": format!("po_test_{n}")}),
         "/v1/account_links" => json!({"url": "https://connect.stripe.test/onboarding"}),
         p if p.ends_with("/login_links") => json!({"url": "https://connect.stripe.test/express"}),
@@ -236,8 +274,8 @@ async fn stripe(
         }
         p if p.starts_with("/v1/checkout/sessions/") => m.session.clone(),
         _ => m.account.clone(),
-    });
-    (StatusCode::OK, reply)
+    })
+    .into_response()
 }
 struct Env {
     app: App,
@@ -436,7 +474,7 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/checkout/sessions/{id}", get(stripe))
         .route("/v1/checkout/sessions/{id}/expire", post(stripe))
         .route("/v1/invoice_payments", get(stripe))
-        .route("/v1/transfers", post(stripe))
+        .route("/v1/transfers", get(stripe).post(stripe))
         .route("/v1/payouts", post(stripe))
         .route("/v1/refunds", post(stripe))
         .route("/v1/subscriptions/{id}", get(stripe).post(stripe))
@@ -499,6 +537,18 @@ async fn discord_bot() {
         pkce: true,
         redirect_uri: None,
     }];
+    // Twitch go-live alerts use the Twitch app; its API is faked in the streamers test.
+    config.providers.push(sver::oauth::Provider {
+        name: "twitch".into(),
+        client_id: "test-twitch".into(),
+        client_secret: "test-only-secret".into(),
+        authorize_url: "https://twitch.example/authorize".into(),
+        token_url: "https://twitch.example/token".into(),
+        profile_url: "https://twitch.example/me".into(),
+        scopes: "".into(),
+        pkce: false,
+        redirect_uri: None,
+    });
     let app = App::new(db.clone(), config).await.unwrap();
     let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
     let result = tokio::spawn(async move { discord::exercise(&env).await }).await;
@@ -563,6 +613,7 @@ async fn exercise(e: &Env) {
     chat::exercise(e).await;
     support::exercise(e).await;
     wall_seats::exercise(e).await;
+    adnet::exercise(e).await;
     supporters::exercise(e).await;
     subs::exercise(e).await;
     engagement::exercise(e).await;
@@ -941,12 +992,32 @@ async fn exercise(e: &Env) {
         "STARTING",
         "Inventory can precede SRS accepting the callback response"
     );
+    e.sql("UPDATE stream_settings SET charity_name='Food Bank',charity_url='https://food.example/give' WHERE owner_id='stream-owner'").await;
+    // Only a link staff approved makes a charity stream.
+    e.sql("INSERT INTO charity_links(url,status,charity_name) VALUES('https://food.example/give','approved','Food Bank') ON CONFLICT DO NOTHING").await;
     e.publishing(&key, client, 1000);
     streams::tick(&e.app).await.unwrap();
     e.publishing(&key, client, 2000);
     streams::tick(&e.app).await.unwrap();
     let live = e.mine().await;
     assert_eq!(live["broadcast"]["state"], "LIVE");
+    // Going live makes it a charity stream; viewing the channel never writes one.
+    let charity = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM charity_streams WHERE owner_id='stream-owner'",
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(charity().await, 1);
+    e.sql("DELETE FROM charity_streams WHERE owner_id='stream-owner'")
+        .await;
+    sver::shine::channel(&mut e.app.db.acquire().await.unwrap(), "stream-owner")
+        .await
+        .unwrap();
+    assert_eq!(charity().await, 0);
+    e.sql("UPDATE stream_settings SET charity_name=NULL,charity_url=NULL WHERE owner_id='stream-owner'").await;
     assert!(live["broadcast"]["health"]["keyframe_seconds"].is_null());
     assert_eq!(live["broadcast"]["health"]["bitrate_warning"], true);
     e.call(

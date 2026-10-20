@@ -20,6 +20,7 @@ export default function OverlaysStudio() {
   const [view, setView] = useState<View | null>(null);
   const [url, setUrl] = useState("");
   const [message, setMessage] = useState("");
+  const [linking, setLinking] = useState(false);
   const apply = (result: Result<View>, done: string) => { if (result.ok) { setView(result.data); setMessage(done); } else setMessage(result.error); };
   const load = useCallback(async () => {
     const r = await send<View>("GET", "/api/me/overlays");
@@ -27,9 +28,12 @@ export default function OverlaysStudio() {
   }, []);
   useLoad(load);
   async function makeLink() {
-    if (view?.linked && !window.confirm("Make a new link? The current one stops working, so update it in OBS.")) return;
+    if (linking || (view?.linked && !window.confirm("Make a new link? The current one stops working, so update it in OBS."))) return;
+    // One at a time: a second link would replace the first, which could then be the one shown.
+    setLinking(true);
     const r = await send<{ url: string }>("POST", "/api/me/overlays/link");
     if (r.ok) { setUrl(r.data.url); setMessage("New link made. Copy it now: it's shown only once."); await load(); } else setMessage(r.error);
+    setLinking(false);
   }
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -74,7 +78,7 @@ export default function OverlaysStudio() {
         <li><strong>StreamElements or Streamlabs:</strong> add a Custom widget (StreamElements) or Custom Widget (Streamlabs) and paste this as its HTML, with empty CSS and JS: <code>{`<iframe src="${url}" style="border:0;width:100%;height:100%" allow="autoplay"></iframe>`}</code></li>
       </ul> : <p className="muted">{view.linked ? `A link exists${view.connected ? " and an overlay is open now" : ""}. Make a new one to see it again.` : "No link yet."}</p>}
       <div className="row wrap">
-        <button type="button" className="small" onClick={makeLink}>{view.linked ? "Make a new link" : "Make a link"}</button>
+        <button type="button" className="small" disabled={linking} onClick={makeLink}>{view.linked ? "Make a new link" : "Make a link"}</button>
         {view.linked && <button type="button" className="small quiet danger-text" onClick={async () => apply(await send<View>("DELETE", "/api/me/overlays/link"), "Link turned off.")}>Turn off the link</button>}
       </div>
     </Section>

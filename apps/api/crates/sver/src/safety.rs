@@ -70,6 +70,8 @@ const TARGETS: &[&str] = &[
     "live_stream",
     "dm_message",
     "wall_tile",
+    "outside_message",
+    "light",
 ];
 pub const STANDING_MAIL: &str =
     "There's an update to your account standing. See sver.tv/settings/standing.";
@@ -207,10 +209,12 @@ async fn target(
         "vod"|"highlight"|"clip"=>crate::videos::review::target(db,kind,id).await?,
         "beacon" => crate::beacons::review::target(db, id).await?,
         "wall_tile" => crate::seats::report_target(db, id).await?,
+        "light" => crate::lights::report_target(db, id, reporter).await?,
         "beacon_comment" => crate::beacons::comment_target(db, id, reporter).await?,
         "guild" | "guild_emblem" => crate::guilds::target(db,id,reporter,kind=="guild_emblem").await?,
         "faction_post" => crate::factions::target(db,id,reporter).await?,
         "emote" => crate::emotes::target(db, id).await?,
+        "outside_message" => crate::linked_chat::report_target(db, id).await?,
         "profile" => {
             let user = profiles::eligible_by_name(db, id).await?.ok_or_else(Fail::missing)?;
             let field = field.filter(|f| FIELDS.contains(f)).ok_or_else(|| Fail::field("field", "Choose what part of the channel you're reporting."))?;
@@ -749,7 +753,8 @@ pub async fn issue_strike(
             Duration::days(90)
         };
     let id = new_id();
-    sqlx::query("INSERT INTO strikes(id,user_id,reason,severity,content_snapshot,report_ids,removed_refs,penalty,interim_restriction_id,penalty_starts_at,penalty_until,level,message_to_user,staff_note,issued_by,issued_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)")
+    // A level-3 strike opens an account-ban review (docs/PROFILES.md "Strikes").
+    sqlx::query("INSERT INTO strikes(id,user_id,reason,severity,content_snapshot,report_ids,removed_refs,penalty,interim_restriction_id,penalty_starts_at,penalty_until,level,message_to_user,staff_note,issued_by,issued_at,expires_at,ban_review_open) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$12=3)")
         .bind(&id)
         .bind(user_id)
         .bind(&input.reason)
@@ -769,6 +774,20 @@ pub async fn issue_strike(
         .bind(expires)
         .execute(&mut *db)
         .await?;
+    if reached == 3 {
+        audit(
+            db,
+            Some(&actor.id),
+            "account_ban_review_opened",
+            "user",
+            user_id,
+            report_ids,
+            "A level-3 strike opens an account-ban review.",
+            json!({"strike_id": id}),
+            false,
+        )
+        .await?;
+    }
     recompute(db, user_id).await?;
     audit(db, Some(&actor.id), "strike_issued", "user", user_id, report_ids, staff_note, json!({"strike_id": id, "level": reached, "penalty": penalty, "severity": input.severity, "converted_interim": input.interim_restriction_id}), false).await?;
     if input.interim_restriction_id.is_some() {
@@ -957,6 +976,14 @@ async fn remove_content(db: &mut PgConnection, kind: &str, id: &str) -> Res<Valu
     if kind == "emote" {
         return crate::emotes::remove(db, id).await;
     }
+    if kind == "outside_message" {
+        let (_, visible) = crate::linked_chat::remove(db, id).await?;
+        let previous = if visible { "VISIBLE" } else { "REMOVED" };
+        return Ok(json!({"type": kind, "id": id, "previous": previous}));
+    }
+    if kind == "light" {
+        return crate::lights::remove(db, id).await;
+    }
     if kind == "dm_message" {
         let visible = crate::dms::remove(db, id).await?;
         let previous = if visible { "VISIBLE" } else { "REMOVED" };
@@ -1045,6 +1072,13 @@ async fn owner_of(db: &mut PgConnection, kind: &str, id: &str) -> Res<String> {
         "guild" | "guild_emblem" => crate::guilds::owner(db, id).await?,
         "faction_post" => crate::factions::owner(db, id).await?,
         "emote" => crate::emotes::owner(db, id).await?,
+        "outside_message" => {
+            sqlx::query_scalar("SELECT channel_id FROM outside_chat_messages WHERE id=$1")
+                .bind(id)
+                .fetch_optional(&mut *db)
+                .await?
+        }
+        "light" => crate::lights::owner(db, id).await?,
         "dm_message" => {
             sqlx::query_scalar("SELECT sender_id FROM dm_messages WHERE id=$1")
                 .bind(id)
@@ -1121,6 +1155,7 @@ async fn current_content(
         "beacon_comment" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM beacon_comments WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "guild" | "guild_emblem" => crate::guilds::snapshot(db, id).await?,
         "emote" => crate::emotes::current(db, id).await?,
+        "light" => crate::lights::current(db, id).await?,
         // Never decrypted here: staff open the sealed excerpt through /api/admin/dm-reports.
         "dm_message" => sqlx::query_scalar("SELECT jsonb_build_object('sealed',true,'deleted',deleted_at IS NOT NULL) FROM dm_messages WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "profile" => match profile_snapshot(db, id, field).await {
@@ -1131,6 +1166,7 @@ async fn current_content(
         "wall_post" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM wall_posts WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "wall_reply" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'status',status,'deleted',deleted_at IS NOT NULL) FROM wall_replies WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "setup_photo" => sqlx::query_scalar("SELECT jsonb_build_object('image',image_key||'/400.webp','alt',alt,'status',status) FROM setup_photos WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
+        "outside_message" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'hidden',hidden_at IS NOT NULL) FROM outside_chat_messages WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "chat_message" => sqlx::query_scalar("SELECT jsonb_build_object('body',body,'deleted',deleted_at IS NOT NULL) FROM chat_messages WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         "live_stream" => sqlx::query_scalar("SELECT jsonb_build_object('state',state,'started_at',started_at,'ended_at',ended_at) FROM broadcasts WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
         _ => sqlx::query_scalar("SELECT jsonb_build_object('image',image_key,'artist_name',artist_name,'caption',caption,'status',status) FROM fan_art WHERE id=$1").bind(id).fetch_optional(&mut *db).await?.unwrap_or(Value::Null),
@@ -1239,10 +1275,32 @@ pub async fn admin_action(
     if !TARGETS.contains(&kind.as_str()) {
         return Err(Fail::missing());
     }
+    // An outside sender isn't a S.V.E.R account; the channel only stands in as the owner.
+    if kind == "outside_message" && (input.strike.is_some() || input.action == "restrict") {
+        return Err(Fail::bad(
+            "An outside message's sender isn't a S.V.E.R account. Remove the message or dismiss the report.",
+        ));
+    }
     let note = note(input.note.as_deref(), "note", true)?;
     let mut tx = app.db.begin().await?;
     let reports: Vec<(String, Value)> = sqlx::query_as("SELECT id,snapshot FROM reports WHERE target_type=$1 AND target_id=$2 AND status='OPEN' ORDER BY created_at FOR UPDATE").bind(&kind).bind(&id).fetch_all(&mut *tx).await?;
+    // Another staff member (or a double click) already handled these reports: striking again would
+    // be a second strike for one violation. Strikes without a report go through the user page;
+    // other actions (a field reset, say) can still be taken without one.
+    if reports.is_empty() && input.strike.is_some() {
+        return Err(Fail::conflict(
+            "These reports were already handled. Refresh the queue; to strike without a report, use the user's page.",
+        ));
+    }
     let report_ids: Vec<String> = reports.iter().map(|r| r.0.clone()).collect();
+    // A likely copy of media removed under Take It Down is removed the legal way: files deleted,
+    // frames added to the removed set, and never restored by an appeal.
+    let copy_of_removed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM reports WHERE id=ANY($1) AND reason='removal_match')",
+    )
+    .bind(&report_ids)
+    .fetch_one(&mut *tx)
+    .await?;
     let owner = owner_of(&mut tx, &kind, &id).await?;
     let snapshot = match reports.first() {
         Some((_, snap)) => snap.clone(),
@@ -1258,6 +1316,12 @@ pub async fn admin_action(
             if input.strike.is_some() {
                 return Err(Fail::bad("Dismissing a report never issues a strike."));
             }
+        }
+        "remove_content" if copy_of_removed && kind == "beacon" => {
+            crate::beacons::review::remove_legal(&mut tx, &id).await?;
+        }
+        "remove_content" if copy_of_removed && crate::videos::review::is_video(&kind) => {
+            crate::videos::review::remove(&mut tx, &id, true, true).await?;
         }
         "remove_content" => removed = json!([remove_content(&mut tx, &kind, &id).await?]),
         "reset_field" => {
@@ -1332,6 +1396,10 @@ pub async fn admin_action(
     // Open chats drop a message staff removed, as they do for a channel moderator's delete.
     if kind == "emote" {
         app.chat.publish(&owner, None, 0, json!({"type":"emotes"}));
+    }
+    if kind == "outside_message" && input.action == "remove_content" {
+        app.chat
+            .publish(&owner, None, 0, json!({"type":"delete","id":id}));
     }
     if kind == "chat_message" && input.action == "remove_content" {
         let place: Option<(Option<String>, Option<String>)> = sqlx::query_as(
@@ -1658,6 +1726,10 @@ pub async fn decide(
                 }
                 "wall_tile" => {
                     crate::seats::restore(&mut tx, item_id, previous).await?;
+                    continue;
+                }
+                "light" => {
+                    crate::lights::restore(&mut tx, item_id, previous).await?;
                     continue;
                 }
                 "wall_post" => "wall_posts",

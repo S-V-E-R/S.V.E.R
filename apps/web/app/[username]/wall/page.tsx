@@ -19,7 +19,7 @@ export default async function WallTab({ params, searchParams }: { params: Channe
       <h2>Wall</h2>
       {page && <WallComposer username={name} viewer={page.viewer} />}
       {!page ? <p className="muted">The wall couldn&apos;t be loaded. Please try again.</p> : <>
-        {[...page.pinned, ...page.items].map(p => <WallPost key={p.id} post={p} viewer={page.viewer} />)}
+        {[...page.pinned, ...page.items].map(p => <WallPost key={p.id} post={p} viewer={page.viewer} wallOwner={data.channel.username} />)}
         {page.pinned.length + page.items.length === 0 && <p className="muted">No posts yet.</p>}
         <nav className="pager">{cursor && <Link href={`/${name}/wall`}>Newest</Link>}{page.next_cursor && <Link href={`/${name}/wall?cursor=${encodeURIComponent(page.next_cursor)}`}>Older posts</Link>}</nav>
       </>}

@@ -54,6 +54,7 @@ export default function AboutPage() {
       <h2 id="open" className="rule-heading">Built in the open<span className="dia" aria-hidden="true" /></h2>
       <div className="about-prose">
         <p>S.V.E.R is being rebuilt in stages and is open source under the GNU AGPL. Anyone can read the code, report a problem or contribute. Accounts, channel pages and live streaming come first; factions, discovery, past broadcasts, clips and Beacons follow.</p>
+        <p>S.V.E.R is built with AI assistance, mostly Anthropic&apos;s Claude, with Joe deciding what gets built and what ships. Changes Claude helped write are credited to it in the commit history on GitHub.</p>
       </div>
       <div className="about-links">
         <a href="https://github.com/S-V-E-R/S.V.E.R" className="button quiet">Read the code on GitHub</a>

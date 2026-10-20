@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { CloseIcon, MenuIcon, SearchIcon } from "./Icons";
 
 // Sign-in screens get no sidebar and a minimal top bar (docs/DESIGN.md "Pages": sign up, log in, …).
@@ -69,7 +70,7 @@ export function Chrome({ actions, sidebar, footer, children }: Props) {
       <form className="search" role="search" action="/search">
         <SearchIcon />
         <label htmlFor="site-search" className="sr-only">Search channels, categories and Beacons</label>
-        <input id="site-search" name="q" type="search" placeholder="Search channels, categories and Beacons" minLength={2} maxLength={50} autoComplete="off" />
+        <Suspense fallback={<SearchInput query="" />}><SearchQuery path={pathname} /></Suspense>
       </form>
       <span className="topbar-space" />
       <div className="topbar-actions">{actions}</div>
@@ -81,3 +82,14 @@ export function Chrome({ actions, sidebar, footer, children }: Props) {
     </div>
   </>;
 }
+
+/** The top-bar search field; on the results page it keeps the query. */
+function SearchQuery({ path }: { path: string }) {
+  const params = useSearchParams();
+  const query = path === "/search" ? params.get("q") ?? "" : "";
+  return <SearchInput key={query} query={query} />;
+}
+function SearchInput({ query }: { query: string }) {
+  return <input id="site-search" name="q" type="search" placeholder="Search channels, categories and Beacons" minLength={2} maxLength={50} autoComplete="off" defaultValue={query} />;
+}
+

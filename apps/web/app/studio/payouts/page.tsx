@@ -3,6 +3,7 @@ import { StatusMark } from "../../../components/shell/Icons";
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
+import CreatorTierTable, { TIER_METRICS } from "../../../components/CreatorTiers";
 import { send, useLoad } from "../../../lib/client-api";
 
 type Payouts = {
@@ -20,7 +21,6 @@ type Summary = { available_cents: number; pending_cents: number; next_payday: st
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 // Earnings accrue in tenths of a cent and round down only at payout.
 const tenths = (t: number) => money(Math.floor(t / 10));
-const LABELS: [keyof Metrics, string][] = [["streams", "Streams"], ["hours", "Stream hours"], ["avg_viewers", "Average viewers"], ["followers", "Followers"], ["subscribers", "Subscribers"], ["unique_viewers", "Unique viewers"], ["days_active", "Days active"]];
 const KIND = { payday: "Payday", early_standard: "Early Pay (standard)", early_instant: "Early Pay (instant)" };
 
 /** Creator Studio → Payouts (docs/SUPPORT.md "Creator tiers", "Who can earn" and "Payouts"). */
@@ -61,14 +61,16 @@ export default function StudioPayouts() {
     {tier && <Section title={`Creator tier · ${tier.name}`} intro={`You keep ${tier.split}% of subscriptions and gift subs, and 0.8¢ per Valor at every tier. Tiers are checked every Monday against the last 90 days and never go down.`}>
       {tier.held && <p className="form-message">Promotion is paused while a staff review of your streams is open.</p>}
       {next ? <table className="table"><thead><tr><th>Last 90 days</th><th>You</th><th>{next.name} ({next.split}%)</th></tr></thead>
-        <tbody>{LABELS.map(([key, label]) => <tr key={key}><td>{label}</td><td>{tier.metrics[key].toLocaleString()}</td><td>{tier.metrics[key] >= next.requirements[key] && <StatusMark ok />}{next.requirements[key].toLocaleString()}</td></tr>)}</tbody></table>
+        <tbody>{TIER_METRICS.map(([key, label]) => <tr key={key}><td>{label}</td><td>{tier.metrics[key].toLocaleString()}</td><td>{tier.metrics[key] >= next.requirements[key] && <StatusMark ok />}{next.requirements[key].toLocaleString()}</td></tr>)}</tbody></table>
         : <p>You&apos;re at the top tier.</p>}
+      <CreatorTierTable current={tier.tier} />
+      <p><Link href="/help/creator-tiers">See every tier</Link> and how they work.</p>
     </Section>}
     <Section title="Earnings" intro="Payday every two weeks pays your whole balance. Between paydays, Early Pay withdraws up to 75% of what you've earned since the last payday, once a day. Taxes aren't withheld; Stripe handles your tax forms.">
       <p className="valor-balance">{tenths(data.earnings_tenths)}</p>
       {summary && <>
         <p className="muted">Next payday {new Date(summary.next_payday).toLocaleDateString()}{summary.pending_cents > 0 && ` · ${money(summary.pending_cents)} on its way`}</p>
-        {summary.held && <p className="form-message">Payouts are on hold while a staff review is open.</p>}
+        {summary.held && <p className="form-message">Payouts are on hold for a staff review of your streams.</p>}
         {summary.enabled && !summary.held && <div className="row wrap">
           <span>Early Pay available: <strong>{money(summary.early.limit_cents)}</strong>{summary.early.used_today && " · used today"}</span>
           <button type="button" className="small" disabled={busy || summary.early.used_today || summary.early.limit_cents < 1} onClick={() => early("standard")}>Standard (free, about 2 business days)</button>

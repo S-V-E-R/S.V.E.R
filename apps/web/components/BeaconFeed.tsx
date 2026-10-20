@@ -10,7 +10,9 @@ import { BeaconComments } from "./BeaconComments";
 import { Crest } from "./Crest";
 import { ReportForm, TakeDownLink } from "./Report";
 import { ShareButton } from "./ShareButton";
+import { AdFrame, fetchAd, type ServedAd } from "./Ads";
 import { Turnstile } from "./Turnstile";
+import { DonateLink } from "./DonateLink";
 import "../styles/beacons.css";
 
 const SOUND = "sver-beacon-sound";
@@ -87,7 +89,19 @@ export function BeaconFeed({ initial, start = null, signedIn, gateId = null, fac
   }, [gateId]);
   useEffect(() => { if (more && items.length - index <= 3) void loadMore(); }, [index, items.length, more, loadMore]);
 
-  const move = useCallback((step: number) => setIndex(i => Math.max(0, Math.min(items.length - 1, i + step))), [items.length]);
+  // An ad card after every 8th Beacon for signed-in viewers; the next swipe goes on (docs/ADVERTISERS.md).
+  const [ad, setAd] = useState<ServedAd | null>(null);
+  const adAt = useRef(-1);
+  const move = useCallback((step: number) => {
+    const go = () => setIndex(i => Math.max(0, Math.min(items.length - 1, i + step)));
+    if (ad) { setAd(null); if (step > 0) go(); return; }
+    if (step > 0 && signedIn && (index + 1) % 8 === 0 && adAt.current !== index) {
+      adAt.current = index;
+      void fetchAd("feed").then(served => { if (served) setAd(served); else go(); });
+      return;
+    }
+    go();
+  }, [items.length, ad, signedIn, index]);
   useEffect(() => {
     function key(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
@@ -123,7 +137,7 @@ export function BeaconFeed({ initial, start = null, signedIn, gateId = null, fac
       onTouchStart={e => { touch.current = e.touches[0]?.clientY ?? null; }}
       onTouchEnd={e => { const from = touch.current; touch.current = null; const to = e.changedTouches[0]?.clientY; if (from === null || to === undefined) return; if (from - to > 50) move(1); else if (to - from > 50) move(-1); }}
       onWheel={e => { const now = Date.now(); if (Math.abs(e.deltaY) < 30 || now - wheel.current < 600) return; wheel.current = now; move(e.deltaY > 0 ? 1 : -1); }}>
-      {current
+      {ad ? <AdFrame ad={ad} className="ad-feed-card" muted={!(sound || soundHere)} /> : current
         && !(gateId && !ageAck)
         ? <BeaconPlayer key={current.beacon.id} item={current} sound={sound || soundHere} onUnmute={unmute} ageAck={ageAck} signedIn={signedIn} />
         : gateId && !ageAck
@@ -223,7 +237,7 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
         <h2>{b.title}</h2>
         <p>{c.username ? <Link href={`/${c.username}`}>@{c.username}</Link> : c.display_name}{b.category && <> · {b.category}</>}</p>
         {item.clipper?.username && <p className="muted">Clipped by <Link href={`/${item.clipper.username}`}>{item.clipper.display_name}</Link></p>}
-        {item.charity && <p className="beacon-shine"><span className="eyebrow">Shine</span> {item.charity.name}{item.charity.url && <> · <a href={item.charity.url} target="_blank" rel="noopener noreferrer">Donate</a></>}</p>}
+        {item.charity && <p className="beacon-shine"><span className="eyebrow">Shine</span> {item.charity.name}{item.charity.url && <> · <DonateLink url={item.charity.url}>Donate</DonateLink></>}</p>}
         {b.clip_id && <p><Link href={`/clips/${b.clip_id}`} className="muted">From a clip</Link></p>}
       </div>
     </div>
@@ -235,7 +249,7 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
       {!item.is_owner && !followed && c.username && <button type="button" className="beacon-action" onClick={() => void follow()} aria-label={`Follow ${c.display_name}`}><span aria-hidden="true">＋</span><span>Follow</span></button>}
       {c.live && c.username && <button type="button" className="beacon-action beacon-live" onClick={() => void goLive()}><span className="tag-live">Live</span><span>Live now</span></button>}
       <button type="button" className="beacon-action" onClick={() => void like()} aria-pressed={liked} aria-label={liked ? "Unlike" : "Like"}><span aria-hidden="true">{liked ? "♥" : "♡"}</span><span>{compact(likes)}</span></button>
-      <span className="beacon-action beacon-stat" aria-label={`${b.views} views`}><span aria-hidden="true">▶</span><span>{compact(b.views)}</span></span>
+      <span className="beacon-action beacon-stat" aria-label={`${b.views} views`}><svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12"><path d="M3 2l7 4-7 4z" fill="currentColor" /></svg><span>{compact(b.views)}</span></span>
       <button type="button" className="beacon-action" onClick={() => setPanel(panel === "comments" ? null : "comments")} aria-expanded={panel === "comments"} aria-label="Comments"><span aria-hidden="true">💬</span><span>Comments</span></button>
       <ShareButton path={`/beacons/${b.id}`} title={b.title} className="beacon-action" label={<><span aria-hidden="true">↗</span><span>Share</span></>} />
       <button type="button" className="beacon-action" onClick={() => setPanel(panel === "more" ? null : "more")} aria-expanded={panel === "more"} aria-label="More actions"><span aria-hidden="true">⋯</span><span>More</span></button>

@@ -474,6 +474,8 @@ async fn upgrade(
             ("items[0][price_data][unit_amount]", price(tier).to_string()),
             ("items[0][price_data][recurring][interval]", "month".into()),
             ("proration_behavior", "always_invoice".into()),
+            // The new tier applies only if the prorated charge is paid now.
+            ("payment_behavior", "error_if_incomplete".into()),
             ("metadata[sver_tier]", tier.to_string()),
         ],
         Some(&format!("sver-upgrade-{subscription}-{tier}")),
@@ -721,8 +723,8 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
     let shares = card_shares(tx, &pooled, cents).await?;
     let share: i64 = shares.iter().map(|s| s.1).sum();
     let stored = (pooled.len() > 1).then(|| shares_json(&shares));
-    let inserted = sqlx::query("INSERT INTO sub_invoices(id,channel_id,user_id,tier,payment_intent,amount_cents,share_tenths,shares) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO NOTHING")
-        .bind(id).bind(channel).bind(user).bind(tier).bind(&intent).bind(cents as i32).bind(share).bind(&stored)
+    let inserted = sqlx::query("INSERT INTO sub_invoices(id,channel_id,user_id,tier,payment_intent,amount_cents,share_tenths,shares,renewal) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO NOTHING")
+        .bind(id).bind(channel).bind(user).bind(tier).bind(&intent).bind(cents as i32).bind(share).bind(&stored).bind(reason == "subscription_cycle")
         .execute(&mut *tx).await?.rows_affected();
     if inserted == 0 {
         return Ok(());
@@ -734,7 +736,7 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
         ON CONFLICT(channel_id,user_id) DO UPDATE SET tier=EXCLUDED.tier,
             paid_through=greatest(channel_subs.paid_through,EXCLUDED.paid_through),
             months=channel_subs.months+EXCLUDED.months,
-            stripe_subscription=coalesce(EXCLUDED.stripe_subscription,channel_subs.stripe_subscription),
+            stripe_subscription=CASE WHEN $7 THEN EXCLUDED.stripe_subscription ELSE channel_subs.stripe_subscription END,
             cancel_at_period_end=CASE WHEN $7 THEN false ELSE channel_subs.cancel_at_period_end END,
             updated_at=now() RETURNING months")
         .bind(channel).bind(user).bind(tier).bind(end as f64).bind(month)
@@ -803,10 +805,37 @@ pub(crate) async fn subscription_changed(
     Ok(())
 }
 
-/// A fully refunded subscription payment ends that subscription's benefits now.
-pub(crate) async fn refunded_in_full(tx: &mut PgConnection, intent: &str) -> Res<()> {
-    sqlx::query("UPDATE channel_subs s SET paid_through=least(s.paid_through,now()),updated_at=now() FROM sub_invoices i WHERE i.payment_intent=$1 AND s.channel_id=i.channel_id AND s.user_id=i.user_id")
-        .bind(intent).execute(tx).await?;
+/// A fully refunded subscription payment that paid for the current period ends the benefits now
+/// and stops renewal; an older month's refund leaves a later paid month alone (as supporters do).
+pub(crate) async fn refunded_in_full(app: &App, tx: &mut PgConnection, intent: &str) -> Res<()> {
+    let Some((channel, user, latest)): Option<(String, String, bool)> = sqlx::query_as("SELECT i.channel_id,i.user_id,NOT EXISTS(SELECT 1 FROM sub_invoices l WHERE l.channel_id=i.channel_id AND l.user_id=i.user_id AND l.amount_cents>0 AND l.created_at>i.created_at) FROM sub_invoices i WHERE i.payment_intent=$1")
+        .bind(intent)
+        .fetch_optional(&mut *tx)
+        .await?
+    else {
+        return Ok(());
+    };
+    if !latest {
+        return Ok(());
+    }
+    let renewing: Option<String> = sqlx::query_scalar("UPDATE channel_subs SET paid_through=least(paid_through,now()),cancel_at_period_end=true,updated_at=now() WHERE channel_id=$1 AND user_id=$2 RETURNING stripe_subscription")
+        .bind(&channel)
+        .bind(&user)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten();
+    // Nothing more is charged for a payment taken back. A Stripe error fails the webhook, which
+    // Stripe then retries.
+    if let Some(subscription) = renewing {
+        stripe::post(
+            &app.http,
+            &app.config.stripe,
+            &format!("subscriptions/{subscription}"),
+            &[("cancel_at_period_end", "true".into())],
+            None,
+        )
+        .await?;
+    }
     Ok(())
 }
 

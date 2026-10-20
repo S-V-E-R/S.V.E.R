@@ -71,11 +71,15 @@ pub(super) async fn page(
         };
     let rows:Vec<(String,bool,String,DateTime<Utc>)>=sqlx::query_as("SELECT user_id,officer,title,joined_at FROM guild_members WHERE guild_id=$1 ORDER BY joined_at,user_id")
         .bind(&g.id).fetch_all(&mut *db).await?;
-    let users = profiles::public_channels(
-        &mut db,
-        &rows.iter().map(|r| r.0.clone()).collect::<Vec<_>>(),
-    )
-    .await?;
+    let ids: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
+    let users = profiles::public_channels(&mut db, &ids).await?;
+    // One query each for blocks, live state and schedules, however large the guild.
+    let blocked = match &viewer {
+        Some(v) if !manage => profiles::blocked_among(&mut db, &v.id, &ids).await?,
+        _ => Default::default(),
+    };
+    let live = crate::playback::live_among(&mut db, &ids).await?;
+    let mut upcoming = crate::studio::next_occurrences_for(&mut db, &ids, 20).await?;
     let mut members = Vec::new();
     let mut schedule = Vec::new();
     for (id, officer, title, at) in rows {
@@ -87,21 +91,16 @@ pub(super) async fn page(
         let Some(user) = user else {
             continue;
         };
-        if let Some(v) = &viewer
-            && !manage
-            && profiles::blocked_between(&mut db, &v.id, &id).await?
-        {
+        if blocked.contains(&id) {
             continue;
         }
-        let live = user.eligible && crate::playback::is_live(&mut db, &id).await?;
+        let live = user.eligible && live.contains(&id);
         let chip = profiles::chip(&app, &user);
         members.push(json!({"user":chip,"live":live,"role":if g.leader_id.as_deref()==Some(&id){"leader"}else if officer{"officer"}else{"member"},"title":title,"joined_at":at}));
         if !user.eligible {
             continue;
         }
-        // ponytail: schedule expansion is per member; batch it when large guilds cause measured latency.
-        let upcoming = crate::studio::next_occurrences(&mut db, &id, 20).await?;
-        for occurrence in upcoming["items"].as_array().into_iter().flatten() {
+        for occurrence in upcoming.remove(&id).unwrap_or_default() {
             schedule.push(json!({"user":chip,"occurrence":occurrence}));
         }
     }
@@ -181,6 +180,25 @@ pub(super) async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Val
         json!({"items":items,"can_create":can_create,"badge":badge}),
     ))
 }
+/// GET /api/me/guilds/live: guildmates live now across the viewer's active guilds, for Studio.
+pub(super) async fn live_mates(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    // Only fixed SQL fragments are interpolated; the user is bound.
+    let rows: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM channel_users c WHERE c.eligible AND c.id<>$1 AND {}
+            AND c.id IN (SELECT m.user_id FROM guild_members me JOIN guilds g ON g.id=me.guild_id AND g.status='ACTIVE' JOIN guild_members m ON m.guild_id=g.id WHERE me.user_id=$1)
+            AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=c.id) OR (b.blocker_id=c.id AND b.blocked_id=$1))
+        ORDER BY lower(c.username)",
+        profiles::chip_sql("c"),
+        crate::playback::live_sql("c.id")
+    )))
+    .bind(&user.id)
+    .fetch_all(&app.db)
+    .await?;
+    let mut members = json!(rows);
+    profiles::hydrate(&app, &mut members);
+    Ok(Json(json!({ "members": members })))
+}
 pub async fn followed_members(
     db: &mut PgConnection,
     user: &str,
@@ -202,7 +220,7 @@ pub async fn id_by_slug(db: &mut PgConnection, slug: &str) -> Res<Option<String>
 }
 pub fn badge_sql(user: &'static str) -> String {
     format!(
-        "(SELECT jsonb_build_object('slug',g.slug,'name',g.name,'tag',g.tag,'guild_image',CASE WHEN g.emblem_visible THEN g.avatar_key END) FROM guild_badges b JOIN guilds g ON g.id=b.guild_id AND g.status='ACTIVE' WHERE b.user_id={user})"
+        "(SELECT jsonb_build_object('slug',g.slug,'name',g.name,'tag',g.tag,'guild_image',CASE WHEN g.emblem_visible THEN g.avatar_key END) FROM guild_badges b JOIN guilds g ON g.id=b.guild_id AND g.status='ACTIVE' WHERE b.user_id={user} AND EXISTS(SELECT 1 FROM guild_members m WHERE m.guild_id=b.guild_id AND m.user_id=b.user_id))"
     )
 }
 pub async fn hydrate_badges(app: &App, items: &mut [Value]) -> Res<()> {

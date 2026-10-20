@@ -60,6 +60,12 @@ async fn main() -> Result<(), String> {
                 if sver::streams::catalog::tick(&catalog).await.is_err() {
                     eprintln!("catalog_event=refresh outcome=retry");
                 }
+                if sver::streams::catalog::steam::tick(&catalog).await.is_err() {
+                    eprintln!("catalog_event=steam outcome=retry");
+                }
+                if sver::streams::catalog::art::tick(&catalog).await.is_err() {
+                    eprintln!("catalog_event=art outcome=failed");
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
         });
@@ -158,6 +164,23 @@ async fn main() -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+    // The community bot's Gateway connection (docs/DISCORD_BOT.md); off unless DISCORD_GATEWAY=1.
+    if sver::discord::gateway::enabled() {
+        tokio::spawn(sver::discord::gateway::run(app.clone()));
+    }
+    // Linked chat subscribes and unsubscribes at Twitch, which can take its 10-second timeout per
+    // call; on its own loop a slow Twitch never holds up playback, raids or Engagement Valor.
+    let linked = app.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if sver::linked_chat::tick(&linked).await.is_err() {
+                eprintln!("linked_chat_event=supervise outcome=retry");
+            }
+        }
+    });
     // Event webhooks too: a slow developer endpoint never delays a game's board webhook.
     let hooks = app.clone();
     tokio::spawn(async move {
@@ -224,9 +247,6 @@ async fn main() -> Result<(), String> {
             if sver::bot::drain(&media_jobs).await.is_err() {
                 eprintln!("bot_event=drain outcome=retry");
             }
-            if sver::linked_chat::tick(&media_jobs).await.is_err() {
-                eprintln!("linked_chat_event=supervise outcome=retry");
-            }
             if sver::playback::tick(&media_jobs).await.is_err() {
                 eprintln!("playback_event=delivery outcome=retry");
             }
@@ -253,9 +273,6 @@ async fn main() -> Result<(), String> {
             }
             if sver::tiers::tick(&media_jobs).await.is_err() {
                 eprintln!("tiers_event=tick outcome=retry");
-            }
-            if sver::shine::tick(&media_jobs).await.is_err() {
-                eprintln!("shine_event=tick outcome=retry");
             }
             if sver::payouts::tick(&media_jobs).await.is_err() {
                 eprintln!("payout_event=tick outcome=retry");

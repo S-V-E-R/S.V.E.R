@@ -4,7 +4,7 @@
 // events, then Connect with a game token from Creator Studio -> Board -> Connections:
 //
 //   Board = NewObject<USverBoardClient>(this);
-//   Board->OnPress.AddDynamic(this, &AMyGame::HandlePress);   // (Control, Username, Text)
+//   Board->OnPress.AddDynamic(this, &AMyGame::HandlePress);   // (Control, Username, Text, PressId, bConfirm)
 //   Board->OnMove.AddDynamic(this, &AMyGame::HandleMove);     // joystick (Control, Username, X, Y)
 //   Board->Connect(Token);
 //   Board->SetDisabled(TEXT("jump"), true);                   // game -> board
@@ -20,7 +20,8 @@ class IWebSocket;
 class FJsonObject;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSverHello, const FString&, Channel);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FSverPress, const FString&, Control, const FString&, Username, const FString&, Text);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FSverPress, const FString&, Control, const FString&, Username, const FString&, Text, const FString&, PressId, bool, bConfirm);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FSverResult, const FString&, PressId, const FString&, Control, const FString&, Outcome);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FSverMove, const FString&, Control, const FString&, Username, float, X, float, Y);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSverJson, const FString&, Json);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSverError, const FString&, Message);
@@ -33,8 +34,10 @@ class SVERBOARD_API USverBoardClient : public UObject
 public:
 	/** Connected; the channel name. The published board is in LastBoardJson. */
 	UPROPERTY(BlueprintAssignable, Category = "S.V.E.R") FSverHello OnHello;
-	/** A viewer pressed a button, goal or text input (Text is empty for buttons). */
+	/** A viewer pressed a button, goal or text input (Text is empty for buttons). With bConfirm, call Capture(PressId) once it happened, or Release(PressId). */
 	UPROPERTY(BlueprintAssignable, Category = "S.V.E.R") FSverPress OnPress;
+	/** A "Game confirms" press was captured or released (Outcome is "captured" or "released"). */
+	UPROPERTY(BlueprintAssignable, Category = "S.V.E.R") FSverResult OnResult;
 	/** A viewer moved a joystick (X and Y from -1 to 1). */
 	UPROPERTY(BlueprintAssignable, Category = "S.V.E.R") FSverMove OnMove;
 	/** A Skill, emote combo or Surge celebration played (the raw event JSON). */

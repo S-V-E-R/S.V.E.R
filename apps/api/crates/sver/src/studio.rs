@@ -526,40 +526,57 @@ pub fn expand(
     out.sort_by_key(|o| o.0);
     out
 }
-async fn load_schedule(
-    db: &mut PgConnection,
-    user_id: &str,
-) -> Res<(
+type Schedule = (
     Option<String>,
     Vec<Block>,
     Vec<(String, DateTime<Utc>, DateTime<Utc>)>,
-)> {
-    let tz: Option<String> = sqlx::query_scalar("SELECT timezone FROM schedules WHERE user_id=$1")
-        .bind(user_id)
-        .fetch_optional(&mut *db)
-        .await?;
-    let blocks: Vec<(i32, i32, i32, String)> = sqlx::query_as("SELECT weekday,start_minute,end_minute,label FROM schedule_blocks WHERE user_id=$1 ORDER BY position").bind(user_id).fetch_all(&mut *db).await?;
-    let events: Vec<(String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as("SELECT title,start_at,end_at FROM schedule_events WHERE user_id=$1 AND end_at>now() ORDER BY start_at").bind(user_id).fetch_all(&mut *db).await?;
-    Ok((
-        tz,
-        blocks
-            .into_iter()
-            .map(|b| Block {
-                weekday: b.0,
-                start: b.1,
-                end: b.2,
-                label: b.3,
-            })
-            .collect(),
-        events,
-    ))
-}
-async fn occurrences(
+);
+/// Several people's schedules in three queries (a guild page); no schedule reads as empty.
+async fn load_schedules(
     db: &mut PgConnection,
-    user_id: &str,
-    days: i64,
-) -> Res<(Option<String>, Vec<Value>)> {
-    let (tz, blocks, events) = load_schedule(db, user_id).await?;
+    users: &[String],
+) -> Res<std::collections::HashMap<String, Schedule>> {
+    let mut out: std::collections::HashMap<String, Schedule> = users
+        .iter()
+        .map(|u| (u.clone(), Schedule::default()))
+        .collect();
+    let zones: Vec<(String, String)> =
+        sqlx::query_as("SELECT user_id,timezone FROM schedules WHERE user_id=ANY($1)")
+            .bind(users)
+            .fetch_all(&mut *db)
+            .await?;
+    for (user, tz) in zones {
+        if let Some(s) = out.get_mut(&user) {
+            s.0 = Some(tz);
+        }
+    }
+    let blocks: Vec<(String, i32, i32, i32, String)> = sqlx::query_as("SELECT user_id,weekday,start_minute,end_minute,label FROM schedule_blocks WHERE user_id=ANY($1) ORDER BY user_id,position").bind(users).fetch_all(&mut *db).await?;
+    for (user, weekday, start, end, label) in blocks {
+        if let Some(s) = out.get_mut(&user) {
+            s.1.push(Block {
+                weekday,
+                start,
+                end,
+                label,
+            });
+        }
+    }
+    let events: Vec<(String, String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as("SELECT user_id,title,start_at,end_at FROM schedule_events WHERE user_id=ANY($1) AND end_at>now() ORDER BY start_at").bind(users).fetch_all(&mut *db).await?;
+    for (user, title, start, end) in events {
+        if let Some(s) = out.get_mut(&user) {
+            s.2.push((title, start, end));
+        }
+    }
+    Ok(out)
+}
+async fn load_schedule(db: &mut PgConnection, user_id: &str) -> Res<Schedule> {
+    Ok(load_schedules(db, &[user_id.to_string()])
+        .await?
+        .remove(user_id)
+        .unwrap_or_default())
+}
+/// A schedule's occurrences over the next `days`: weekly blocks and one-off events together.
+fn upcoming((tz, blocks, events): Schedule, days: i64) -> Vec<Value> {
     let now = Utc::now();
     let until = now + Duration::days(days);
     let mut all: Vec<(DateTime<Utc>, DateTime<Utc>, String, &str)> = Vec::new();
@@ -577,7 +594,27 @@ async fn occurrences(
             .map(|(t, s, e)| (s, e, t, "event")),
     );
     all.sort_by_key(|o| o.0);
-    Ok((tz, all.into_iter().map(|(s, e, l, kind)| json!({"start_at": s, "end_at": e, "label": l, "kind": kind, "live": false})).collect()))
+    all.into_iter().map(|(s, e, l, kind)| json!({"start_at": s, "end_at": e, "label": l, "kind": kind, "live": false})).collect()
+}
+async fn occurrences(
+    db: &mut PgConnection,
+    user_id: &str,
+    days: i64,
+) -> Res<(Option<String>, Vec<Value>)> {
+    let schedule = load_schedule(db, user_id).await?;
+    Ok((schedule.0.clone(), upcoming(schedule, days)))
+}
+/// The next `n` occurrences (two weeks ahead) for each of several people.
+pub async fn next_occurrences_for(
+    db: &mut PgConnection,
+    users: &[String],
+    n: usize,
+) -> Res<std::collections::HashMap<String, Vec<Value>>> {
+    Ok(load_schedules(db, users)
+        .await?
+        .into_iter()
+        .map(|(user, s)| (user, upcoming(s, 14).into_iter().take(n).collect()))
+        .collect())
 }
 /// The next `n` occurrences for the Home tab.
 pub async fn next_occurrences(db: &mut PgConnection, user_id: &str, n: usize) -> Res<Value> {
@@ -1285,6 +1322,24 @@ struct ShelfConfig {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PromptConfig {
+    question: String,
+    answer: String,
+    /// Sent back by editors that loaded the saved block; the title always comes from the question.
+    #[serde(default, rename = "title")]
+    _title: Option<String>,
+}
+/// The fixed questions a PROMPT block can answer (docs/PROFILES.md "Persona pass").
+pub const PROMPTS: [(&str, &str); 6] = [
+    ("meet", "Who I'd like to meet"),
+    ("made_me", "Games that made me"),
+    ("hot_take", "My hot take"),
+    ("obsessed", "Currently obsessed with"),
+    ("moment", "Best stream moment"),
+    ("chat_calls_me", "What my chat calls me"),
+];
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BlockItem {
     #[serde(rename = "type")]
     kind: String,
@@ -1324,10 +1379,24 @@ pub fn validate_block(kind: &str, config: &Value) -> Res<Value> {
             }
             json!({"games": c.games.iter().map(|g| text::plain(g, "games", 1, 80, 0, true)).collect::<Res<Vec<_>>>()?})
         }
+        "PROMPT" => {
+            let c: PromptConfig = serde_json::from_value(config.clone()).map_err(|_| invalid())?;
+            let Some((key, question)) = PROMPTS.iter().find(|(k, _)| *k == c.question) else {
+                return Err(Fail::field(
+                    "question",
+                    "Choose one of the listed questions.",
+                ));
+            };
+            json!({"question": key, "title": question, "answer": text::plain(&c.answer, "answer", 1, 500, 4, true)?})
+        }
         _ => return Err(Fail::field("type", "Choose a block type.")),
     })
 }
-async fn blocks_json(db: &mut PgConnection, user_id: &str, enabled_only: bool) -> Res<Vec<Value>> {
+pub async fn blocks_json(
+    db: &mut PgConnection,
+    user_id: &str,
+    enabled_only: bool,
+) -> Res<Vec<Value>> {
     Ok(sqlx::query_scalar("SELECT jsonb_build_object('type',type,'enabled',enabled,'config',config) FROM profile_blocks WHERE user_id=$1 AND (enabled OR NOT $2) ORDER BY position").bind(user_id).bind(enabled_only).fetch_all(&mut *db).await?)
 }
 /// GET /api/me/blocks
@@ -1347,6 +1416,17 @@ pub async fn save_blocks(
     let user = signed_in(&app, &jar).await?;
     if input.items.len() > 10 {
         return Err(Fail::field("items", "Add up to 10 blocks."));
+    }
+    let mut asked: Vec<&str> = Vec::new();
+    for b in input.items.iter().filter(|b| b.kind == "PROMPT") {
+        let q = b.config["question"].as_str().unwrap_or_default();
+        if asked.contains(&q) {
+            return Err(Fail::field(
+                "question",
+                "Each question can be answered once.",
+            ));
+        }
+        asked.push(q);
     }
     let rows = input
         .items
@@ -1698,8 +1778,6 @@ pub async fn review_fan_art(
 
 // ---------------------------------------------------------------- Page header copy (P9)
 
-pub const DEFAULT_PAGE_LABEL: &str = "Creator Page";
-pub const DEFAULT_WELCOME: &str = "Welcome to my page";
 type HeaderRow = (String, String, String, String, String, bool);
 async fn header_row(db: &mut PgConnection, user_id: &str) -> Res<HeaderRow> {
     Ok(sqlx::query_as("SELECT page_label,welcome_line,intro_title,intro_body,page_vibe,header_copy_enabled FROM profiles WHERE user_id=$1")
@@ -1708,14 +1786,14 @@ async fn header_row(db: &mut PgConnection, user_id: &str) -> Res<HeaderRow> {
         .await?
         .unwrap_or_else(|| (String::new(), String::new(), String::new(), String::new(), String::new(), true)))
 }
-/// The header copy as rendered on the channel: defaults resolved, label and welcome null when
-/// the owner turned them off, intro fields empty when there is no intro body.
+/// The header copy as rendered on the channel: label and welcome null when the owner turned them
+/// off or hasn't written them (stock "Creator Page" and "Welcome to my page" said nothing to a
+/// reader; UI review, October 2026), intro fields empty when there is no intro body.
 pub async fn channel_header(db: &mut PgConnection, user_id: &str) -> Res<Value> {
     let (label, welcome, intro_title, intro_body, vibe, enabled) = header_row(db, user_id).await?;
-    let or = |v: String, d: &str| if v.is_empty() { d.to_string() } else { v };
     Ok(json!({
-        "label": enabled.then(|| or(label, DEFAULT_PAGE_LABEL)),
-        "welcome": enabled.then(|| or(welcome, DEFAULT_WELCOME)),
+        "label": (enabled && !label.is_empty()).then_some(label),
+        "welcome": (enabled && !welcome.is_empty()).then_some(welcome),
         "intro_title": if intro_body.is_empty() { String::new() } else { intro_title },
         "intro_body": intro_body,
         "vibe": vibe,
@@ -1734,7 +1812,7 @@ pub async fn my_header(State(app): State<App>, jar: CookieJar) -> Res<Json<Value
         "intro_body": intro_body,
         "page_vibe": vibe,
         "enabled": enabled,
-        "defaults": {"page_label": DEFAULT_PAGE_LABEL, "welcome_line": DEFAULT_WELCOME},
+        "defaults": {"page_label": "", "welcome_line": ""},
         "revision": section_revision(&mut db, &user.id, "header").await?,
     })))
 }

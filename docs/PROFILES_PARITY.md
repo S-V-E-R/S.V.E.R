@@ -47,7 +47,7 @@ Stage spot-checks ran on October 3 against `https://sver.tv` with API `sitepages
 | Follow button / "Log in to follow" | SHIPPED | `ChannelActions.tsx` | HTML: "Log in to follow" |
 | Edit Profile button on own page | SHIPPED | `ChannelActions.tsx` (Edit profile + Creator Studio) | Local browser check |
 | Share button (`navigator.share`) / copy link | SHIPPED (P1) | `components/ShareButton.tsx` in the channel header: native share on touch, copy link elsewhere, selectable fallback | Local browser: clipboard holds the canonical URL from `/wall`, share sheet, fallback; stage: button on every channel tab |
-| Message button | ARCHIVED | Spec ARCHIVE: Subscribe/Tip/Message buttons | — |
+| Message button | SHIPPED (direct messages) | `ChannelActions.tsx` links to `/messages?with=` when the viewer can message | — |
 | Subscribe button | STUB | Phase 2 (spec stub table) | Hidden |
 | Support / Tip button | STUB | Phase 2 (spec stub table) | Hidden |
 | Notification bell (per-follow go-live alerts) | STUB | Notification work / Module 3; legacy preferences not imported | — |

@@ -218,7 +218,7 @@ async fn create(
             return Err(Fail::bad("Choose one of your channel's approved clips."));
         }
         let charity: Option<(String, String)> = sqlx::query_as(
-            "SELECT charity_name,donate_url FROM charity_streams WHERE broadcast_id=$1 LIMIT 1",
+            "SELECT cs.charity_name,cs.donate_url FROM charity_streams cs WHERE cs.broadcast_id=$1 AND EXISTS(SELECT 1 FROM charity_links k WHERE k.url=cs.donate_url AND k.status='approved') LIMIT 1",
         )
         .bind(&clip.broadcast_id)
         .fetch_optional(&mut *tx)

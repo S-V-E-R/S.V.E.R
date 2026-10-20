@@ -1,0 +1,8 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.8",
+	"Description": "Crowd Runner: the S.V.E.R board example game for Unreal Engine.",
+	"Modules": [{ "Name": "CrowdRunner", "Type": "Runtime", "LoadingPhase": "Default" }],
+	"Plugins": [{ "Name": "SverBoard", "Enabled": true }],
+	"AdditionalPluginDirectories": ["../sdk-unreal"]
+}

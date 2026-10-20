@@ -5,6 +5,7 @@ import type { LiveCard, Recent } from "../components/home/types";
 import { apiGet, viewerLanguages } from "../lib/server-api";
 import { factionOf, isFaction } from "../lib/factions";
 import { currentAccount } from "./session";
+import { AdSlot } from "../components/Ads";
 import "../styles/home.css";
 import { VideoGrid } from "../components/VideoGrid";
 import type { VideoCard } from "../lib/videos";
@@ -63,7 +64,7 @@ export default async function Home() {
     <section aria-labelledby="live-h" className="home-section">
       <SectionHead id="live-h" title="Live now" note="Ordered by MAGNet, not by viewer count" level={rotation.length ? 2 : 1} href="/browse" link="View all" />
       {live.length
-        ? <StreamGrid streams={live} viewerFaction={viewerFaction} languages={languages} />
+        ? <StreamGrid streams={live} viewerFaction={viewerFaction} languages={languages} shelf />
         : <div className="empty-live panel">
           <p><strong>Nothing live right now.</strong> These channels were live recently; follow them to hear when they&apos;re back.</p>
           {home && <RecentChannels recent={home.recent} />}
@@ -73,9 +74,10 @@ export default async function Home() {
 
     {mine && (home?.faction?.length ?? 0) > 0 && <section aria-labelledby="fac-h" className="home-section">
       <SectionHead id="fac-h" title={`From ${mine.name}`} note="Live from your side" href={`/browse?faction=${mine.slug}`} link="View all" />
-      <StreamGrid streams={home!.faction!} viewerFaction={viewerFaction} languages={languages} />
+      <StreamGrid streams={home!.faction!} viewerFaction={viewerFaction} languages={languages} shelf />
     </section>}
 
+    <AdSlot signedIn={!!account} />
     {beacons.length > 0 && <section aria-labelledby="bea-h" className="home-section frame beacon-shelf">
       <SectionHead id="bea-h" title="Beacons" note="Short videos that lead to the stream" href="/beacons" link="Open the feed" />
       <BeaconGrid items={beacons} />
@@ -83,12 +85,12 @@ export default async function Home() {
 
     {(home?.fresh.length ?? 0) > 0 && <section aria-labelledby="new-h" className="home-section">
       <SectionHead id="new-h" title="Just went live" note="MAGNet gives fresh streams a head start." />
-      <StreamGrid streams={home!.fresh} viewerFaction={viewerFaction} languages={languages} />
+      <StreamGrid streams={home!.fresh} viewerFaction={viewerFaction} languages={languages} shelf />
     </section>}
 
     {genres.length > 0 && <section aria-labelledby="ter-h" className="home-section">
       <SectionHead id="ter-h" title="Territories" note={war?.season ? "Every category is held by a faction this season" : "Control opens when the first season starts"} href="/browse" link="View all" />
-      <TerritoryGrid genres={genres} war={war} viewerFaction={viewerFaction} limit={8} href={(g, c) => `/browse?genre=${g.id}&category=${c.id}`} />
+      <TerritoryGrid genres={genres} war={war} viewerFaction={viewerFaction} limit={12} shelf href={(g, c) => `/browse?genre=${g.id}&category=${c.id}`} />
     </section>}
 
     {clips.length > 0 && <section aria-labelledby="clips-h" className="home-section"><SectionHead id="clips-h" title="Latest clips" note="The newest moments from each channel" /><VideoGrid items={clips} /></section>}

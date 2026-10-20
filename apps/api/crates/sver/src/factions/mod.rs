@@ -23,7 +23,7 @@ pub(crate) use community::{owner, remove, restore, snapshot, target};
 pub(crate) use engine::lock;
 pub use engine::tick;
 pub use influence::support;
-pub(crate) use influence::{chat, raid, stream, watch};
+pub(crate) use influence::{chat, discord, raid, stream, watch};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
@@ -40,6 +40,25 @@ pub async fn membership(db: &mut PgConnection, user: &str) -> Res<Option<String>
             .fetch_optional(db)
             .await?,
     )
+}
+/// Every genre: id and name, in map order.
+pub async fn genres(db: &mut PgConnection) -> Res<Vec<(String, String)>> {
+    Ok(
+        sqlx::query_as("SELECT id,name FROM faction_genres ORDER BY position,id")
+            .fetch_all(db)
+            .await?,
+    )
+}
+/// The latest season's territories: its id, then each genre's id, name and holder.
+pub async fn territories(
+    db: &mut PgConnection,
+) -> Res<Option<(i64, Vec<(String, String, Option<String>)>)>> {
+    let Some(season) = engine::latest(db).await? else {
+        return Ok(None);
+    };
+    let held = sqlx::query_as("SELECT g.id,g.name,t.holder FROM faction_territories t JOIN faction_genres g ON g.id=t.genre WHERE t.season_id=$1 ORDER BY g.position,g.id")
+        .bind(season.id).fetch_all(db).await?;
+    Ok(Some((season.id, held)))
 }
 /// Projection for Profiles' SQL chips. `user` must be a fixed SQL expression, never user input.
 pub fn membership_sql(user: &str) -> String {
@@ -92,10 +111,9 @@ pub(super) async fn status(db: &mut PgConnection, user: &str, at: DateTime<Utc>)
 }
 async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
+    engine::catch_up(&app).await?;
     let mut tx = app.db.begin().await?;
-    engine::lock(&mut tx).await?;
     let at = engine::now(&mut tx).await?;
-    engine::advance(&mut tx, &app.config.factions, at).await?;
     let value = status(&mut tx, &user.id, at).await?;
     tx.commit().await?;
     Ok(Json(value))
@@ -128,12 +146,13 @@ async fn choose(
             "Your faction is locked until the break between seasons.",
         ));
     }
+    // The break is open to everyone, so switching then never uses up the free switch.
     let reason = if state["faction"].is_null() {
         "join"
-    } else if state["free_switch_available"] == true {
-        "free_switch"
-    } else {
+    } else if state["between_seasons"] == true {
         "season_break"
+    } else {
+        "free_switch"
     };
     sqlx::query("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at,free_switch_used) VALUES($1,$2,$3,$3,false) ON CONFLICT(user_id) DO UPDATE SET faction=$2,joined_at=$3,free_switch_used=faction_members.free_switch_used OR $4,moderator_candidate=false")
         .bind(&user.id).bind(&input.faction).bind(at).bind(reason=="free_switch").execute(&mut *tx).await?;
