@@ -42,6 +42,28 @@ function GenreMap({ name, label, value, channels, genres }: { name: string; labe
   </fieldset>;
 }
 
+type Forum = { key: string; channel: string; made: number; skipped: number; problem: string | null };
+const FORUM_NAMES: Record<string, string> = { game_chat: "Game chat", lfg: "Looking for group", stream_help: "Stream help", clips: "Clips and highlights" };
+
+/** Sets up the managed forums picked above: guidelines, tags and starter posts (already-made posts are skipped). */
+function ForumSetup() {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ forums?: Forum[]; error?: string }>({});
+  async function run() {
+    setBusy(true);
+    const r = await send<{ forums: Forum[] }>("POST", "/api/admin/discord/forums");
+    setBusy(false);
+    setResult(r.ok ? { forums: r.data.forums } : { error: r.error });
+  }
+  return <section className="stack forum-setup"><h2>Forums</h2>
+    <p className="muted">Gives the game chat, LFG, stream help and clips channels their guidelines, tags and starter posts. Posts made before are left alone.</p>
+    <span className="row wrap"><button type="button" onClick={() => void run()} disabled={busy}>{busy ? "Setting up…" : "Set up forums and starter posts"}</button></span>
+    {result.error && <p role="alert" className="form-message error">{result.error}</p>}
+    {result.forums && <ul className="list" role="status">{result.forums.map(f => <li key={f.key}>
+      <strong>{FORUM_NAMES[f.key] ?? f.key}:</strong> {f.made} made, {f.skipped} already there{f.problem ? `. ${f.problem}` : "."}</li>)}</ul>}
+  </section>;
+}
+
 /** The S.V.E.R home server's Discord bot (docs/DISCORD_BOT.md): health and settings. */
 export default function DiscordAdmin() {
   const [view, setView] = useState<View | null>(null);
@@ -124,5 +146,6 @@ export default function DiscordAdmin() {
       {message.saved && <p role="status" className="form-message">{message.saved}</p>}
       <span className="row wrap"><button type="submit" disabled={!guild}>Save</button></span>
     </form>
+    {home && <ForumSetup />}
   </section>;
 }

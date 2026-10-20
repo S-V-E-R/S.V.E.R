@@ -910,12 +910,19 @@ pub(super) async fn component(
             )
         }
         ("new", "approve") => {
-            match member(app, h, target).await {
-                Ok(Some(_)) => {}
+            let joined = match member(app, h, target).await {
+                Ok(Some(m)) => m,
                 Ok(None) => return Ok(private("They're no longer in the server.")),
                 Err(()) => return Ok(private("Discord didn't answer. Try again in a minute.")),
-            }
+            };
             unrestrict(app, h, target).await;
+            // Held members skipped the welcome; it starts now.
+            if super::super::community::welcome(app, &joined["user"])
+                .await
+                .is_err()
+            {
+                eprintln!("discord_event=welcome outcome=retry");
+            }
             update(
                 json!({"content": format!("✅ <@{target}> approved by <@{by}>."), "components": []}),
             )

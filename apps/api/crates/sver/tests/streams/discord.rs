@@ -318,6 +318,7 @@ pub async fn exercise(e: &Env) {
     factions(e).await;
     super::discord_moderation::exercise(e).await;
     super::discord_streamers::exercise(e).await;
+    super::discord_community::exercise(e).await;
 }
 
 /// Levels and ranks, quests and achievements (docs/DISCORD_BOT.md), driven through the same

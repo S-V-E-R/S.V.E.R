@@ -309,7 +309,136 @@ def streamers(db):
                  f"auto-link opt-outs: {len(optouts)}, spotlights: {len(spotlights)}")
 
 
-SECTIONS = [home, levels, quests, moderation, holidays, streamers]
+def when(value):
+    """A legacy time as timestamptz: ISO strings carry their zone ('...Z'); the others are UTC."""
+    if not value:
+        return "NULL"
+    return f"{literal(value)}::timestamptz" if "T" in value else ts(value)
+
+
+def community(db):
+    """Onboarding state, birthdays (in real time zones), upcoming events and their RSVPs, open
+    polls, running giveaways, waiting reminders, custom commands, mentors, seasonal events, managed
+    threads, free games already posted, WoW characters, and the free-games ping role and changelog
+    channel. The legacy GitHub webhook secret isn't carried over: it becomes GITHUB_WEBHOOK_SECRET
+    in the server's environment."""
+    import datetime
+    import re
+    out = []
+    year = datetime.datetime.now(datetime.timezone.utc).year
+    opt = lambda v: literal(v) if v else "NULL"
+    array = lambda items: "ARRAY[" + ",".join(literal(i) for i in items) + "]::text[]"
+    db.row_factory = sqlite3.Row
+    guild = db.execute("SELECT guild_id FROM guild_config").fetchone()[0]
+    settings = {}
+    free = db.execute("SELECT ping_role_id FROM free_games_config WHERE guild_id=?", (guild,)).fetchone()
+    if free and free[0]:
+        settings["free_games_role"] = str(free[0])
+    github = db.execute("SELECT changelog_channel_id FROM github_config WHERE guild_id=?", (guild,)).fetchone()
+    if github and github[0]:
+        settings["changelog"] = str(github[0])
+    if settings:
+        out.append(f"UPDATE discord_home SET settings=settings||{literal(json.dumps(settings))}::jsonb;")
+    done = rows(db, "SELECT user_id FROM members WHERE onboarding_complete=1")
+    for m in done:
+        out.append(f"UPDATE discord_members SET onboarded_at=coalesce(joined_at,now()) WHERE discord_user={literal(m['user_id'])};")
+    birthdays = rows(db, "SELECT * FROM birthdays")
+    for b in birthdays:
+        zone = ZONES.get((b["timezone"] or "EST").upper(), "America/New_York")
+        # Already celebrated this year: not again before next year's.
+        celebrated = year if b["celebrated_this_year"] else "NULL"
+        out.append("INSERT INTO discord_birthdays(discord_user,month,day,year,zone,celebrated_year) VALUES("
+                   f"{literal(b['user_id'])},{int(b['month'])},{int(b['day'])},{int(b['year']) if b['year'] else 'NULL'},{literal(zone)},{celebrated}) "
+                   "ON CONFLICT(discord_user) DO NOTHING;")
+    # Events still to come (or under way in the last day); RSVPs already paid stay paid.
+    kinds = {"general", "game_night", "watch_party", "faction_war", "territory_push", "tournament", "custom"}
+    events = rows(db, "SELECT * FROM events WHERE status IN ('scheduled','active') AND julianday(starts_at)>julianday('now','-1 day')")
+    for e in events:
+        zone = ZONES.get((e["timezone"] or "UTC").upper(), e["timezone"] or "UTC")
+        repeat = literal(e["recurring"]) if e["recurring"] in {"daily", "weekly", "biweekly", "monthly"} else "NULL"
+        faction = literal(e["faction_only"]) if e["faction_only"] in FACTIONS else "NULL"
+        out.append("INSERT INTO discord_events(id,title,description,kind,faction,zone,starts_at,ends_at,repeat,status,channel_id,message_id,reminded_60,reminded_15,created_by) VALUES("
+                   f"{int(e['id'])},{literal(e['title'])},{opt(e['description'])},{literal(e['event_type'] if e['event_type'] in kinds else 'general')},{faction},"
+                   f"{literal(zone)},{when(e['starts_at'])},{when(e['ends_at'])},{repeat},{literal(e['status'])},{opt(e['channel_id'])},{opt(e['message_id'])},"
+                   f"{'true' if e['reminder_sent_60'] else 'false'},{'true' if e['reminder_sent_15'] else 'false'},{literal(e['created_by'])});")
+        for r in rows(db, f"SELECT * FROM event_rsvps WHERE event_id={int(e['id'])}"):
+            out.append("INSERT INTO discord_event_rsvps(event_id,discord_user,status,counted) VALUES("
+                       f"{int(e['id'])},{literal(r['user_id'])},{literal(r['status'])},{'true' if r['status'] == 'going' else 'false'}) ON CONFLICT DO NOTHING;")
+    polls = rows(db, "SELECT * FROM polls WHERE status='active' AND channel_id IS NOT NULL")
+    imported_polls = 0
+    for p in polls:
+        options = [str(o)[:80] for o in json.loads(p["options"] or "[]")][:4]
+        if len(options) < 2:
+            continue
+        imported_polls += 1
+        out.append("INSERT INTO discord_polls(id,question,options,channel_id,message_id,created_by,ends_at) VALUES("
+                   f"{int(p['id'])},{literal(p['question'])},{array(options)},{literal(p['channel_id'])},{opt(p['message_id'])},{literal(p['created_by'])},{when(p['ends_at'])});")
+        for user, option in json.loads(p["votes"] or "{}").items():
+            if isinstance(option, int) and 0 <= option < len(options):
+                out.append(f"INSERT INTO discord_poll_votes(poll_id,discord_user,option) VALUES({int(p['id'])},{literal(user)},{option}) ON CONFLICT DO NOTHING;")
+    giveaways = rows(db, "SELECT *, CAST(max(1,(julianday(ends_at)-julianday(coalesce(starts_at,submitted_at)))*1440) AS INTEGER) AS minutes FROM giveaways WHERE status IN ('pending','approved','active')")
+    for g in giveaways:
+        active = g["status"] in {"approved", "active"}
+        out.append("INSERT INTO discord_giveaways(id,prize,description,winners,minutes,status,channel_id,message_id,created_by,reviewed_by,starts_at,ends_at) VALUES("
+                   f"{int(g['id'])},{literal(g['prize'])},{opt(g['description'])},{min(20, max(1, int(g['winner_count'] or 1)))},{int(g['minutes'] or 1)},"
+                   f"{literal('active' if active else 'pending')},{literal(g['channel_id'])},{opt(g['message_id'])},{literal(g['created_by'])},{opt(g['approved_by'])},"
+                   f"{when(g['starts_at']) if active else 'NULL'},{when(g['ends_at']) if active else 'NULL'});")
+        for e in rows(db, f"SELECT user_id FROM giveaway_entries WHERE giveaway_id={int(g['id'])}"):
+            out.append(f"INSERT INTO discord_giveaway_entries(giveaway_id,discord_user) VALUES({int(g['id'])},{literal(e['user_id'])}) ON CONFLICT DO NOTHING;")
+    reminders = rows(db, "SELECT * FROM reminders WHERE fired=0")
+    for r in reminders:
+        out.append("INSERT INTO discord_reminders(discord_user,channel_id,message,remind_at) VALUES("
+                   f"{literal(r['user_id'])},{literal(r['channel_id'])},{literal(r['message'][:500])},{when(r['remind_at'])});")
+    commands = [c for c in rows(db, "SELECT * FROM custom_commands")
+                if re.fullmatch(r"[a-z0-9_-]{1,32}", (c["trigger_word"] or "").lower()) and c["response"]]
+    for c in commands:
+        out.append("INSERT INTO discord_custom_commands(name,response,created_by,uses) VALUES("
+                   f"{literal(c['trigger_word'].lower())},{literal(c['response'][:2000])},{literal(c['created_by'])},{int(c['uses'] or 0)}) ON CONFLICT DO NOTHING;")
+    mentors = rows(db, "SELECT * FROM mentors")
+    for m in mentors:
+        listed = lambda col: [str(x)[:40] for x in json.loads(m[col] or "[]")]
+        out.append("INSERT INTO discord_mentors(discord_user,platforms,specialties,games,availability,max_mentees,active) VALUES("
+                   f"{literal(m['user_id'])},{array(listed('platforms'))},{array(listed('specialties'))},{array(listed('games'))},{opt(m['availability'])},"
+                   f"{int(m['max_mentees'] or 3)},{'true' if m['active'] else 'false'}) ON CONFLICT DO NOTHING;")
+    matches = rows(db, "SELECT * FROM mentorship_matches WHERE status IN ('pending','active')")
+    for m in matches:
+        out.append("INSERT INTO discord_mentorships(mentor,mentee,help_with,status,created_at) VALUES("
+                   f"{literal(m['mentor_id'])},{literal(m['mentee_id'])},'mentoring',{literal(m['status'])},{ts_or_now(m['matched_at'])}) ON CONFLICT DO NOTHING;")
+    seasons = rows(db, "SELECT * FROM seasonal_events WHERE active=1 AND julianday(start_date)<julianday(end_date)")
+    themes = {"winter", "spring", "summer", "fall"}
+    for s in seasons:
+        factor = json.loads(s["rewards"] or "{}").get("xpMultiplier")
+        factor = min(10.0, max(0.1, float(factor))) if factor else "NULL"
+        out.append("INSERT INTO discord_seasonal_events(name,description,theme,starts_at,ends_at,factor) VALUES("
+                   f"{literal(s['name'])},{literal(s['description'] or '')},{literal(s['theme'] if s['theme'] in themes else 'custom')},"
+                   f"{when(s['start_date'])},{when(s['end_date'])},{factor});")
+    threads = rows(db, "SELECT * FROM managed_threads")
+    for t in threads:
+        out.append("INSERT INTO discord_threads(thread_id,channel_id,name,category,created_at) VALUES("
+                   f"{literal(t['thread_id'])},{literal(t['channel_id'])},{literal(t['thread_name'])},{literal('wow' if t['category'] == 'wow' else 'starter')},"
+                   f"{ts_or_now(t['created_at'])}) ON CONFLICT DO NOTHING;")
+    board = db.execute("SELECT wow_leaderboard_channel_id, wow_leaderboard_thread_id FROM guild_config WHERE guild_id=?", (guild,)).fetchone()
+    if board and board[0] and board[1]:
+        out.append("INSERT INTO discord_threads(thread_id,channel_id,name,category) VALUES("
+                   f"{literal(board[1])},{literal(board[0])},'📊 WoW speedrun leaderboard','wow_leaderboard') ON CONFLICT DO NOTHING;")
+    games = rows(db, "SELECT * FROM free_games WHERE store IN ('epic','steam','gog')")
+    for g in games:
+        out.append("INSERT INTO discord_free_games(store,title,url,expires_at,message_id,posted_at) VALUES("
+                   f"{literal(g['store'])},{literal(g['title'])},{literal(g['url'])},{when(g['expires_at'])},{opt(g['message_id'])},{ts_or_now(g['posted_at'])}) ON CONFLICT DO NOTHING;")
+    wow = rows(db, "SELECT * FROM wow_characters")
+    for w in wow:
+        out.append("INSERT INTO discord_wow(discord_user,character,realm) VALUES("
+                   f"{literal(w['user_id'])},{literal(w['character_name'])},{literal(w['realm'])}) ON CONFLICT DO NOTHING;")
+    # Events, polls and giveaways keep their legacy numbers; new ones continue after them.
+    for table in ["discord_events", "discord_polls", "discord_giveaways"]:
+        out.append(f"SELECT setval(pg_get_serial_sequence('{table}','id'),greatest((SELECT max(id) FROM {table}),1));")
+    return out, (f"community: onboarded {len(done)}, birthdays {len(birthdays)}, events {len(events)}, polls {imported_polls}, "
+                 f"giveaways {len(giveaways)}, reminders {len(reminders)}, custom commands {len(commands)}, mentors {len(mentors)}, "
+                 f"mentorships {len(matches)}, seasonal events {len(seasons)}, threads {len(threads)}, free games {len(games)}, "
+                 f"WoW characters {len(wow)}, settings {len(settings)}")
+
+
+SECTIONS = [home, levels, quests, moderation, holidays, streamers, community]
 
 
 def main():
