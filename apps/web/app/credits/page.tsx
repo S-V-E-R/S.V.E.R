@@ -15,6 +15,7 @@ export default function Credits() {
   for (const p of packages) if (p.text) users.set(p.text, [...(users.get(p.text) ?? []), p.name]);
   return <SitePage path="/credits" title="Credits" intro="S.V.E.R is built on open-source software. These are the packages that ship, with their licenses." wide>
     <p>S.V.E.R itself is open source under the GNU Affero General Public License v3.0. <a href="https://github.com/S-V-E-R/S.V.E.R">Read the source on GitHub</a>.</p>
+    <p>S.V.E.R is built with AI assistance, mostly Anthropic&apos;s Claude. Commits it helped write credit it as a co-author.</p>
     <p>Where a package offers a choice of licenses that includes MIT, S.V.E.R uses it under MIT.</p>
     {GROUPS.map(([kind, title]) => {
       const list = packages.filter(p => p.kind === kind);
