@@ -105,6 +105,11 @@ async fn profile(
     if provider == "twitch" {
         assert_eq!(headers["client-id"], "test-client");
         Json(json!({"data":[identity]}))
+    } else if provider == "kick" {
+        // Kick's shape: a numeric user_id and a name, wrapped in data.
+        let id = identity["id"].as_str().unwrap();
+        let id = id.parse::<u64>().map_or_else(|_| json!(id), |n| json!(n));
+        Json(json!({"data":[{"user_id":id,"name":"Kick_Runner","email":identity["email"]}]}))
     } else {
         Json(identity)
     }
@@ -447,7 +452,7 @@ async fn login_lifecycle_and_security_boundaries() {
     config.breach_url = format!("{base}/range/");
     config.resend_key.clear();
     config.resend_url = format!("{base}/emails");
-    config.providers = ["google", "twitch", "discord"]
+    config.providers = ["google", "twitch", "discord", "kick"]
         .iter()
         .map(|name| sver::oauth::Provider {
             name: (*name).into(),
@@ -1051,7 +1056,9 @@ async fn exercise(app: App, mock: Mock) {
     assert_eq!(linked, 0);
 
     // Exercise each real adapter's response shape and PKCE token exchange with synthetic HTTP.
-    for (index, p) in ["google", "discord", "twitch"].iter().enumerate() {
+    for (index, p) in ["google", "discord", "twitch", "kick"].iter().enumerate() {
+        // Kick and Twitch have no email-verification flag: S.V.E.R sends its own link.
+        let unverified = matches!(*p, "twitch" | "kick");
         // A valid browser/state cannot turn a rejected provider code into either a session or MFA challenge.
         let mut invalid = Browser::new(router.clone(), 30 + index as u8);
         let url = start_oauth(&mut invalid, p, "login", "", "").await;
@@ -1073,7 +1080,11 @@ async fn exercise(app: App, mock: Mock) {
             StatusCode::UNAUTHORIZED
         );
         let email = format!("{p}@example.invalid");
-        let subject = format!("{p}-only");
+        let subject = if *p == "kick" {
+            "7001".to_string()
+        } else {
+            format!("{p}-only")
+        };
         identity(&mock, &subject, &subject, &email, true);
         let mut browser = Browser::new(router.clone(), 20 + index as u8);
         let intent = if *p == "twitch" { "login" } else { "signup" };
@@ -1095,6 +1106,12 @@ async fn exercise(app: App, mock: Mock) {
             .await;
         assert_eq!(pending["provider"], *p);
         assert!(sec::validate_username(pending["username"].as_str().unwrap()).is_ok());
+        if *p == "kick" {
+            assert_eq!(
+                pending["username"].as_str().unwrap().to_lowercase(),
+                "kick_runner"
+            );
+        }
         assert!(pending.get("email").is_none() && pending.get("subject").is_none());
         let pending_hash = sec::digest(&browser.cookies["sver_dev_signup"]);
         let encrypted: String =
@@ -1209,7 +1226,7 @@ async fn exercise(app: App, mock: Mock) {
         }
         let user = browser.ok("GET", "/api/auth/me", Value::Null).await;
         assert_eq!(user["has_password"], false);
-        assert_eq!(user["email_verified"], *p != "twitch");
+        assert_eq!(user["email_verified"], !unverified);
         assert_eq!(
             browser
                 .call("DELETE", &format!("/api/auth/oauth/{p}"), json!({}))
@@ -1240,7 +1257,7 @@ async fn exercise(app: App, mock: Mock) {
             browser.ok("GET", "/api/auth/me", Value::Null).await["reauthenticated"],
             true
         );
-        if *p == "twitch" {
+        if unverified {
             let token = mail_token(&app, &email, "verify").await;
             browser
                 .ok("POST", "/api/auth/email/verify", json!({"token":token}))

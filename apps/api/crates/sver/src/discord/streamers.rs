@@ -816,8 +816,8 @@ fn bare(name: &str) -> &str {
 /// account that signed in with Twitch or linked Twitch for chat. (login, Twitch id).
 ///
 /// Alerts need that proof (Joe, October 20, 2026), so nobody can link a channel that isn't theirs.
-/// S.V.E.R can't confirm YouTube or Kick channels yet, so those can't be linked until it can;
-/// accounts the legacy bot linked are kept.
+/// S.V.E.R can't confirm YouTube channels yet, so those can't be linked until it can; accounts the
+/// legacy bot linked are kept.
 async fn proven_twitch(app: &App, discord: &str) -> Res<Option<(String, String)>> {
     let found: Option<(Option<String>, String)> = sqlx::query_as("SELECT coalesce(t.handle,l.handle),coalesce(t.subject,l.subject)
         FROM identities d JOIN channel_users u ON u.id=d.user_id AND u.eligible AND u.deleted_at IS NULL
@@ -833,6 +833,60 @@ async fn proven_twitch(app: &App, discord: &str) -> Res<Option<(String, String)>
         None => twitch_login(app, &id).await.unwrap_or_else(|| id.clone()),
     };
     Ok(Some((login, id)))
+}
+/// The member's own Kick channel: their Discord is linked to a S.V.E.R account that signed in with
+/// Kick. (slug, slug), or why it can't be linked right now.
+async fn proven_kick(app: &App, discord: &str) -> Res<Result<Option<(String, String)>, String>> {
+    let kick_id: Option<String> = sqlx::query_scalar(
+        "SELECT k.subject FROM identities d
+        JOIN channel_users u ON u.id=d.user_id AND u.eligible AND u.deleted_at IS NULL
+        JOIN identities k ON k.user_id=u.id AND k.provider='kick'
+        WHERE d.provider='discord' AND d.subject=$1",
+    )
+    .bind(discord)
+    .fetch_optional(&app.db)
+    .await?;
+    let Some(kick_id) = kick_id else {
+        return Ok(Ok(None));
+    };
+    if kick_keys().is_none() {
+        return Ok(Err("Kick alerts aren't available yet.".into()));
+    }
+    let Some(token) = kick_token(app).await else {
+        return Ok(Err("Kick didn't answer. Try again in a minute.".into()));
+    };
+    let body: Option<Value> = async {
+        app.http
+            .get(format!(
+                "{}/public/v1/channels",
+                env_or("KICK_API_BASE", "https://api.kick.com")
+            ))
+            .query(&[("broadcaster_user_id", kick_id.as_str())])
+            .bearer_auth(token)
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?
+            .json()
+            .await
+            .ok()
+    }
+    .await;
+    let Some(body) = body else {
+        return Ok(Err("Kick didn't answer. Try again in a minute.".into()));
+    };
+    Ok(Ok(body["data"]
+        .as_array()
+        .and_then(|c| {
+            c.iter().find(|c| {
+                let id = &c["broadcaster_user_id"];
+                id.as_u64().map(|n| n.to_string()).as_deref() == Some(kick_id.as_str())
+                    || id.as_str() == Some(kick_id.as_str())
+            })
+        })
+        .and_then(|c| c["slug"].as_str())
+        .map(|slug| (slug.to_owned(), slug.to_owned()))))
 }
 async fn save(app: &App, user: &str, platform: &str, handle: &str, id: &str) -> Res<()> {
     let old: Option<(Option<String>, Vec<String>)> = sqlx::query_as(
@@ -886,21 +940,30 @@ async fn link(app: &App, user: &str, platform: &str) -> Res<Value> {
     if platform == "sver" {
         return sver_link(app, user).await;
     }
-    if platform != "twitch" {
+    if platform != "twitch" && platform != "kick" {
         return Ok(private(format!(
             "{name} channels can't be linked yet. Go-live posts need proof the channel is yours, and S.V.E.R can't confirm {name} accounts yet.",
             name = platform_name(platform)
         )));
     }
+    let name = platform_name(platform);
     if sync::linked(app, user).await?.is_none() {
         return Ok(private(format!(
-            "To prove the channel is yours, link your Discord to S.V.E.R first: sign in with Discord, or connect it under sign-in methods at {}/account. Then connect Twitch there too, and run `/alerts link` again.",
+            "To prove the channel is yours, link your Discord to S.V.E.R first: sign in with Discord, or connect it under sign-in methods at {}/account. Then connect {name} there too, and run `/alerts link` again.",
             app.config.origin
         )));
     }
-    let Some((handle, id)) = proven_twitch(app, user).await? else {
+    let proven = if platform == "kick" {
+        match proven_kick(app, user).await? {
+            Ok(found) => found,
+            Err(why) => return Ok(private(why)),
+        }
+    } else {
+        proven_twitch(app, user).await?
+    };
+    let Some((handle, id)) = proven else {
         return Ok(private(format!(
-            "Connect Twitch under sign-in methods at {}/account to prove the channel is yours, then run `/alerts link` again.",
+            "Connect {name} under sign-in methods at {}/account to prove the channel is yours, then run `/alerts link` again.",
             app.config.origin
         )));
     };
@@ -1095,11 +1158,11 @@ async fn panel(app: App, i: Interaction) -> Res<Value> {
     };
     let button = |p: &str, style: u8| json!({"type": 2, "style": style, "label": platform_name(p), "emoji": {"name": platform_emoji(p)}, "custom_id": format!("str:link:{p}")});
     let body = json!({"embeds": [{"title": "🎮 Link your streaming account", "color": 0x9b_59b6,
-        "description": format!("Get a post in the go-live channel whenever you go live. Link your Discord to S.V.E.R first ({}/account, sign-in methods); for Twitch, connect Twitch there too, so we know the channel is yours. Then pick your platform below.", app.config.origin),
+        "description": format!("Get a post in the go-live channel whenever you go live. Link your Discord to S.V.E.R first ({}/account, sign-in methods); for Twitch or Kick, connect it there too, so we know the channel is yours. Then pick your platform below.", app.config.origin),
         "fields": [
             {"name": "🔔 Go-live posts", "value": "Your stream is announced automatically.", "inline": true},
             {"name": "⚡ Auto-detect", "value": "Streaming on your own Twitch channel? It's picked up from your Discord status.", "inline": true}]}],
-        "components": [{"type": 1, "components": [button("sver", 2), button("twitch", 1)]}],
+        "components": [{"type": 1, "components": [button("sver", 2), button("twitch", 1), button("kick", 3)]}],
         "allowed_mentions": {"parse": []}});
     let Some(m) = send(&app, &to, body).await else {
         return Ok(private(
@@ -1870,7 +1933,7 @@ pub fn definitions() -> Vec<Value> {
         json!({"name": "alerts", "description": "Go-live posts for your streams.", "options": [
             {"type": 1, "name": "link", "description": "Link your own streaming account (proven through S.V.E.R)", "options": [
                 {"type": 3, "name": "platform", "description": "The platform", "required": true, "choices": [
-                    {"name": "S.V.E.R", "value": "sver"}, {"name": "Twitch", "value": "twitch"}]}]},
+                    {"name": "S.V.E.R", "value": "sver"}, {"name": "Twitch", "value": "twitch"}, {"name": "Kick", "value": "kick"}]}]},
             {"type": 1, "name": "unlink", "description": "Unlink a streaming account", "options": [
                 {"type": 3, "name": "platform", "description": "The platform", "required": true, "choices": platforms}]},
             {"type": 1, "name": "on", "description": "Turn your go-live posts on"},

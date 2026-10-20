@@ -70,6 +70,9 @@ async fn fake(
             json!({"data": [{"slug": "kicker", "stream_title": "Kick run", "category": {"name": "Chess"},
             "stream": {"is_live": live(&s, "kick"), "start_time": "2026-10-20T10:00:00Z", "viewer_count": 3, "thumbnail": ""}}]})
         }
+        ("GET", ["public", "v1", "channels"]) if query.contains("broadcaster_user_id=7001") => {
+            json!({"data": [{"broadcaster_user_id": 7001, "slug": "kicker"}]})
+        }
         ("GET", ["public", "v1", "channels"]) => json!({"data": []}),
         // YouTube: the channel, its feed, then which video is live.
         ("GET", ["yt", "channels"]) if query.contains("forHandle=%40tuber") => {
@@ -324,17 +327,31 @@ pub async fn exercise(e: &Env) {
         .unwrap();
     assert_eq!(count("SELECT cardinality(eventsub)::int8 FROM discord_stream_accounts WHERE platform='twitch'").await, 1);
 
-    // Kick and YouTube can't be linked: S.V.E.R can't confirm those channels yet. Accounts the
-    // legacy bot linked are still polled once the keys are set.
+    // Kick: proven by signing in to S.V.E.R with Kick; its channel is found by the Kick user id.
+    // YouTube can't be linked: S.V.E.R can't confirm YouTube channels yet. Accounts the legacy bot
+    // linked are still polled once the keys are set.
     let kick = ask("st3", "920", false, 2, link("kick")).await;
-    assert!(kick.contains("can't be linked yet"), "{kick}");
+    assert!(
+        kick.contains("Connect Kick under sign-in methods"),
+        "{kick}"
+    );
+    e.sql("INSERT INTO identities(provider,subject,user_id,handle) VALUES('kick','7001','ds-streamer','Kicker')").await;
+    let kick = ask("st3b", "920", false, 2, link("kick")).await;
+    assert!(kick.contains("aren't available yet"), "{kick}");
+    let tube = ask("st3c", "920", false, 2, link("youtube")).await;
+    assert!(tube.contains("can't be linked yet"), "{tube}");
     // SAFETY: as above.
     unsafe {
         std::env::set_var("KICK_CLIENT_ID", "test-kick");
         std::env::set_var("KICK_CLIENT_SECRET", "test-only-secret");
         std::env::set_var("YOUTUBE_API_KEY", "test-only-key");
     }
-    e.sql("INSERT INTO discord_stream_accounts(discord_user,platform,handle,platform_id) VALUES('920','kick','kicker','kicker'),('920','youtube','@tuber','UCtube')").await;
+    let kick = ask("st3d", "920", false, 2, link("kick")).await;
+    assert!(
+        kick.contains("kicker") && kick.contains("is linked"),
+        "{kick}"
+    );
+    e.sql("INSERT INTO discord_stream_accounts(discord_user,platform,handle,platform_id) VALUES('920','youtube','@tuber','UCtube')").await;
     taken();
     // A closed channel, polled before UCtube, doesn't stop the others being checked.
     e.sql("INSERT INTO discord_stream_accounts(discord_user,platform,handle,platform_id) VALUES('925','youtube','gone','UCgone')").await;
@@ -644,7 +661,7 @@ pub async fn exercise(e: &Env) {
     find(&taken(), &["PUT /channels/th1/thread-members/921"]);
 
     // The streamer panel: staff post and pin it; its buttons link the proven account at once (an
-    // older panel's Kick button says why not), and S.V.E.R's explains the automatic link.
+    // older panel's YouTube button says why not), and S.V.E.R's explains the automatic link.
     let panel = ask("pa1", "920", false, 2, json!({"name": "streamerpanel"})).await;
     assert!(panel.contains("Only staff"), "{panel}");
     let panel = ask("pa2", "920", true, 2, json!({"name": "streamerpanel"})).await;
@@ -655,14 +672,21 @@ pub async fn exercise(e: &Env) {
         &[
             "POST /channels/40/messages",
             "str:link:twitch",
+            "str:link:kick",
             "str:link:sver",
         ],
     );
     find(&c, &["PUT /channels/40/pins/"]);
-    none(&c, "str:link:kick");
+    none(&c, "str:link:youtube");
     let open = json!({"custom_id": "str:link:kick", "component_type": 2});
     let open = ask("pa3", "921", false, 3, open).await;
-    assert!(open.contains("can't be linked yet"), "{open}");
+    assert!(
+        open.contains("Connect Kick under sign-in methods"),
+        "{open}"
+    );
+    let old = json!({"custom_id": "str:link:youtube", "component_type": 2});
+    let old = ask("pa3b", "921", false, 3, old).await;
+    assert!(old.contains("can't be linked yet"), "{old}");
     let sver_button = json!({"custom_id": "str:link:sver", "component_type": 2});
     let sver_button = ask("pa4", "921", false, 3, sver_button).await;
     assert!(

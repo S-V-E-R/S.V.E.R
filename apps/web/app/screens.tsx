@@ -51,9 +51,9 @@ function UsernameField({ initialUsername = "" }: { initialUsername?: string }) {
   }, [username]);
   return <label className="field" htmlFor="username"><span>Username</span><input ref={input} id="username" name="username" autoComplete="username" required minLength={3} maxLength={25} pattern="[A-Za-z0-9_]{3,25}" value={username} aria-describedby="username-hint username-status" aria-invalid={feedback?.available === false || undefined} onChange={event => { setUsername(event.target.value); setFeedback(event.target.value ? { message: "Checking availability…" } : undefined); event.target.setCustomValidity(""); }} /><small id="username-hint">3–25 letters, numbers or underscores. Availability is confirmed when your account is created.</small><small id="username-status" className={`username-status ${feedback?.available === true ? "available" : feedback?.available === false ? "unavailable" : ""}`} role="status" aria-live="polite" aria-atomic="true">{feedback?.available === true ? <>Available. Your channel: <strong>sver.tv/{username}</strong></> : feedback?.message}</small></label>;
 }
-const providerNames: Record<string, string> = { google: "Google", twitch: "Twitch", discord: "Discord" };
+const providerNames: Record<string, string> = { google: "Google", twitch: "Twitch", discord: "Discord", kick: "Kick" };
 function ProviderIcon({ name }: { name: string }) {
-  return <span className={`provider-icon ${name}`} aria-hidden="true">{name === "google" ? "G" : name === "twitch" ? "T" : "D"}</span>;
+  return <span className={`provider-icon ${name}`} aria-hidden="true">{({ google: "G", twitch: "T", discord: "D", kick: "K" } as Record<string, string>)[name] ?? "?"}</span>;
 }
 export default function AuthScreen({ screen }: { screen: string }) {
   const [config, setConfig] = useState<Config>();
