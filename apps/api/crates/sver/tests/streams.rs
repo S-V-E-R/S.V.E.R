@@ -46,6 +46,8 @@ mod devapps;
 mod discord;
 #[path = "streams/discord_moderation.rs"]
 mod discord_moderation;
+#[path = "streams/discord_streamers.rs"]
+mod discord_streamers;
 #[path = "streams/discovery.rs"]
 mod discovery;
 #[path = "streams/dms.rs"]
@@ -516,6 +518,18 @@ async fn discord_bot() {
         pkce: true,
         redirect_uri: None,
     }];
+    // Twitch go-live alerts use the Twitch app; its API is faked in the streamers test.
+    config.providers.push(sver::oauth::Provider {
+        name: "twitch".into(),
+        client_id: "test-twitch".into(),
+        client_secret: "test-only-secret".into(),
+        authorize_url: "https://twitch.example/authorize".into(),
+        token_url: "https://twitch.example/token".into(),
+        profile_url: "https://twitch.example/me".into(),
+        scopes: "".into(),
+        pkce: false,
+        redirect_uri: None,
+    });
     let app = App::new(db.clone(), config).await.unwrap();
     let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
     let result = tokio::spawn(async move { discord::exercise(&env).await }).await;

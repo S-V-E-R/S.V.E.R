@@ -263,7 +263,53 @@ def holidays(db):
     return out, f"holidays: {len(out)}"
 
 
-SECTIONS = [home, levels, quests, moderation, holidays]
+def streamers(db):
+    """Streaming accounts (alerts setting), stream sessions, streamer profiles, the auto-link
+    opt-outs and past spotlights. S.V.E.R accounts aren't carried over: they come from linked
+    Discord identities on the rebuild. Live state and old go-live posts start fresh."""
+    out = []
+    accounts = rows(db, "SELECT user_id, platform, platform_username, platform_id, alerts_enabled FROM stream_accounts WHERE platform <> 'sver'")
+    for a in accounts:
+        handle, pid = a["platform_username"], a["platform_id"]
+        if a["platform"] == "kick":
+            handle = pid = (pid or handle).lower()
+        # A YouTube channel the legacy bot never resolved gets its id on the first poll.
+        out.append("INSERT INTO discord_stream_accounts(discord_user,platform,handle,platform_id,alerts) VALUES("
+                   f"{literal(a['user_id'])},{literal(a['platform'])},{literal(handle)},{literal(pid) if pid else 'NULL'},"
+                   f"{'true' if a['alerts_enabled'] else 'false'}) ON CONFLICT(discord_user,platform) DO UPDATE SET "
+                   "handle=EXCLUDED.handle,platform_id=EXCLUDED.platform_id,alerts=EXCLUDED.alerts;")
+    sessions = rows(db, "SELECT user_id, platform, platform_username, started_at, ended_at, duration_minutes FROM stream_sessions")
+    for x in sessions:
+        out.append("INSERT INTO discord_stream_sessions(discord_user,platform,handle,started_at,ended_at,minutes) VALUES("
+                   f"{literal(x['user_id'])},{literal(x['platform'])},{literal(x['platform_username'])},"
+                   f"{ts_or_now(x['started_at'])},{ts_or_now(x['ended_at'])},{max(0, int(x['duration_minutes'] or 0))});")
+    profiles = rows(db, "SELECT * FROM streamer_profiles")
+    array = lambda items: "ARRAY[" + ",".join(literal(i) for i in items) + "]::text[]"
+    for pr in profiles:
+        collab = json.loads(pr["collab_preferences"] or "{}")
+        platforms = [p for p in collab.get("preferredPlatforms", []) if p in {"sver", "twitch", "youtube", "kick"}]
+        bio = literal(pr["bio"][:500]) if pr["bio"] else "NULL"
+        out.append("INSERT INTO discord_streamer_profiles(discord_user,bio,tags,games,collab,collab_platforms,collab_content,collab_size,collab_notes,featured,last_live_at,created_at) VALUES("
+                   f"{literal(pr['discord_id'])},{bio},{array(json.loads(pr['tags'] or '[]')[:10])},{array(json.loads(pr['games'] or '[]')[:20])},"
+                   f"{'true' if collab.get('availableForCollab') else 'false'},{array(platforms)},{array(collab.get('contentTypes', [])[:10])},"
+                   f"{min(20, max(2, int(collab.get('maxCollabSize') or 4)))},{literal(str(collab.get('notes') or '')[:200])},"
+                   f"{'true' if pr['featured'] else 'false'},{ts(pr['last_live_at'])},{ts_or_now(pr['created_at'])}) ON CONFLICT(discord_user) DO NOTHING;")
+    optouts = rows(db, "SELECT user_id, platform FROM auto_link_blacklist")
+    for o in optouts:
+        out.append("INSERT INTO discord_autolink_optouts(discord_user,platform) VALUES("
+                   f"{literal(o['user_id'])},{literal(o['platform'])}) ON CONFLICT DO NOTHING;")
+    spotlights = rows(db, "SELECT type, discord_id, title, reason, nominated_by, faction, channel_id, message_id, featured, created_at FROM spotlights")
+    for x in spotlights:
+        faction = literal(x["faction"]) if x["faction"] in FACTIONS else "NULL"
+        opt = lambda v: literal(v) if v else "NULL"
+        out.append("INSERT INTO discord_spotlights(kind,discord_user,title,reason,nominated_by,faction,channel_id,message_id,featured,created_at) VALUES("
+                   f"{literal(x['type'])},{literal(x['discord_id'])},{opt(x['title'])},{opt(x['reason'])},{opt(x['nominated_by'])},{faction},"
+                   f"{opt(x['channel_id'])},{opt(x['message_id'])},{'true' if x['featured'] else 'false'},{ts_or_now(x['created_at'])});")
+    return out, (f"stream accounts: {len(accounts)}, sessions: {len(sessions)}, profiles: {len(profiles)}, "
+                 f"auto-link opt-outs: {len(optouts)}, spotlights: {len(spotlights)}")
+
+
+SECTIONS = [home, levels, quests, moderation, holidays, streamers]
 
 
 def main():

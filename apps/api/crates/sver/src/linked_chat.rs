@@ -69,7 +69,7 @@ pub fn webhook_secret(app: &App) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
-fn callback(app: &App) -> String {
+pub(crate) fn callback(app: &App) -> String {
     format!("{}/api/integrations/twitch/eventsub", app.config.origin)
 }
 
@@ -377,16 +377,23 @@ async fn eventsub(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Re
         .as_str()
         .unwrap_or_default()
         .to_string();
+    // Go-live subscriptions belong to the Discord bot's alerts.
+    let go_live = event["subscription"]["type"]
+        .as_str()
+        .is_some_and(|t| t.starts_with("stream."));
     let result: Res<()> = match kind {
         "webhook_callback_verification" => {
-            let _ = sqlx::query("UPDATE linked_chat_accounts SET status='connected',detail=NULL,status_at=now() WHERE platform='twitch' AND subject=$1")
+            if !go_live {
+                let _ = sqlx::query("UPDATE linked_chat_accounts SET status='connected',detail=NULL,status_at=now() WHERE platform='twitch' AND subject=$1")
                 .bind(&subject).execute(&app.db).await;
+            }
             return event["challenge"]
                 .as_str()
                 .unwrap_or_default()
                 .to_string()
                 .into_response();
         }
+        _ if go_live => crate::discord::streamers::twitch_event(&app, kind, &event).await,
         "revocation" => revoked(&app, &subject, &event).await,
         "notification" => notification(&app, &subject, &event).await,
         _ => Ok(()),
@@ -515,6 +522,35 @@ async fn app_token(app: &App, p: &Provider) -> Res<String> {
         .saturating_sub(300);
     *cached() = Some((token.clone(), Instant::now() + Duration::from_secs(life)));
     Ok(token)
+}
+/// One Helix call with the app token (for the Discord bot's go-live alerts): the status and JSON
+/// body, or None without a Twitch app or when Twitch couldn't be reached.
+pub(crate) async fn helix(
+    app: &App,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<Value>,
+) -> Option<(u16, Value)> {
+    let p = twitch(app)?;
+    for attempt in 0..2 {
+        let token = app_token(app, p).await.ok()?;
+        let mut request = app
+            .http
+            .request(method.clone(), format!("{}/helix{path}", api_base()))
+            .header("Client-Id", &p.client_id)
+            .bearer_auth(&token);
+        if let Some(body) = &body {
+            request = request.json(body);
+        }
+        let response = request.send().await.ok()?;
+        let status = response.status().as_u16();
+        if status == 401 && attempt == 0 {
+            *cached() = None;
+            continue;
+        }
+        return Some((status, response.json().await.unwrap_or(Value::Null)));
+    }
+    None
 }
 enum Connect {
     Ok(Vec<String>),
