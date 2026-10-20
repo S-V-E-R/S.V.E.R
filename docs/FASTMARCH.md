@@ -54,11 +54,14 @@ Fastmarch takes its feel from light-trail racing games, following the lore rule:
 2. Records and server replay, then the channel offline screen. The offline page comes when the service worker ships.
 3. Crowd Fastmarch as a CrowdSync game and board template.
 
+## Decided
+
+- **Name:** Fastmarch (Joe, October 20, 2026).
+
 ## Open questions for Joe
 
 - **Glow.** [DESIGN.md](DESIGN.md) says ornament never uses glows. Do light trails inside the game canvas count? Step 1 uses flat, bright lines on navy with no bloom.
 - **Placement.** Is the rest a standalone side project, part of Progression (Phase 2), or a CrowdSync addition?
-- **Name.** Should the game be called "Fastmarch" or "the Courier's Run"?
 
 ## Done when
 
