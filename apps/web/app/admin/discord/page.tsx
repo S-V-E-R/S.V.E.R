@@ -55,7 +55,7 @@ function ForumSetup() {
     setBusy(false);
     setResult(r.ok ? { forums: r.data.forums } : { error: r.error });
   }
-  return <section className="stack"><h2>Forums</h2>
+  return <section className="stack forum-setup"><h2>Forums</h2>
     <p className="muted">Gives the game chat, LFG, stream help and clips channels their guidelines, tags and starter posts. Posts made before are left alone.</p>
     <span className="row wrap"><button type="button" onClick={() => void run()} disabled={busy}>{busy ? "Setting up…" : "Set up forums and starter posts"}</button></span>
     {result.error && <p role="alert" className="form-message error">{result.error}</p>}
