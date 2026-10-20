@@ -161,6 +161,8 @@ fn next_start(
     })
 }
 
+/// Upcoming events a member (not staff) can have at once.
+const MEMBER_EVENTS: i64 = 3;
 async fn create_event(app: &App, i: &Interaction) -> Res<Value> {
     let settings = home::settings(app).await;
     let zone = text(i, "zone", 40)
@@ -213,6 +215,17 @@ async fn create_event(app: &App, i: &Interaction) -> Res<Value> {
     let Some(channel) = home::id(&settings, "events").or(i.channel.clone()) else {
         return Ok(private("No events channel is set."));
     };
+    // Members have up to 3 upcoming events at a time (a repeating one counts once); staff have no
+    // limit (Joe, October 20, 2026).
+    if !i.staff() {
+        let upcoming: i64 = sqlx::query_scalar("SELECT count(DISTINCT coalesce(parent_id,id)) FROM discord_events WHERE created_by=$1 AND status IN ('scheduled','active')")
+            .bind(&i.user).fetch_one(&app.db).await?;
+        if upcoming >= MEMBER_EVENTS {
+            return Ok(private(format!(
+                "You have {MEMBER_EVENTS} upcoming events already. Cancel one with `/event cancel`, or wait for one to finish."
+            )));
+        }
+    }
     // Only staff events ping a whole faction's role.
     let id: i64 = sqlx::query_scalar("INSERT INTO discord_events(title,description,kind,faction,zone,starts_at,ends_at,repeat,channel_id,ping_role,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id")
         .bind(text(i, "title", 100).unwrap_or_else(|| "Event".into())).bind(text(i, "description", 1000)).bind(kind).bind(faction)

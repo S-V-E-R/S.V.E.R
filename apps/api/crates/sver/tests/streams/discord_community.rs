@@ -580,6 +580,30 @@ pub async fn exercise(e: &Env) {
         &["POST /channels/157/messages", "Game night", "event:rsvp:"],
     );
     let event: i64 = count("SELECT id FROM discord_events WHERE title='Game night'").await;
+    // Members have up to 3 upcoming events at once (a repeating series counts once).
+    for n in 2..=4 {
+        let more = ask(
+            &format!("ev{n}"),
+            "960",
+            MEMBER,
+            2,
+            sub(
+                "event",
+                "create",
+                json!([
+                    opt("title", json!(format!("Extra {n}"))),
+                    opt("date", json!(day.to_string())),
+                    opt("time", json!("9:00 PM"))
+                ]),
+            ),
+            true,
+        )
+        .await;
+        assert_eq!(more.contains("upcoming events already"), n == 4, "{more}");
+    }
+    taken();
+    e.sql("DELETE FROM discord_events WHERE title LIKE 'Extra %'")
+        .await;
     // The host going to their own event earns nothing.
     e.sql("INSERT INTO discord_members(discord_user,faction) VALUES('960','glint') ON CONFLICT(discord_user) DO UPDATE SET faction='glint'").await;
     let own = ask(
