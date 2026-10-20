@@ -416,7 +416,7 @@ fn ago(t: DateTime<Utc>) -> String {
     format!("<t:{}:R>", t.timestamp())
 }
 /// A length like 30m, 2h, 7d or 2w, in minutes (at most ten years).
-fn minutes(text: &str) -> Option<i64> {
+pub(in crate::discord) fn minutes(text: &str) -> Option<i64> {
     let t = text.trim().to_lowercase();
     let split = t.find(|c: char| !c.is_ascii_digit())?;
     let (n, unit) = t.split_at(split);

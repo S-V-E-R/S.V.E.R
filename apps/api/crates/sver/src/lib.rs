@@ -366,6 +366,8 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         && req.uri().path() != "/api/stripe/webhook"
         // Twitch EventSub posts without an Origin; its HMAC signature is checked in linked_chat.
         && req.uri().path() != "/api/integrations/twitch/eventsub"
+        // GitHub and Chromely post signed webhooks without an Origin (discord::community::feeds).
+        && !matches!(req.uri().path(), "/api/integrations/github" | "/api/integrations/chromely")
         // OAuth clients post tokens server to server; the client and PKCE checks are in devapps.
         && !matches!(req.uri().path(), "/api/oauth/token" | "/api/oauth/revoke" | "/api/oauth/device")
         // Apps call these with a bearer token (never a cookie); devapps::actor and
@@ -483,6 +485,7 @@ pub fn router(app: App) -> Router {
         .merge(discord::routes())
         .merge(discord::home::routes())
         .merge(discord::sync::routes())
+        .merge(discord::community::routes())
         .merge(overlays::routes())
         .merge(ravens_eye::routes())
         .merge(achievements::routes())

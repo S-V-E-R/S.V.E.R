@@ -44,6 +44,8 @@ mod crowd;
 mod devapps;
 #[path = "streams/discord.rs"]
 mod discord;
+#[path = "streams/discord_community.rs"]
+mod discord_community;
 #[path = "streams/discord_moderation.rs"]
 mod discord_moderation;
 #[path = "streams/discord_streamers.rs"]

@@ -173,27 +173,29 @@ fn welcome(faction: &str) -> String {
 }
 
 async fn join(app: &App, i: &Interaction) -> Res<Value> {
+    let pick = i.option("faction").and_then(Value::as_str).unwrap_or("");
+    choose(app, &i.user, pick).await
+}
+/// Joining a faction from `/faction join` or the role-select panel: a private answer, with a
+/// confirmation when it's a switch.
+pub(super) async fn choose(app: &App, user: &str, pick: &str) -> Res<Value> {
     if !home::on(&home::settings(app).await, "factions_on") {
         return Ok(private("Factions are turned off on this server."));
     }
-    let Some(pick) = i
-        .option("faction")
-        .and_then(Value::as_str)
-        .filter(|f| levels::FACTIONS.contains(f))
-    else {
+    if !levels::FACTIONS.contains(&pick) {
         return Ok(private("Pick Myria, Aetheron or Glint."));
-    };
+    }
     // A linked account's faction comes from S.V.E.R; Discord can't move it.
-    if let Some(sver) = sync::linked(app, &i.user).await?.and_then(|a| a.faction) {
-        set(app, &i.user, &sver).await?;
-        sync::soon(app, &i.user);
+    if let Some(sver) = sync::linked(app, user).await?.and_then(|a| a.faction) {
+        set(app, user, &sver).await?;
+        sync::soon(app, user);
         return Ok(private(format!(
             "Your faction comes from your S.V.E.R account: {} **{}**. Faction changes happen on S.V.E.R.",
             levels::emoji(Some(&sver)),
             title(&sver)
         )));
     }
-    Ok(match levels::faction(app, &i.user).await? {
+    Ok(match levels::faction(app, user).await? {
         Some(f) if f == pick => private(format!("You're already in **{}**.", title(pick))),
         Some(f) => json!({"type": 4, "data": {"flags": 64, "allowed_mentions": {"parse": []},
             "content": format!("Switch from **{}** to **{}**? Your rank role moves to {}'s version.", title(&f), title(pick), title(pick)),
@@ -201,7 +203,7 @@ async fn join(app: &App, i: &Interaction) -> Res<Value> {
                 {"type": 2, "style": 3, "label": "Switch", "custom_id": format!("fac:join:{pick}")},
                 {"type": 2, "style": 2, "label": "Cancel", "custom_id": "fac:cancel"}]}]}}),
         None => {
-            set(app, &i.user, pick).await?;
+            set(app, user, pick).await?;
             private(welcome(pick))
         }
     })

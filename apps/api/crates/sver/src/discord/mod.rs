@@ -9,11 +9,12 @@
 //!
 //! The community bot on the S.V.E.R home server (docs/DISCORD_BOT.md) adds a Gateway connection
 //! (`gateway`), slash commands (`commands`), the staff settings for that server (`home`), levels,
-//! factions, the S.V.E.R sync (`sync`), streamers (`streamers`, `collab`) and moderation
-//! (`moderation`).
+//! factions, the S.V.E.R sync (`sync`), streamers (`streamers`, `collab`), moderation
+//! (`moderation`) and the community features (`community`).
 pub mod card;
 pub mod collab;
 pub mod commands;
+pub mod community;
 pub mod factions;
 pub mod gateway;
 pub mod home;
@@ -502,7 +503,8 @@ pub async fn tick(app: &App) -> Res<()> {
     for channel in due {
         sweep(app, &channel).await?;
     }
-    moderation::tick(app).await
+    moderation::tick(app).await?;
+    community::tick(app).await
 }
 
 type Due = (

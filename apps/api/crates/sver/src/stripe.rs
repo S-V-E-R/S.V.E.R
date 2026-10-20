@@ -200,7 +200,7 @@ pub fn verify(secret: &str, header: &str, body: &[u8], now: i64) -> bool {
         mac.verify_slice(&expected).is_ok()
     })
 }
-fn hex_decode(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn hex_decode(text: &str) -> Option<Vec<u8>> {
     if !text.len().is_multiple_of(2) || !text.is_ascii() {
         return None;
     }

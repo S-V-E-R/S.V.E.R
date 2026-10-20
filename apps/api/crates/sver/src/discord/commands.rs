@@ -134,6 +134,7 @@ pub fn definitions() -> Vec<Value> {
     all.extend(super::streamers::definitions());
     all.extend(super::collab::definitions());
     all.extend(super::moderation::definitions());
+    all.extend(super::community::definitions());
     all
 }
 
@@ -184,6 +185,9 @@ pub async fn interaction(app: &App, raw: Value) {
         3 | 5 if i.custom_id().starts_with("collab:") || i.custom_id().starts_with("lfg:") => {
             super::collab::component(app, &i).await
         }
+        3 | 5 if super::community::owns(i.custom_id()) => {
+            super::community::component(app, &i).await
+        }
         _ => None,
     };
     if let Some(reply) = reply.filter(|r| *r != ANSWERED) {
@@ -210,6 +214,9 @@ async fn command(app: &App, i: &Interaction) -> Option<Value> {
         return Some(reply);
     }
     if let Some(reply) = super::collab::command(app, i).await {
+        return Some(reply);
+    }
+    if let Some(reply) = super::community::command(app, i).await {
         return Some(reply);
     }
     Some(match i.name() {
@@ -342,4 +349,53 @@ async fn health(app: &App) -> Value {
         ]}),
         true,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    /// Discord refuses the whole set when one definition breaks its rules, so every command
+    /// would vanish: names, descriptions, option counts, required options first, choices.
+    fn check(options: &[Value], at: &str) {
+        assert!(options.len() <= 25, "{at}: too many options");
+        let mut optional = false;
+        for o in options {
+            let name = o["name"].as_str().unwrap_or_default();
+            let here = format!("{at} {name}");
+            assert!(
+                !name.is_empty()
+                    && name.len() <= 32
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "-_".contains(c)),
+                "{here}: bad name"
+            );
+            let d = o["description"].as_str().unwrap_or_default().chars().count();
+            assert!((1..=100).contains(&d), "{here}: description is {d} long");
+            match o["type"].as_u64() {
+                // A command (no type), a subcommand or a group: its own options.
+                None | Some(1 | 2) => check(o["options"].as_array().map_or(&[], |v| v), &here),
+                _ => {
+                    let required = o["required"] == true;
+                    assert!(!(required && optional), "{here}: required after optional");
+                    optional |= !required;
+                    let choices = o["choices"].as_array().map_or(0, Vec::len);
+                    assert!(choices <= 25, "{here}: too many choices");
+                }
+            }
+        }
+    }
+    #[test]
+    fn every_definition_follows_discords_rules() {
+        let all = definitions();
+        let mut names: Vec<&str> = all.iter().filter_map(|d| d["name"].as_str()).collect();
+        assert!(names.len() <= 100, "too many commands");
+        for d in &all {
+            check(std::slice::from_ref(d), "/");
+        }
+        names.sort_unstable();
+        let before = names.len();
+        names.dedup();
+        assert_eq!(names.len(), before, "two commands share a name");
+    }
 }

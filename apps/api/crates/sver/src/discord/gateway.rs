@@ -5,13 +5,15 @@
 //! The connection resumes after a drop and identifies afresh after a restart. Events go to
 //! `dispatch` on their own task, so a slow handler never delays a heartbeat.
 use super::{
-    bot_token, call, collab, commands, factions, home, levels, moderation, quests, streamers, sync,
+    bot_token, call, collab, commands, community, factions, home, levels, moderation, quests,
+    streamers, sync,
 };
 use crate::App;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Method;
 use serde_json::{Value, json};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -23,6 +25,12 @@ pub const INTENTS: u64 =
 
 pub fn enabled() -> bool {
     std::env::var("DISCORD_GATEWAY").as_deref() == Ok("1") && bot_token().is_some()
+}
+
+/// True while this process holds the Gateway lock and runs the bot.
+static LEADING: AtomicBool = AtomicBool::new(false);
+pub fn leading() -> bool {
+    LEADING.load(Ordering::Relaxed)
 }
 
 /// Commands for the live connection (presence updates, member requests), sent between heartbeats.
@@ -71,6 +79,7 @@ async fn lead(app: &App) -> Result<(), sqlx::Error> {
     if !held {
         return Ok(());
     }
+    LEADING.store(true, Ordering::Relaxed);
     let (events, received) = mpsc::channel(1024);
     let handler = tokio::spawn(handle(app.clone(), received));
     let ticker = tokio::spawn(ticker(app.clone()));
@@ -112,6 +121,7 @@ async fn lead(app: &App) -> Result<(), sqlx::Error> {
         status(app, false, problem).await;
         tokio::time::sleep(Duration::from_secs(wait)).await;
     }
+    LEADING.store(false, Ordering::Relaxed);
     handler.abort();
     ticker.abort();
     Ok(())
@@ -148,6 +158,7 @@ pub async fn minute(app: &App) {
     }
     logged("streamers", streamers::minute(app).await);
     logged("collab", collab::expire(app).await);
+    logged("community", community::minute(app).await);
 }
 fn logged(what: &str, result: crate::profiles::Res<()>) {
     if result.is_err() {
@@ -376,12 +387,28 @@ pub async fn dispatch(app: &App, kind: &str, data: Value) {
         "MESSAGE_UPDATE" | "MESSAGE_DELETE" | "MESSAGE_DELETE_BULK" => {
             moderation::event(app, kind, &data).await;
         }
+        // A member moderation holds is welcomed once a moderator approves them.
         "GUILD_MEMBER_ADD" | "GUILD_MEMBER_REMOVE" => {
-            moderation::event(app, kind, &data).await;
+            let held = moderation::event(app, kind, &data).await;
             logged("membership", sync::membership(app, kind, &data).await);
+            if kind == "GUILD_MEMBER_REMOVE" {
+                logged("goodbye", community::left(app, &data).await);
+            } else if !held {
+                logged("welcome", community::joined(app, &data).await);
+            }
         }
-        "MESSAGE_REACTION_ADD" => logged("reaction", levels::reaction(app, &data).await),
-        "VOICE_STATE_UPDATE" => logged("voice", levels::voice_state(app, &data).await),
+        // A 🎉 on a giveaway is an entry, not a reaction that earns XP.
+        "MESSAGE_REACTION_ADD" => match community::events::reaction(app, &data).await {
+            Ok(true) => {}
+            other => {
+                logged("giveaway_entry", other.map(drop));
+                logged("reaction", levels::reaction(app, &data).await);
+            }
+        },
+        "VOICE_STATE_UPDATE" => {
+            logged("voice", levels::voice_state(app, &data).await);
+            logged("temp_rooms", community::tools::voice(app, &data).await);
+        }
         "PRESENCE_UPDATE" => logged("presence", streamers::presence(app, &data).await),
         "INTERACTION_CREATE" => {
             // Each interaction gets its own task: Discord wants an answer within 3 seconds.

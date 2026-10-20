@@ -146,7 +146,7 @@ fn card(
     }
     e
 }
-fn hours(minutes: i64) -> String {
+pub(super) fn hours(minutes: i64) -> String {
     match (minutes / 60, minutes % 60) {
         (0, m) => format!("{m}m"),
         (h, 0) => format!("{h}h"),
@@ -1150,7 +1150,7 @@ async fn profile(app: &App, user: &str) -> Res<Option<Profile>> {
     Ok(sqlx::query_as("SELECT bio,tags,games,collab,collab_platforms,collab_content,collab_size,collab_notes,last_live_at FROM discord_streamer_profiles WHERE discord_user=$1")
         .bind(user).fetch_optional(&app.db).await?)
 }
-fn faction_line(faction: &str) -> String {
+pub(super) fn faction_line(faction: &str) -> String {
     format!(
         "{} {}",
         levels::emoji(Some(faction)),
@@ -1442,7 +1442,7 @@ async fn search(app: &App, i: &Interaction) -> Res<Value> {
 // ---- Schedules ----
 
 /// A legacy abbreviation or an IANA zone.
-fn zone(name: &str) -> Option<Tz> {
+pub(super) fn zone(name: &str) -> Option<Tz> {
     let name = match name.trim().to_uppercase().as_str() {
         "EST" | "EDT" | "ET" => "America/New_York",
         "CST" | "CDT" | "CT" => "America/Chicago",
@@ -1454,7 +1454,7 @@ fn zone(name: &str) -> Option<Tz> {
     name.parse().ok()
 }
 /// "20:00", "8pm", "8:30 PM" or "20".
-fn clock(text: &str) -> Option<NaiveTime> {
+pub(super) fn clock(text: &str) -> Option<NaiveTime> {
     let t = text.trim().to_lowercase().replace(' ', "");
     let (t, pm) = match (t.strip_suffix("pm"), t.strip_suffix("am")) {
         (Some(t), _) => (t.to_string(), Some(true)),
@@ -1672,17 +1672,23 @@ async fn schedule_post(app: &App, now: DateTime<Utc>) -> Res<()> {
 /// Monday 10:00 UTC: the Streamer of the Week, by minutes streamed in the last 7 days (time live on
 /// several platforms at once counts once).
 async fn spotlight(app: &App, now: DateTime<Utc>) -> Res<()> {
-    let settings = home::settings(app).await;
-    let Some(to) = either(&settings, "go_live", "announcements") else {
-        return Ok(());
-    };
-    if !weekly(app, now, "spotlight", Weekday::Mon, 10).await? {
+    if either(&home::settings(app).await, "go_live", "announcements").is_none()
+        || !weekly(app, now, "spotlight", Weekday::Mon, 10).await?
+    {
         return Ok(());
     }
+    streamer_spotlight(app).await.map(drop)
+}
+/// Posts the Streamer of the Week, unless one went up in the last 6 days or nobody streamed: the
+/// winner, when posted (also staff's `/rituals spotlight streamer`).
+pub(super) async fn streamer_spotlight(app: &App) -> Res<Option<String>> {
+    let Some(to) = either(&home::settings(app).await, "go_live", "announcements") else {
+        return Ok(None);
+    };
     let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discord_spotlights WHERE kind='streamer' AND created_at>now()-interval '6 days')")
         .fetch_one(&app.db).await?;
     if recent {
-        return Ok(());
+        return Ok(None);
     }
     let top: Option<(String, f64)> = sqlx::query_as("SELECT discord_user,sum(extract(epoch FROM upper(r)-lower(r)))::float8/60 FROM (
             SELECT discord_user,unnest(range_agg(tstzrange(greatest(started_at,now()-interval '7 days'),least(ended_at,now())))) r FROM (
@@ -1692,7 +1698,7 @@ async fn spotlight(app: &App, now: DateTime<Utc>) -> Res<()> {
         GROUP BY discord_user ORDER BY 2 DESC LIMIT 1")
         .fetch_optional(&app.db).await?;
     let Some((user, minutes)) = top.filter(|t| t.1 >= 1.0) else {
-        return Ok(());
+        return Ok(None);
     };
     let faction = levels::faction(app, &user).await?;
     let reason = format!(
@@ -1732,7 +1738,7 @@ async fn spotlight(app: &App, now: DateTime<Utc>) -> Res<()> {
         let react = format!("/channels/{to}/messages/{m}/reactions/%F0%9F%8E%89/@me");
         call(app, Method::PUT, &react, None).await;
     }
-    Ok(())
+    Ok(Some(user))
 }
 
 /// Sunday 18:00 UTC: a clip of the week in the clips channel (a forum gets a post of its own),
