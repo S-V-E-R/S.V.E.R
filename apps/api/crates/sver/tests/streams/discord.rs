@@ -138,6 +138,12 @@ pub async fn exercise(e: &Env) {
     let service = fake(calls.clone());
     tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
     let taken = |calls: &Calls| std::mem::take(&mut *calls.lock().unwrap());
+    // Nothing reaches the real Twitch before the streamers test points it at its fake.
+    // SAFETY: only the Discord tests read these variables, one at a time.
+    unsafe {
+        std::env::set_var("TWITCH_API_BASE", "http://127.0.0.1:9");
+        std::env::set_var("TWITCH_ID_BASE", "http://127.0.0.1:9");
+    }
 
     // Off until the bot token is set.
     assert_eq!(
@@ -311,6 +317,7 @@ pub async fn exercise(e: &Env) {
     levels(e, &calls).await;
     factions(e).await;
     super::discord_moderation::exercise(e).await;
+    super::discord_streamers::exercise(e).await;
 }
 
 /// Levels and ranks, quests and achievements (docs/DISCORD_BOT.md), driven through the same

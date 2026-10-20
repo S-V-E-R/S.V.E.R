@@ -4,7 +4,9 @@
 //!
 //! The connection resumes after a drop and identifies afresh after a restart. Events go to
 //! `dispatch` on their own task, so a slow handler never delays a heartbeat.
-use super::{bot_token, call, commands, factions, home, levels, moderation, quests, sync};
+use super::{
+    bot_token, call, collab, commands, factions, home, levels, moderation, quests, streamers, sync,
+};
 use crate::App;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Method;
@@ -144,6 +146,8 @@ pub async fn minute(app: &App) {
     if factions::due("sync", 15) {
         logged("sync", sync::all(app).await);
     }
+    logged("streamers", streamers::minute(app).await);
+    logged("collab", collab::expire(app).await);
 }
 fn logged(what: &str, result: crate::profiles::Res<()>) {
     if result.is_err() {
@@ -378,6 +382,7 @@ pub async fn dispatch(app: &App, kind: &str, data: Value) {
         }
         "MESSAGE_REACTION_ADD" => logged("reaction", levels::reaction(app, &data).await),
         "VOICE_STATE_UPDATE" => logged("voice", levels::voice_state(app, &data).await),
+        "PRESENCE_UPDATE" => logged("presence", streamers::presence(app, &data).await),
         "INTERACTION_CREATE" => {
             // Each interaction gets its own task: Discord wants an answer within 3 seconds.
             let app = app.clone();
