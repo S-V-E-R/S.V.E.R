@@ -594,14 +594,52 @@ pub async fn exercise(e: &Env) {
     sver::payouts::payday(&e.app, second).await.unwrap();
     assert_eq!(early().await.0, StatusCode::FORBIDDEN);
     assert_eq!(runs().await, 0, "a held creator is never paid");
-    // Lifting the hold (audited) pays them again.
-    assert_eq!(hold(false).await.0, StatusCode::OK);
+    // A run reserved before the hold whose transfer was never sent stays pending while held.
+    e.sql("INSERT INTO payout_runs(id,user_id,kind,amount_cents,fee_cents,created_at) VALUES('rt-held-run','rt-held','payday',100,0,now()-interval '10 minutes')").await;
+    let run_status = || async {
+        sqlx::query_scalar::<_, String>("SELECT status FROM payout_runs WHERE id='rt-held-run'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    sver::payouts::resume(&e.app).await.unwrap();
+    assert_eq!(
+        transfers_for("rt-held-run"),
+        0,
+        "resume sends nothing while held"
+    );
+    assert_eq!(run_status().await, "pending");
+    // Staff can't act on their own case while another admin can.
+    staff(e, "rt-staff2", "RtStaff2").await;
+    e.sql("INSERT INTO integrity_cases(id,broadcast_id,owner_id,evidence) VALUES('rt-own-case','rt-own-b','rt-staff','{}')").await;
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/admin/integrity/rt-own-case/hold",
+        Some(&admin),
+        json!({"hold": false, "note": "Mine"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // With a second case holding, lifting one still leaves them held.
+    e.sql("INSERT INTO integrity_cases(id,broadcast_id,owner_id,evidence,hold_payouts) VALUES('rt-held-case2','rt-held-b2','rt-held','{}',true)").await;
+    let (status, lifted) = hold(false).await;
+    assert_eq!(status, StatusCode::OK, "{lifted}");
+    assert_eq!(lifted["payouts_held"], true, "another case still holds");
+    assert_eq!(early().await.0, StatusCode::FORBIDDEN);
+    // Lifting the last hold (audited) pays them again, the resumed run included.
+    e.sql("UPDATE integrity_cases SET hold_payouts=false WHERE id='rt-held-case2'")
+        .await;
     let (status, paid) = early().await;
     assert_eq!(status, StatusCode::OK, "{paid}");
     assert_eq!(paid["held"], false);
+    e.sql("UPDATE payout_runs SET attempted_at=NULL WHERE id='rt-held-run'")
+        .await;
+    sver::payouts::resume(&e.app).await.unwrap();
+    assert_eq!(run_status().await, "paid");
     let third = Utc.with_ymd_and_hms(2026, 11, 6, 16, 0, 0).unwrap();
     sver::payouts::payday(&e.app, third).await.unwrap();
-    assert_eq!(runs().await, 2, "Early Pay and payday");
+    assert_eq!(runs().await, 3, "the resumed run, Early Pay and payday");
     assert_eq!(earnings(e, "rt-held").await, 0, "paid in full");
     let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM moderation_actions WHERE action IN ('integrity_payouts_held','integrity_payouts_released') AND target_id='rt-held'")
         .fetch_one(&e.app.db)

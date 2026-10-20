@@ -11,7 +11,6 @@ type Case = {
   evidence: { windows: Window[]; flags: Record<string, number>; networks_excluded: number; guests: number };
 };
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-const STEP_UP = "Confirm your sign-in method again on the Account page, then retry.";
 
 /** Viewer integrity cases: aggregate evidence only. Bots aimed at a channel never punish it without staff review. */
 export default function Integrity() {
@@ -23,14 +22,14 @@ export default function Integrity() {
     event.preventDefault();
     const f = new FormData(event.currentTarget);
     const r = await send("POST", `/api/admin/integrity/${id}/decision`, { outcome: f.get("outcome"), note: f.get("note"), hold_payouts: f.get("hold") === "on", pause_tier: f.get("pause") === "on" });
-    setState(r.ok ? { saved: "Decision saved." } : r.status === 403 ? { error: STEP_UP } : r);
+    setState(r.ok ? { saved: "Decision saved." } : r);
     load();
   }
   async function hold(c: Case) {
     const note = window.prompt(c.hold_payouts ? "Why lift the payout hold?" : "Why hold payouts?");
     if (!note) return;
-    const r = await send("POST", `/api/admin/integrity/${c.id}/hold`, { hold: !c.hold_payouts, note });
-    setState(r.ok ? { saved: c.hold_payouts ? "Payout hold lifted." : "Payouts held." } : r.status === 403 ? { error: STEP_UP } : r);
+    const r = await send<{ payouts_held: boolean }>("POST", `/api/admin/integrity/${c.id}/hold`, { hold: !c.hold_payouts, note });
+    setState(!r.ok ? r : { saved: !c.hold_payouts ? "Payouts held." : r.data.payouts_held ? `Lifted on this case; another case still holds @${c.username}'s payouts.` : "Payout hold lifted." });
     load();
   }
   if (!cases) return <p className="loading">Loading…</p>;

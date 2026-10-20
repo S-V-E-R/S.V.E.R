@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 use sver::security as sec;
 
-/// Any gated staff action; a missing case answers 409 once past the window check, 403 before it.
+/// Any gated staff action; a missing case answers 404 once past the window check, 403 before it.
 async fn staff_action(e: &Env, token: &str) -> StatusCode {
     call(
         e,
@@ -31,7 +31,7 @@ pub async fn exercise(e: &Env) {
     let admin = staff(e, "win-staff", "WinStaff").await;
     let outsider = person(e, "win-user", "WinUser", true).await;
     let gated = StatusCode::FORBIDDEN;
-    let passed = StatusCode::CONFLICT;
+    let passed = StatusCode::NOT_FOUND;
 
     // Fresh sign-in: unlocked.
     assert_eq!(staff_action(e, &admin).await, passed);

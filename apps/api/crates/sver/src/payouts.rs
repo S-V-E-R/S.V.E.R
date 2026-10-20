@@ -259,7 +259,17 @@ pub async fn resume(app: &App) -> Res<()> {
             .find(|t| t["metadata"]["sver_payout"].as_str() == Some(id.as_str()));
         let result = match existing {
             Some(transfer) => finish(app, &id, &user, &account, &kind, cents, fee, transfer).await,
-            None => execute(app, &id, &user, &account, &kind, cents, fee).await,
+            // Never sent yet: an integrity hold keeps it pending until staff lift the hold.
+            None => {
+                let mut tx = app.db.begin().await?;
+                ledger::lock(&mut tx, &format!("payout:{user}")).await?;
+                if held(&mut tx, &user).await? {
+                    eprintln!("payout_event=resume outcome=held");
+                    continue;
+                }
+                tx.commit().await?;
+                execute(app, &id, &user, &account, &kind, cents, fee).await
+            }
         };
         if result.is_err() {
             eprintln!("payout_event=resume outcome=failed kind={kind}");
