@@ -249,6 +249,11 @@ async fn connect(
                             session.id = v["d"]["session_id"].as_str().map(String::from);
                             session.resume_url = v["d"]["resume_gateway_url"].as_str().map(String::from);
                         }
+                        // Recorded here, in order with a later close: on the event task a slow
+                        // "connected" could land after a fatal close and wipe its problem.
+                        if kind == "READY" || kind == "RESUMED" {
+                            status(app, true, None).await;
+                        }
                         if events.send((kind, v["d"].clone())).await.is_err() {
                             return Err(());
                         }
@@ -334,7 +339,6 @@ async fn handle(app: App, mut received: mpsc::Receiver<(String, Value)>) {
 pub async fn dispatch(app: &App, kind: &str, data: Value) {
     match kind {
         "READY" => {
-            status(app, true, None).await;
             let guilds: Vec<&str> = data["guilds"]
                 .as_array()
                 .map(|g| g.iter().filter_map(|g| g["id"].as_str()).collect())
@@ -352,7 +356,6 @@ pub async fn dispatch(app: &App, kind: &str, data: Value) {
                 eprintln!("discord_event=commands outcome=retry");
             }
         }
-        "RESUMED" => status(app, true, None).await,
         "GUILD_CREATE" | "GUILD_UPDATE" => {
             home::guild_seen(app, &data).await;
             if kind == "GUILD_CREATE" {
