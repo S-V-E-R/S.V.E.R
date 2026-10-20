@@ -12,7 +12,7 @@ export default function PrivacyPage() {
   return <PolicyPage path="/privacy" title="Privacy Policy" intro="What we collect, why we need it, and the choices you have." summary={[
     "We use account, activity and technical information to operate and secure S.V.E.R.",
     "Your published channel details, follows and public posts can be seen by others.",
-    "We do not sell personal information; service providers help us run the Platform.",
+    "We do not sell personal information or use it to train AI; service providers help us run the Platform.",
     "Manage your information in settings or contact us about a privacy request.",
   ]} sections={[
     { title: "Information we collect", content: <>
@@ -37,6 +37,7 @@ export default function PrivacyPage() {
         <li>Prevent spam, abuse and unauthorized access; investigate reports and enforce our <Link href="/guidelines">Community Guidelines</Link>.</li>
         <li>Diagnose problems, maintain the service and respond to legal obligations and requests.</li>
       </ul>
+      <p>We do not use your information, streams, videos, chat or other content to train artificial intelligence or machine-learning models, and we do not sell or license any of it to anyone for that purpose. Public pages can be seen by anyone, including automated services we don&apos;t control.</p>
     </> },
     { title: "Public information and sharing", content: <>
       <p>Your channel, username, display name, published profile details, public posts, and follower and following lists are visible to other people. Public chat can be read without an account. Do not publish information you want to keep private. Your email, date of birth and account security details are not part of your public profile.</p>

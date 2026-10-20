@@ -15,6 +15,7 @@ export default function TermsPage() {
     "You keep ownership of your content and grant the permissions described below.",
     "Paid features run through Stripe. Purchases are non-refundable except as these terms or the law say.",
     "Creators earn by tier and are paid every two weeks; earnings are never guaranteed.",
+    "We never use your content to train AI, or sell or license it to anyone for that.",
     "Read the full terms for moderation, account closure, liability and dispute rules.",
   ]} sections={[
     { title: "Using S.V.E.R", content: <>
@@ -40,6 +41,7 @@ export default function TermsPage() {
     </> },
     { title: "Your content and our intellectual property", content: <>
       <p>You retain ownership of the content you create. By sharing it on S.V.E.R, you grant us a worldwide, non-exclusive, royalty-free license to host, display and distribute it on the Platform, enable interaction with it, and promote it on the Platform and in marketing materials. You must have the rights needed to grant this license.</p>
+      <p>This license does not include training artificial intelligence or machine-learning models. We do not use your streams, videos, clips, chat or other content to train them, and we do not sell or license your content to anyone for that purpose. Apps you choose to connect to your account act under their own terms.</p>
       <p>The S.V.E.R name, logo and faction emblems belong to S.V.E.R. Trademark use requires written permission except where the law permits it. The Platform source code is available under its published open-source license; these Terms do not replace that license.</p>
       <p>See <Link href="/dmca">Copyright & DMCA</Link> for infringement notices and counter-notices.</p>
     </> },
