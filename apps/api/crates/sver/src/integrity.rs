@@ -457,7 +457,7 @@ pub async fn tick(app: &App) -> Res<()> {
         .execute(&app.db)
         .await?;
     sqlx::query(
-        "DELETE FROM integrity_cases WHERE status<>'OPEN' AND decided_at<now()-interval '1 year'",
+        "DELETE FROM integrity_cases WHERE status<>'OPEN' AND NOT hold_payouts AND decided_at<now()-interval '1 year'",
     )
     .execute(&app.db)
     .await?;
@@ -516,8 +516,8 @@ pub struct Decision {
     pause_tier: bool,
 }
 /// POST /api/admin/integrity/{id}/decision: staff only. Dismissing records nothing against the
-/// streamer; "action" records payout and tier holds for Module 6. Strikes go through the user's
-/// standing page so they keep the normal appeal path.
+/// streamer and clears any payout hold; "action" keeps or lifts the payout hold and records the
+/// tier pause. Strikes go through the user's standing page so they keep the normal appeal path.
 pub async fn decide(
     State(app): State<App>,
     jar: CookieJar,
@@ -552,10 +552,54 @@ pub async fn decide(
     Ok(Json(json!({"status": status})))
 }
 
+#[derive(Deserialize)]
+pub struct Hold {
+    hold: bool,
+    note: Option<String>,
+}
+/// POST /api/admin/integrity/{id}/hold: staff only. Holds or lifts the streamer's payouts on an
+/// open or actioned case; payday and Early Pay skip them while any case holds.
+pub async fn hold(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Json(input): Json<Hold>,
+) -> Res<Json<Value>> {
+    let actor = safety::staff_write(&app, &jar).await?;
+    let note = safety::note(input.note.as_deref(), "note", true)?;
+    let mut tx = app.db.begin().await?;
+    let owner: String = sqlx::query_scalar("UPDATE integrity_cases SET hold_payouts=$2 WHERE id=$1 AND status<>'DISMISSED' RETURNING owner_id")
+        .bind(&id).bind(input.hold)
+        .fetch_optional(&mut *tx).await?
+        .ok_or_else(Fail::missing)?;
+    // Waits out a payout already starting, so none starts after a hold is confirmed.
+    crate::ledger::lock(&mut tx, &format!("payout:{owner}")).await?;
+    let action = if input.hold {
+        "integrity_payouts_held"
+    } else {
+        "integrity_payouts_released"
+    };
+    safety::audit(
+        &mut tx,
+        Some(&actor.id),
+        action,
+        "user",
+        &owner,
+        &[],
+        &note,
+        json!({"case_id": id}),
+        false,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"hold_payouts": input.hold})))
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/admin/integrity", get(admin_cases))
         .route("/api/admin/integrity/{id}/decision", post(decide))
+        .route("/api/admin/integrity/{id}/hold", post(hold))
 }
 
 #[cfg(test)]

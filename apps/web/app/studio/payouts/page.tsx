@@ -68,7 +68,7 @@ export default function StudioPayouts() {
       <p className="valor-balance">{tenths(data.earnings_tenths)}</p>
       {summary && <>
         <p className="muted">Next payday {new Date(summary.next_payday).toLocaleDateString()}{summary.pending_cents > 0 && ` · ${money(summary.pending_cents)} on its way`}</p>
-        {summary.held && <p className="form-message">Payouts are on hold while a staff review is open.</p>}
+        {summary.held && <p className="form-message">Payouts are on hold for a staff review of your streams.</p>}
         {summary.enabled && !summary.held && <div className="row wrap">
           <span>Early Pay available: <strong>{money(summary.early.limit_cents)}</strong>{summary.early.used_today && " · used today"}</span>
           <button type="button" className="small" disabled={busy || summary.early.used_today || summary.early.limit_cents < 1} onClick={() => early("standard")}>Standard (free, about 2 business days)</button>

@@ -538,6 +538,77 @@ pub async fn exercise(e: &Env) {
             &json!("Not a registered charity's page")
         )
     );
+
+    // ---- An integrity hold stops payday and Early Pay until staff lift it ----
+    let held = creator(e, "rt-held", "RtHeld").await;
+    e.sql("INSERT INTO ledger_transactions(id,kind,reference) VALUES('fund-rt-held','test','fund-rt-held')").await;
+    e.sql("INSERT INTO ledger_entries(transaction_id,account,unit,amount) VALUES('fund-rt-held','usd:earnings:rt-held','usd',10000),('fund-rt-held','usd:stripe','usd',-10000)").await;
+    e.sql("INSERT INTO integrity_cases(id,broadcast_id,owner_id,evidence) VALUES('rt-held-case','rt-held-b','rt-held','{}')").await;
+    let hold = |on: bool| {
+        call(
+            e,
+            "POST",
+            "/api/admin/integrity/rt-held-case/hold",
+            Some(&admin),
+            json!({"hold": on, "note": "Reviewing paid traffic"}),
+        )
+    };
+    let early = || {
+        call(
+            e,
+            "POST",
+            "/api/me/payouts/early",
+            Some(&held),
+            json!({"method": "standard"}),
+        )
+    };
+    let runs = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM payout_runs WHERE user_id='rt-held'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    // Held while the case is open.
+    assert_eq!(hold(true).await.0, StatusCode::OK);
+    assert_eq!(early().await.0, StatusCode::FORBIDDEN);
+    let (_, s) = call(
+        e,
+        "GET",
+        "/api/me/payouts/summary",
+        Some(&held),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(s["held"], true);
+    // Still held once the case is closed as actioned: payday skips them.
+    let (status, decided) = call(
+        e,
+        "POST",
+        "/api/admin/integrity/rt-held-case/decision",
+        Some(&admin),
+        json!({"outcome": "action", "note": "Paid bot traffic", "hold_payouts": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{decided}");
+    let second = Utc.with_ymd_and_hms(2026, 10, 23, 16, 0, 0).unwrap();
+    sver::payouts::payday(&e.app, second).await.unwrap();
+    assert_eq!(early().await.0, StatusCode::FORBIDDEN);
+    assert_eq!(runs().await, 0, "a held creator is never paid");
+    // Lifting the hold (audited) pays them again.
+    assert_eq!(hold(false).await.0, StatusCode::OK);
+    let (status, paid) = early().await;
+    assert_eq!(status, StatusCode::OK, "{paid}");
+    assert_eq!(paid["held"], false);
+    let third = Utc.with_ymd_and_hms(2026, 11, 6, 16, 0, 0).unwrap();
+    sver::payouts::payday(&e.app, third).await.unwrap();
+    assert_eq!(runs().await, 2, "Early Pay and payday");
+    assert_eq!(earnings(e, "rt-held").await, 0, "paid in full");
+    let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM moderation_actions WHERE action IN ('integrity_payouts_held','integrity_payouts_released') AND target_id='rt-held'")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(audited, 2);
+
     let unbalanced: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM (SELECT unit FROM ledger_entries GROUP BY unit HAVING sum(amount)<>0) u",
     )

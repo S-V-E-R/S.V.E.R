@@ -26,16 +26,24 @@ export default function Integrity() {
     setState(r.ok ? { saved: "Decision saved." } : r.status === 403 ? { error: STEP_UP } : r);
     load();
   }
+  async function hold(c: Case) {
+    const note = window.prompt(c.hold_payouts ? "Why lift the payout hold?" : "Why hold payouts?");
+    if (!note) return;
+    const r = await send("POST", `/api/admin/integrity/${c.id}/hold`, { hold: !c.hold_payouts, note });
+    setState(r.ok ? { saved: c.hold_payouts ? "Payout hold lifted." : "Payouts held." } : r.status === 403 ? { error: STEP_UP } : r);
+    load();
+  }
   if (!cases) return <p className="loading">Loading…</p>;
   return <><h1>Viewer integrity</h1><Status state={state} />
     <p className="muted">A case opens when a broadcast&apos;s share of uncounted viewers stays high. Uncounted viewers are already left out of every count; act against a streamer only with evidence that they caused the traffic. Issue strikes from the user&apos;s page so the normal appeal applies.</p>
     {cases.length === 0 ? <p className="muted">No cases.</p> : cases.map(c => <Section key={c.id} title={`@${c.username} · ${when(c.opened_at)} · ${c.status.toLowerCase()}`}>
       <ul className="list">{c.evidence.windows.map(w => <li key={w.at}>{when(w.at)}: {w.raw} sessions, {w.counted} counted ({w.trusted} trusted), {w.excluded} excluded, {w.pending} pending</li>)}</ul>
       <p className="muted">Signals: {Object.entries(c.evidence.flags).map(([k, n]) => `${k.replaceAll("_", " ")} ${n}`).join(", ") || "none"} · {c.evidence.networks_excluded} networks among excluded sessions · {c.evidence.guests} guests</p>
-      <p><Link href={`/admin/users/${c.username}`}>Open @{c.username}&apos;s standing</Link></p>
+      <p className="row wrap"><Link href={`/admin/users/${c.username}`}>Open @{c.username}&apos;s standing</Link>
+        {c.status !== "DISMISSED" && <button type="button" className="small" onClick={() => hold(c)}>{c.hold_payouts ? "Lift payout hold" : "Hold payouts"}</button>}</p>
       {c.status === "OPEN" ? <form onSubmit={e => decide(e, c.id)}>
         <fieldset className="row"><legend className="sr-only">Outcome</legend><label className="row"><input type="radio" name="outcome" value="dismiss" required /> Dismiss</label><label className="row"><input type="radio" name="outcome" value="action" /> Take action</label></fieldset>
-        <label className="row"><input type="checkbox" name="hold" /> Hold payouts for review</label>
+        <label className="row"><input type="checkbox" name="hold" defaultChecked={c.hold_payouts} /> Hold payouts</label>
         <label className="row"><input type="checkbox" name="pause" /> Pause tier promotion</label>
         <label className="field"><span>Staff note (required)</span><textarea name="note" required maxLength={500} rows={2} /></label>
         <button type="submit" className="small">Decide</button>
