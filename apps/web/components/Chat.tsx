@@ -398,7 +398,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}
         {m.author.guild && <GuildChatBadge guild={m.author.guild} />}
         {m.author.username ? <PlayerCardButton username={m.author.username} className="chip-button faction-name chat-name" data={{ faction: m.author.faction ?? undefined, style: m.author.name_style ?? undefined, supporter: m.supporter?.tier }} title={`${LOYALTY[m.loyalty ?? 0]} in this channel`}><strong>{m.author.display_name}</strong></PlayerCardButton> : <strong>{m.author.display_name}</strong>}
-        {m.creator_tier ? <span className="badge tier-badge" title="Creator tier">{CREATOR_TIERS[m.creator_tier]}</span> : null}
+        {m.creator_tier ? <a href="/help/creator-tiers" target="_blank" rel="noopener" className="badge tier-badge" title={`${CREATOR_TIERS[m.creator_tier]} creator tier: see every tier`}>{CREATOR_TIERS[m.creator_tier]}</a> : null}
         {m.supporter && <SupporterBadge tier={m.supporter.tier} monthsSupported={m.supporter.months} />}
         {m.supporter?.founder ? <FounderMark number={m.supporter.founder} /> : null}
         {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber`}>{subBadge(m.sub.months)}</span>}

@@ -13,6 +13,8 @@ export default function TermsPage() {
     "You must be at least 13 and keep your account credentials private.",
     "Stream something you play, build or make; follow our content and conduct rules.",
     "You keep ownership of your content and grant the permissions described below.",
+    "Paid features run through Stripe. Purchases are non-refundable except as these terms or the law say.",
+    "Creators earn by tier and are paid every two weeks; earnings are never guaranteed.",
     "Read the full terms for moderation, account closure, liability and dispute rules.",
   ]} sections={[
     { title: "Using S.V.E.R", content: <>
@@ -41,8 +43,38 @@ export default function TermsPage() {
       <p>The S.V.E.R name, logo and faction emblems belong to S.V.E.R. Trademark use requires written permission except where the law permits it. The Platform source code is available under its published open-source license; these Terms do not replace that license.</p>
       <p>See <Link href="/dmca">Copyright & DMCA</Link> for infringement notices and counter-notices.</p>
     </> },
+    { title: "Purchases", content: <>
+      <p>Prices are in US dollars and are shown before you pay. Card payments are processed by Stripe; S.V.E.R never receives your card details. You need a verified email to buy anything.</p>
+      <ul>
+        <li><strong>Channel subscriptions</strong> cost $4.99, $9.99 or $24.99 a month. A card subscription renews every month until you cancel it. You can cancel anytime, and its benefits last until the end of the month you paid for. Upgrading takes effect at once, and the difference is charged prorated. You can instead pay for one month at a time with 499, 999 or 2,499 Purchased Valor, which doesn&apos;t renew.</li>
+        <li><strong>Gift subscriptions</strong> give one month to a named viewer, or 5, 10 or 20 one-month gifts to random signed-in viewers who recently chatted in that channel and allow gifts. A gifted month never renews.</li>
+        <li><strong>Purchased Valor</strong> is bought in packs shown in your <Link href="/wallet">wallet</Link>. You can spend it on tributes in chat (at least 10 Valor with a message), Skills and subscriptions. It doesn&apos;t expire, can&apos;t be transferred to another account and can&apos;t be cashed out. A tribute or Skill must follow the channel&apos;s chat rules, and nothing is spent if the message is refused.</li>
+        <li><strong>Engagement Valor</strong> is earned by watching, chatting and following in a channel and can be spent only in that channel. It can&apos;t be bought, transferred or cashed out, and has no cash value.</li>
+        <li><strong>Platform supporter subscriptions</strong> support S.V.E.R itself: Wolfsworn costs $5 a month and Greycloak $25 a month, by card only. They can&apos;t be paid with Valor or gifted. All of the money goes to S.V.E.R. The perks are cosmetic only: badges, a silver name and player-card frame, and &ldquo;Supporting since&rdquo; on your profile. Supporting never changes discovery, faction influence, XP, Valor or chat rules. Upgrading to Greycloak takes effect at once, prorated; downgrading takes effect at your next renewal; cancelling keeps your perks until the end of the paid month.</li>
+        <li><strong>Founder marks:</strong> the first 500 accounts to pay for a full Greycloak month get a numbered Founder mark (#001 to #500), kept after cancelling or downgrading. An upgrade from Wolfsworn claims a mark at its first full Greycloak renewal. A mark can&apos;t be bought any other way, sold or transferred, and it is revoked if the payment that claimed it is fully refunded or lost to a dispute. See <Link href="/supporters">Support S.V.E.R</Link>.</li>
+        <li><strong>Wall seats</strong> are not on sale. Their terms will be published here before sales open.</li>
+      </ul>
+      <p>If you are 13 to 17, or we don&apos;t have your date of birth, a parent or legal guardian must confirm at checkout that they are the cardholder and consent before your first purchase. Purchases by an account under 18 are limited to $50 per calendar month (UTC), including subscription renewals due that month.</p>
+    </> },
+    { title: "Refunds and chargebacks", content: <>
+      <p>Purchases are non-refundable except as these Terms describe or where the law requires a refund. A parent or guardian can report a purchase made by a minor without their permission through <Link href="/contact">support</Link> for a refund.</p>
+      <p>When a payment is refunded or disputed:</p>
+      <ul>
+        <li>The Purchased Valor it bought is removed in proportion to the amount refunded. If that Valor was already spent, your balance can go below zero, and spending is locked until it is back above zero. Valor from a dispute you win is restored.</li>
+        <li>A full refund of the latest payment for a channel or platform supporter subscription ends its benefits at once and stops it from renewing.</li>
+        <li>The creator&apos;s share of the payment is reversed, as described in Creator earnings and payouts.</li>
+      </ul>
+    </> },
+    { title: "Creator earnings and payouts", content: <>
+      <p><strong>Who can earn.</strong> Your channel can receive subscriptions, gift subs, tributes and Skills once you have a verified email, authenticator two-factor authentication and a finished Stripe Connect payout setup, including Stripe&apos;s tax form. There is no follower or hours minimum. If you are 13 to 17, a parent or legal guardian must own the payout account: they complete Stripe&apos;s setup, accept Stripe&apos;s Connected Account Agreement and receive the payouts. Stripe collects identity, bank and tax details; S.V.E.R never sees them. A suspended or restricted channel can&apos;t receive new payments; earnings already in your balance stay owed to you under these Terms.</p>
+      <p><strong>What you earn.</strong> You keep 65%, 70%, 75% or 80% of the full price of each subscription and gift sub, depending on your <Link href="/help/creator-tiers">creator tier</Link>; S.V.E.R pays the card fees out of its share. You earn 0.8¢ for every Valor spent on you, at every tier. In a merged co-stream, money spent through the squad page is split equally among the members who are live and can earn at that moment, each at their own tier. Earnings build up in tenths of a cent and are rounded down only when paid.</p>
+      <p><strong>When you&apos;re paid.</strong> Payday is every two weeks, on Fridays at noon Eastern: your whole available balance is sent by Stripe transfer and usually arrives in about two business days. Between paydays, Early Pay lets you withdraw up to 75% of what you&apos;ve earned since the last payday, less any earlier Early Pay, once per day (Eastern time). Standard Early Pay is free and takes about two business days. Instant Early Pay arrives in minutes to an eligible debit card, and Stripe&apos;s 1% fee is taken from the amount and shown before you confirm.</p>
+      <p><strong>Refunds and disputes.</strong> If a payment you earned from is refunded or lost to a dispute, your share of it is reversed. If that share was already paid out, your balance goes below zero and is recovered from your future earnings before your next payout or Early Pay.</p>
+      <p><strong>Taxes.</strong> S.V.E.R doesn&apos;t withhold taxes from your earnings. Stripe collects your tax information and handles your tax forms, and you are responsible for the taxes you owe.</p>
+      <p><strong>No guarantee.</strong> These Terms don&apos;t promise any amount of earnings, any creator tier or any number of viewers or supporters.</p>
+    </> },
     { title: "Feature availability", content: <>
-      <p>Features may change or be unavailable as S.V.E.R develops. Subscriptions, tips, Valor purchases and payouts are not available in the rebuilt Platform. These Terms do not promise earnings or a payment entitlement. Terms for paid features will be published before those features become available.</p>
+      <p>Features may change or be unavailable as S.V.E.R develops. Ads, ad revenue sharing and Ad Valor are not available yet: no ad money is paid to creators or viewers, and Ad Valor can&apos;t be earned, spent or cashed out. Terms for these and any other new paid features will be published before they become available.</p>
     </> },
     { title: "Moderation and account closure", content: <>
       <p>We may remove content, restrict access, suspend or terminate accounts for violations of these Terms or the Community Guidelines, unlawful conduct, fraud, metric manipulation or ban evasion. Channel moderators may delete chat messages, time out users and ban users from their channels.</p>

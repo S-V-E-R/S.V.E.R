@@ -91,7 +91,7 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .snapshot{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;background:rgba(0,0,0,.45);border:1px solid var(--line);padding:10px;max-height:260px;overflow:auto}
 .report-form{display:flex;flex-direction:column;gap:4px;min-width:260px}
 .wall-reason{margin:0 0 12px}
-@media(max-width:900px){.channel,.settings-body{padding:18px}.settings-page{flex-direction:column}.settings-nav{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line);padding:12px}.occurrences li{grid-template-columns:1fr 1fr}.identity{flex-direction:column}}
+@media(max-width:900px){.channel,.settings-body{padding:18px}.settings-page{flex-direction:column}.settings-body{width:100%}.settings-nav{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line);padding:12px}.occurrences li{grid-template-columns:1fr 1fr}.identity{flex-direction:column}}
 @media(max-width:650px){.player-slot{aspect-ratio:2/1}.setup div{grid-template-columns:1fr}.setup dd{grid-column:auto}.council{grid-template-columns:repeat(2,minmax(0,1fr))}.user-card{position:fixed;top:auto;left:0;right:0;bottom:0;width:auto;max-height:80vh;overflow:auto;z-index:60;border-left:0;border-right:0;border-bottom:0;box-shadow:0 -12px 40px rgba(0,0,0,.6)}.card-close{display:block;align-self:stretch}}
 .nav-dot{display:inline-block;width:6px;height:6px;margin-left:6px;vertical-align:middle;background:var(--accent);transform:rotate(45deg)}
 .player-slot:has(.live-player){aspect-ratio:auto}
@@ -278,6 +278,9 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .open-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:0}.open-swatch{display:inline-block;width:10px;height:10px;background:var(--accent)}.open-swatch-under{background:repeating-linear-gradient(45deg,var(--accent) 0 1.5px,var(--accent-dark) 1.5px 4px)}.open-swatch-withheld{background:var(--ink-dim);height:3px}
 .open-headline{margin:0 0 var(--space-2,8px)}.open-headline strong{font-size:1.6em;display:block}
 .open-table{margin:var(--space-3,12px) 0}.open-table td,.open-table th{white-space:nowrap;padding:4px 10px;text-align:right}.open-table th[scope=row],.open-table thead th:first-child{text-align:left}.open-table tbody tr{border-top:1px solid var(--ink-dim)}
+/* Creator tier ladder (/help/creator-tiers, Studio → Payouts): the viewer's own tier is tinted. */
+.tier-table col.tier-current{background:var(--tint)}.tier-table th[aria-current]{color:var(--accent-light);box-shadow:inset 0 -2px 0 var(--accent)}.tier-you{font-weight:400;color:var(--ink-muted)}
+.tier-table th[scope=colgroup]{text-align:left;padding-top:14px;font:700 12px/1.4 var(--font-label);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-dim)}
 
 /* Staff site banner (docs/ADMIN.md): one line above the page content, dismissible. */
 .site-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:8px 12px;border:1px solid var(--accent);background:var(--panel);color:var(--ink)}
