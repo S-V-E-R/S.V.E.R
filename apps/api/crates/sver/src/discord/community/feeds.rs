@@ -796,15 +796,14 @@ async fn submitted(app: App, i: Interaction) -> Res<Value> {
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await;
-    Ok(private(match answer {
+    // Chromely decides; every submission and its outcome is kept here too, as the legacy bot did.
+    let (status, reason, reply) = match answer {
         Ok(r) if r.status().is_success() => {
             let body: Value = r.json().await.unwrap_or(Value::Null);
-            format!(
-                "✅ {}",
-                body["message"]
-                    .as_str()
-                    .unwrap_or("Run submitted to the leaderboard!")
-            )
+            let message = body["message"]
+                .as_str()
+                .unwrap_or("Run submitted to the leaderboard!");
+            ("accepted", None, format!("✅ {message}"))
         }
         Ok(r) => {
             let code = r.status().as_u16();
@@ -814,10 +813,75 @@ async fn submitted(app: App, i: Interaction) -> Res<Value> {
                 .or(body["error"].as_str())
                 .map(String::from)
                 .unwrap_or_else(|| format!("Chromely answered {code}."));
-            format!("❌ Run refused: {why}")
+            (
+                "rejected",
+                Some(why.clone()),
+                format!("❌ Run refused: {why}"),
+            )
         }
-        Err(_) => "Chromely couldn't be reached. Try again later.".into(),
-    }))
+        Err(_) => (
+            "error",
+            None,
+            "Chromely couldn't be reached. Try again later.".into(),
+        ),
+    };
+    let seconds = run["end_time"].as_i64().unwrap_or(0) - run["start_time"].as_i64().unwrap_or(0);
+    sqlx::query("INSERT INTO discord_wow_runs(discord_user,character,realm,seconds,proof_url,status,reason) VALUES($1,$2,$3,$4,$5,$6,$7)")
+        .bind(&i.user).bind(run["character"].as_str()).bind(run["realm"].as_str()).bind(seconds as f64)
+        .bind(field(&i, "proof").filter(|p| p.starts_with("https://"))).bind(status).bind(reason)
+        .execute(&app.db).await?;
+    Ok(private(reply))
+}
+/// `/wow rival`: a character's fastest run as an import string for the Chromely addon, sent by DM
+/// (or shown here when DMs are closed).
+async fn rival(app: App, i: Interaction) -> Res<Value> {
+    let (Some(api), Some(key)) = (chromely(), secret("CHROMELY_WEBHOOK_SECRET")) else {
+        return Ok(private("WoW commands aren't available yet."));
+    };
+    let name = super::text(&i, "character", 40).unwrap_or_default();
+    let answer = app
+        .http
+        .get(format!("{api}/api/bot/rival-string/{}", encode(&name)))
+        .header("X-Bot-Secret", key)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+    let string = match answer {
+        Ok(r) if r.status().as_u16() == 404 => {
+            return Ok(private(format!(
+                "❌ **{name}** wasn't found, or has no finished runs."
+            )));
+        }
+        Ok(r) if r.status().is_success() => r.json::<Value>().await.ok().and_then(|b| {
+            b["importString"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        }),
+        _ => None,
+    };
+    let Some(string) = string else {
+        return Ok(private(
+            "Chromely didn't give a rival string. Try again later.",
+        ));
+    };
+    let how = format!(
+        "**Rival import string for {name}**\n\n1. Type `/cl import` in WoW\n2. Paste the string below\n3. Press Import\n\n```\n{string}\n```\n*This imports {name}'s fastest run as your rival in the Chromely addon.*"
+    );
+    if super::dm(
+        &app,
+        &i.user,
+        json!({"content": how, "allowed_mentions": {"parse": []}}),
+    )
+    .await
+    {
+        return Ok(private(format!(
+            "✅ The rival string for **{name}** is in your DMs."
+        )));
+    }
+    Ok(private(format!(
+        "⚠️ Your DMs are closed, so here it is.\n\n{how}"
+    )))
 }
 
 /// The bot's thread for `category` in `channel`, made on first use with `first` as its opening
@@ -965,6 +1029,8 @@ pub fn definitions() -> Vec<Value> {
             {"type": 1, "name": "leaderboard", "description": "The speedrun leaderboard", "options": [milestone.clone()]},
             {"type": 1, "name": "record", "description": "The world record", "options": [milestone]},
             {"type": 1, "name": "rivals", "description": "Rival status"},
+            {"type": 1, "name": "rival", "description": "A character's fastest run as a rival import string (by DM)", "options": [
+                {"type": 3, "name": "character", "description": "Character name", "required": true, "max_length": 40}]},
             {"type": 1, "name": "submit", "description": "Submit a speedrun from the Chromely export"}]}),
     ]
 }
@@ -996,6 +1062,10 @@ pub async fn command(app: &App, i: &Interaction) -> Option<Value> {
                 ),
             ],
         ));
+    }
+    if i.sub() == Some("rival") {
+        later(app, i, true, rival);
+        return Some(ANSWERED);
     }
     later(app, i, i.sub() == Some("link"), wow);
     Some(ANSWERED)
