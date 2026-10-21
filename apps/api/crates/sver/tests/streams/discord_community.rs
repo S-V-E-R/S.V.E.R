@@ -6,7 +6,7 @@
 //! forum setup, temp voice rooms, custom commands, embeds, free games, the signed GitHub changelog
 //! and WoW/Chromely.
 use super::*;
-use axum::http::{Method, Uri};
+use axum::http::{HeaderMap, Method, Uri};
 use chrono::{Datelike, Duration, Utc};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -22,6 +22,7 @@ async fn fake(
     State(state): State<Shared>,
     method: Method,
     uri: Uri,
+    headers: HeaderMap,
     body: String,
 ) -> (StatusCode, Json<Value>) {
     let path = uri.path().to_string();
@@ -106,6 +107,20 @@ async fn fake(
         }
         ("GET", ["chromely", "api", "bot", "character", _]) => {
             return (StatusCode::NOT_FOUND, Json(json!({})));
+        }
+        // The rival string needs the bot's secret.
+        ("GET", ["chromely", "api", "bot", "rival-string", "Joe"])
+            if headers
+                .get("x-bot-secret")
+                .is_some_and(|v| v == "test-chromely-secret") =>
+        {
+            json!({"importString": "CR1|Joe|Rogue|Alliance|3600|0"})
+        }
+        ("GET", ["chromely", "api", "bot", "rival-string", _]) => {
+            return (StatusCode::NOT_FOUND, Json(json!({})));
+        }
+        ("POST", ["chromely", "api", "chromely", "runs"]) => {
+            json!({"success": true, "run_id": 5, "message": "Run accepted at rank 3"})
         }
         ("GET", ["chromely", "api", "bot", "leaderboard"]) => {
             json!([{"name": "Joe", "realm": "Dream", "time": 3725}])
@@ -1259,6 +1274,44 @@ pub async fn exercise(e: &Env) {
         board.contains("1:02:05.0") && board.contains("Joe"),
         "{board}"
     );
+    // The rival string goes by DM; an unknown character is said so.
+    let rival = |c: &str| sub("wow", "rival", json!([opt("character", json!(c))]));
+    let sent = ask("ww4", "976", MEMBER, 2, rival("Joe"), true).await;
+    assert!(sent.contains("in your DMs"), "{sent}");
+    find(
+        &taken(),
+        &[
+            "POST /channels/dm-976/messages",
+            "CR1|Joe|Rogue",
+            "/cl import",
+        ],
+    );
+    let unknown = ask("ww5", "976", MEMBER, 2, rival("Nobody"), true).await;
+    assert!(unknown.contains("wasn't found"), "{unknown}");
+    // A submitted run goes to Chromely and is recorded with its answer.
+    let export = "=== CHROMELY SPEEDRUN EXPORT ===
+Character: Joe
+Realm: Dream
+Class: ROGUE
+Total Time: 1:00:00";
+    let run = ask(
+        "ww6",
+        "976",
+        MEMBER,
+        5,
+        submit(
+            "wow:submit",
+            &[("export", export), ("proof", "https://img.example/run.png")],
+        ),
+        true,
+    )
+    .await;
+    assert!(run.contains("Run accepted at rank 3"), "{run}");
+    find(
+        &taken(),
+        &["POST /chromely/api/chromely/runs", r#""character":"Joe""#],
+    );
+    assert_eq!(count("SELECT count(*) FROM discord_wow_runs WHERE discord_user='976' AND status='accepted' AND seconds=3600 AND proof_url IS NOT NULL").await, 1);
     let record = json!({"event": "speedrun.record", "data": {"characterName": "Joe", "realm": "Dream", "time": 3600, "class": "Rogue"}}).to_string();
     let chromely = "/api/integrations/chromely";
     let signed = vec![(

@@ -321,7 +321,7 @@ def community(db):
     polls, running giveaways, waiting reminders, custom commands, mentors, seasonal events, managed
     threads, free games already posted, WoW characters, and the free-games ping role and changelog
     channel. The legacy GitHub webhook secret isn't carried over: it becomes GITHUB_WEBHOOK_SECRET
-    in the server's environment."""
+    in the server's environment. WoW run submissions keep their outcome; Chromely holds the runs."""
     import datetime
     import re
     out = []
@@ -429,13 +429,19 @@ def community(db):
     for w in wow:
         out.append("INSERT INTO discord_wow(discord_user,character,realm) VALUES("
                    f"{literal(w['user_id'])},{literal(w['character_name'])},{literal(w['realm'])}) ON CONFLICT DO NOTHING;")
+    runs = rows(db, "SELECT * FROM run_submissions WHERE status IN ('accepted','rejected','error')")
+    for r in runs:
+        proof = r["proof_url"] if (r["proof_url"] or "").startswith("https://") else None
+        out.append("INSERT INTO discord_wow_runs(discord_user,character,realm,seconds,proof_url,status,reason,submitted_at) VALUES("
+                   f"{literal(r['discord_id'])},{literal(r['character_name'])},{literal(r['realm'])},{float(r['time_seconds'])},"
+                   f"{opt(proof)},{literal(r['status'])},{opt(r['rejection_reason'])},{when(r['submitted_at']) if r['submitted_at'] else 'now()'});")
     # Events, polls and giveaways keep their legacy numbers; new ones continue after them.
     for table in ["discord_events", "discord_polls", "discord_giveaways"]:
         out.append(f"SELECT setval(pg_get_serial_sequence('{table}','id'),greatest((SELECT max(id) FROM {table}),1));")
     return out, (f"community: onboarded {len(done)}, birthdays {len(birthdays)}, events {len(events)}, polls {imported_polls}, "
                  f"giveaways {len(giveaways)}, reminders {len(reminders)}, custom commands {len(commands)}, mentors {len(mentors)}, "
                  f"mentorships {len(matches)}, seasonal events {len(seasons)}, threads {len(threads)}, free games {len(games)}, "
-                 f"WoW characters {len(wow)}, settings {len(settings)}")
+                 f"WoW characters {len(wow)}, WoW run submissions {len(runs)}, settings {len(settings)}")
 
 
 SECTIONS = [home, levels, quests, moderation, holidays, streamers, community]
