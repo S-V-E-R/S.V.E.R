@@ -13,6 +13,7 @@ import { BarlowCondensed_600SemiBold } from "@expo-google-fonts/barlow-condensed
 import { BarlowCondensed_700Bold } from "@expo-google-fonts/barlow-condensed/700Bold";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../src/auth";
+import { usePushOpen } from "../src/register-push";
 import { bg, ink } from "../src/theme";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -35,6 +36,7 @@ export default function Root() {
 
 function Shell({ fontsFailed }: { fontsFailed: boolean }) {
   const { ready } = useAuth();
+  usePushOpen();
   useEffect(() => {
     if (ready) void SplashScreen.hideAsync();
   }, [ready]);

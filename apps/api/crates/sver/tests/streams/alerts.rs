@@ -3,9 +3,12 @@
 //! stale push cleanup and 30-day retention.
 use super::Env;
 use super::chat::{call, person};
+use std::sync::{Arc, Mutex};
+
 use axum::{
+    Json,
     body::Body,
-    http::{Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
 };
 use serde_json::{Value, json};
 use sver::security as sec;
@@ -128,6 +131,134 @@ pub async fn exercise(e: &Env) {
         "INSERT INTO push_subscriptions(id,user_id,subscription) VALUES('al-push','al-a','sealed')",
     )
     .await;
+    // Phone tokens. al-b muted the channel, al-j turned push off, al-h does not follow.
+    let held = person(e, "al-j", "AlertFanJ", true).await;
+    sqlx::query("INSERT INTO follows(follower_id,following_id) VALUES('al-j','al-owner')")
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO notification_settings(user_id,site,push,email) VALUES('al-j',false,false,false)")
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    let token_a = "ExponentPushToken[alertfana000000000001]";
+    let token_b = "ExponentPushToken[alertfanb000000000001]";
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/push/expo",
+            None,
+            json!({"token": token_a})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/push/expo",
+            Some(&fan),
+            json!({"token": "https://evil.example/push"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/push/expo",
+            Some(&quiet),
+            json!({"token": token_a})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/push/expo",
+            Some(&fan),
+            json!({"token": token_a})
+        )
+        .await
+        .0,
+        StatusCode::OK,
+        "the same phone moves to the account that registers it"
+    );
+    assert_eq!(
+        count(e, "SELECT count(*) FROM expo_devices WHERE user_id='al-a'").await,
+        1
+    );
+    assert_eq!(
+        count(e, "SELECT count(*) FROM expo_devices WHERE user_id='al-b'").await,
+        0
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/push/expo",
+            Some(&quiet),
+            json!({"token": token_b})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/push/expo",
+            Some(&held),
+            json!({"token": "ExponentPushToken[alertfanj000000000001]"})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    for n in 0..10 {
+        assert_eq!(
+            call(
+                e,
+                "POST",
+                "/api/me/push/expo",
+                Some(&stranger),
+                json!({"token": format!("ExponentPushToken[alertfanh{n:02}0000000001]")})
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+    }
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/push/expo",
+            Some(&stranger),
+            json!({"token": "ExponentPushToken[alertfanh110000000001]"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (_, phone) = call(
+        e,
+        "GET",
+        "/api/me/notifications/settings",
+        Some(&fan),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(phone["expo_devices"], 1);
 
     // STARTING sends nothing; reaching LIVE fans out once.
     go_live(e, "al-1", "STARTING", "1 hour").await;
@@ -162,6 +293,23 @@ pub async fn exercise(e: &Env) {
         1
     );
     assert_eq!(
+        count(
+            e,
+            "SELECT count(*) FROM expo_push_jobs WHERE broadcast_id='al-1'"
+        )
+        .await,
+        1,
+        "only the follower with push on and a phone"
+    );
+    assert_eq!(
+        count(
+            e,
+            "SELECT count(*) FROM expo_push_jobs j JOIN expo_devices d ON d.id=j.device_id WHERE d.user_id IN ('al-b','al-j','al-h')"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
         count(e, "SELECT count(*) FROM mail_jobs WHERE user_id='al-c'").await,
         1
     );
@@ -178,6 +326,15 @@ pub async fn exercise(e: &Env) {
         )
         .await,
         1
+    );
+    assert_eq!(
+        count(
+            e,
+            "SELECT count(*) FROM expo_push_jobs WHERE broadcast_id='al-1'"
+        )
+        .await,
+        1,
+        "a reconnect does not queue the phone again"
     );
     assert_eq!(
         count(e, "SELECT count(*) FROM mail_jobs WHERE user_id='al-c'").await,
@@ -307,6 +464,42 @@ pub async fn exercise(e: &Env) {
         .unwrap();
     assert_eq!(forged.status(), StatusCode::BAD_REQUEST);
 
+    // Phone delivery: opt-out is rechecked, a dead Expo token is removed, ended streams are not sent.
+    expo_delivery(e, token_a).await;
+    assert_eq!(
+        call(
+            e,
+            "DELETE",
+            "/api/me/push/expo",
+            Some(&fan),
+            json!({"token": token_b})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        count(e, "SELECT count(*) FROM expo_devices WHERE user_id='al-b'").await,
+        1,
+        "one account cannot remove another's phone"
+    );
+    assert_eq!(
+        call(
+            e,
+            "DELETE",
+            "/api/me/push/expo",
+            Some(&quiet),
+            json!({"token": token_b})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        count(e, "SELECT count(*) FROM expo_devices WHERE user_id='al-b'").await,
+        0
+    );
+
     // Pushes for ended streams are dropped; in-site notifications are kept 30 days.
     assert_eq!(
         count(
@@ -333,4 +526,185 @@ pub async fn exercise(e: &Env) {
     e.sql("DELETE FROM mail_jobs WHERE user_id LIKE 'al-%'")
         .await;
     e.sql("DELETE FROM users WHERE id LIKE 'al-%'").await;
+}
+
+async fn expo_delivery(e: &Env, live_token: &str) {
+    let reader = person(e, "al-i", "AlertFanI", true).await;
+    let (status, saved) = call(
+        e,
+        "PUT",
+        "/api/me/notifications/settings",
+        Some(&reader),
+        json!({"site":true,"push":true,"email":false,"community":[{"kind":"dm","site":true,"push":false},{"kind":"light","site":true,"push":true}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let dm = saved["community"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["kind"] == "dm")
+        .unwrap();
+    assert_eq!(dm["push"], false);
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/push/expo",
+            Some(&reader),
+            json!({"token": "ExponentPushToken[alertfani000000000001]"})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let mut db = e.app.db.acquire().await.unwrap();
+    sver::alerts::community(
+        &mut db,
+        "al-i",
+        "al-h",
+        "dm",
+        "expo-off",
+        None,
+        &json!({"title":"New message","body":"AlertFanH sent you a message.","url":"/messages?with=AlertFanH"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        count(
+            e,
+            "SELECT count(*) FROM expo_push_jobs j JOIN expo_devices d ON d.id=j.device_id WHERE d.user_id='al-i'"
+        )
+        .await,
+        0,
+        "a type with push off does not queue the phone"
+    );
+    call(
+        e,
+        "PUT",
+        "/api/me/notifications/settings",
+        Some(&reader),
+        json!({"site":true,"push":true,"email":false,"community":[{"kind":"dm","site":true,"push":true}]}),
+    )
+    .await;
+    sver::alerts::community(
+        &mut db,
+        "al-i",
+        "al-h",
+        "dm",
+        "expo-on",
+        None,
+        &json!({"title":"New message","body":"AlertFanH sent you a message.","url":"/messages?with=AlertFanH"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        count(
+            e,
+            "SELECT count(*) FROM expo_push_jobs j JOIN expo_devices d ON d.id=j.device_id WHERE d.user_id='al-i'"
+        )
+        .await,
+        1
+    );
+    // Turn it off again before the worker runs. The worker reads the switch, not the queued flag.
+    call(
+        e,
+        "PUT",
+        "/api/me/notifications/settings",
+        Some(&reader),
+        json!({"site":true,"push":true,"email":false,"community":[{"kind":"dm","site":true,"push":false}]}),
+    )
+    .await;
+    drop(db);
+
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let capture = seen.clone();
+    let router = axum::Router::new().route(
+        "/push",
+        axum::routing::post(move |headers: HeaderMap, Json(body): Json<Value>| {
+            let capture = capture.clone();
+            async move {
+                let authorized = headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    == Some("Bearer synthetic-expo-access-token");
+                if !authorized {
+                    return (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"})));
+                }
+                capture.lock().unwrap().push(body.clone());
+                let dead = body["to"].as_str().unwrap_or("").contains("DEADTOKEN");
+                let data = if dead {
+                    json!({"status":"error","message":"not registered","details":{"error":"DeviceNotRegistered"}})
+                } else {
+                    json!({"status":"ok","id":"synthetic-ticket"})
+                };
+                (StatusCode::OK, Json(json!({"data": data})))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let mut config = (*e.app.config).clone();
+    config.expo_access_token = "synthetic-expo-access-token".into();
+    config.expo_push_url = format!("http://{address}/push");
+    let sender = sver::App::new(e.app.db.clone(), config).await.unwrap();
+    sver::alerts::deliver_expo(&sender).await.unwrap();
+    let messages = seen.lock().unwrap().clone();
+    assert_eq!(messages.len(), 1, "the muted direct message is not sent");
+    assert_eq!(messages[0]["to"], json!(live_token));
+    assert_eq!(messages[0]["title"], "AlertOwner is live");
+    assert_eq!(messages[0]["body"], "Watch now on S.V.E.R.");
+    assert_eq!(messages[0]["data"]["url"], "/AlertOwner");
+    assert_eq!(messages[0]["channelId"], "live");
+    let text = messages[0].to_string();
+    assert!(!text.to_lowercase().contains("boost"));
+    assert!(!text.to_lowercase().contains("pay"));
+    assert_eq!(
+        count(
+            e,
+            "SELECT count(*) FROM expo_push_jobs j JOIN expo_devices d ON d.id=j.device_id WHERE d.user_id='al-i'"
+        )
+        .await,
+        0
+    );
+
+    let dead = "ExponentPushToken[DEADTOKEN000000000001]";
+    assert_eq!(
+        call(
+            e,
+            "POST",
+            "/api/me/push/expo",
+            Some(&reader),
+            json!({"token": dead})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    // reader is not the live follower. Queue a go-live job directly so the dead-token path runs
+    // without depending on another broadcast. The device id is the digest of the token.
+    sqlx::query(
+        "INSERT INTO expo_push_jobs(id,device_id,broadcast_id) VALUES('al-dead',$1,'al-3')",
+    )
+    .bind(sec::digest(dead))
+    .execute(&e.app.db)
+    .await
+    .unwrap();
+    sver::alerts::deliver_expo(&sender).await.unwrap();
+    let dead_left: i64 = sqlx::query_scalar("SELECT count(*) FROM expo_devices WHERE id=$1")
+        .bind(sec::digest(dead))
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        dead_left, 0,
+        "Expo reporting DeviceNotRegistered removes the phone"
+    );
+    assert_eq!(
+        count(e, "SELECT count(*) FROM expo_devices WHERE user_id='al-a'").await,
+        1,
+        "a dead phone does not remove the other device"
+    );
+    server.abort();
 }

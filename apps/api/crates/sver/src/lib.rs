@@ -129,6 +129,10 @@ pub struct Config {
     pub factions: factions::Tuning,
     pub take_down: take_down::Config,
     pub staff_push: staff_push::Config,
+    /// Expo access token for phone push. Empty means jobs are queued and not sent.
+    pub expo_access_token: String,
+    /// Expo push service. Fixed; device tokens never choose the URL.
+    pub expo_push_url: String,
     pub stripe: stripe::Config,
     pub videos: videos::Config,
     pub beacons: beacons::Config,
@@ -208,6 +212,8 @@ impl Config {
             factions: factions::Tuning::from_env(production)?,
             take_down: take_down::Config::from_env(),
             staff_push: staff_push::Config::from_env(),
+            expo_access_token: env("EXPO_ACCESS_TOKEN"),
+            expo_push_url: "https://exp.host/--/api/v2/push/send".into(),
             stripe: stripe::Config::from_env(production)?,
             videos: videos::Config::from_env(production)?,
             beacons: beacons::Config::from_env(production)?,

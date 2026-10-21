@@ -51,6 +51,7 @@ export default function SignInScreen() {
               <Text style={styles.body}>{factionLabel(account.faction) ?? "No faction yet"}</Text>
               {account.deletion_due ? <Notice>This account is pending deletion.</Notice> : null}
               {!account.email_verified ? <Text style={styles.body}>Confirm your email to chat and go live. You can browse and watch now.</Text> : null}
+              <Button label="Alerts" kind="quiet" onPress={() => router.push("/alerts")} />
               <Button label={busy ? "Please wait…" : "Log out"} kind="quiet" onPress={() => { void out(); }} disabled={busy} />
             </View>
           ) : (

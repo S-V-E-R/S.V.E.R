@@ -30,11 +30,20 @@ const config: ExpoConfig = {
     "expo-secure-store",
     "expo-font",
     [
+      "expo-notifications",
+      { color: "#F2F0EA", defaultChannel: "live" },
+    ],
+    [
       "expo-splash-screen",
       { backgroundColor: "#07080B", image: "./assets/splash.png", imageWidth: 200 },
     ],
   ],
   experiments: { typedRoutes: false },
+  extra: {
+    eas: process.env.EXPO_PUBLIC_EAS_PROJECT_ID
+      ? { projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID }
+      : {},
+  },
 };
 
 export default cleartext

@@ -62,6 +62,8 @@ Passwords, stream keys and 2FA setup/recovery values never belong in logs. Back 
 
 Take It Down deployment also needs `MEDIA_CLOUDFLARE_ZONE_ID` and `MEDIA_CLOUDFLARE_PURGE_TOKEN` with Cache Purge permission for the zone serving media. Verify a synthetic URL purge before activation; storage deletion alone does not remove cached copies. Configure the staff `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`, then enroll each staff browser from `/admin/take-it-down`. Mail and push use durable Postgres jobs. See [the removal spec and acceptance limits](docs/TAKE_IT_DOWN.md).
 
+Phone push for the S.V.E.R app is separate from that staff key. Set `EXPO_ACCESS_TOKEN` (an Expo access token for the EAS project) on the API. Until it is set, the API stores phone tokens and does not send. FCM and APNs credentials are uploaded with `eas credentials`, not stored here. See `apps/mobile/README.md`.
+
 ## Contributing
 
 To publish a change, use a feature branch, run the relevant checks, and stage only the files you want to commit:

@@ -10,6 +10,7 @@ The goal is fewer, better notifications. Each one should be something the person
 - **The notifications page** (`/notifications`) lists everything from the last 30 days, with filters (All, Channels, Community, Money, Account) and "Mark all as read".
 - **Live updates:** while a page is open, new notifications arrive over the live connection the site already keeps for chat and live state. There's no polling and no separate socket.
 - **Browser push** uses standard Web Push with server-held VAPID keys and no outside service. Push messages are encrypted to the browser by the Web Push standard itself. On iPhone and iPad, push works only once the site is installed to the home screen (the installable web app in [COMMUNITY.md](COMMUNITY.md)), and the settings page says so.
+- **The S.V.E.R app** registers an Expo push token (`POST /api/me/push/expo`). The API sends through Expo's push service, which then uses FCM and APNs. That credential is `EXPO_ACCESS_TOKEN` on the server. It is not Web Push and it does not use the staff VAPID key. The same push switches apply: the go-live push switch, the per-channel follow bell, and the per-type push switch for guilds, co-streams, direct messages and lights. Kinds that are in-site only are not sent to the phone. Nothing is sent to promote paid visibility. Setup for a device is in `apps/mobile/README.md`.
 - **Email** goes through Resend, using Login's encrypted mail-job queue with idempotency keys.
 
 ## Settings (`/settings/notifications`)

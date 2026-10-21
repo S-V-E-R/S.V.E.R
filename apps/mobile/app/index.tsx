@@ -74,9 +74,16 @@ export default function MagnetScreen() {
             <Text style={[styles.logo, { color: colors.accentLight }]}>S.V.E.R</Text>
             <View style={styles.markRow}><MagnetMark /><Text style={styles.kicker}>MAGNet</Text></View>
           </View>
-          <Pressable accessibilityRole="button" onPress={() => router.push("/sign-in")} style={styles.account}>
-            <Text style={[styles.accountText, { color: colors.accentLight }]}>{account ? account.username : "Log in"}</Text>
-          </Pressable>
+          <View style={styles.accountCol}>
+            <Pressable accessibilityRole="button" onPress={() => router.push("/sign-in")} style={styles.account}>
+              <Text style={[styles.accountText, { color: colors.accentLight }]}>{account ? account.username : "Log in"}</Text>
+            </Pressable>
+            {account ? (
+              <Pressable accessibilityRole="button" onPress={() => router.push("/alerts")} style={styles.account}>
+                <Text style={[styles.accountText, { color: colors.accentLight }]}>Alerts</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
         <Text style={styles.lead}>Every live stream gets a turn here, whether it has 3 viewers or 3,000.</Text>
         {account?.deletion_due ? <Notice>This account is pending deletion.</Notice> : null}
@@ -179,6 +186,7 @@ const styles = StyleSheet.create({
   logo: { fontFamily: "Cinzel_800ExtraBold", fontSize: 28 },
   markRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
   kicker: { fontFamily: "BarlowCondensed_700Bold", color: inkDim, letterSpacing: 1.6, textTransform: "uppercase", fontSize: 13 },
+  accountCol: { alignItems: "flex-end" },
   account: { minHeight: 44, justifyContent: "center", paddingHorizontal: 4 },
   accountText: { fontFamily: "Cinzel_700Bold", fontSize: 15 },
   lead: { color: inkMuted, fontFamily: "Barlow_400Regular", fontSize: 15, lineHeight: 22 },

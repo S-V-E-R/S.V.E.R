@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { send, type Result } from "./api";
+import { forgetDevice, registerDevice } from "./register-push";
 import { clearJar } from "./session";
 import { palette, themeFor, type Colors, type ThemeName } from "./theme";
 import type { Account, LoginBody } from "./types";
@@ -53,6 +54,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh().finally(() => setReady(true));
   }, [refresh]);
 
+  const accountId = account?.id;
+  useEffect(() => {
+    if (!accountId) return;
+    void registerDevice();
+  }, [accountId]);
+
   const finish = useCallback(async (result: Result<LoginBody>) => {
     if (result.ok && result.data.signed_in) await refresh();
     return result;
@@ -69,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [finish]);
 
   const signOut = useCallback(async () => {
+    await forgetDevice();
     await send("POST", "/api/auth/logout");
     await clearJar();
     setAccount(null);
