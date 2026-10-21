@@ -9,6 +9,7 @@ Read `AGENTS.md` before working in this repo. What's built and what's left is in
 ```
 apps/api      Rust backend (Axum, Tokio, SQLx); crates under apps/api/crates
 apps/web      Next.js frontend (TypeScript, React)
+apps/mobile   Expo app for iOS and Android (see apps/mobile/README.md)
 migrations    SQLx migrations, applied by the API on startup
 infra         Dockerfiles, Nginx and backup units
 config        Example tuning files (production tuning stays private)
@@ -38,6 +39,7 @@ Install FFmpeg and ffprobe on the test machine. Module 8's integration test gene
 ./scripts/dev.ps1 test                      # reserved and WebSocket routes, login, profiles, streams, unit tests
 cd apps/api; cargo fmt --check; cargo clippy --all-targets -- -D warnings
 cd apps/web; corepack pnpm typecheck; corepack pnpm lint; corepack pnpm build
+cd apps/mobile; corepack pnpm typecheck; corepack pnpm lint; corepack pnpm test; corepack pnpm bundle
 ```
 
 The same checks run on every push (`.github/workflows/ci.yml`), plus the integration kit tests, the `/credits` license check and a scan for leaked secrets. Integration tests require a local database named `sver_rebuild`; each run creates a uniquely named schema and removes only that schema. They use synthetic users and controlled HTTP responses, so no real email is sent. For the explicit live Resend simulator check, set `SVER_TEST_RESEND=1` only in the test process.

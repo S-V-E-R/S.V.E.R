@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+dist/
+android/
+ios/
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+*.orig.*
+.metro-health-check*
