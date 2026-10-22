@@ -85,6 +85,8 @@ export type ChatMessage = {
   created_at: string;
   author: ChatAuthor;
   role?: string | null;
+  /** A Skill's name when the message played one (bought on the website). */
+  skill?: string | null;
 };
 
 export type ChatRoom = { messages: ChatMessage[] };

@@ -5,8 +5,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { send } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { Chat } from "../../src/chat";
+import { Board, Crowd } from "../../src/crowd";
 import { useLoad } from "../../src/load";
 import { HlsPlayer } from "../../src/player";
+import { PlaysControls } from "../../src/plays";
 import { SafetySheet, type SafetyTarget } from "../../src/safety";
 import type { Live } from "../../src/types";
 import { Button, Frame, Notice, Screen, Tag, inkMuted } from "../../src/ui";
@@ -112,6 +114,10 @@ export default function WatchScreen() {
                 <Button label="Check again" kind="quiet" onPress={() => { setAttempt(n => n + 1); void load(); }} />
               </Frame>
             ) : null}
+            {/* SVER Plays' game controls (Plays channels only), then CrowdSync: polls, rally, counters, Surge and the board. */}
+            <PlaysControls username={username} />
+            <Crowd username={username} />
+            <Board username={username} />
             <Chat username={username} />
           </>
         ) : null}

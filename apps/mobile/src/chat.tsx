@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { DeviceEventEmitter, Pressable, StyleSheet, Text, View } from "react-native";
+import { BOARD_EVENT, BOARD_TYPES } from "./crowd";
 import { send } from "./api";
 import { useAuth } from "./auth";
 import { factionColor, factionLabel } from "./brand";
@@ -84,6 +85,9 @@ export function Chat({ username }: { username: string }) {
           setMessages(current => merge(current, [record.message as ChatMessage]));
         } else if (record.type === "delete" && typeof record.id === "string") {
           setMessages(current => current.filter(message => message.id !== record.id));
+        } else if (record.type && BOARD_TYPES.has(record.type)) {
+          // Board presses, polls, counters, rally and Surge go to the CrowdSync panels and player effects (src/crowd.tsx).
+          DeviceEventEmitter.emit(BOARD_EVENT, { channel: username.toLowerCase(), event: payload });
         }
       };
     })();
@@ -151,6 +155,8 @@ function Message({ message, onReport }: { message: ChatMessage; onReport: () => 
         <Text style={{ color }}>{message.author.display_name}</Text>
         {side ? <Text style={styles.dim}> · {side}</Text> : null}
         {role ? <Text style={styles.dim}> · {role}</Text> : null}
+        {/* Skills are bought and sent on the website; the app only shows them (docs/MOBILE.md). */}
+        {message.skill ? <Text style={styles.dim}> · ✨ {message.skill}</Text> : null}
       </Text>
       {message.body ? <Text style={styles.body}>{message.body}</Text> : null}
     </Pressable>

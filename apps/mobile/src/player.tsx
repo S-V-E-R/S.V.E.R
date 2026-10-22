@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AppState, StyleSheet, Text, View } from "react-native";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { send } from "./api";
+import { PlayerEffects, setPlayerDelay } from "./crowd";
 import { browserId } from "./session";
 import { Button, inkMuted } from "./ui";
 import { playbackKey } from "./urls";
@@ -58,6 +59,16 @@ function Player({ url, generation, username, broadcastId, isOwner, onFail, onTur
     return () => clearInterval(timer);
   }, [player]);
 
+  // Effects and poll windows follow this phone's picture: its distance from live, from the HLS
+  // program date (EXT-X-PROGRAM-DATE-TIME). Without that tag, keep the 4 s default.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const offset = player.currentOffsetFromLive;
+      if (offset != null && Number.isFinite(offset) && offset >= 0) setPlayerDelay(Math.round(offset * 1000));
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [player]);
+
   useEffect(() => {
     if (isOwner) return;
     let id = "";
@@ -82,6 +93,7 @@ function Player({ url, generation, username, broadcastId, isOwner, onFail, onTur
   return (
     <View style={styles.stage}>
       <VideoView player={player} style={styles.video} nativeControls contentFit="contain" allowsPictureInPicture={false} />
+      <PlayerEffects username={username} />
     </View>
   );
 }
