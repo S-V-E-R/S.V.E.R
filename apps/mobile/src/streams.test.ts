@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { rotationOrder } from "./streams.ts";
+import { liveFirst, rotationOrder } from "./streams.ts";
 import { palette, themeFor } from "./theme.ts";
 import { isStreamCard, type StreamCard } from "./types.ts";
 import { absolute, playbackKey } from "./urls.ts";
@@ -17,6 +17,11 @@ function card(username: string, viewers: number): StreamCard {
 test("discovery order stays put when a later stream has more viewers", () => {
   const items = [card("small", 3), card("large", 3000)];
   assert.deepEqual(rotationOrder(items).map(item => item.username), ["small", "large"]);
+});
+
+test("following list puts live channels first and keeps follow order within each group", () => {
+  const rows = [{ user: { name: "a" } }, { user: { name: "b", live: true } }, { user: { name: "c", live: false } }, { user: { name: "d", live: true } }];
+  assert.deepEqual(liveFirst(rows).map(row => row.user.name), ["b", "d", "a", "c"]);
 });
 
 test("faction accents match the web faction colors", () => {

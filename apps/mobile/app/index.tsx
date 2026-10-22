@@ -79,9 +79,14 @@ export default function MagnetScreen() {
               <Text style={[styles.accountText, { color: colors.accentLight }]}>{account ? account.username : "Log in"}</Text>
             </Pressable>
             {account ? (
-              <Pressable accessibilityRole="button" onPress={() => router.push("/alerts")} style={styles.account}>
-                <Text style={[styles.accountText, { color: colors.accentLight }]}>Alerts</Text>
-              </Pressable>
+              <>
+                <Pressable accessibilityRole="button" onPress={() => router.push("/following")} style={styles.account}>
+                  <Text style={[styles.accountText, { color: colors.accentLight }]}>Following</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" onPress={() => router.push("/alerts")} style={styles.account}>
+                  <Text style={[styles.accountText, { color: colors.accentLight }]}>Alerts</Text>
+                </Pressable>
+              </>
             ) : null}
           </View>
         </View>

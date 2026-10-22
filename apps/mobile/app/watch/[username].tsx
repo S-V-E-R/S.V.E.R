@@ -13,7 +13,7 @@ import { playbackKey } from "../../src/urls";
 
 export default function WatchScreen() {
   const insets = useSafeAreaInsets();
-  const { colors } = useAuth();
+  const { account, colors } = useAuth();
   const params = useLocalSearchParams<{ username: string }>();
   const username = typeof params.username === "string" ? params.username : "";
   const [live, setLive] = useState<Live | null>(null);
@@ -33,6 +33,25 @@ export default function WatchScreen() {
   }, [username]);
 
   useLoad(load, 15000);
+
+  // Follow state comes from the channel page's viewer relation; null hides the button (owner, signed out, not loaded).
+  const [following, setFollowing] = useState<boolean | null>(null);
+  const [followBusy, setFollowBusy] = useState(false);
+  const loadChannel = useCallback(async () => {
+    if (!username || !account) { setFollowing(null); return; }
+    const result = await send<{ viewer?: { is_owner?: boolean; following?: boolean } }>("GET", `/api/channels/${encodeURIComponent(username)}`);
+    setFollowing(result.ok && !result.data.viewer?.is_owner ? !!result.data.viewer?.following : null);
+  }, [username, account]);
+  useLoad(loadChannel);
+  async function toggleFollow() {
+    if (following === null) return;
+    setFollowBusy(true);
+    const result = await send<{ following: boolean }>(following ? "DELETE" : "PUT", `/api/follows/${encodeURIComponent(username)}`);
+    setFollowBusy(false);
+    if (result.ok) setFollowing(result.data.following);
+    else setError(result.error);
+  }
+  const followButton = following !== null ? <Button label={following ? "Unfollow" : "Follow"} kind={following ? "quiet" : "primary"} disabled={followBusy} onPress={() => { void toggleFollow(); }} /> : null;
 
   const hls = live?.live ? live.playback?.hls ?? null : null;
   const warn = live?.live && live.mature_warn && !accepted;
@@ -55,6 +74,7 @@ export default function WatchScreen() {
                 <Button label={`Watch ${live.hosting.display_name}`} onPress={() => router.replace(`/watch/${live.hosting!.username}`)} />
               </>
             ) : <Text style={styles.body}>Nothing is live on this channel right now.</Text>}
+            {followButton ? <View style={styles.actions}>{followButton}</View> : null}
           </Frame>
         ) : null}
         {live?.live ? (
@@ -66,6 +86,7 @@ export default function WatchScreen() {
             </View>
             <Text style={[styles.title, { color: colors.accentLight }]}>{live.title}</Text>
             <Text style={styles.body}>{username} · {live.viewers.toLocaleString()} watching</Text>
+            {followButton}
             {live.mature_blocked ? <Frame><Text style={styles.body}>This stream is labeled mature, so it isn’t available on your account.</Text></Frame> : null}
             {live.banned ? <Frame><Text style={styles.body}>You’re banned from this channel, so the stream isn’t available while you’re signed in.</Text></Frame> : null}
             {warn ? (
