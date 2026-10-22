@@ -754,6 +754,48 @@ async fn exercise(app: App, mock: Mock) {
     let user = a.ok("GET", "/api/auth/me", Value::Null).await;
     let user_id = user["id"].as_str().unwrap().to_string();
     assert_eq!(user["email_verified"], false);
+    // A share link's ?ref= is stored on the new account and counted for the referrer. A bad name is ignored.
+    let mut referred = Browser::new(router.clone(), 174);
+    let mut with_ref = signup.clone();
+    with_ref["email"] = json!("second@example.invalid");
+    with_ref["username"] = json!("Second_User");
+    with_ref["ref"] = json!("First_User");
+    assert_eq!(
+        referred.call("POST", "/api/auth/signup", with_ref).await.0,
+        StatusCode::OK
+    );
+    let credited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM signup_referrals WHERE user_id=(SELECT id FROM users WHERE username='Second_User') AND referrer_id=$1",
+    )
+    .bind(&user_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(credited, 1);
+    assert_eq!(
+        a.ok("GET", "/api/auth/referrals", Value::Null).await["enlisted"],
+        1
+    );
+    assert_eq!(
+        referred.ok("GET", "/api/auth/referrals", Value::Null).await["enlisted"],
+        0
+    );
+    let mut ignored = Browser::new(router.clone(), 175);
+    let mut bad_ref = signup.clone();
+    bad_ref["email"] = json!("third@example.invalid");
+    bad_ref["username"] = json!("Third_User");
+    bad_ref["ref"] = json!("not a name");
+    assert_eq!(
+        ignored.call("POST", "/api/auth/signup", bad_ref).await.0,
+        StatusCode::OK
+    );
+    let stray: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM signup_referrals WHERE user_id=(SELECT id FROM users WHERE username='Third_User')",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stray, 0);
     let (status, checked, check_headers) = availability
         .call(
             "GET",

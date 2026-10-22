@@ -1,4 +1,6 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+import { publicMeta } from "../../../lib/seo";
 import { notFound } from "next/navigation";
 import { apiGet } from "../../../lib/server-api";
 import { isFaction, factionInfo, WORLD } from "../../../lib/factions";
@@ -14,6 +16,14 @@ import type { VideoCard } from "../../../lib/videos";
 import { FactionCommunity, MemberDirectory, RefreshFaction } from "../../../components/FactionCommunity";
 
 type Hub = War & { is_member: boolean; live: StreamCardData[]; weekly_leaders: { user: Chip; influence: number }[]; season_leaders: { user: Chip; influence: number }[] };
+
+export async function generateMetadata({ params }: { params: Promise<{ faction: string }> }): Promise<Metadata> {
+  const { faction } = await params;
+  if (!isFaction(faction)) return { title: "Faction | S.V.E.R", robots: { index: false, follow: false } };
+  const f = factionInfo(faction);
+  return publicMeta(`${f.name} | S.V.E.R`, f.line, `/factions/${f.slug}`);
+}
+
 export default async function Page({ params }: { params: Promise<{ faction: string }> }) {
   const { faction } = await params;
   if (!isFaction(faction)) notFound();

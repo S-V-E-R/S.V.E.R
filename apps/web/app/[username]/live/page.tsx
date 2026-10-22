@@ -17,6 +17,8 @@ import type { LiveCard } from "../../../components/home/types";
 import { TurfStrip } from "../../../components/TurfStrip";
 import type { War } from "../../../lib/war";
 import { apiGet } from "../../../lib/server-api";
+import { JsonLd } from "../../../components/JsonLd";
+import { broadcastJsonLd } from "../../../lib/seo";
 import { CoStreamPlayers, type Squad } from "../../../components/Squads";
 import "../../../styles/profiles.css";
 import "../../../styles/home.css";
@@ -43,7 +45,9 @@ export default async function Live({ params }: { params: ChannelParams }) {
   // The streamer's colors frame their stream (player and streamer bar); everything that belongs to
   // the viewer (Up next, rally, chat) stays in the viewer's own colors, so ALLY and "Rally for
   // Myria" always mean the viewer's side.
+  const description = c.bio?.trim() ? c.bio.slice(0, 200) : c.streaming_category ? `Live: ${c.streaming_category}` : `${c.display_name} is live on S.V.E.R`;
   return <div className="channel watch">
+    {c.live && <JsonLd data={broadcastJsonLd({ username: c.username, name: c.display_name, description, image: c.live_preview ? `https://sver.tv${c.live_preview}` : c.avatar?.["400"], started: c.live_started_at ?? undefined })} />}
     <div className="watch-main">
     {ground && <TurfStrip genre={{ id: ground.id, name: ground.name }} holder={ground.holder} viewer={account?.faction ?? null} />}
     <div className="watch-stage" data-theme={c.faction ?? "neutral"}>
@@ -59,7 +63,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
       <Link href={`/${c.username}`} aria-label={`${c.display_name}'s channel`}>{c.faction ? <Crest faction={c.faction} size={48} /> : <Avatar sizes={c.avatar} name={c.display_name} size={48} />}</Link>
       <div className="streamer-name"><h1><Link href={`/${c.username}`}>{c.display_name}</Link></h1><p className="handle">@{c.username}</p><p className="streamer-tags">{c.faction && <Link href={`/factions/${c.faction}`} className="badge faction-tag">{factionInfo(c.faction).name}</Link>}<span className="muted">{c.follower_count.toLocaleString()} followers</span></p></div>
       {account && <StandingPill username={c.username} />}
-      <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
+      <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} credit={account?.username ?? null} />
       {account && <EditStreamInfo username={c.username} />}
     </section>
     </div>

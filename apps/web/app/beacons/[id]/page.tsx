@@ -11,7 +11,7 @@ type Share = { title: string; author_name: string; url: string; mp4: string; thu
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const { data } = await apiGet<Share>(`/api/beacons/${encodeURIComponent(id)}/share`);
-  if (!data) return { title: "Beacon | S.V.E.R" };
+  if (!data) return { title: "Beacon | S.V.E.R", robots: { index: false, follow: false } };
   const images = data.thumbnail ? [{ url: data.thumbnail, width: 540, height: 960 }] : [];
   return {
     title: `${data.title} | S.V.E.R`, description: `A Beacon from ${data.author_name}`, alternates: { canonical: data.url },
@@ -28,6 +28,6 @@ export default async function BeaconPage({ params }: { params: Promise<{ id: str
   const gated = result.status === 403 && !result.data;
   return <>
     <h1 className="sr-only">{result.data?.beacon.title ?? "Beacon"}</h1>
-    <BeaconFeed key={id} initial={null} start={result.data} signedIn={!!account} gateId={gated ? id : null} />
+    <BeaconFeed key={id} initial={null} start={result.data} signedIn={!!account} faction={null} gateId={gated ? id : null} credit={account?.username ?? null} />
   </>;
 }

@@ -557,6 +557,22 @@ pub async fn channel(
     if let (Some(c), Some(p)) = (channel.as_object_mut(), persona.as_object()) {
         c.extend(p.clone());
     }
+    // A fresh, non-mature still for link previews. Mature frames stay off the card.
+    let live: Option<(String, DateTime<Utc>, bool)> = sqlx::query_as("SELECT b.id, b.started_at, (b.thumbnail_key IS NOT NULL AND b.thumbnail_at>now()-interval '3 minutes' AND NOT b.mature) FROM broadcasts b WHERE b.owner_id=$1 AND (b.state='LIVE' OR (b.state='RECONNECTING' AND b.reconnect_deadline>now()))")
+        .bind(&user.id)
+        .fetch_optional(&mut *db)
+        .await?;
+    if let Some((id, started, still)) = live
+        && let Some(c) = channel.as_object_mut()
+    {
+        c.insert("live_started_at".into(), json!(started));
+        if still {
+            c.insert(
+                "live_preview".into(),
+                json!(format!("/api/discovery/thumbnails/{id}")),
+            );
+        }
+    }
     Ok(Json(json!({
         "channel": channel,
         "tabs": tabs,

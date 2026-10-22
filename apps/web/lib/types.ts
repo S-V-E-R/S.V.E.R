@@ -28,7 +28,7 @@ export type Persona = {
   song_why?: string; theme_variant?: string | null; layout?: "stream" | "persona"; home_order?: HomeSection[];
 };
 export type Channel = {
-  channel: { plays?: boolean; board?: boolean; username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[]; creator_tier?: number; shine?: Shine; supporter?: import("../components/Supporter").SupporterMarks; discord_rank?: { name: string; level: number; faction: Faction | null } | null } & Persona;
+  channel: { plays?: boolean; board?: boolean; username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; live_preview?: string | null; live_started_at?: string | null; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[]; creator_tier?: number; shine?: Shine; supporter?: import("../components/Supporter").SupporterMarks; discord_rank?: { name: string; level: number; faction: Faction | null } | null } & Persona;
   tabs: { wall: boolean; schedule: boolean; about: boolean; fan_art: boolean; videos?: boolean; beacons?: boolean };
   /** About me blocks, shown on Home (docs/PROFILES.md "Persona pass"). */
   blocks?: PageBlock[];

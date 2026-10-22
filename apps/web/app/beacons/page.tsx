@@ -5,7 +5,8 @@ import type { BeaconFeedPage } from "../../lib/beacons";
 import { apiGet } from "../../lib/server-api";
 import { currentAccount } from "../session";
 
-export const metadata = { title: "Beacons | S.V.E.R", description: "Short videos from S.V.E.R creators that lead to their live streams." };
+import { publicMeta } from "../../lib/seo";
+export const metadata = publicMeta("Beacons | S.V.E.R", "Short videos from S.V.E.R creators that lead to their live streams.", "/beacons");
 
 /** The Beacons feed (docs/BEACONS.md "The feed"). */
 export default async function Beacons({ searchParams }: { searchParams: Promise<{ faction?: string }> }) {
@@ -18,6 +19,6 @@ export default async function Beacons({ searchParams }: { searchParams: Promise<
       <Link href="/beacons" aria-current={faction ? undefined : "page"}>For you</Link>
       {factions.map(f => <Link key={f.slug} href={`/beacons?faction=${f.slug}`} aria-current={faction === f.slug ? "page" : undefined}>{f.name}</Link>)}
     </nav>
-    <BeaconFeed key={faction ?? "all"} initial={feed.data} signedIn={!!account} faction={faction} />
+    <BeaconFeed key={faction ?? "all"} initial={feed.data} signedIn={!!account} faction={faction} credit={account?.username ?? null} />
   </>;
 }

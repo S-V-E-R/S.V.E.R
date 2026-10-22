@@ -18,14 +18,21 @@ export async function channelMetadata(username: string, section?: string): Promi
   if (status !== 200 || !data?.channel) return { title: "This channel doesn't exist. | S.V.E.R", robots: { index: false, follow: false } };
   const c = data.channel;
   const title = `${c.display_name} (@${c.username})${section ? ` · ${section}` : ""} | S.V.E.R`;
-  const description = c.bio?.trim() ? c.bio.slice(0, 200) : "Channel on S.V.E.R";
-  const image = c.avatar?.["400"];
+  const description = c.bio?.trim() ? c.bio.slice(0, 200) : c.live ? `${c.display_name} is live on S.V.E.R` : "Channel on S.V.E.R";
+  const path = `https://sver.tv/${c.username}${section ? `/${section.toLowerCase().replaceAll(" ", "-")}` : ""}`;
+  const liveStill = c.live_preview ? `https://sver.tv${c.live_preview}` : undefined;
+  const avatar = c.avatar?.["400"];
+  const image = liveStill ?? avatar;
   return {
     title,
     description,
-    alternates: { canonical: `https://sver.tv/${c.username}${section ? `/${section.toLowerCase().replace(" ", "-")}` : ""}` },
-    openGraph: { title, description, url: `https://sver.tv/${c.username}`, siteName: "S.V.E.R", type: "profile", images: image ? [{ url: image, width: 400, height: 400, alt: c.display_name }] : undefined },
-    robots: { index: false, follow: false },
+    alternates: { canonical: path },
+    openGraph: {
+      title, description, url: path, siteName: "S.V.E.R", type: "profile",
+      images: image ? [{ url: image, width: liveStill ? 1280 : 400, height: liveStill ? 720 : 400, alt: c.display_name }] : undefined,
+    },
+    twitter: { card: liveStill ? "summary_large_image" : "summary", title, description, images: image ? [image] : undefined },
+    robots: { index: true, follow: true },
   };
 }
 

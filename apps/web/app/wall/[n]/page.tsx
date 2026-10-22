@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Crest } from "../../../components/Crest";
 import { ReportButton } from "../../../components/Report";
 import { ShareButton } from "../../../components/ShareButton";
+import { currentAccount } from "../../session";
 import { TileOwner } from "../../../components/WallTileOwner";
 import { apiGet } from "../../../lib/server-api";
 import { place, sizeLabel, tileLinkRel, type MyTile, type WallTile } from "../../../lib/wall";
@@ -22,7 +23,7 @@ export async function generateMetadata({ params }: { params: Promise<{ n: string
 export default async function WallTilePage({ params, searchParams }: { params: Promise<{ n: string }>; searchParams: Promise<{ checkout?: string }> }) {
   const n = number((await params).n);
   if (!n) notFound();
-  const { data } = await apiGet<Page>(`/api/wall/${n}`);
+  const [{ data }, account] = await Promise.all([apiGet<Page>(`/api/wall/${n}`), currentAccount()]);
   if (!data) notFound();
   const { tile, mine } = data;
   const paid = (await searchParams).checkout === "done";
@@ -45,7 +46,7 @@ export default async function WallTilePage({ params, searchParams }: { params: P
           {tile.approved_at && <><dt>Claimed</dt><dd>{new Date(tile.approved_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" })}</dd></>}
           <dt>Place</dt><dd>{place(tile)}, {tile.side}×{tile.side} cells</dd>
         </dl>
-        {live && <div className="row wrap"><ShareButton path={`/wall/${tile.n}`} title={`${tile.name} on the S.V.E.R Wall`} /><ReportButton target={{ target_type: "wall_tile", target_id: String(tile.n) }} label="Report this seat" /></div>}
+        {live && <div className="row wrap"><ShareButton path={`/wall/${tile.n}`} title={`${tile.name} on the S.V.E.R Wall`} credit={account?.username ?? null} networks /><ReportButton target={{ target_type: "wall_tile", target_id: String(tile.n) }} label="Report this seat" /></div>}
       </div>
     </article>
     {paid && mine && <p role="status" className="panel section">Payment received. Your tile shows as &ldquo;taken · in review&rdquo; until staff approve it.</p>}

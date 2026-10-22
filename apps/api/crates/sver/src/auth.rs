@@ -285,6 +285,47 @@ pub struct Signup {
     date_of_birth: String,
     password: String,
     turnstile_token: String,
+    /// Public username from a share link. Unknown names are ignored; signup still succeeds.
+    #[serde(rename = "ref", default)]
+    referrer: String,
+}
+/// Records who a new account enlisted from, when `name` is an eligible public username.
+/// A miss, a reserved name or the account itself changes nothing. Never a ranking signal.
+pub async fn attach_referral(db: &mut PgConnection, user_id: &str, name: &str) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() || sec::validate_username(name).is_err() {
+        return Ok(());
+    }
+    let referrer: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM channel_users WHERE lower(username)=lower($1) AND eligible",
+    )
+    .bind(name)
+    .fetch_optional(&mut *db)
+    .await?;
+    let Some(referrer) = referrer else {
+        return Ok(());
+    };
+    if referrer == user_id {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO signup_referrals(user_id, referrer_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(referrer)
+    .execute(&mut *db)
+    .await?;
+    Ok(())
+}
+pub async fn referrals(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>> {
+    let (tx, user, _) = session(&app, &jar, true).await?;
+    tx.commit().await?;
+    let enlisted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM signup_referrals WHERE referrer_id=$1")
+            .bind(&user.id)
+            .fetch_one(&app.db)
+            .await?;
+    Ok(Json(json!({ "enlisted": enlisted })))
 }
 pub async fn signup(
     State(app): State<App>,
@@ -301,6 +342,7 @@ pub async fn signup(
     let hash = sec::new_password(&app, input.password).await?;
     let mut tx = app.db.begin().await?;
     let user = create_user(&mut tx, &email, &input.username, dob, Some(&hash), false).await?;
+    attach_referral(&mut tx, &user.id, &input.referrer).await?;
     crate::jobs::queue_email(&app, &mut tx, &user, "verify").await?;
     let jar = new_session(&app, &mut tx, &user, jar, &headers, false).await?;
     tx.commit().await?;

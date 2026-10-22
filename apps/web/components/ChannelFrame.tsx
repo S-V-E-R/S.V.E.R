@@ -12,6 +12,9 @@ import { SongPlayer } from "./SongPlayer";
 import { Crest } from "./Crest";
 import { factionInfo, factionOf } from "../lib/factions";
 import { DonateLink } from "./DonateLink";
+import { JsonLd } from "./JsonLd";
+import { profileJsonLd } from "../lib/seo";
+import { currentAccount } from "../app/session";
 import "../styles/profiles.css";
 
 /** The next scheduled stream, in the channel's own time zone when it has one. */
@@ -29,8 +32,10 @@ const day = (iso: string | null) => iso ? new Date(iso).toLocaleDateString("en-U
  * live mark, mood and Currently, bio, links, song, showcase), then the live area while live, then
  * the tabs. The channel area wears the owner's faction colors in their chosen variant.
  */
-export function ChannelFrame({ data, path, children }: { data: Channel; path: string; children: React.ReactNode }) {
+export async function ChannelFrame({ data, path, children }: { data: Channel; path: string; children: React.ReactNode }) {
+  const account = await currentAccount();
   const c = data.channel;
+  const description = c.bio?.trim() ? c.bio.slice(0, 200) : "Channel on S.V.E.R";
   const banner = c.banner ? Object.entries(c.banner) : [];
   const faction = factionOf(c.faction);
   const next = c.live ? null : nextStream(data);
@@ -40,7 +45,9 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
   const currently = c.live && c.streaming_category ? { label: "Streaming", text: c.streaming_category } : c.currently && (c.currently.text || c.currently.label) ? c.currently : null;
   // Persona first: while live, a compact card under the header instead of the player.
   const personaFirst = c.layout === "persona";
+  const image = c.live_preview ? `https://sver.tv${c.live_preview}` : c.avatar?.["400"];
   return <div className="channel" data-theme={faction?.slug ?? "neutral"} data-variant={c.theme_variant ?? undefined}>
+    <JsonLd data={profileJsonLd({ username: c.username, name: c.display_name, description, image, followers: c.follower_count })} />
     <section className="channel-header frame" aria-label={`${c.display_name}'s channel`}>
       <div className={banner.length ? "channel-banner" : "channel-banner none"}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -66,7 +73,7 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
           <p className="counts"><Link href={`/${c.username}/followers`}><strong>{c.follower_count.toLocaleString()}</strong> followers</Link><Link href={`/${c.username}/following`}><strong>{c.following_count.toLocaleString()}</strong> following</Link><span className="muted">Joined {joined(c.joined_at)}</span>{data.header?.vibe && <span className="muted page-vibe">Vibe: <strong>{data.header.vibe}</strong></span>}</p>
         </div>
         <div className="identity-side">
-          <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={path} />
+          <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={path} credit={account?.username ?? null} />
           {c.song && <SongPlayer song={c.song} why={c.song_why} />}
         </div>
       </div>
