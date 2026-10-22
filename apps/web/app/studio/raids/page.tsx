@@ -6,7 +6,7 @@ import { send, useLoad, type Result } from "../../../lib/client-api";
 import { UsernameInput } from "../../../components/UsernameInput";
 
 type Raid = { id: string; status: string; execute_at: string; target: { username: string; display_name: string } };
-type Hosting = { accept_raids: boolean; accept_hosts: boolean; auto_host: boolean; auto_list: string[]; raid_blocks: string[]; live: boolean; hosting: { username: string; display_name: string; source: "manual" | "auto" | "raid" } | null; raid: Raid | null };
+type Hosting = { accept_raids: boolean; raids_followed_only: boolean; accept_hosts: boolean; auto_host: boolean; auto_list: string[]; raid_blocks: string[]; live: boolean; hosting: { username: string; display_name: string; source: "manual" | "auto" | "raid" } | null; raid: Raid | null };
 
 const names = (text: string) => text.split(/[\s,]+/).map(n => n.replace(/^@/, "")).filter(Boolean);
 
@@ -26,7 +26,7 @@ export default function RaidsAndHosting() {
   async function save(change: Partial<Hosting>) {
     if (!data) return;
     const next = { ...data, ...change };
-    apply(await send<Hosting>("PUT", "/api/me/hosting", { accept_raids: next.accept_raids, accept_hosts: next.accept_hosts, auto_host: next.auto_host, auto_list: names(list) }));
+    apply(await send<Hosting>("PUT", "/api/me/hosting", { accept_raids: next.accept_raids, raids_followed_only: next.raids_followed_only, accept_hosts: next.accept_hosts, auto_host: next.auto_host, auto_list: names(list) }));
   }
   async function field(event: FormEvent<HTMLFormElement>, run: (value: string) => Promise<void>) {
     event.preventDefault();
@@ -68,6 +68,7 @@ export default function RaidsAndHosting() {
     </Section>
     <Section title="Incoming raids and hosts" intro="Channels you've blocked, or banned from your chat, can never raid or host you.">
       <label className="checkbox"><input type="checkbox" checked={data.accept_raids} onChange={e => save({ accept_raids: e.target.checked })} /> Accept raids</label>
+      {data.accept_raids && <label className="checkbox"><input type="checkbox" checked={data.raids_followed_only} onChange={e => save({ raids_followed_only: e.target.checked })} /> Only from channels I follow</label>}
       <label className="checkbox"><input type="checkbox" checked={data.accept_hosts} onChange={e => save({ accept_hosts: e.target.checked })} /> Allow other channels to host me</label>
       <form className="row" onSubmit={e => field(e, async name => apply(await send<Hosting>("POST", "/api/me/raid-blocks", { username: name }), `@${name} can't raid or host you now.`))}>
         <UsernameInput label="Block raids and hosts from a channel" required /><button type="submit" className="small">Block</button>

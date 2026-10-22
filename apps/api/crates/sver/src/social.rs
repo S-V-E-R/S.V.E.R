@@ -39,10 +39,16 @@ async fn announce_follow(app: &App, tx: &mut PgConnection, channel: &str, user: 
         json!({"followers": followers}),
     )
     .await?;
-    let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id=$1")
+    let (username, words): (String, Vec<String>) = sqlx::query_as("SELECT u.username,coalesce((SELECT banned_words FROM chat_settings WHERE channel_id=$2),'{}') FROM users u WHERE u.id=$1")
         .bind(user)
+        .bind(channel)
         .fetch_one(&mut *tx)
         .await?;
+    // A name with one of the channel's banned words never goes on stream (the bot's line is
+    // refused the same way); the follow still counts.
+    if crate::moderation::check_content(&username, &words, false, true).is_err() {
+        return Ok(());
+    }
     crate::events::emit(
         &mut *tx,
         channel,

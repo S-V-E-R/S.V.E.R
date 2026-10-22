@@ -350,6 +350,28 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
             ));
         }
     }
+    // Minimum account age (docs/LIVE_STREAMS.md "Hate-raid defenses"); channel roles are exempt.
+    let min_days: i16 = sqlx::query_scalar(
+        "SELECT coalesce((SELECT min_account_days FROM chat_settings WHERE channel_id=$1),0::smallint)",
+    )
+    .bind(channel)
+    .fetch_one(&app.db)
+    .await?;
+    if min_days > 0 && role_of(app, channel, user).await?.is_none() {
+        let new: bool = sqlx::query_scalar(
+            "SELECT created_at>now()-make_interval(days=>$2) FROM users WHERE id=$1",
+        )
+        .bind(&user.id)
+        .bind(i32::from(min_days))
+        .fetch_one(&app.db)
+        .await?;
+        if new {
+            return Err(Fail::denied(format!(
+                "Chat here needs an account at least {min_days} day{} old.",
+                if min_days == 1 { "" } else { "s" }
+            )));
+        }
+    }
     // The chat rank gate (docs/PROGRESSION.md section 5); channel roles are exempt.
     let (min, earned): (i16, i64) = sqlx::query_as("SELECT coalesce((SELECT min_loyalty FROM chat_settings WHERE channel_id=$1),0::smallint),coalesce((SELECT earned FROM engagement WHERE channel_id=$1 AND user_id=$2),0)")
         .bind(channel).bind(&user.id).fetch_one(&app.db).await?;
@@ -445,6 +467,12 @@ pub async fn view(
     .await?;
     let (slow, links, words, fade, signatures, min_loyalty) =
         settings.unwrap_or((0, false, vec![], 30, true, 0));
+    let min_account_days: i16 = sqlx::query_scalar(
+        "SELECT coalesce((SELECT min_account_days FROM chat_settings WHERE channel_id=$1),0::smallint)",
+    )
+    .bind(&channel)
+    .fetch_one(&app.db)
+    .await?;
     // Only chip_sql with a literal alias is interpolated; channel values are bound.
     let mut moderators: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT {} FROM channel_moderators m JOIN channel_users c ON c.id=m.user_id WHERE m.channel_id=$1 ORDER BY m.appointed_at", profiles::chip_sql("c"))))
         .bind(&channel).fetch_all(&app.db).await?;
@@ -470,7 +498,7 @@ pub async fn view(
         "role": role.name(),
         "spike": spike,
         "followers_only_until": followers_only(&app, &channel).await?,
-        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade, "allow_signatures": signatures, "min_loyalty": min_loyalty, "gifs": crate::chat::gif_setting(&app, &channel).await?},
+        "settings": {"slow_mode_seconds": slow, "block_links": links, "banned_words": words, "overlay_fade_seconds": fade, "allow_signatures": signatures, "min_loyalty": min_loyalty, "min_account_days": min_account_days, "gifs": crate::chat::gif_setting(&app, &channel).await?},
         "moderators": moderators, "restrictions": restrictions, "log": log, "reviews": reviews,
     })))
 }
@@ -599,6 +627,91 @@ pub async fn restrict(
     ))
 }
 #[derive(Deserialize)]
+pub struct Sweep {
+    /// Chatted or followed here within the last `minutes` (1–60).
+    minutes: i32,
+    /// Accounts younger than this many days (1–90).
+    account_days: i32,
+    #[serde(default)]
+    reason: String,
+}
+/// Most accounts one sweep bans.
+const SWEEP_LIMIT: i64 = 500;
+/// POST /api/channels/{u}/chat/sweep: after a raid, bans every account younger than
+/// `account_days` that chatted or followed here in the last `minutes`, and removes their follows
+/// and those messages (docs/LIVE_STREAMS.md "Hate-raid defenses"). Channel roles, staff and
+/// people already banned are left alone. One evidence capture covers the sweep; each ban is logged
+/// and reviewed like any other, so undoing one lifts it.
+pub async fn sweep(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Json(input): Json<Sweep>,
+) -> Res<Json<Value>> {
+    let channel = channel(&app, &name).await?;
+    let (user, role) = actor(&app, &jar, &channel).await?;
+    if !(1..=60).contains(&input.minutes) {
+        return Err(Fail::field("minutes", "Look back 1–60 minutes."));
+    }
+    if !(1..=90).contains(&input.account_days) {
+        return Err(Fail::field("account_days", "Choose 1–90 days."));
+    }
+    let review = input.reason.trim().is_empty();
+    let reason = optional_reason(&input.reason, NO_REASON_YET)?;
+    let mut tx = app.db.begin().await?;
+    let targets: Vec<String> = sqlx::query_scalar("SELECT u.id FROM users u WHERE u.created_at>now()-make_interval(days=>$3)
+        AND (EXISTS(SELECT 1 FROM chat_messages m WHERE m.channel_id=$1 AND m.squad_id IS NULL AND m.author_id=u.id AND m.created_at>now()-make_interval(mins=>$2))
+          OR EXISTS(SELECT 1 FROM follows f WHERE f.following_id=$1 AND f.follower_id=u.id AND f.created_at>now()-make_interval(mins=>$2)))
+        AND u.id<>$1 AND u.id<>$4
+        AND NOT EXISTS(SELECT 1 FROM channel_moderators WHERE channel_id=$1 AND user_id=u.id)
+        AND NOT EXISTS(SELECT 1 FROM staff_roles WHERE user_id=u.id)
+        AND NOT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=$1 AND user_id=u.id AND kind='ban')
+        ORDER BY u.id LIMIT $5")
+        .bind(&channel).bind(input.minutes).bind(input.account_days).bind(&user.id).bind(SWEEP_LIMIT)
+        .fetch_all(&mut *tx).await?;
+    if targets.is_empty() {
+        return Ok(Json(json!({"banned": 0, "review": false})));
+    }
+    let sweep = profiles::new_id();
+    for target in &targets {
+        sqlx::query("INSERT INTO channel_restrictions(channel_id,user_id,kind,until) VALUES($1,$2,'ban',NULL) ON CONFLICT(channel_id,user_id,kind) DO UPDATE SET until=NULL, created_at=now()")
+            .bind(&channel).bind(target).execute(&mut *tx).await?;
+        log(
+            &mut tx,
+            &channel,
+            &user.id,
+            role,
+            "ban",
+            Some(target),
+            None,
+            json!({"sweep": sweep, "minutes": input.minutes, "account_days": input.account_days}),
+            &reason,
+        )
+        .await?;
+    }
+    // Evidence before the messages go: the chat leading up to it and the stream's last minute.
+    let chat: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('user',u.username,'body',m.body,'at',m.created_at,'deleted',m.deleted_at IS NOT NULL) FROM (SELECT * FROM chat_messages WHERE channel_id=$1 AND squad_id IS NULL AND created_at>now()-interval '10 minutes' ORDER BY created_at DESC LIMIT 30) m JOIN users u ON u.id=m.author_id ORDER BY m.created_at")
+        .bind(&channel).fetch_all(&mut *tx).await?;
+    let clip = crate::videos::evidence(&mut tx, &channel, &sweep).await?;
+    sqlx::query("UPDATE channel_moderation_log SET needs_review=$2, detail=detail||jsonb_build_object('chat',$3::jsonb,'clip',$4::text) WHERE channel_id=$1 AND detail->>'sweep'=$5")
+        .bind(&channel).bind(review).bind(json!(chat)).bind(&clip).bind(&sweep).execute(&mut *tx).await?;
+    let removed: Vec<(Option<String>, String)> = sqlx::query_as("UPDATE chat_messages SET deleted_at=now() WHERE channel_id=$1 AND squad_id IS NULL AND author_id=ANY($2) AND deleted_at IS NULL AND created_at>now()-make_interval(mins=>$3) RETURNING origin,id")
+        .bind(&channel).bind(&targets).bind(input.minutes).fetch_all(&mut *tx).await?;
+    sqlx::query("DELETE FROM follows WHERE following_id=$1 AND follower_id=ANY($2)")
+        .bind(&channel)
+        .bind(&targets)
+        .execute(&mut *tx)
+        .await?;
+    let mut counted: Vec<&str> = targets.iter().map(String::as_str).collect();
+    counted.push(&channel);
+    crate::social::refresh_counts(&mut tx, &counted).await?;
+    tx.commit().await?;
+    for (origin, id) in removed {
+        crate::chat::publish_delete(&app, Some(&channel), origin.as_deref(), &id);
+    }
+    Ok(Json(json!({"banned": targets.len(), "review": review})))
+}
+#[derive(Deserialize)]
 pub struct Review {
     keep: bool,
     #[serde(default)]
@@ -725,6 +838,9 @@ pub struct Settings {
     /// Who can send GIFs: off, everyone, followers or subscribers.
     #[serde(default)]
     gifs: Option<String>,
+    /// Minimum account age to chat, in days (0 off, up to 90).
+    #[serde(default)]
+    min_account_days: Option<i16>,
 }
 pub async fn save_settings(
     State(app): State<App>,
@@ -754,6 +870,15 @@ pub async fn save_settings(
         return Err(Fail::field("min_loyalty", "Choose a loyalty rank."));
     }
     if input
+        .min_account_days
+        .is_some_and(|d| !(0..=90).contains(&d))
+    {
+        return Err(Fail::field(
+            "min_account_days",
+            "Account age is off, or 1–90 days.",
+        ));
+    }
+    if input
         .gifs
         .as_deref()
         .is_some_and(|g| !["off", "everyone", "followers", "subscribers"].contains(&g))
@@ -775,9 +900,17 @@ pub async fn save_settings(
         ));
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("INSERT INTO chat_settings(channel_id,slow_mode_seconds,block_links,banned_words,overlay_fade_seconds) VALUES($1,$2,$3,$4,coalesce($5,30)) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=$2,block_links=$3,banned_words=$4,overlay_fade_seconds=coalesce($5,chat_settings.overlay_fade_seconds),allow_signatures=coalesce($6,chat_settings.allow_signatures),min_loyalty=coalesce($7,chat_settings.min_loyalty),gifs=coalesce($8,chat_settings.gifs)")
-        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).bind(input.allow_signatures).bind(input.min_loyalty).bind(&input.gifs).execute(&mut *tx).await?;
-    log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len(), "min_loyalty": input.min_loyalty, "gifs": input.gifs}), &reason).await?;
+    // The row first, so a channel's first save keeps every optional field too (left out = column
+    // default or unchanged).
+    sqlx::query(
+        "INSERT INTO chat_settings(channel_id) VALUES($1) ON CONFLICT(channel_id) DO NOTHING",
+    )
+    .bind(&channel)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE chat_settings SET slow_mode_seconds=$2,block_links=$3,banned_words=$4,overlay_fade_seconds=coalesce($5,overlay_fade_seconds),allow_signatures=coalesce($6,allow_signatures),min_loyalty=coalesce($7,min_loyalty),gifs=coalesce($8,gifs),min_account_days=coalesce($9,min_account_days) WHERE channel_id=$1")
+        .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).bind(input.allow_signatures).bind(input.min_loyalty).bind(&input.gifs).bind(input.min_account_days).execute(&mut *tx).await?;
+    log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len(), "min_loyalty": input.min_loyalty, "gifs": input.gifs, "min_account_days": input.min_account_days}), &reason).await?;
     tx.commit().await?;
     Ok(Json(
         json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words}),
@@ -900,6 +1033,7 @@ pub fn routes() -> Router<App> {
             delete(delete_message),
         )
         .route("/api/channels/{username}/chat/restrictions", post(restrict))
+        .route("/api/channels/{username}/chat/sweep", post(sweep))
         .route("/api/channels/{username}/chat/reviews/{id}", post(review))
         .route(
             "/api/channels/{username}/chat/restrictions/{target}/{kind}",

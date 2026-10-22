@@ -82,6 +82,8 @@ mod overlays;
 mod playback;
 #[path = "streams/plays.rs"]
 mod plays;
+#[path = "streams/raid_defenses.rs"]
+mod raid_defenses;
 #[path = "streams/raids.rs"]
 mod raids;
 #[path = "streams/ravens_eye.rs"]
@@ -656,6 +658,7 @@ async fn exercise(e: &Env) {
     switches::exercise(e).await;
     alerts::exercise(e).await;
     raids::exercise(e).await;
+    raid_defenses::exercise(e).await;
     staff_streams::exercise(e).await;
     discovery::exercise(e).await;
     plays::exercise(e).await;

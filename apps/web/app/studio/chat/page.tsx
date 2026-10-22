@@ -8,7 +8,7 @@ import type { Chip } from "../../../lib/types";
 
 type View = {
   role: string;
-  settings: { slow_mode_seconds: number; block_links: boolean; banned_words: string[]; overlay_fade_seconds?: number; allow_signatures?: boolean; min_loyalty?: number; gifs?: string };
+  settings: { slow_mode_seconds: number; block_links: boolean; banned_words: string[]; overlay_fade_seconds?: number; allow_signatures?: boolean; min_loyalty?: number; gifs?: string; min_account_days?: number };
   moderators: Chip[];
   restrictions: { user: Chip; kind: "timeout" | "ban"; until: string | null }[];
   log: { action: string; actor_role: string; actor: string | null; target: string | null; reason: string; created_at: string; detail?: Evidence }[];
@@ -40,6 +40,7 @@ export default function ChatStudio() {
   const [words, setWords] = useState("");
   const [state, setState] = useState<SaveState>({});
   const [modState, setModState] = useState<SaveState>({});
+  const [sweepState, setSweepState] = useState<SaveState>({});
   const base = username ? `/api/channels/${encodeURIComponent(username)}` : "";
 
   const load = useCallback(async () => {
@@ -66,8 +67,18 @@ export default function ChatStudio() {
       allow_signatures: form.get("signatures") === "on",
       min_loyalty: Number(form.get("loyalty")),
       gifs: form.get("gifs"),
+      min_account_days: Number(form.get("age")),
     });
     setState(result.ok ? { saved: "Chat rules saved." } : result);
+    if (result.ok) load();
+  }
+  async function sweep(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const minutes = Number(form.get("minutes")), days = Number(form.get("days"));
+    if (!window.confirm(`Ban every account younger than ${days} days that chatted or followed in the last ${minutes} minutes?`)) return;
+    const result = await send<{ banned: number }>("POST", `${base}/chat/sweep`, { minutes, account_days: days, reason: form.get("reason") });
+    setSweepState(result.ok ? { saved: result.data.banned === 0 ? "No accounts matched." : `Banned ${result.data.banned} account${result.data.banned === 1 ? "" : "s"} and removed their follows and messages.` } : result);
     if (result.ok) load();
   }
   async function appoint(event: FormEvent<HTMLFormElement>) {
@@ -121,6 +132,9 @@ export default function ChatStudio() {
         <label className="field narrow"><span>Who can chat (you and your moderators always can)</span><select name="loyalty" defaultValue={s.min_loyalty ?? 0}>
           <option value={0}>Everyone</option><option value={1}>Regular and above (200 Engagement Valor earned here)</option><option value={2}>Devoted and above (1,000)</option><option value={3}>Veteran and above (5,000)</option><option value={4}>Legend only (20,000)</option>
         </select></label>
+        <label className="field narrow"><span>Account age to chat (you and your moderators always can)</span><select name="age" defaultValue={s.min_account_days ?? 0}>
+          <option value={0}>Any age</option><option value={1}>At least 1 day old</option><option value={7}>At least 1 week old</option><option value={30}>At least 30 days old</option><option value={90}>At least 90 days old</option>
+        </select></label>
         <label className="field narrow"><span>Who can send GIFs (slow mode and timeouts apply)</span><select name="gifs" defaultValue={s.gifs ?? "everyone"}>
           <option value="everyone">Everyone</option><option value="followers">Followers</option><option value="subscribers">Subscribers</option><option value="off">Nobody (GIFs off)</option>
         </select></label>
@@ -128,6 +142,21 @@ export default function ChatStudio() {
         <label className="field narrow"><span>OBS chat overlay: seconds each message stays (10–120)</span><input name="fade" type="number" min={10} max={120} defaultValue={s.overlay_fade_seconds ?? 30} /></label>
         <button type="submit" className="small">Save rules</button>
         <Status state={state} />
+      </form>
+    </Section>
+    <Section title="After a raid" intro="Ban every new account that chatted or followed recently, and remove their follows and messages. You, your moderators and staff are never included. Each ban is logged and can be lifted.">
+      <form onSubmit={sweep} className="stack">
+        <div className="row">
+          <label className="field narrow"><span>Chatted or followed in the last</span><select name="minutes" defaultValue={10}>
+            <option value={5}>5 minutes</option><option value={10}>10 minutes</option><option value={30}>30 minutes</option><option value={60}>60 minutes</option>
+          </select></label>
+          <label className="field narrow"><span>Accounts younger than</span><select name="days" defaultValue={7}>
+            <option value={1}>1 day</option><option value={7}>1 week</option><option value={30}>30 days</option><option value={90}>90 days</option>
+          </select></label>
+        </div>
+        <label className="field"><span>Reason (shown in the log)</span><input name="reason" maxLength={500} defaultValue="Hate raid" required /></label>
+        <button type="submit" className="small">Ban matching accounts</button>
+        <Status state={sweepState} />
       </form>
     </Section>
     <Section title="Chat in OBS" intro="Your chat can sit in OBS as a dock you type in, or on stream as an overlay.">
