@@ -541,7 +541,8 @@ pub async fn run(
             tally.drop("follows", "duplicate", row);
         } else {
             sqlx::query(
-                "INSERT INTO follows(follower_id,following_id,created_at) VALUES($1,$2,$3)",
+                // Imported follows predate verified followers, so they count.
+                "INSERT INTO follows(follower_id,following_id,created_at,counted_at) VALUES($1,$2,$3,$3)",
             )
             .bind(&f.follower_id)
             .bind(&f.following_id)

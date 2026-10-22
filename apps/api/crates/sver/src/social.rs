@@ -20,6 +20,85 @@ use serde_json::{Value, json};
 use sqlx::PgConnection;
 
 const PAGE: i64 = 50;
+/// A follow counts (public numbers, alerts, milestones, the follow bonus) once the follower has
+/// watched the channel live this long (docs/PROFILES.md "Verified followers").
+pub const COUNTED_WATCH_MINUTES: i32 = 15;
+
+/// What a follow does once it counts, inside its transaction: the follow bonus, the bot's line,
+/// a milestone and the live events (the count is public, who followed is the channel's private
+/// topic).
+async fn announce_follow(app: &App, tx: &mut PgConnection, channel: &str, user: &str) -> Res<()> {
+    crate::engagement::followed(&mut *tx, &app.config.engagement, channel, user).await?;
+    crate::bot::record(&mut *tx, channel, "follow", user, 0).await?;
+    crate::bot::follower_milestone(&mut *tx, channel).await?;
+    let (followers, _) = follower_counts(&mut *tx, channel).await?;
+    crate::events::emit(
+        &mut *tx,
+        channel,
+        "follows",
+        json!({"followers": followers}),
+    )
+    .await?;
+    let username: String = sqlx::query_scalar("SELECT username FROM users WHERE id=$1")
+        .bind(user)
+        .fetch_one(&mut *tx)
+        .await?;
+    crate::events::emit(
+        &mut *tx,
+        channel,
+        "follows:detail",
+        json!({"user": username}),
+    )
+    .await?;
+    Ok(())
+}
+
+/// After each watch award: follows whose follower now has enough live watch time start counting.
+/// One short transaction each, holding only the channel's profile lock (the lock `follow` takes,
+/// so milestones stay exact).
+pub async fn count_watched(app: &App) -> Res<()> {
+    let ready: Vec<(String, String)> = sqlx::query_as(
+        "SELECT f.following_id,f.follower_id FROM follows f JOIN engagement e ON e.channel_id=f.following_id AND e.user_id=f.follower_id
+         WHERE f.counted_at IS NULL AND e.watch_minutes>=$1",
+    )
+    .bind(COUNTED_WATCH_MINUTES)
+    .fetch_all(&app.db)
+    .await?;
+    for (channel, user) in ready {
+        let mut tx = app.db.begin().await?;
+        ensure_profile(&mut tx, &channel).await?;
+        sqlx::query("SELECT 1 FROM profiles WHERE user_id=$1 FOR UPDATE")
+            .bind(&channel)
+            .execute(&mut *tx)
+            .await?;
+        let counted = sqlx::query("UPDATE follows SET counted_at=now() WHERE following_id=$1 AND follower_id=$2 AND counted_at IS NULL")
+            .bind(&channel)
+            .bind(&user)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if counted == 1 {
+            announce_follow(app, &mut tx, &channel, &user).await?;
+        }
+        tx.commit().await?;
+    }
+    Ok(())
+}
+
+/// GET /api/me/followers: the owner's counted followers and the follows still waiting on watch
+/// time (Studio only; the public count is the counted one).
+pub async fn my_followers(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut db = app.db.acquire().await?;
+    let (counted, _) = follower_counts(&mut db, &user.id).await?;
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM follows f JOIN channel_users c ON c.id=f.follower_id WHERE f.following_id=$1 AND f.counted_at IS NULL AND NOT c.internal AND c.deleted_at IS NULL")
+        .bind(&user.id)
+        .fetch_one(&mut *db)
+        .await?;
+    Ok(Json(
+        json!({"counted": counted, "pending": pending, "watch_minutes": COUNTED_WATCH_MINUTES}),
+    ))
+}
 
 /// Recomputes the cached raw follow counters for both users (the displayed counts are computed
 /// exactly at read time with the visibility rules).
@@ -69,37 +148,21 @@ pub async fn follow(
             .bind(&target.id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query(
-            "INSERT INTO follows(follower_id,following_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        // Counted at once when they've already watched enough; otherwise count_watched does it.
+        let counted: Option<bool> = sqlx::query_scalar(
+            "INSERT INTO follows(follower_id,following_id,counted_at) VALUES($1,$2,
+                CASE WHEN EXISTS(SELECT 1 FROM engagement WHERE channel_id=$2 AND user_id=$1 AND watch_minutes>=$3) THEN now() END)
+             ON CONFLICT DO NOTHING RETURNING counted_at IS NOT NULL",
         )
         .bind(&user.id)
         .bind(&target.id)
-        .execute(&mut *tx)
+        .bind(COUNTED_WATCH_MINUTES)
+        .fetch_optional(&mut *tx)
         .await?;
         refresh_counts(&mut tx, &[&user.id, &target.id]).await?;
-        crate::engagement::followed(&mut tx, &app.config.engagement, &target.id, &user.id).await?;
-        crate::bot::record(&mut tx, &target.id, "follow", &user.id, 0).await?;
-        crate::bot::follower_milestone(&mut tx, &target.id).await?;
-        // Live events: the count is public, who followed is the channel's private topic.
-        let followers: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM follows WHERE following_id=$1")
-                .bind(&target.id)
-                .fetch_one(&mut *tx)
-                .await?;
-        crate::events::emit(
-            &mut tx,
-            &target.id,
-            "follows",
-            json!({"followers": followers}),
-        )
-        .await?;
-        crate::events::emit(
-            &mut tx,
-            &target.id,
-            "follows:detail",
-            json!({"user": user.username}),
-        )
-        .await?;
+        if counted == Some(true) {
+            announce_follow(&app, &mut tx, &target.id, &user.id).await?;
+        }
         crate::activity::record(
             &mut tx,
             &user.id,
@@ -174,15 +237,20 @@ async fn follow_list(
         .await?
         .ok_or_else(Fail::channel_missing)?;
     let after = parse_cursor(cursor)?;
-    let (join_col, filter_col) = if followers {
-        ("follower_id", "following_id")
+    // A channel's public follower list shows counted follows, like its count.
+    let (join_col, filter_col, counted) = if followers {
+        (
+            "follower_id",
+            "following_id",
+            "AND f.counted_at IS NOT NULL",
+        )
     } else {
-        ("following_id", "follower_id")
+        ("following_id", "follower_id", "")
     };
     // Only literal column choices and chip SQL are interpolated; request values are bound.
     let rows: Vec<(Value, DateTime<Utc>, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {chip}, f.created_at, c.id FROM follows f JOIN channel_users c ON c.id=f.{join_col} \
-         WHERE f.{filter_col}=$1 AND c.eligible \
+         WHERE f.{filter_col}=$1 {counted} AND c.eligible \
          AND ($2::text IS NULL OR NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$2 AND b.blocked_id=c.id) OR (b.blocker_id=c.id AND b.blocked_id=$2))) \
          AND ($3::timestamptz IS NULL OR (f.created_at,c.id) < ($3,$4)) \
          ORDER BY f.created_at DESC, c.id DESC LIMIT $5",

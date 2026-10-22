@@ -851,7 +851,7 @@ async fn v1_channel(
     caller(&app, &headers, None).await?;
     let channel: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('username',c.username,'display_name',c.display_name,'faction',(SELECT faction FROM faction_members WHERE user_id=c.id),
             'live',EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=c.id AND b.state IN ('LIVE','RECONNECTING')),
-            'title',s.title,'category',k.name,'category_id',s.category_id,'revision',s.revision,'followers',(SELECT count(*) FROM follows WHERE following_id=c.id))
+            'title',s.title,'category',k.name,'category_id',s.category_id,'revision',s.revision,'followers',(SELECT count(*) FROM follows WHERE following_id=c.id AND counted_at IS NOT NULL))
         FROM channel_users c LEFT JOIN stream_settings s ON s.owner_id=c.id LEFT JOIN stream_categories k ON k.id=s.category_id
         WHERE lower(c.username)=lower($1) AND c.eligible")
         .bind(&name).fetch_optional(&app.db).await?;

@@ -119,7 +119,9 @@ async fn settings(app: &App, channel: &str) -> Res<Value> {
 /// The goal widget's current count.
 async fn goal_count(app: &App, channel: &str, kind: Option<&str>) -> Res<Option<i64>> {
     let sql = match kind {
-        Some("followers") => "SELECT count(*) FROM follows WHERE following_id=$1",
+        Some("followers") => {
+            "SELECT count(*) FROM follows WHERE following_id=$1 AND counted_at IS NOT NULL"
+        }
         Some("subs") => {
             "SELECT count(*) FROM channel_subs WHERE channel_id=$1 AND paid_through>now()"
         }

@@ -68,6 +68,7 @@ pub async fn exercise(e: &Env) {
 
     // A follow moves the goal bar and plays its alert.
     let fan = person(e, "ov-fan", "OverlayFan", true).await;
+    e.watched_all().await;
     call(e, "PUT", "/api/follows/Streamer", Some(&fan), Value::Null).await;
     sver::events::drain(&e.app).await.unwrap();
     let goal = next_json(&mut ws).await;

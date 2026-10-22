@@ -54,6 +54,7 @@ pub async fn exercise(e: &Env) {
     let owner = person(e, "ev-owner", "EvOwner", true).await;
     let viewer = person(e, "ev-viewer", "EvViewer", true).await;
     let lurker = person(e, "ev-lurker", "EvLurker", false).await;
+    e.watched_all().await;
 
     // The owner's rewards; the built-in highlight is always there.
     let create = |body: Value| call(e, "POST", "/api/me/rewards", Some(&owner), body);
