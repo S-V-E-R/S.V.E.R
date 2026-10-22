@@ -264,6 +264,14 @@ A moderator cannot sanction the owner, themselves, another appointed moderator o
 - Reuse Module 2's block relationship. A block with the channel owner prevents sending in that channel. Between ordinary chatters, hide each other's messages/history in their own view without muting them for everyone. Moderation reviewers can still inspect reported content under staff permissions. A user blocking a moderator does not defeat moderation.
 - All moderation UI uses confirmation for destructive actions, clear duration/reason fields, and accessible focus restoration. Server authorization remains authoritative even when controls are hidden.
 
+### Hate-raid defenses
+Added October 22, 2026, on top of verified followers (docs/PROFILES.md) and spike protection.
+- **Follow alerts:** a follow alerts only once it counts (15 minutes of live watching), and a follower whose username contains one of the channel's banned words never reaches the overlay or the bot's greeting. The follow still counts. Usernames already refuse the site's abuse list at signup and rename.
+- **Account age:** owners and moderators can require chatters' accounts to be at least 1, 7, 30 or 90 days old (`min_account_days`, 0 off). Channel roles are exempt.
+- **Sweep, after a raid:** owners and moderators ban, in one action, every account younger than N days (1–90) that chatted or followed in the last M minutes (1–60), at most 500. Their follows of the channel and those messages are removed. The owner, moderators, staff and people already banned are left out. Each ban gets its own log entry, sharing one evidence capture (chat and the last minute of stream), and is reviewed or lifted like any other. Studio asks for a reason, so a sweep doesn't fill the review queue.
+- **Raids from followed channels only:** with this on, a raid is refused unless the owner follows the raiding channel. Hosting isn't limited.
+- **Not added:** mass-report protection (no report count acts on its own; staff review every report), and linking accounts by IP or device for ban evasion (raw IPs aren't stored, see docs/ADMIN.md).
+
 ## Platform moderation and appeals
 
 Staff operations (October 4, `staff_streams.rs`, Admin → Live streams): staff see every open broadcast with channel, title, category, state, time live, the public/trusted/pending/excluded/raw session counts, measured OBS health and warnings, open stream reports and whether followers-only chat is on. Stop stream (reason required, staff window) ends the broadcast and revokes the key exactly like a report's remove-content action, and is recorded in `moderation_actions`. Staff also manage the category catalog: add a category with a genre, which is fixed at creation because factions group categories by genre; rename; or hide it from new choices while channels keep their current category. Every change is audited. Covered by `tests/streams/staff_streams.rs`.

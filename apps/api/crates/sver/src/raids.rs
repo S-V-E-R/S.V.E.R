@@ -27,6 +27,7 @@ fn refusal_message(refusal: &str, hosting: bool) -> Fail {
         } else {
             "That channel isn't accepting raids."
         }),
+        "followed_only" => Fail::bad("That channel only accepts raids from channels it follows."),
         "unavailable" => Fail::channel_missing(),
         _ => Fail::bad(format!("You can't {verb} that channel.")),
     }
@@ -262,7 +263,7 @@ async fn settings(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     settings_json(&app, &user.id).await
 }
 async fn settings_json(app: &App, user: &str) -> Res<Json<Value>> {
-    let (accept_raids, accept_hosts, auto_host): (bool, bool, bool) = sqlx::query_as("SELECT coalesce(s.accept_raids,true),coalesce(s.accept_hosts,true),coalesce(s.auto_host,false) FROM (SELECT 1) one LEFT JOIN channel_host_settings s ON s.user_id=$1")
+    let (accept_raids, accept_hosts, auto_host, raids_followed_only): (bool, bool, bool, bool) = sqlx::query_as("SELECT coalesce(s.accept_raids,true),coalesce(s.accept_hosts,true),coalesce(s.auto_host,false),coalesce(s.raids_followed_only,false) FROM (SELECT 1) one LEFT JOIN channel_host_settings s ON s.user_id=$1")
         .bind(user)
         .fetch_one(&app.db)
         .await?;
@@ -283,13 +284,16 @@ async fn settings_json(app: &App, user: &str) -> Res<Json<Value>> {
         None => None,
     };
     Ok(Json(
-        json!({"accept_raids":accept_raids,"accept_hosts":accept_hosts,"auto_host":auto_host,
+        json!({"accept_raids":accept_raids,"raids_followed_only":raids_followed_only,"accept_hosts":accept_hosts,"auto_host":auto_host,
         "auto_list":auto_list,"raid_blocks":blocks,"live":live,"hosting":hosting(app, user).await?,"raid":raid}),
     ))
 }
 #[derive(Deserialize)]
 struct Settings {
     accept_raids: bool,
+    /// Raids only from channels the owner follows (hate-raid defense); unchanged when left out.
+    #[serde(default)]
+    raids_followed_only: Option<bool>,
     accept_hosts: bool,
     auto_host: bool,
     auto_list: Vec<String>,
@@ -324,8 +328,8 @@ async fn save(
             ids.push(channel.id);
         }
     }
-    sqlx::query("INSERT INTO channel_host_settings(user_id,accept_raids,accept_hosts,auto_host,auto_list) VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id) DO UPDATE SET accept_raids=$2,accept_hosts=$3,auto_host=$4,auto_list=$5")
-        .bind(&user.id).bind(input.accept_raids).bind(input.accept_hosts).bind(input.auto_host).bind(&ids)
+    sqlx::query("INSERT INTO channel_host_settings(user_id,accept_raids,accept_hosts,auto_host,auto_list,raids_followed_only) VALUES($1,$2,$3,$4,$5,coalesce($6,false)) ON CONFLICT(user_id) DO UPDATE SET accept_raids=$2,accept_hosts=$3,auto_host=$4,auto_list=$5,raids_followed_only=coalesce($6,channel_host_settings.raids_followed_only)")
+        .bind(&user.id).bind(input.accept_raids).bind(input.accept_hosts).bind(input.auto_host).bind(&ids).bind(input.raids_followed_only)
         .execute(&mut *db).await?;
     drop(db);
     settings_json(&app, &user.id).await
