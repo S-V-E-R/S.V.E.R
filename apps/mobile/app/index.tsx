@@ -149,8 +149,7 @@ function Node({ stream, last }: { stream: StreamCard; last: boolean }) {
     <View style={styles.nodeRow}>
       <View style={styles.rail}>
         {!last ? <View style={[styles.trail, { backgroundColor: color }]} /> : null}
-        <View style={[styles.halo, { backgroundColor: color }]} />
-        <View style={[styles.core, { backgroundColor: color }]} />
+        <View style={[styles.node, { backgroundColor: color }]} />
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel={`${stream.title}, ${stream.display_name}`} onPress={() => router.push(`/watch/${stream.username}`)} style={styles.nodeCard}>
         <Frame>
@@ -200,8 +199,8 @@ const styles = StyleSheet.create({
   nodeRow: { flexDirection: "row", gap: 12 },
   rail: { width: 28, alignItems: "center" },
   trail: { position: "absolute", top: 16, bottom: -8, width: 2, opacity: 0.45 },
-  halo: { width: 22, height: 22, borderRadius: 11, opacity: 0.35, marginTop: 16 },
-  core: { position: "absolute", top: 22, width: 10, height: 10, borderRadius: 5 },
+  // docs/DESIGN.md's section-heading marker: an 8 px square turned 45°, no glow or rounding.
+  node: { width: 8, height: 8, marginTop: 23, transform: [{ rotate: "45deg" }] },
   nodeCard: { flex: 1, marginBottom: 12 },
   cardTop: { flexDirection: "row", gap: 12 },
   thumb: { width: 96, height: 54, backgroundColor: "#000" },
