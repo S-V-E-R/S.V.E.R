@@ -102,13 +102,16 @@ export default function AuthScreen({ screen }: { screen: string }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
+    // Where to go after signing in, such as the OBS dock (`/login?next=/dock`). Only a path on this site.
+    const asked = new URLSearchParams(window.location.search).get("next") ?? "";
+    const next = /^\/(?![/\\])/.test(asked) ? asked : "/";
     await run(async () => {
       let result: Reply;
       switch (screen) {
         case "signup": result = await request("signup", { ...values, turnstile_token: botToken }); window.location.assign("/welcome"); break;
         case "oauth-signup": await request("oauth/signup", { ...values, turnstile_token: botToken }); window.location.assign("/welcome"); break;
-        case "login": result = await request("login", values); window.location.assign(result.requires_mfa ? "/mfa" : "/"); break;
-        case "mfa": await request("mfa/login", values); window.location.assign("/"); break;
+        case "login": result = await request("login", values); window.location.assign(result.requires_mfa ? (next === "/" ? "/mfa" : `/mfa?${new URLSearchParams({ next })}`) : next); break;
+        case "mfa": await request("mfa/login", values); window.location.assign(next); break;
         case "forgot": await request("password/forgot", { ...values, turnstile_token: botToken }); setMessage("If that account exists, a recovery email has been queued. Check your inbox and spam folder."); break;
         case "reset": await request("password/reset", { ...values, token: linkToken }); setLinkToken(""); setMessage("Your password has been changed. Sign in again to continue."); break;
         case "verify": result = await request("email/verify", { token: linkToken }); setLinkToken(""); setMessage(result.email_changed ? "Your email address is changed. Notices go there from now on." : "Your email is verified. You’re ready for your next chapter."); break;

@@ -5,6 +5,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 import { GamePicker } from "../../../components/GamePicker";
+import { onAir as airState } from "../../../lib/obs";
 import { StudioAds } from "../../../components/Ads";
 
 /** A new channel's language defaults to the browser's (then "other"). */
@@ -125,12 +126,9 @@ export default function StreamStudio() {
   if (!data || !form) return <><h1>Live stream</h1>{loadError ? <><p role="alert">{loadError}</p><button className="quiet" onClick={load}>Retry</button></> : <p className="loading">Loading your stream…</p>}</>;
   const broadcast = data.broadcast;
   const health = broadcast?.health ?? {};
-  const staleSignal = broadcast?.state === "LIVE" && (!broadcast.observed_at || seenAt - Date.parse(broadcast.observed_at) > 15000);
-  const state = data.disconnect_pending ? "Disconnecting" : staleSignal ? "Signal not confirmed" : ({ STARTING: "Connecting", LIVE: "Live", RECONNECTING: "Reconnecting", ENDED: "Offline" }[broadcast?.state ?? "ENDED"] ?? "Offline");
   const hasDetails = !!data.settings.title.trim() && !!data.settings.category_id;
   const hasKey = !!data.credential && !data.credential.revoked;
-  const onAir = broadcast?.state === "LIVE" && !staleSignal && !data.disconnect_pending;
-  const plain = state === "Offline" ? (hasKey ? "OBS isn't connected yet. Press Start Streaming in OBS" : "OBS isn't connected yet") : state === "Live" ? "You're live" : state === "Connecting" ? "OBS is connecting…" : state === "Reconnecting" ? "Connection dropped. Waiting for OBS to reconnect" : state === "Signal not confirmed" ? "Connected, but no fresh video yet" : state;
+  const { plain, stale: staleSignal, live: onAir } = airState(broadcast, data.disconnect_pending, hasKey, seenAt);
   const usable = data.configured && data.eligible && !loadError;
   const count = Array.from(form.title.trim()).length;
   return <><span className="eyebrow">CREATOR STUDIO / BROADCAST</span><h1>Live stream</h1>
@@ -197,6 +195,7 @@ export default function StreamStudio() {
     </Section>
     <Section title="OBS setup and input health" intro="Use H.264 video and AAC audio, turn B-frames off, and set a one-second keyframe interval.">
       <p>Start testing at 6 Mbps video and 160 Kbps audio, up to 1080p60. The bitrate recommendation is provisional while delivery testing continues. Step-by-step OBS setup and fixes for common problems are in <Link href="/help#obs-setup">Help</Link>.</p>
+      <p><strong>Studio inside OBS:</strong> choose View → Docks → Custom Browser Docks, name it S.V.E.R and paste <code>{`${location.origin}/dock`}</code>. It shows whether you&apos;re live, viewers and these readings, and lets you change the title and category, mark a highlight and test alerts. Sign in with email inside the dock.</p>
       <dl className="setup">
         <div><dt>Video / audio</dt><dd>{health.video_codec ?? "Not measured"} / {health.audio_codec ?? "Not measured"}</dd></div>
         <div><dt>Resolution</dt><dd>{health.width && health.height ? health.width + " × " + health.height : "Not measured"}</dd></div>
