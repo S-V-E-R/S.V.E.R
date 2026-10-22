@@ -6,6 +6,7 @@ import { isFaction, FACTIONS } from "../lib/factions";
 import { Crest } from "../components/Crest";
 import { Avatar } from "../components/Avatar";
 import type { Sizes } from "../lib/types";
+import { useSignInElsewhere } from "../lib/client-api";
 
 type Config = { providers: string[]; turnstile_site_key: string; development: boolean };
 type Me = { username: string; email: string; email_verified: boolean; mfa_enabled: boolean; has_password: boolean; providers: string[]; session_id: string; reauthenticated: boolean; recovery_codes_remaining: number; deletion_due: string | null; pending_email?: string | null };
@@ -73,6 +74,9 @@ export default function AuthScreen({ screen }: { screen: string }) {
   const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [pendingSignup, setPendingSignup] = useState<{ provider: string; username: string }>();
   const form = useRef<HTMLFormElement>(null);
+  const [back, setBack] = useState<string | null>(null);
+  // Docks share cookies: a sign-in in another OBS dock carries this one on to where it was going.
+  useSignInElsewhere(screen === "login" && back !== null, back ?? undefined);
 
   async function loadAccount() {
     const user = await request<Me>("me"); setMe(user);
@@ -87,6 +91,9 @@ export default function AuthScreen({ screen }: { screen: string }) {
     setLinkToken(params.get("token") || "");
     const preferred = new URLSearchParams(window.location.search).get("faction");
     if (isFaction(preferred)) sessionStorage.setItem("preferred-faction", preferred);
+    // Where to go after signing in, such as an OBS dock (`/login?next=/dock`). Only a path on this site.
+    const asked = new URLSearchParams(window.location.search).get("next") ?? "";
+    if (/^\/(?![/\\])/.test(asked)) setBack(asked);
     const providerError = new URLSearchParams(window.location.search).get("error");
     if (providerError) setError(providerError);
     if (window.location.hash || providerError) history.replaceState(null, "", window.location.pathname);
@@ -102,9 +109,7 @@ export default function AuthScreen({ screen }: { screen: string }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
-    // Where to go after signing in, such as the OBS dock (`/login?next=/dock`). Only a path on this site.
-    const asked = new URLSearchParams(window.location.search).get("next") ?? "";
-    const next = /^\/(?![/\\])/.test(asked) ? asked : "/";
+    const next = back ?? "/";
     await run(async () => {
       let result: Reply;
       switch (screen) {
