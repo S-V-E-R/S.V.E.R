@@ -1,10 +1,14 @@
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../src/auth";
 import { factionLabel } from "../src/brand";
 import { Button, Field, Frame, Notice, Screen, inkMuted } from "../src/ui";
+import { webOrigin } from "../src/urls";
+
+// Signup (Turnstile), password recovery and account deletion stay on the website (docs/MOBILE.md).
+const openSite = (path: string) => { void Linking.openURL(`${webOrigin}${path}`); };
 
 export default function SignInScreen() {
   const insets = useSafeAreaInsets();
@@ -53,6 +57,7 @@ export default function SignInScreen() {
               {!account.email_verified ? <Text style={styles.body}>Confirm your email to chat and go live. You can browse and watch now.</Text> : null}
               <Button label="Alerts" kind="quiet" onPress={() => router.push("/alerts")} />
               <Button label={busy ? "Please wait…" : "Log out"} kind="quiet" onPress={() => { void out(); }} disabled={busy} />
+              <Button label="Delete account" kind="quiet" onPress={() => openSite("/account")} />
             </View>
           ) : (
             <View style={styles.stack}>
@@ -68,6 +73,11 @@ export default function SignInScreen() {
                 </>
               )}
               <Button label={busy ? "Please wait…" : needsCode ? "Confirm" : "Log in"} onPress={() => { void submit(); }} disabled={busy} />
+              {needsCode ? null : <>
+                <Button label="Create account" kind="quiet" onPress={() => openSite("/signup")} />
+                <Button label="Forgot password" kind="quiet" onPress={() => openSite("/forgot")} />
+                <Text style={styles.body}>Signed up with Google, Twitch, Discord or Kick? Use Forgot password on the website to add a password, then log in here.</Text>
+              </>}
             </View>
           )}
         </Frame>

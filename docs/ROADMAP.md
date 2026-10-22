@@ -19,7 +19,7 @@ Modules 1 to 5 make the site usable. Several later systems shipped early at the 
 
 The numbered table is also the public roadmap feed. The API embeds it at build time and serves it at `GET /api/roadmap` with `no-store`; the website server-renders it and refreshes every 30 seconds while visible. Update this table when a module starts or passes acceptance, then deploy the API. The page follows that release without a frontend rebuild. Unreleased local edits never appear as live progress. Keep rows 0–9 in order and statuses `Done`, `In progress`, `Started` or `Planned`; the backend tests reject an incomplete or malformed table.
 
-The iOS and Android app in `apps/mobile` is a client of this API. It is not one of the modules above: it does not change discovery, sessions, playback or chat. It can register a phone for the go-live alerts this API already sends. See `apps/mobile/README.md`.
+The iOS and Android app in `apps/mobile` is a client of this API. It is not one of the modules above: it does not change discovery, sessions, playback or chat. It can register a phone for the go-live alerts this API already sends. See [Mobile app](MOBILE.md) and `apps/mobile/README.md`.
 
 ## Site pages
 
