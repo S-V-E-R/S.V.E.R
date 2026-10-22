@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { send } from "../src/api";
 import { useAuth } from "../src/auth";
 import { cookieHeader } from "../src/cookies";
+import { SafetySheet, type SafetyTarget } from "../src/safety";
 import { browserId, loadJar } from "../src/session";
 import { Tag, ink, inkMuted } from "../src/ui";
 import { absolute } from "../src/urls";
@@ -41,6 +42,7 @@ export default function BeaconsScreen() {
   const [height, setHeight] = useState(0);
   const [sound, setSound] = useState(false);
   const [cookie, setCookie] = useState<string | null>(null);
+  const [reporting, setReporting] = useState<SafetyTarget | null>(null);
   const fetching = useRef(false);
 
   // Signed-in playback tickets belong to the account, so the video request carries the session cookie.
@@ -87,7 +89,8 @@ export default function BeaconsScreen() {
           onEndReachedThreshold={3}
           renderItem={({ item, index: i }) => (
             <BeaconCard item={item} height={height} active={i === index && cookie !== null} cookie={cookie ?? ""}
-              sound={sound} onSound={() => setSound(true)} signedIn={!!account} accent={colors.accent} />
+              sound={sound} onSound={() => setSound(true)} signedIn={!!account} accent={colors.accent}
+              onReport={() => setReporting({ type: "beacon", id: item.beacon.id, label: "Beacon", username: item.channel.username, displayName: item.channel.display_name })} />
           )}
           ListEmptyComponent={
             <View style={[styles.empty, { height }]}>
@@ -100,12 +103,15 @@ export default function BeaconsScreen() {
       <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={[styles.back, { top: insets.top + 8 }]}>
         <Text style={{ color: colors.accentLight, fontFamily: "Cinzel_700Bold" }}>Back</Text>
       </Pressable>
+      {/* A blocked creator's Beacons leave the feed now; the server leaves them out of later pages. */}
+      <SafetySheet target={reporting} onClose={() => setReporting(null)}
+        onBlocked={name => setItems(current => current.filter(i => i.channel.username !== name))} />
     </View>
   );
 }
 
-function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, accent }: {
-  item: Item; height: number; active: boolean; cookie: string; sound: boolean; onSound: () => void; signedIn: boolean; accent: string;
+function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, accent, onReport }: {
+  item: Item; height: number; active: boolean; cookie: string; sound: boolean; onSound: () => void; signedIn: boolean; accent: string; onReport: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const { beacon: b, channel: c } = item;
@@ -167,6 +173,9 @@ function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, ac
               <Text style={[styles.railText, { color: accent }]}>Follow</Text>
             </Pressable>
           ) : null}
+          <Pressable accessibilityRole="button" accessibilityLabel="Report or block" onPress={onReport} style={styles.railButton}>
+            <Text style={styles.railText}>Report</Text>
+          </Pressable>
         </View>
       </View>
     </View>

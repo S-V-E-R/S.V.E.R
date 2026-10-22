@@ -7,6 +7,7 @@ import { useAuth } from "../../src/auth";
 import { Chat } from "../../src/chat";
 import { useLoad } from "../../src/load";
 import { HlsPlayer } from "../../src/player";
+import { SafetySheet, type SafetyTarget } from "../../src/safety";
 import type { Live } from "../../src/types";
 import { Button, Frame, Notice, Screen, Tag, inkMuted } from "../../src/ui";
 import { playbackKey } from "../../src/urls";
@@ -20,6 +21,7 @@ export default function WatchScreen() {
   const [error, setError] = useState("");
   const [accepted, setAccepted] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [reporting, setReporting] = useState<SafetyTarget | null>(null);
 
   const load = useCallback(async () => {
     if (!username) return;
@@ -87,6 +89,9 @@ export default function WatchScreen() {
             <Text style={[styles.title, { color: colors.accentLight }]}>{live.title}</Text>
             <Text style={styles.body}>{username} · {live.viewers.toLocaleString()} watching</Text>
             {followButton}
+            {!live.is_owner ? <Button label="Report stream" kind="quiet" onPress={() => setReporting({ type: "live_stream", id: live.broadcast_id, label: "stream", username, displayName: username })} /> : null}
+            {/* Blocking the streamer leaves the stream; the server stops serving it to this account. */}
+            <SafetySheet target={reporting} onClose={() => setReporting(null)} onBlocked={() => { setReporting(null); router.back(); }} />
             {live.mature_blocked ? <Frame><Text style={styles.body}>This stream is labeled mature, so it isn’t available on your account.</Text></Frame> : null}
             {live.banned ? <Frame><Text style={styles.body}>You’re banned from this channel, so the stream isn’t available while you’re signed in.</Text></Frame> : null}
             {warn ? (

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { send } from "./api";
 import { useAuth } from "./auth";
 import { factionColor, factionLabel } from "./brand";
 import { cookieHeader } from "./cookies";
+import { SafetySheet, type SafetyTarget } from "./safety";
 import { loadJar, newId } from "./session";
 import { isChatMessage, type ChatMessage } from "./types";
 import { Button, Field, Frame, Notice, ink, inkDim, inkMuted } from "./ui";
@@ -26,6 +27,9 @@ export function Chat({ username }: { username: string }) {
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reporting, setReporting] = useState<SafetyTarget | null>(null);
+  // Hidden at once after a block; the server leaves them out of history and the socket from then on.
+  const [blocked, setBlocked] = useState<Set<string>>(new Set());
 
   const pull = useCallback(async () => {
     const result = await send<{ messages?: unknown }>("GET", `/api/channels/${encodeURIComponent(username)}/chat`);
@@ -118,8 +122,12 @@ export function Chat({ username }: { username: string }) {
       <Text style={styles.heading}>Chat</Text>
       {error ? <Notice>{error}</Notice> : null}
       <View style={styles.list}>
-        {messages.length === 0 ? <Text style={styles.empty}>No messages yet.</Text> : messages.map(message => <Message key={message.id} message={message} />)}
+        {messages.length === 0 ? <Text style={styles.empty}>No messages yet.</Text> : messages
+          .filter(message => !message.author.username || !blocked.has(message.author.username))
+          .map(message => <Message key={message.id} message={message} onReport={() => setReporting({ type: "chat_message", id: message.id, label: "message", username: message.author.username, displayName: message.author.display_name })} />)}
       </View>
+      {messages.length > 0 ? <Text style={styles.hint}>Press and hold a message to report it or block its author.</Text> : null}
+      <SafetySheet target={reporting} onClose={() => setReporting(null)} onBlocked={name => setBlocked(current => new Set(current).add(name))} />
       {account ? (
         <View style={styles.composer}>
           <Field label="Message" value={body} onChangeText={setBody} multiline onSubmitEditing={() => { void submit(); }} />
@@ -132,19 +140,20 @@ export function Chat({ username }: { username: string }) {
   );
 }
 
-function Message({ message }: { message: ChatMessage }) {
+function Message({ message, onReport }: { message: ChatMessage; onReport: () => void }) {
   const color = factionColor(message.author.faction);
   const side = factionLabel(message.author.faction);
   const role = message.role === "owner" ? "Broadcaster" : message.role === "moderator" ? "Moderator" : message.role === "staff" ? "Staff" : null;
   return (
-    <View style={styles.message}>
+    <Pressable style={styles.message} onLongPress={onReport} accessibilityRole="button" accessibilityHint="Press and hold to report or block"
+      accessibilityActions={[{ name: "longpress", label: "Report or block" }]} onAccessibilityAction={onReport}>
       <Text style={styles.meta}>
         <Text style={{ color }}>{message.author.display_name}</Text>
         {side ? <Text style={styles.dim}> · {side}</Text> : null}
         {role ? <Text style={styles.dim}> · {role}</Text> : null}
       </Text>
       {message.body ? <Text style={styles.body}>{message.body}</Text> : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -157,4 +166,5 @@ const styles = StyleSheet.create({
   dim: { color: inkDim, fontFamily: "Barlow_400Regular" },
   body: { color: ink, fontFamily: "Barlow_400Regular", fontSize: 15, lineHeight: 22 },
   composer: { gap: 12, marginTop: 8 },
+  hint: { color: inkDim, fontFamily: "Barlow_400Regular", fontSize: 13, marginTop: 4 },
 });
