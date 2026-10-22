@@ -72,20 +72,23 @@ pub async fn tick(app: &App) -> Res<()> {
     award_watch(app).await
 }
 /// Watch points for real playback: a signed-in, verified viewer whose lease viewer integrity
-/// counts, on a live stream, once per `watch_seconds` per channel.
+/// counts, on a live stream, once per `watch_seconds` per channel. The same award adds live watch
+/// minutes, which make a follow count (docs/PROFILES.md "Verified followers").
 pub async fn award_watch(app: &App) -> Res<()> {
     let t = &app.config.engagement;
-    sqlx::query("INSERT INTO engagement(channel_id,user_id,balance,earned,last_watch_at)
-        SELECT DISTINCT b.owner_id,u.id,$1::bigint,$1::bigint,now()
+    sqlx::query("INSERT INTO engagement(channel_id,user_id,balance,earned,last_watch_at,watch_minutes)
+        SELECT DISTINCT b.owner_id,u.id,$1::bigint,$1::bigint,now(),$3
         FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id JOIN users u ON l.viewer_key='u:'||u.id
         WHERE l.expires_at>now() AND l.level IN ('counted','trusted') AND b.state IN ('LIVE','RECONNECTING')
             AND u.email_verified AND u.deleted_at IS NULL AND u.id<>b.owner_id
             AND NOT EXISTS(SELECT 1 FROM channel_restrictions r WHERE r.channel_id=b.owner_id AND r.user_id=u.id AND r.kind='ban')
         ON CONFLICT(channel_id,user_id) DO UPDATE SET balance=engagement.balance+EXCLUDED.balance,
-            earned=engagement.earned+EXCLUDED.earned, last_watch_at=now()
+            earned=engagement.earned+EXCLUDED.earned, last_watch_at=now(), watch_minutes=engagement.watch_minutes+EXCLUDED.watch_minutes
         WHERE engagement.last_watch_at IS NULL OR engagement.last_watch_at<=now()-make_interval(secs=>$2)")
         .bind(t.watch_points).bind((t.watch_seconds - 5).max(0) as f64)
+        .bind((t.watch_seconds / 60).max(1) as i32)
         .execute(&app.db).await?;
+    crate::social::count_watched(app).await?;
     // Account XP from the same real playback (docs/PROGRESSION.md).
     crate::progression::award_watch(app).await
 }
@@ -111,7 +114,8 @@ pub(crate) async fn chatted(
         .execute(tx).await?;
     Ok(())
 }
-/// The one-time follow bonus (inside the follow's transaction); refollowing never pays again.
+/// The one-time follow bonus (inside the transaction that makes the follow count); refollowing
+/// never pays again.
 pub(crate) async fn followed(
     tx: &mut PgConnection,
     t: &Tuning,

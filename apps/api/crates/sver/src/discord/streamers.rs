@@ -1860,7 +1860,7 @@ pub async fn milestones(app: &App) -> Res<()> {
     let Some(to) = either(&settings, "go_live", "announcements") else {
         return Ok(());
     };
-    let rows: Vec<(String, i64)> = sqlx::query_as("SELECT a.discord_user,(SELECT count(*) FROM follows f JOIN channel_users c ON c.id=f.follower_id WHERE f.following_id=a.platform_id AND NOT c.internal AND c.deleted_at IS NULL)
+    let rows: Vec<(String, i64)> = sqlx::query_as("SELECT a.discord_user,(SELECT count(*) FROM follows f JOIN channel_users c ON c.id=f.follower_id WHERE f.following_id=a.platform_id AND f.counted_at IS NOT NULL AND NOT c.internal AND c.deleted_at IS NULL)
         FROM discord_stream_accounts a WHERE a.platform='sver' AND a.platform_id IS NOT NULL")
         .fetch_all(&app.db).await?;
     for (user, followers) in rows {

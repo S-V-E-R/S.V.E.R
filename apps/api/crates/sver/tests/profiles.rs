@@ -158,6 +158,11 @@ impl Env {
     async fn sql(&self, query: impl sqlx::SqlSafeStr) {
         sqlx::query(query).execute(&self.app.db).await.unwrap();
     }
+    /// Everyone so far has watched everyone else live long enough for their follows to count
+    /// (docs/PROFILES.md "Verified followers"); tests/streams/verified_followers.rs covers waiting.
+    async fn watched_all(&self) {
+        self.sql("INSERT INTO engagement(channel_id,user_id,watch_minutes) SELECT c.id,f.id,15 FROM users c JOIN users f ON f.id<>c.id ON CONFLICT (channel_id,user_id) DO UPDATE SET watch_minutes=greatest(engagement.watch_minutes,15)").await;
+    }
     async fn count(&self, query: impl sqlx::SqlSafeStr) -> i64 {
         sqlx::query_scalar(query)
             .fetch_one(&self.app.db)
@@ -249,6 +254,12 @@ async fn profiles_acceptance() {
         .unwrap();
     sqlx::migrate!("../../../../migrations")
         .run(&db)
+        .await
+        .unwrap();
+    // Fixture rows inserted straight into follows stand for follows from before verified
+    // followers, which count; the follow endpoint always sets counted_at itself.
+    sqlx::query("ALTER TABLE follows ALTER COLUMN counted_at SET DEFAULT now()")
+        .execute(&db)
         .await
         .unwrap();
     let fake = Router::new()
@@ -745,6 +756,7 @@ async fn follows_council_and_blocks(env: &Env) {
     let (_, carol) = env.user("CarolCasts", true).await;
     let (dave_id, dave) = env.user("DaveDoes", true).await;
     let alice = env.session(&env.id_of("Alice_Plays").await, false).await;
+    env.watched_all().await;
     assert_eq!(
         carol
             .ok("PUT", "/api/follows/alice_plays", Value::Null)
@@ -780,6 +792,7 @@ async fn follows_council_and_blocks(env: &Env) {
     let mut handles = Vec::new();
     for i in 0..8 {
         let (_, fan) = env.user(&format!("Fan_{i}x"), true).await;
+        env.watched_all().await;
         handles.push(tokio::spawn(async move {
             fan.status("PUT", "/api/follows/DaveDoes", Value::Null)
                 .await
@@ -4685,6 +4698,7 @@ async fn persona_pass(env: &Env) {
     );
 
     // The relationship line is about the visitor only.
+    env.watched_all().await;
     guest
         .ok("PUT", "/api/follows/PersonaHost", Value::Null)
         .await;

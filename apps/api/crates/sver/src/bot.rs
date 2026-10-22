@@ -341,12 +341,15 @@ pub async fn record_raid(
 }
 /// Follower counts the bot celebrates, each once per channel.
 pub const MILESTONES: [i64; 10] = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
-/// After a follow (in its transaction): a milestone line the first time the count reaches one.
+/// After a follow starts counting (in its transaction): a milestone line the first time the
+/// counted total reaches one.
 pub async fn follower_milestone(db: &mut PgConnection, channel: &str) -> Res<()> {
-    let followers: i64 = sqlx::query_scalar("SELECT count(*) FROM follows WHERE following_id=$1")
-        .bind(channel)
-        .fetch_one(&mut *db)
-        .await?;
+    let followers: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM follows WHERE following_id=$1 AND counted_at IS NOT NULL",
+    )
+    .bind(channel)
+    .fetch_one(&mut *db)
+    .await?;
     if !MILESTONES.contains(&followers) {
         return Ok(());
     }

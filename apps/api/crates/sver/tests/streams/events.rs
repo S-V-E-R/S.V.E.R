@@ -73,6 +73,7 @@ pub async fn exercise(e: &Env) {
 
     // A follow: the count is public, the follower's name only on the private topic.
     let fan = person(e, "ev-fan", "EvFan", true).await;
+    e.watched_all().await;
     call(e, "PUT", "/api/follows/Streamer", Some(&fan), Value::Null).await;
     sver::events::drain(&e.app).await.unwrap();
     let count = next_json(&mut public).await;
@@ -354,6 +355,7 @@ pub async fn exercise(e: &Env) {
     // A follow reaches the person's hook on both topics, signed.
     e.fake.lock().unwrap().hooks.clear();
     let fan2 = person(e, "ev-fan2", "EvFanTwo", true).await;
+    e.watched_all().await;
     call(e, "PUT", "/api/follows/Streamer", Some(&fan2), Value::Null).await;
     sver::events::deliver_hooks(&e.app).await.unwrap();
     {

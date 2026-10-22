@@ -99,7 +99,7 @@ pub async fn metrics(db: &mut PgConnection, owner: &str) -> Res<Metrics> {
         (SELECT count(*) FROM broadcasts WHERE owner_id=$1 AND started_at>now()-interval '90 days') AS streams,
         (SELECT coalesce(sum(extract(epoch FROM coalesce(ended_at,now())-started_at)),0)::float8/3600 FROM broadcasts WHERE owner_id=$1 AND started_at>now()-interval '90 days') AS hours,
         (SELECT coalesce(avg(s.trusted),0)::float8 FROM integrity_snapshots s JOIN broadcasts b ON b.id=s.broadcast_id WHERE b.owner_id=$1 AND s.taken_at>now()-interval '90 days') AS avg_viewers,
-        (SELECT count(*) FROM follows WHERE following_id=$1) AS followers,
+        (SELECT count(*) FROM follows WHERE following_id=$1 AND counted_at IS NOT NULL) AS followers,
         (SELECT count(*) FROM channel_subs WHERE channel_id=$1 AND paid_through>now()) AS subscribers,
         (SELECT count(*) FROM creator_viewers WHERE owner_id=$1 AND last_seen>now()-interval '90 days') AS unique_viewers,
         (SELECT count(DISTINCT (started_at AT TIME ZONE 'America/New_York')::date) FROM broadcasts WHERE owner_id=$1 AND started_at>now()-interval '90 days') AS days_active")

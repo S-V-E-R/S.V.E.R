@@ -6,12 +6,17 @@ import { Section, Status, type SaveState } from "../../../components/Form";
 import type { Readiness } from "../../../components/Readiness";
 import { send, useLoad } from "../../../lib/client-api";
 
-/** Channel overview: the page readiness checklist (docs/PROFILES.md, P3). */
+type Followers = { counted: number; pending: number; watch_minutes: number };
+
+/** Channel overview: the page readiness checklist (docs/PROFILES.md, P3) and verified followers. */
 export default function ChannelOverview() {
   const [data, setData] = useState<Readiness | null>(null);
+  const [followers, setFollowers] = useState<Followers | null>(null);
   const [state, setState] = useState<SaveState>({});
   const load = useCallback(async () => { const r = await send<Readiness>("GET", "/api/me/readiness"); if (r.ok) setData(r.data); else setState(r); }, []);
   useLoad(load);
+  const loadFollowers = useCallback(async () => { const r = await send<Followers>("GET", "/api/me/followers"); if (r.ok) setFollowers(r.data); }, []);
+  useLoad(loadFollowers);
   async function remind(dismissed: boolean) {
     const r = await send("PUT", "/api/me/readiness", { dismissed });
     setState(r.ok ? { saved: dismissed ? "Reminder hidden." : "The reminder is back on your Studio pages." } : r);
@@ -29,5 +34,8 @@ export default function ChannelOverview() {
       {!data.complete && (data.dismissed ? <button type="button" className="small quiet" onClick={() => remind(false)}>Show the reminder again</button> : <button type="button" className="small quiet" onClick={() => remind(true)}>Hide the reminder</button>)}
       <Status state={state} />
     </Section>
+    {followers && <Section title="Followers" intro={`A follow counts once that person has watched you live for ${followers.watch_minutes} minutes. Only counted followers show on your page.`}>
+      <p className="readiness-count"><strong>{followers.counted.toLocaleString()}</strong> counted · {followers.pending.toLocaleString()} waiting on watch time</p>
+    </Section>}
   </>;
 }

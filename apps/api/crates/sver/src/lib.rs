@@ -569,6 +569,7 @@ fn profile_routes() -> Router<App> {
             put(so::follow).delete(so::unfollow),
         )
         .route("/api/me/following", get(so::my_following))
+        .route("/api/me/followers", get(so::my_followers))
         .route("/api/me/suggestions", get(so::suggestions))
         .route(
             "/api/me/profile",

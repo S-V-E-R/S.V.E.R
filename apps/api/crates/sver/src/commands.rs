@@ -60,7 +60,7 @@ async fn fill(app: &App, channel: &str, user: Option<&str>, text: &str) -> Res<S
     let (name, started, game, followers): (String, Option<chrono::DateTime<chrono::Utc>>, Option<String>, i64) = sqlx::query_as("SELECT c.display_name,
             (SELECT started_at FROM broadcasts WHERE owner_id=c.id AND state IN ('LIVE','RECONNECTING') ORDER BY started_at DESC LIMIT 1),
             (SELECT k.name FROM stream_settings s JOIN stream_categories k ON k.id=s.category_id WHERE s.owner_id=c.id),
-            (SELECT count(*) FROM follows WHERE following_id=c.id)
+            (SELECT count(*) FROM follows WHERE following_id=c.id AND counted_at IS NOT NULL)
         FROM channel_users c WHERE c.id=$1")
         .bind(channel)
         .fetch_one(&app.db)

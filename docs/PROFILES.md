@@ -259,6 +259,14 @@ All profile text is NFC-normalized and trimmed. Control characters, bidi overrid
 - No notifications, emails, chat messages or activity entries come from follows in this module. Legacy per-follow notification preferences are not imported.
 - **Erasure:** follows in both directions are deleted.
 
+### Verified followers
+Added October 21, 2026, to make bought and bot follows worthless.
+- A follow **counts** once the follower has watched that channel live for 15 minutes. Watch time comes from the same award as watch Engagement Valor: a signed-in, email-verified viewer on a counted or trusted playback lease of a live broadcast. A follow made after the follower already has 15 minutes counts at once; otherwise it counts within a minute of crossing 15.
+- Until then the follow is **pending**: it works for the follower (their Following page, go-live alerts, followers-only chat after 10 minutes), but it is left out of the channel's public follower count and follower list, the bot's `{followers}`, overlay follower goals, the developer API, creator tier metrics and the Discord milestone posts.
+- Everything a follow triggers waits until it counts: the follow alert and overlay event, the bot's greeting, follower milestones and the one-time follow bonus (and the "follow a new channel" order it completes).
+- Follows made before verified followers launched, including the legacy import, count.
+- The owner sees both numbers on Studio → Channel overview (`GET /api/me/followers`: counted, pending and the threshold).
+
 ## War Council (Top 8)
 - **Rules:**
   - Up to 8 members in positions 1-8, with no duplicates and not including yourself.

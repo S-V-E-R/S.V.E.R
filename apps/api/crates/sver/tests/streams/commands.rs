@@ -316,6 +316,7 @@ async fn part_two(e: &Env) {
     );
 
     // A follow is recorded for the bot to greet.
+    e.watched_all().await;
     chat::call(
         e,
         "PUT",

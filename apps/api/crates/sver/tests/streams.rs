@@ -114,6 +114,8 @@ mod switches;
 mod teams;
 #[path = "streams/username_claims.rs"]
 mod username_claims;
+#[path = "streams/verified_followers.rs"]
+mod verified_followers;
 #[path = "streams/videos.rs"]
 mod videos;
 #[path = "streams/wall_seats.rs"]
@@ -387,6 +389,11 @@ impl Env {
     async fn sql(&self, query: impl sqlx::SqlSafeStr) {
         sqlx::query(query).execute(&self.app.db).await.unwrap();
     }
+    /// Everyone so far has watched everyone else live long enough for their follows to count
+    /// (docs/PROFILES.md "Verified followers"); tests/streams/verified_followers.rs covers waiting.
+    async fn watched_all(&self) {
+        self.sql("INSERT INTO engagement(channel_id,user_id,watch_minutes) SELECT c.id,f.id,15 FROM users c JOIN users f ON f.id<>c.id ON CONFLICT (channel_id,user_id) DO UPDATE SET watch_minutes=greatest(engagement.watch_minutes,15)").await;
+    }
 }
 
 async fn isolated_database() -> (sqlx::PgPool, sqlx::PgPool, String) {
@@ -424,6 +431,12 @@ async fn isolated_database() -> (sqlx::PgPool, sqlx::PgPool, String) {
         .unwrap();
     sqlx::migrate!("../../../../migrations")
         .run(&db)
+        .await
+        .unwrap();
+    // Fixture rows inserted straight into follows stand for follows from before verified
+    // followers, which count; the follow endpoint always sets counted_at itself.
+    sqlx::query("ALTER TABLE follows ALTER COLUMN counted_at SET DEFAULT now()")
+        .execute(&db)
         .await
         .unwrap();
     (admin, db, schema)
@@ -619,6 +632,7 @@ async fn exercise(e: &Env) {
     supporters::exercise(e).await;
     subs::exercise(e).await;
     engagement::exercise(e).await;
+    verified_followers::exercise(e).await;
     boards::exercise(e).await;
     crowd::exercise(e).await;
     moments::exercise(e).await;

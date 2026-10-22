@@ -417,8 +417,9 @@ pub async fn follows(db: &mut PgConnection, viewer: &str, channel: &str) -> Res<
 }
 
 pub async fn follower_counts(db: &mut PgConnection, user_id: &str) -> Res<(i64, i64)> {
-    // Exact counts excluding internal, deleted and held accounts.
-    Ok(sqlx::query_as("SELECT (SELECT count(*) FROM follows f JOIN channel_users c ON c.id=f.follower_id WHERE f.following_id=$1 AND NOT c.internal AND c.deleted_at IS NULL),(SELECT count(*) FROM follows f JOIN channel_users c ON c.id=f.following_id WHERE f.follower_id=$1 AND NOT c.internal AND c.deleted_at IS NULL)")
+    // Exact counts excluding internal, deleted and held accounts; followers only once counted
+    // (docs/PROFILES.md "Verified followers").
+    Ok(sqlx::query_as("SELECT (SELECT count(*) FROM follows f JOIN channel_users c ON c.id=f.follower_id WHERE f.following_id=$1 AND f.counted_at IS NOT NULL AND NOT c.internal AND c.deleted_at IS NULL),(SELECT count(*) FROM follows f JOIN channel_users c ON c.id=f.following_id WHERE f.follower_id=$1 AND NOT c.internal AND c.deleted_at IS NULL)")
         .bind(user_id)
         .fetch_one(&mut *db)
         .await?)
