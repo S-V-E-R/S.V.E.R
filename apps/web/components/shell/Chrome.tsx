@@ -4,11 +4,14 @@ import { usePathname } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CloseIcon, MenuIcon, SearchIcon } from "./Icons";
+import { Logo, type LogoStyle } from "../LogoStyle";
 
 // Sign-in screens get no sidebar and a minimal top bar (docs/DESIGN.md "Pages": sign up, log in, …).
 const AUTH_ROUTES = new Set(["login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "welcome", "choose-side", "choose-faction"]);
 
 type Props = {
+  /** The signed-in player's optional logo badge. */
+  logo?: LogoStyle;
   /** Right side of the full top bar: notifications and player chip, or Log in and Enlist. */
   actions: React.ReactNode;
   sidebar: React.ReactNode;
@@ -21,7 +24,7 @@ type Props = {
  * Client-side only for the pathname (auth screens) and the phone drawer; the parts inside are
  * rendered on the server and passed in.
  */
-export function Chrome({ actions, sidebar, footer, children }: Props) {
+export function Chrome({ logo, actions, sidebar, footer, children }: Props) {
   const pathname = usePathname() ?? "/";
   const first = pathname.split("/")[1] ?? "";
   // The drawer remembers the path it was opened on, so any navigation closes it without an effect.
@@ -50,7 +53,7 @@ export function Chrome({ actions, sidebar, footer, children }: Props) {
   if (AUTH_ROUTES.has(first)) {
     return <>
       <header className="topbar minimal">
-        <Link href="/" className="logo">S.V.E.R</Link>
+        <Logo style={logo} />
         <span className="topbar-space" />
         {/^(welcome|choose-side|choose-faction)$/.test(first) ? null : first === "login"
           ? <span className="topbar-note">New here? <Link href="/signup">Enlist</Link></span>
@@ -65,7 +68,7 @@ export function Chrome({ actions, sidebar, footer, children }: Props) {
   return <>
     <header className="topbar">
       <button ref={toggle} type="button" className="menu-toggle" aria-controls="site-sidebar" aria-expanded={open} aria-label={open ? "Close menu" : "Open menu"} onClick={() => setOpenOn(open ? null : pathname)}>{open ? <CloseIcon /> : <MenuIcon />}</button>
-      <Link href="/" className="logo">S.V.E.R</Link>
+      <Logo style={logo} />
       <span className="topbar-space" />
       <form className="search" role="search" action="/search">
         <SearchIcon />

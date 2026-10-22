@@ -1799,6 +1799,36 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         assert!(sver::text::valid_mood(p.as_str().unwrap()), "{p}");
     }
     assert_eq!(me["show_linked_accounts"], false);
+    // Logo style: optional, default until chosen, and only the three styles.
+    assert_eq!(me["logo_style"], "default");
+    assert_eq!(
+        owner.ok("GET", "/api/auth/me", Value::Null).await["logo_style"],
+        "default"
+    );
+    owner
+        .ok("PUT", "/api/me/logo-style", json!({"logo_style": "female"}))
+        .await;
+    assert_eq!(
+        owner.ok("GET", "/api/me/profile", Value::Null).await["logo_style"],
+        "female"
+    );
+    assert_eq!(
+        owner.ok("GET", "/api/auth/me", Value::Null).await["logo_style"],
+        "female"
+    );
+    assert_eq!(
+        owner
+            .status("PUT", "/api/me/logo-style", json!({"logo_style": "other"}))
+            .await,
+        StatusCode::BAD_REQUEST
+    );
+    owner
+        .ok(
+            "PUT",
+            "/api/me/logo-style",
+            json!({"logo_style": "default"}),
+        )
+        .await;
     owner
         .ok(
             "PATCH",
