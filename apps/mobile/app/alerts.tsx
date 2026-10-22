@@ -23,6 +23,7 @@ function phoneLine(phone: PushState | null, registered: boolean): string {
   if (phone.state === "on") return "This phone is registered.";
   if (phone.state === "denied") return "Notifications are blocked for S.V.E.R in the phone's settings.";
   if (phone.state === "simulator") return "A simulator cannot register for push. Use a phone.";
+  if (phone.state === "expo-go") return "Expo Go on Android cannot receive push. Use a development or store build.";
   if (phone.state === "unconfigured") return "This build has no Expo project id yet, so it cannot register.";
   if (phone.state === "failed") return phone.message;
   return "This phone is not registered.";

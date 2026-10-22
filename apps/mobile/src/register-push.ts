@@ -3,8 +3,9 @@ import { router } from "expo-router";
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Linking from "expo-linking";
-import * as Notifications from "expo-notifications";
-import { AndroidImportance } from "expo-notifications";
+import { isRunningInExpoGo } from "expo";
+import { Platform } from "react-native";
+import type * as NotificationsModule from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { send } from "./api";
 import { isExpoPushToken, notificationTarget } from "./push";
@@ -13,7 +14,13 @@ import { webOrigin } from "./urls";
 const TOKEN = "sver.expo";
 const OPENED = "sver.expo-opened";
 
-Notifications.setNotificationHandler({
+// Expo Go on Android has no remote push module (SDK 53+): importing expo-notifications there
+// throws at launch, so it loads only where push can work and the rest of the app runs without it.
+const pushless = Platform.OS === "android" && isRunningInExpoGo();
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- a conditional native module load
+const Notifications: typeof NotificationsModule | null = pushless ? null : require("expo-notifications");
+
+Notifications?.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
     shouldShowList: true,
@@ -27,6 +34,7 @@ export type PushState =
   | { state: "off" }
   | { state: "denied" }
   | { state: "simulator" }
+  | { state: "expo-go" }
   | { state: "unconfigured" }
   | { state: "failed"; message: string };
 
@@ -54,6 +62,7 @@ async function storedToken(): Promise<string | null> {
 export async function registerDevice(): Promise<PushState> {
   const id = projectId();
   if (!id) return { state: "unconfigured" };
+  if (!Notifications) return { state: "expo-go" };
   if (!Device.isDevice) return { state: "simulator" };
   const current = await Notifications.getPermissionsAsync();
   let status = current.status;
@@ -61,11 +70,11 @@ export async function registerDevice(): Promise<PushState> {
   if (status !== "granted") return { state: "denied" };
   await Notifications.setNotificationChannelAsync("live", {
     name: "Go-live alerts",
-    importance: AndroidImportance.HIGH,
+    importance: Notifications.AndroidImportance.HIGH,
   });
   await Notifications.setNotificationChannelAsync("alerts", {
     name: "Alerts",
-    importance: AndroidImportance.DEFAULT,
+    importance: Notifications.AndroidImportance.DEFAULT,
   });
   try {
     const token = (await Notifications.getExpoPushTokenAsync({ projectId: id })).data;
@@ -102,7 +111,7 @@ function openUrl(url: string) {
   else void Linking.openURL(`${webOrigin}${target.path}`);
 }
 
-async function openResponse(response: Notifications.NotificationResponse | null) {
+async function openResponse(response: NotificationsModule.NotificationResponse | null) {
   if (!response) return;
   const id = response.notification.request.identifier;
   const seen = await SecureStore.getItemAsync(OPENED).catch(() => null);
@@ -115,6 +124,7 @@ async function openResponse(response: Notifications.NotificationResponse | null)
 /** Opens the channel when a go-live alert is tapped. Other alerts open the website. */
 export function usePushOpen() {
   useEffect(() => {
+    if (!Notifications) return;
     const sub = Notifications.addNotificationResponseReceivedListener(response => {
       void openResponse(response);
     });
