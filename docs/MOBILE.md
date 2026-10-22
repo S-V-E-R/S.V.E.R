@@ -20,7 +20,7 @@ Decided by Joe on October 21, 2026:
 
 1. **Log in**: password, then the authenticator or recovery code. Links to create an account, recover a password and delete the account.
 2. **MAGNet**: the live rotation in API order, the featured stream, search, and recently live channels when nothing is on.
-3. **Watch**: player, title, category, viewers, mature warning, hosting, and chat (read for everyone, send when signed in).
+3. **Watch**: player, title, category, viewers, mature warning, hosting, and chat (read for everyone, send when signed in). Below the player: the SVER Plays controller on Plays channels, and CrowdSync (`docs/CROWDSYNC.md`): the channel's board, polls, predictions, counters, Faction Rally and Surge, with board effects over the video timed to this phone's distance from live. Board presses and predictions spend earned Engagement Valor only. **Skills are not offered in the app**: they spend Purchased Valor, which the stores treat as an in-app purchase. Chat shows a Skill when someone plays one from the website. Owner and moderator tools (starting polls, resolving, counters, panic) stay on the website.
 4. **Alerts**: the go-live push switch and this phone's registration.
 
 ## After v1
