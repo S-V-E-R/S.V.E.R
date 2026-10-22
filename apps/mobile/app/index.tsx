@@ -91,6 +91,7 @@ export default function MagnetScreen() {
           </View>
         </View>
         <Text style={styles.lead}>Every live stream gets a turn here, whether it has 3 viewers or 3,000.</Text>
+        <Button label="Beacons" kind="quiet" onPress={() => router.push("/beacons")} />
         {account?.deletion_due ? <Notice>This account is pending deletion.</Notice> : null}
         {error ? <Notice>{error}</Notice> : null}
         <View style={styles.search}>
