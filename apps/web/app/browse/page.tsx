@@ -12,7 +12,8 @@ import { AdSlot } from "../../components/Ads";
 import "../../styles/home.css";
 
 
-export const metadata = { title: "Browse | S.V.E.R" };
+import { publicMeta } from "../../lib/seo";
+export const metadata = publicMeta("Browse | S.V.E.R", "Live streams by category. Every channel gets a turn. Nothing here is ordered by viewer count.", "/browse");
 
 /**
  * Browse (docs/DESIGN.md "Browse"; docs/MAGNET.md "Browse"): genre tabs grouped by holding faction,

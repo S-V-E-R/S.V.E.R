@@ -35,7 +35,7 @@ function session(key: string, make: () => string) {
  * Swipe, scroll or use the arrow keys to move. Videos play muted until tapped, then stay unmuted
  * for the rest of the session. The order comes from the server and never reads counts or money.
  */
-export function BeaconFeed({ initial, start = null, signedIn, gateId = null, faction = null }: { initial: BeaconFeedPage | null; start?: BeaconItem | null; signedIn: boolean; gateId?: string | null; faction?: string | null }) {
+export function BeaconFeed({ initial, start = null, signedIn, gateId = null, faction = null, credit = null }: { initial: BeaconFeedPage | null; start?: BeaconItem | null; signedIn: boolean; gateId?: string | null; faction?: string | null; credit?: string | null }) {
   const [items, setItems] = useState<BeaconItem[]>(() => {
     const rest = (initial?.items ?? []).filter(i => i.beacon.id !== start?.beacon.id);
     return start ? [start, ...rest] : rest;
@@ -139,7 +139,7 @@ export function BeaconFeed({ initial, start = null, signedIn, gateId = null, fac
       onWheel={e => { const now = Date.now(); if (Math.abs(e.deltaY) < 30 || now - wheel.current < 600) return; wheel.current = now; move(e.deltaY > 0 ? 1 : -1); }}>
       {ad ? <AdFrame ad={ad} className="ad-feed-card" muted={!(sound || soundHere)} /> : current
         && !(gateId && !ageAck)
-        ? <BeaconPlayer key={current.beacon.id} item={current} sound={sound || soundHere} onUnmute={unmute} ageAck={ageAck} signedIn={signedIn} />
+        ? <BeaconPlayer key={current.beacon.id} item={current} sound={sound || soundHere} onUnmute={unmute} ageAck={ageAck} signedIn={signedIn} credit={credit} />
         : gateId && !ageAck
           ? <div className="beacon-empty panel"><p>This Beacon is for viewers aged 18 and over.</p><button type="button" onClick={() => void confirmAge()}>I am 18 or older</button> <Link href="/beacons" className="button quiet">Back to Beacons</Link></div>
           : <div className="beacon-empty panel">
@@ -157,7 +157,7 @@ export function BeaconFeed({ initial, start = null, signedIn, gateId = null, fac
   </div>;
 }
 
-function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: BeaconItem; sound: boolean; onUnmute: () => void; ageAck: boolean; signedIn: boolean }) {
+function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn, credit = null }: { item: BeaconItem; sound: boolean; onUnmute: () => void; ageAck: boolean; signedIn: boolean; credit?: string | null }) {
   const router = useRouter();
   const video = useRef<HTMLVideoElement>(null);
   const [liked, setLiked] = useState(item.liked);
@@ -251,7 +251,7 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
       <button type="button" className="beacon-action" onClick={() => void like()} aria-pressed={liked} aria-label={liked ? "Unlike" : "Like"}><span aria-hidden="true">{liked ? "♥" : "♡"}</span><span>{compact(likes)}</span></button>
       <span className="beacon-action beacon-stat" aria-label={`${b.views} views`}><svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12"><path d="M3 2l7 4-7 4z" fill="currentColor" /></svg><span>{compact(b.views)}</span></span>
       <button type="button" className="beacon-action" onClick={() => setPanel(panel === "comments" ? null : "comments")} aria-expanded={panel === "comments"} aria-label="Comments"><span aria-hidden="true">💬</span><span>Comments</span></button>
-      <ShareButton path={`/beacons/${b.id}`} title={b.title} className="beacon-action" label={<><span aria-hidden="true">↗</span><span>Share</span></>} />
+      <ShareButton path={`/beacons/${b.id}`} title={b.title} className="beacon-action" credit={credit} label={<><span aria-hidden="true">↗</span><span>Share</span></>} />
       <button type="button" className="beacon-action" onClick={() => setPanel(panel === "more" ? null : "more")} aria-expanded={panel === "more"} aria-label="More actions"><span aria-hidden="true">⋯</span><span>More</span></button>
     </aside>
     {panel === "more" && <div className="beacon-panel panel" role="dialog" aria-label="More actions">

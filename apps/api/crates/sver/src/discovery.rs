@@ -700,11 +700,31 @@ async fn admin_end(
     admin_list(State(app), jar).await
 }
 
+/// Usernames, public videos and guilds for the sitemap. Empty profiles stay out.
+/// ponytail: 10,000 of each; a sitemap index if the directory outgrows that.
+async fn sitemap(State(app): State<App>) -> Res<Json<Value>> {
+    let channels: Vec<String> = sqlx::query_scalar("SELECT c.username FROM channel_users c WHERE c.eligible AND (c.bio<>'' OR c.avatar_key IS NOT NULL OR c.banner_key IS NOT NULL OR EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=c.id) OR EXISTS(SELECT 1 FROM videos v WHERE v.owner_id=c.id AND v.visibility='PUBLIC' AND v.status='READY' AND v.approval='APPROVED' AND NOT v.mature AND (v.expires_at IS NULL OR v.expires_at>now()))) ORDER BY lower(c.username) LIMIT 10000")
+        .fetch_all(&app.db).await?;
+    let videos: Vec<(String, String)> = sqlx::query_as("SELECT id, kind FROM videos WHERE visibility='PUBLIC' AND status='READY' AND approval='APPROVED' AND NOT mature AND (expires_at IS NULL OR expires_at>now()) AND owner_id IS NOT NULL ORDER BY created_at DESC LIMIT 10000")
+        .fetch_all(&app.db).await?;
+    let guilds: Vec<String> = sqlx::query_scalar(
+        "SELECT slug FROM guilds WHERE status='ACTIVE' ORDER BY lower(slug) LIMIT 2000",
+    )
+    .fetch_all(&app.db)
+    .await?;
+    Ok(Json(json!({
+        "channels": channels,
+        "videos": videos.into_iter().map(|(id, kind)| json!({"id": id, "kind": kind})).collect::<Vec<_>>(),
+        "guilds": guilds,
+    })))
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/discovery/home", get(home))
         .route("/api/discovery/live", get(live))
         .route("/api/discovery/browse", get(browse))
+        .route("/api/discovery/sitemap", get(sitemap))
         .route("/api/discovery/thumbnails/{id}", get(thumbnail))
         .route("/api/search", get(search))
         .route("/api/channels/{username}/suggestions", get(suggestions))

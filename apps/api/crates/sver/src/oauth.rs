@@ -625,6 +625,8 @@ pub struct FinishSignup {
     username: String,
     date_of_birth: String,
     turnstile_token: String,
+    #[serde(rename = "ref", default)]
+    referrer: String,
 }
 pub async fn finish_signup(
     State(app): State<App>,
@@ -655,6 +657,7 @@ pub async fn finish_signup(
         identity.verified,
     )
     .await?;
+    auth::attach_referral(&mut tx, &user.id, &input.referrer).await?;
     sqlx::query("INSERT INTO identities(provider,subject,user_id,handle) VALUES($1,$2,$3,$4)")
         .bind(&pending.provider)
         .bind(identity.subject)

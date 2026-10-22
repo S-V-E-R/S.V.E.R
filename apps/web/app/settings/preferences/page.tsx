@@ -10,9 +10,11 @@ type Preferences = { skip_mature_warning: boolean; adult: boolean; languages: st
 export default function PreferencesPage() {
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [message, setMessage] = useState("");
+  const [enlisted, setEnlisted] = useState<number | null>(null);
   const load = useCallback(async () => {
-    const result = await send<Preferences>("GET", "/api/me/preferences");
+    const [result, referrals] = await Promise.all([send<Preferences>("GET", "/api/me/preferences"), send<{ enlisted: number }>("GET", "/api/auth/referrals")]);
     if (result.ok) setPrefs(result.data); else setMessage(result.error);
+    if (referrals.ok) setEnlisted(referrals.data.enlisted);
   }, []);
   useLoad(load);
   async function save(change: Partial<Preferences>) {
@@ -31,6 +33,7 @@ export default function PreferencesPage() {
       <label className="checkbox"><input type="checkbox" checked={!prefs.ads_off} onChange={event => { if (event.target.checked || window.confirm(ADS_OFF_WARNING)) void save({ ads_off: !event.target.checked }); }} /> Show me ads</label>
       {prefs.ads_off && <p className="muted small">Ads are off. You don&apos;t see any and don&apos;t earn Ad Valor.</p>}
     </section>}
+    {enlisted !== null && <section className="panel"><h2>Links you shared</h2><p>{enlisted === 1 ? "1 person enlisted from a link with your username." : `${enlisted.toLocaleString()} people enlisted from a link with your username.`}</p><p className="muted small">That number is only for you. It does not change who gets seen.</p></section>}
     {message && <p role="status" className="form-message">{message}</p>}
   </>;
 }

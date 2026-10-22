@@ -11,10 +11,14 @@ import { VideoGrid } from "../components/VideoGrid";
 import type { VideoCard } from "../lib/videos";
 import { BeaconGrid } from "../components/BeaconGrid";
 import type { BeaconItem } from "../lib/beacons";
+import type { Metadata } from "next";
 import { FrontLine } from "../components/WarStanding";
+import { publicMeta } from "../lib/seo";
 import { SeasonReveal } from "../components/SeasonReveal";
 import { TerritoryGrid, type BrowseGenre } from "../components/Territories";
 import type { War } from "../lib/war";
+
+export const metadata: Metadata = publicMeta("S.V.E.R — Find Your People. Forge Your Legacy.", "A live streaming platform built on community. Choose your faction, grow with your people, and get discovered: every live stream gets a fair turn.", "/");
 
 type Spotlight = { kind: "staff" | "first_stream" | "returning"; reason: string; stream: LiveCard | null; user?: { username: string; display_name: string } };
 type Home = { live: LiveCard[]; following: LiveCard[]; faction: LiveCard[] | null; fresh: LiveCard[]; spotlights: Spotlight[]; recent: Recent[] };

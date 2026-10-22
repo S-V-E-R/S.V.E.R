@@ -2,6 +2,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Turnstile } from "../components/Turnstile";
+import { storedReferral } from "../components/ReferralCapture";
 import { isFaction, FACTIONS } from "../lib/factions";
 import { Crest } from "../components/Crest";
 import { Avatar } from "../components/Avatar";
@@ -105,8 +106,8 @@ export default function AuthScreen({ screen }: { screen: string }) {
     await run(async () => {
       let result: Reply;
       switch (screen) {
-        case "signup": result = await request("signup", { ...values, turnstile_token: botToken }); window.location.assign("/welcome"); break;
-        case "oauth-signup": await request("oauth/signup", { ...values, turnstile_token: botToken }); window.location.assign("/welcome"); break;
+        case "signup": result = await request("signup", { ...values, turnstile_token: botToken, ref: storedReferral() || undefined }); window.location.assign("/welcome"); break;
+        case "oauth-signup": await request("oauth/signup", { ...values, turnstile_token: botToken, ref: storedReferral() || undefined }); window.location.assign("/welcome"); break;
         case "login": result = await request("login", values); window.location.assign(result.requires_mfa ? "/mfa" : "/"); break;
         case "mfa": await request("mfa/login", values); window.location.assign("/"); break;
         case "forgot": await request("password/forgot", { ...values, turnstile_token: botToken }); setMessage("If that account exists, a recovery email has been queued. Check your inbox and spam folder."); break;

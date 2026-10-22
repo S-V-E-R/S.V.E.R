@@ -436,6 +436,7 @@ pub fn router(app: App) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/mfa/login", post(auth::mfa_login))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/referrals", get(auth::referrals))
         .route("/api/auth/logout", post(auth::logout))
         .route(
             "/api/auth/sessions",
