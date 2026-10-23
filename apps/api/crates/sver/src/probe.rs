@@ -238,6 +238,13 @@ async fn thumbnail(app: &App, broadcast: &str, ts: Vec<u8>) -> Res<()> {
     let Some(image) = snapshot(ts).await else {
         return Ok(());
     };
+    // Game detection (opted-in channels only) never fails the still itself.
+    if crate::streams::detect::still(app, broadcast, &image)
+        .await
+        .is_err()
+    {
+        eprintln!("detect_event=check outcome=retry");
+    }
     let key = format!("thumbs/{broadcast}/{}.webp", chrono::Utc::now().timestamp());
     if app
         .config
