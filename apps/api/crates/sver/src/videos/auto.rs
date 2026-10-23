@@ -2,7 +2,9 @@
 //! moment, game-agnostic so they work for consoles on capture cards too:
 //! - room moments: MAGNet's own signals (chat or follows well above the stream's normal), checked
 //!   for every live stream rather than only when a lane features it;
-//! - loud moments: a recorded segment's audio well above the stream's last 3 minutes.
+//! - loud moments: a recorded segment's audio well above the stream's last 3 minutes;
+//! - MW4 wins: Call of Duty: Modern Warfare 4's own VICTORY and ROUND WIN screens, recognized with
+//!   the game detection model (CLIP) against labeled examples, so the clip is the fight that won it.
 //!
 //! Each becomes a clip of the last 35 seconds that waits for the streamer's approval, through the
 //! same path as MAGNet spotlights. Streamers switch it off in Studio → Videos & clips.
@@ -50,14 +52,34 @@ pub async fn tick(app: &App) -> Res<()> {
     Ok(())
 }
 
+#[derive(sqlx::FromRow)]
+struct Recording {
+    broadcast_id: String,
+    owner_id: Option<String>,
+    auto_clips: bool,
+    category: Option<String>,
+    detect_area: Option<Vec<f32>>,
+}
 /// Called with each recorded segment (worker SEGMENT job). Never holds up the recording: a decode
 /// problem only skips the check.
 pub async fn segment(app: &App, video: &str, bytes: &[u8]) -> Res<()> {
-    let row: Option<(String, Option<String>, bool)> = sqlx::query_as("SELECT v.broadcast_id,v.owner_id,coalesce(s.auto_clips,true) FROM videos v LEFT JOIN video_settings s ON s.owner_id=v.owner_id WHERE v.id=$1 AND v.kind='VOD' AND v.status='RECORDING'")
+    let row: Option<Recording> = sqlx::query_as("SELECT v.broadcast_id,v.owner_id,coalesce(s.auto_clips,true) AS auto_clips,c.name AS category,ss.detect_area FROM videos v LEFT JOIN video_settings s ON s.owner_id=v.owner_id LEFT JOIN stream_settings ss ON ss.owner_id=v.owner_id LEFT JOIN stream_categories c ON c.id=ss.category_id WHERE v.id=$1 AND v.kind='VOD' AND v.status='RECORDING'")
         .bind(video).fetch_optional(&app.db).await?;
-    let Some((broadcast, Some(_), true)) = row else {
+    let Some(Recording {
+        broadcast_id: broadcast,
+        owner_id: Some(_),
+        auto_clips: true,
+        category,
+        detect_area: area,
+    }) = row
+    else {
         return Ok(());
     };
+    if category.as_deref() == Some(MW4)
+        && let Some(title) = win_screen(bytes, area).await
+    {
+        moment(app, &broadcast, "win", title).await?;
+    }
     let Some(level) = loudness(bytes).await else {
         return Ok(());
     };
@@ -77,6 +99,71 @@ pub async fn segment(app: &App, video: &str, bytes: &[u8]) -> Res<()> {
         moment(app, &broadcast, "loud", "Loud moment").await?;
     }
     Ok(())
+}
+
+const MW4: &str = "Call of Duty: Modern Warfare 4";
+/// Labeled MW4 screens cut from Joe's recordings (the `mw4_screens` test writes it): per example a
+/// label byte (0 anything else, 1 VICTORY, 2 ROUND WIN) and a 512-float CLIP embedding of the
+/// game area. Embeddings, not pictures. Losses, mid-match scoreboards, killcams and menus are
+/// labeled "other" so they outvote a near miss.
+static SCREENS: &[u8] = include_bytes!("mw4_screens.bin");
+const RECORD: usize = 1 + 4 * crate::streams::detect::DIM;
+fn screens() -> &'static [(String, Vec<f32>)] {
+    static PARSED: LazyLock<Vec<(String, Vec<f32>)>> = LazyLock::new(|| {
+        SCREENS
+            .as_chunks::<RECORD>()
+            .0
+            .iter()
+            .filter_map(|r| {
+                let label = ["other", "victory", "round_win"].get(usize::from(r[0]))?;
+                Some((
+                    label.to_string(),
+                    crate::streams::detect::from_bytes(&r[1..])?,
+                ))
+            })
+            .collect()
+    });
+    &PARSED
+}
+/// "Victory" or "Round win" when the segment's first frame is one of MW4's win screens. The frame
+/// is the 640-pixel still the probe makes, cropped to the channel's learned game area if any.
+async fn win_screen(bytes: &[u8], area: Option<Vec<f32>>) -> Option<&'static str> {
+    use crate::streams::detect;
+    if !detect::available() || screens().is_empty() {
+        return None;
+    }
+    let still = crate::probe::snapshot(bytes.to_vec()).await?;
+    let image = image::load_from_memory(&still).ok()?.to_rgb8();
+    let game = detect::crop(&image, area.as_deref());
+    // CLIP sees an end-of-match board but not the one word on it; losses are drawn in red.
+    if red_share(&game) >= 0.05 {
+        return None;
+    }
+    // ponytail: one embedding per 2-second segment per MW4 stream on the shared one-thread pool;
+    // past a dozen MW4 streams at once, check every other segment.
+    let embedding = tokio::task::spawn_blocking(move || detect::embed(&game))
+        .await
+        .ok()??;
+    match detect::vote(screens(), &embedding)?.as_str() {
+        "victory" => Some("Victory"),
+        "round_win" => Some("Round win"),
+        _ => None,
+    }
+}
+
+/// Share of clearly red pixels in the top 40% of the game area. MW4 draws DEFEAT and ROUND LOSS
+/// in red-orange and wins in teal: on Joe's recordings wins were at most 3%, losses 7% to 10%.
+pub fn red_share(game: &image::RgbImage) -> f32 {
+    let (w, h) = game.dimensions();
+    let rows = (h * 2 / 5).max(1);
+    let red = (0..rows)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let [r, g, b] = game.get_pixel(x, y).0.map(i32::from);
+            r > g + 40 && r > b + 40 && r > 90
+        })
+        .count();
+    red as f32 / (w * rows).max(1) as f32
 }
 
 /// Whether `level` (dBFS) is a spike against the levels before it, then remembers it.
@@ -231,6 +318,116 @@ mod tests {
             "silence floors at -100"
         );
         assert_eq!(loudest(&[]), None);
+    }
+
+    /// MW4 win screens across sessions (docs/VODS_CLIPS.md): frames named
+    /// `<victory|roundwin|other>_<session>_<seconds>.png` (full 640-pixel stills) in
+    /// SVER_SCREEN_FRAMES, GAME_DETECTION_MODEL set. Session A's examples judge session B's
+    /// frames and the reverse; with SVER_SCREEN_WRITE set, every example is written there.
+    #[test]
+    #[ignore = "needs GAME_DETECTION_MODEL and SVER_SCREEN_FRAMES"]
+    fn mw4_screens() {
+        use crate::streams::detect;
+        // The game area learned for the recordings' layout (game detection, October 22).
+        const AREA: [f32; 4] = [0.302_083_34, 0.1, 0.9375, 0.975];
+        let dir = std::env::var("SVER_SCREEN_FRAMES").unwrap();
+        let mut rows: Vec<(String, String, Vec<f32>, String)> = Vec::new();
+        let mut reds = Vec::new();
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        paths.sort();
+        for path in paths {
+            let stem = path.file_stem().unwrap().to_str().unwrap().to_string();
+            let mut parts = stem.splitn(3, '_');
+            let label = match parts.next().unwrap() {
+                "roundwin" => "round_win",
+                l => l,
+            }
+            .to_string();
+            let session = parts.next().unwrap().to_string();
+            let image = image::open(&path).unwrap().to_rgb8();
+            let game = detect::crop(&image, Some(&AREA));
+            if label != "other" {
+                assert!(red_share(&game) < 0.05, "{stem} is a win drawn in red");
+            }
+            reds.push(red_share(&game) >= 0.05);
+            rows.push((label, session, detect::embed(&game).unwrap(), stem));
+        }
+        let mut wins_found = 0;
+        let mut wins_total = 0;
+        let mut false_wins = 0;
+        for (examples, tested) in [("A", "B"), ("B", "A")] {
+            let gallery: Vec<(String, Vec<f32>)> = rows
+                .iter()
+                .filter(|r| r.1 == examples)
+                .map(|r| (r.0.clone(), r.2.clone()))
+                .collect();
+            for ((label, session, embedding, name), red) in
+                rows.iter().zip(&reds).filter(|r| r.0.1 == tested)
+            {
+                let seen = match detect::vote(&gallery, embedding) {
+                    Some(_) if *red => "other (red)".to_string(),
+                    Some(seen) => seen,
+                    None => "unknown".into(),
+                };
+                if label != "other" {
+                    wins_total += 1;
+                    wins_found += usize::from(&seen == label);
+                    println!("{session} {label:9} -> {seen:9} {name}");
+                } else if seen == "victory" || seen == "round_win" {
+                    false_wins += 1;
+                    println!("{session} other     -> {seen:9} {name} (false win)");
+                }
+            }
+        }
+        println!("wins found {wins_found}/{wins_total}, false wins {false_wins}");
+        if let Ok(out) = std::env::var("SVER_SCREEN_WRITE") {
+            let bytes: Vec<u8> = rows
+                .iter()
+                .flat_map(|(label, _, e, _)| {
+                    let code = match label.as_str() {
+                        "victory" => 1u8,
+                        "round_win" => 2,
+                        _ => 0,
+                    };
+                    std::iter::once(code).chain(detect::to_bytes(e))
+                })
+                .collect();
+            std::fs::write(out, bytes).unwrap();
+        }
+        assert_eq!(false_wins, 0);
+    }
+
+    /// The live path on real segments: SVER_SCREEN_SEGMENTS holds victory.ts, roundwin.ts,
+    /// defeat.ts and gameplay.ts cut from an MW4 recording with the layout below.
+    #[tokio::test]
+    #[ignore = "needs ffmpeg, GAME_DETECTION_MODEL and SVER_SCREEN_SEGMENTS"]
+    async fn win_screens_on_real_segments() {
+        let dir = std::path::PathBuf::from(std::env::var("SVER_SCREEN_SEGMENTS").unwrap());
+        let area = Some(vec![0.302_083_34, 0.1, 0.9375, 0.975]);
+        let seen = |name: &str| {
+            let bytes = std::fs::read(dir.join(name)).unwrap();
+            let area = area.clone();
+            async move { win_screen(&bytes, area).await }
+        };
+        assert_eq!(seen("victory.ts").await, Some("Victory"));
+        assert!(seen("roundwin.ts").await.is_some());
+        assert_eq!(seen("defeat.ts").await, None);
+        assert_eq!(seen("gameplay.ts").await, None);
+    }
+
+    #[test]
+    fn the_shipped_screens_parse() {
+        let all = screens();
+        assert_eq!(
+            all.len() * (1 + 4 * crate::streams::detect::DIM),
+            SCREENS.len()
+        );
+        for label in ["victory", "round_win", "other"] {
+            assert!(all.iter().any(|(l, _)| l == label), "{label}");
+        }
     }
 
     #[tokio::test]

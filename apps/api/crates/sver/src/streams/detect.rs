@@ -140,7 +140,7 @@ fn normalize(mut v: Vec<f32>) -> Vec<f32> {
 pub fn to_bytes(embedding: &[f32]) -> Vec<u8> {
     embedding.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
-fn from_bytes(bytes: &[u8]) -> Option<Vec<f32>> {
+pub fn from_bytes(bytes: &[u8]) -> Option<Vec<f32>> {
     (bytes.len() == DIM * 4).then(|| {
         bytes
             .as_chunks::<4>()
