@@ -650,6 +650,7 @@ fn profile_routes() -> Router<App> {
         )
         .route("/api/me/link-suggestions", get(p::link_suggestions))
         .route("/api/me/card-settings", put(p::card_settings))
+        .route("/api/me/logo-style", put(p::logo_style))
         // `GET /me/blocks` is the user-block list, so the custom page blocks read from
         // `/me/page-blocks`; `PUT /me/blocks` saves page blocks as the spec lists.
         .route(

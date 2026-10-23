@@ -1229,6 +1229,13 @@ Acceptance:
 - Off by default for new accounts and imported accounts (the import test checks it).
 - On shows only providers with handles; off hides them; unlink removes them; a blocked pair sees none.
 
+### Logo style (optional)
+
+Rules:
+- Approved by Joe on October 22, 2026. Not a gender field: S.V.E.R never asks for gender at signup or anywhere else.
+- `/settings/profile` (Look → Site logo) and the onboarding profile step offer Default, Male or Female. Stored as `profiles.logo_style`, **`default` for everyone** until they choose. Saved with `PUT /api/me/logo-style {"logo_style": "default" | "male" | "female"}`; anything else is a 400.
+- Returned by `GET /api/me/profile` and `GET /api/auth/me`. The top bar shows the chosen badge (`/icons/logo-male.webp` or `/icons/logo-female.webp`, cropped from the 4500×5100 masters) before the S.V.E.R wordmark; Default is the wordmark alone. Only the account owner sees their choice.
+
 ### P7. Activity feed (Module 2 scope)
 
 Rules:
