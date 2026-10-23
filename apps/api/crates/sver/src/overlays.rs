@@ -267,6 +267,56 @@ async fn test(State(app): State<App>, jar: CookieJar, Json(input): Json<Test>) -
     Ok(Json(json!({"sent": true})))
 }
 
+/// GET /api/me/overlays/activity: the channel's last 50 alerts for the OBS dock (docs/OBS.md),
+/// newest first, with follows from the last 7 days that don't count yet marked `pending`. People
+/// the streamer has blocked since are left out.
+async fn activity(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let me = profiles::signed_in(&app, &jar).await?;
+    let rows: Vec<(i64, String, Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as("SELECT a.id,a.kind,a.data,a.created_at FROM stream_activity a WHERE a.channel_id=$1
+        AND NOT EXISTS(SELECT 1 FROM user_blocks k JOIN users b ON b.id=k.blocked_id WHERE k.blocker_id=$1 AND lower(b.username)=lower(coalesce(a.data->>'user',a.data->>'from')))
+        ORDER BY a.id DESC LIMIT 50")
+        .bind(&me.id).fetch_all(&app.db).await?;
+    let pending: Vec<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT cu.username,f.created_at FROM follows f JOIN channel_users cu ON cu.id=f.follower_id
+        WHERE f.following_id=$1 AND f.counted_at IS NULL AND f.created_at>now()-interval '7 days' AND {SHOWN} ORDER BY f.created_at DESC LIMIT 20")))
+        .bind(&me.id).fetch_all(&app.db).await?;
+    let mut items: Vec<(chrono::DateTime<chrono::Utc>, Value)> = rows
+        .into_iter()
+        .map(|(id, kind, data, at)| (at, json!({"id": id, "kind": kind, "data": data, "at": at})))
+        .chain(pending.into_iter().map(|(name, at)| {
+            (at, json!({"id": null, "kind": "follow", "data": {"user": name}, "at": at, "pending": true}))
+        }))
+        .collect();
+    items.sort_by_key(|a| std::cmp::Reverse(a.0));
+    let items: Vec<Value> = items.into_iter().take(50).map(|(_, v)| v).collect();
+    Ok(Json(json!({"items": items})))
+}
+/// POST /api/me/overlays/activity/{id}/replay: plays that alert again on open overlays only, with
+/// today's settings; like a test it plays even when its type is off. Nothing is recorded.
+async fn replay(State(app): State<App>, jar: CookieJar, Path(id): Path<i64>) -> Res<Json<Value>> {
+    let me = profiles::signed_in(&app, &jar).await?;
+    profiles::rate(&app, format!("overlay-replay:{}", me.id), 30, 60).await?;
+    let (kind, data): (String, Value) =
+        sqlx::query_as("SELECT kind,data FROM stream_activity WHERE id=$1 AND channel_id=$2")
+            .bind(id)
+            .bind(&me.id)
+            .fetch_optional(&app.db)
+            .await?
+            .ok_or_else(Fail::missing)?;
+    let topic = KINDS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, t)| *t)
+        .ok_or_else(Fail::missing)?;
+    let mut settings = settings(&app, &me.id).await?;
+    settings[kind.as_str()]["on"] = json!(true);
+    settings["tribute"]["min"] = json!(10);
+    if let Some(alert) = alert(&settings, topic, &data, id, &app.config.media.public_base) {
+        app.chat
+            .publish(&format!("alerts:{}", me.id), None, 0, alert);
+    }
+    Ok(Json(json!({"sent": true})))
+}
+
 /// Replaces one alert type's image or sound (`slot` is "image" or "audio"; None removes it) and
 /// updates open overlays.
 async fn set_media(app: &App, me: &str, kind: &str, slot: &str, key: Option<&str>) -> Res<()> {
@@ -297,6 +347,10 @@ async fn set_media(app: &App, me: &str, kind: &str, slot: &str, key: Option<&str
         json!({"type": "settings", "settings": settings, "goal_count": count}),
     );
     Ok(())
+}
+/// The alert kind of a live event kind (`subs` → `sub`), for the streamer's Activity.
+pub(crate) fn alert_of(event: &str) -> Option<&'static str> {
+    KINDS.iter().find(|(_, t)| *t == event).map(|(k, _)| *k)
 }
 fn alert_kind(kind: &str) -> Res<&'static str> {
     KINDS
@@ -580,7 +634,7 @@ async fn session(app: App, channel: String, username: String, digest: String, mu
 
 /// Visible people only: not internal or deleted, and not blocked by the channel (`$1`).
 const SHOWN: &str = "NOT cu.internal AND cu.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM user_blocks k WHERE k.blocker_id=$1 AND k.blocked_id=cu.id)";
-/// GET /api/overlays/latest?token=: the newest follower, subscriber and tribute (each only while
+/// GET /api/overlays/latest?token=: the newest counted follower, subscriber and tribute (each only while
 /// its alert is on, a tribute at or over the alert minimum) and the active subscriber count, for
 /// the streamer's own overlay loaded from a local file. Those can't open the socket (it checks
 /// Origin), so any origin may read this; the private link is the only credential and no cookies
@@ -604,7 +658,7 @@ async fn latest(
     let on = |kind: &str| settings[kind]["on"] == true;
     let mut follow: Option<String> = None;
     if on("follow") {
-        follow = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT cu.username FROM follows f JOIN channel_users cu ON cu.id=f.follower_id WHERE f.following_id=$1 AND {SHOWN} ORDER BY f.created_at DESC LIMIT 1")))
+        follow = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT cu.username FROM follows f JOIN channel_users cu ON cu.id=f.follower_id WHERE f.following_id=$1 AND f.counted_at IS NOT NULL AND {SHOWN} ORDER BY f.counted_at DESC LIMIT 1")))
             .bind(&channel).fetch_optional(&app.db).await?;
     }
     let mut sub: Option<(String, i16, i32)> = None;
@@ -640,6 +694,8 @@ pub fn routes() -> Router<App> {
         .route("/api/me/overlays", get(mine).put(save))
         .route("/api/me/overlays/link", post(link).delete(revoke))
         .route("/api/me/overlays/test", post(test))
+        .route("/api/me/overlays/activity", get(activity))
+        .route("/api/me/overlays/activity/{id}/replay", post(replay))
         .route(
             "/api/me/overlays/{kind}/image",
             post(upload_image)

@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { onAir, osOf, sceneCollection } from "./obs.ts";
+import { activityText, onAir, osOf, sceneCollection } from "./obs.ts";
+
+test("Activity lines read plainly for every alert kind", () => {
+  const at = "2026-10-23T12:00:00Z";
+  assert.equal(activityText({ id: 1, kind: "follow", at, data: { user: "Ana" } }).text, "Ana followed");
+  assert.equal(activityText({ id: null, kind: "follow", at, pending: true, data: { user: "Bo" } }).text, "Bo followed (counts after 15 minutes of watching)");
+  assert.equal(activityText({ id: 2, kind: "sub", at, data: { user: "Cy", tier: 2, months: 1 } }).text, "Cy subscribed at Tier 2");
+  assert.equal(activityText({ id: 3, kind: "sub", at, data: { user: "Cy", tier: 1, months: 14 } }).text, "Cy subscribed at Tier 1 (14 months)");
+  assert.deepEqual(activityText({ id: 4, kind: "tribute", at, data: { user: "Di", valor: 1500, message: "gg" } }), { text: "Di paid 1,500 Valor", message: "gg" });
+  assert.equal(activityText({ id: 5, kind: "tribute", at, data: { user: "Di", valor: 10 } }).message, undefined, "the message is gone after 7 days");
+  assert.equal(activityText({ id: 6, kind: "skill", at, data: { user: "Ed", skill: "Confetti", valor: 300 } }).text, "Ed played Confetti (300 Valor)");
+  assert.equal(activityText({ id: 7, kind: "raid", at, data: { from: "Fay", seconds: 10 } }).text, "Fay raided");
+});
 
 type Source = { name: string; uuid: string; id: string; settings: { url?: string; items?: { name: string; source_uuid: string }[] } };
 
