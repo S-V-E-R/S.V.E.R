@@ -219,7 +219,7 @@
   {
    "kind": "npm",
    "name": "@next/env",
-   "version": "16.4.0",
+   "version": "16.4.1",
    "license": "MIT",
    "url": "https://github.com/vercel/next.js#readme",
    "text": null
@@ -411,7 +411,7 @@
   {
    "kind": "npm",
    "name": "next",
-   "version": "16.4.0",
+   "version": "16.4.1",
    "license": "MIT",
    "url": "https://nextjs.org",
    "text": "25afff58f46401f4"
