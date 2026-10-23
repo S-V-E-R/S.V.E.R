@@ -1263,6 +1263,51 @@ async fn chapters_caps_and_retention(e: &Env, video: &str, highlight: &str) {
         magnet_chapters, 1,
         "one chapter for a moment featured by two lanes"
     );
+    // Automatic suggestions (docs/VODS_CLIPS.md): a room moment overlapping the spotlight isn't
+    // offered again; a clear one becomes a pending clip titled with its reason; switching
+    // automatic clips off stops new ones.
+    let broadcast: String = sqlx::query_scalar("SELECT broadcast_id FROM videos WHERE id=$1")
+        .bind(video)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    let auto = |e: &Env| {
+        let db = e.app.db.clone();
+        async move {
+            sqlx::query_as::<_, (String, String)>("SELECT title,approval FROM videos WHERE request_key LIKE 'auto:%' ORDER BY created_at")
+                .fetch_all(&db)
+                .await
+                .unwrap()
+        }
+    };
+    sver::videos::auto::moment(&e.app, &broadcast, "room", "Chat is going off")
+        .await
+        .unwrap();
+    assert_eq!(auto(e).await, vec![], "the spotlight already covers it");
+    // The recording is under a minute, so anything is within the 2-minute gap: set the spotlight
+    // aside as if it were a viewer's clip.
+    e.sql("UPDATE videos SET request_key='synthetic-set-aside' WHERE request_key='magnet:synthetic-spotlight'")
+        .await;
+    sver::videos::auto::moment(&e.app, &broadcast, "room", "Chat is going off")
+        .await
+        .unwrap();
+    assert_eq!(
+        auto(e).await,
+        vec![("Chat is going off".to_string(), "PENDING".to_string())]
+    );
+
+    e.sql(
+        "UPDATE videos SET request_key='synthetic-auto-set-aside' WHERE request_key LIKE 'auto:%'",
+    )
+    .await;
+    e.sql("UPDATE video_settings SET auto_clips=false WHERE owner_id='stream-owner'")
+        .await;
+    sver::videos::auto::moment(&e.app, &broadcast, "loud", "Loud moment")
+        .await
+        .unwrap();
+    assert_eq!(auto(e).await, vec![], "off means no new suggestions");
+    e.sql("UPDATE video_settings SET auto_clips=true WHERE owner_id='stream-owner'")
+        .await;
     while sver::videos::worker::run_one(&e.app, false).await.unwrap() {}
     // Count the approved cap before enqueueing any new media work.
     sqlx::query("UPDATE videos SET duration_ms=36000000 WHERE id=$1")

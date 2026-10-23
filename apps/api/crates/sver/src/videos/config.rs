@@ -15,6 +15,13 @@ pub struct Tuning {
     /// often a live recording's frames are compared.
     pub frame_distance: i32,
     pub frame_every_ms: i64,
+    /// Automatic clip suggestions: a segment this many dB above the median of the stream's last
+    /// 90 segments (about 3 minutes), and at least this loud, is a loud moment; at most this many
+    /// suggestions an hour, this many seconds apart.
+    pub auto_loud_db: f32,
+    pub auto_loud_floor_db: f32,
+    pub auto_clips_per_hour: i64,
+    pub auto_gap_seconds: i64,
 }
 impl Default for Tuning {
     fn default() -> Self {
@@ -28,6 +35,10 @@ impl Default for Tuning {
             beats_per_ip_minute: 600,
             frame_distance: 6,
             frame_every_ms: 5000,
+            auto_loud_db: 15.0,
+            auto_loud_floor_db: -30.0,
+            auto_clips_per_hour: 6,
+            auto_gap_seconds: 120,
         }
     }
 }
@@ -132,6 +143,10 @@ impl Config {
             || tuning.beats_per_ip_minute < 1
             || !(0..=16).contains(&tuning.frame_distance)
             || !(1000..=60_000).contains(&tuning.frame_every_ms)
+            || !(3.0..=40.0).contains(&tuning.auto_loud_db)
+            || !(-60.0..=0.0).contains(&tuning.auto_loud_floor_db)
+            || !(0..=60).contains(&tuning.auto_clips_per_hour)
+            || !(30..=3600).contains(&tuning.auto_gap_seconds)
         {
             return Err("Invalid recording queue or clipping limits".into());
         }

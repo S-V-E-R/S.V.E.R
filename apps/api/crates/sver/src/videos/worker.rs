@@ -93,6 +93,13 @@ async fn process(app: &App, job: &Job) -> Res<bool> {
                 frames::decoded(&mut tx, &format!("video:{}", job.video_id), start).await?;
             }
             tx.commit().await?;
+            // After the commit, so a suggested clip can end with this segment.
+            if super::auto::segment(app, &job.video_id, bytes)
+                .await
+                .is_err()
+            {
+                eprintln!("auto_clip_event=segment outcome=skipped");
+            }
             Ok(true)
         }
         "THUMBNAIL" => thumbnail(app, job).await.map(|_| true),
