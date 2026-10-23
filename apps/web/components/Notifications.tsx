@@ -99,13 +99,13 @@ export function NotificationSettings() {
   }
   if (!settings) return message ? <p role="alert" className="form-message error">{message}</p> : <p className="loading">Loading…</p>;
   return <>
-    <Section title="Go-live alerts" intro="When a channel you follow goes live (at most once every 6 hours per channel). Turn alerts off for one channel with the bell next to Following on its page.">
+    <Section title="Go-live alerts" intro="When a channel you follow goes live (at most once every 6 hours per channel). Turn alerts off for one channel with the bell next to Following on its page. Push also reaches the S.V.E.R app on a phone that has registered.">
       <label className="checkbox"><input type="checkbox" disabled={busy} checked={settings.site} onChange={e => save({ site: e.target.checked })} /> In-site notifications (the bell at the top)</label>
-      <label className="checkbox"><input type="checkbox" disabled={busy} checked={settings.push} onChange={e => save({ push: e.target.checked })} /> Browser push notifications</label>
+      <label className="checkbox"><input type="checkbox" disabled={busy} checked={settings.push} onChange={e => save({ push: e.target.checked })} /> Push notifications</label>
       <label className="checkbox"><input type="checkbox" disabled={busy} checked={settings.email} onChange={e => save({ email: e.target.checked })} /> Email (every email has a one-click unsubscribe)</label>
     </Section>
     <Section title="Guilds & co-streams" intro="Choose how each team event reaches you. You can also mute a guild from its page.">
-      {settings.community.map(t => <fieldset key={t.kind}><legend>{names[t.kind]}</legend>{(["site", "push"] as const).map(channel => <label key={channel} className="checkbox"><input type="checkbox" disabled={busy} checked={t[channel]} onChange={e => save({ community: settings.community.map(c => c.kind === t.kind ? { ...c, [channel]: e.target.checked } : c) })} />{channel === "site" ? "In-site" : "Browser push"}</label>)}</fieldset>)}
+      {settings.community.map(t => <fieldset key={t.kind}><legend>{names[t.kind]}</legend>{(["site", "push"] as const).map(channel => <label key={channel} className="checkbox"><input type="checkbox" disabled={busy} checked={t[channel]} onChange={e => save({ community: settings.community.map(c => c.kind === t.kind ? { ...c, [channel]: e.target.checked } : c) })} />{channel === "site" ? "In-site" : "Push"}</label>)}</fieldset>)}
     </Section>
     <Section title="This browser" intro={`Push alerts are on for ${settings.push_devices} browser${settings.push_devices === 1 ? "" : "s"} on your account.`}>
       <button type="button" className="small" disabled={busy || (!here && !settings.push && !settings.community.some(t => t.push))} onClick={togglePush}>{here ? "Turn off push on this browser" : "Turn on push on this browser"}</button>
