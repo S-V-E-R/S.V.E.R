@@ -83,7 +83,7 @@ export function ChannelFrame({ data, path, children }: { data: Channel; path: st
         {c.board && <Board username={c.username} />}
       </>)}
     {c.song_notice && owner && <p className="panel notice">Spotify links aren&apos;t supported. <Link href="/settings/profile#sound">Add a YouTube or SoundCloud track</Link>.</p>}
-    <ChannelTabs username={c.username} tabs={data.tabs} />
+    <ChannelTabs username={c.username} live={c.live} tabs={data.tabs} />
     <div className="channel-body">{children}</div>
   </div>;
 }
