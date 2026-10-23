@@ -124,6 +124,8 @@ mod verified_followers;
 mod videos;
 #[path = "streams/wall_seats.rs"]
 mod wall_seats;
+#[path = "streams/youtube_chat.rs"]
+mod youtube_chat;
 
 #[derive(Default)]
 struct Media {
@@ -571,6 +573,40 @@ async fn discord_bot() {
     let app = App::new(db.clone(), config).await.unwrap();
     let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
     let result = tokio::spawn(async move { discord::exercise(&env).await }).await;
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    result.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn youtube_linked_chat() {
+    let (admin, db, schema) = isolated_database().await;
+    let google = Arc::new(Mutex::new(youtube_chat::Google::default()));
+    let base = youtube_chat::serve(google.clone()).await;
+    // SAFETY: only this test reads the YouTube variables.
+    unsafe {
+        std::env::set_var("YOUTUBE_API_BASE", format!("{base}/yt"));
+        std::env::set_var("YOUTUBE_REVOKE_URL", format!("{base}/revoke"));
+    }
+    let mut config = Config::from_env().unwrap();
+    config.resend_key.clear();
+    config.providers = vec![sver::oauth::Provider {
+        name: "youtube".into(),
+        client_id: "test-youtube".into(),
+        client_secret: "test-only-secret".into(),
+        authorize_url: "https://google.example/authorize".into(),
+        token_url: format!("{base}/token"),
+        profile_url: format!("{base}/yt/channels"),
+        scopes: "".into(),
+        pkce: true,
+        redirect_uri: None,
+    }];
+    let app = App::new(db.clone(), config).await.unwrap();
+    let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
+    let result = tokio::spawn(async move { youtube_chat::exercise(&env, google).await }).await;
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)

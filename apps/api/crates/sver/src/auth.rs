@@ -250,7 +250,7 @@ pub async fn create_user(
 }
 pub async fn public_config(State(app): State<App>) -> Json<Value> {
     Json(
-        json!({"turnstile_site_key":app.config.turnstile_site_key,"providers":app.config.providers.iter().map(|p| &p.name).collect::<Vec<_>>(),"development":!app.config.production}),
+        json!({"turnstile_site_key":app.config.turnstile_site_key,"providers":app.config.providers.iter().map(|p| &p.name).filter(|n| *n != "youtube").collect::<Vec<_>>(),"development":!app.config.production}),
     )
 }
 #[derive(Deserialize)]

@@ -60,6 +60,16 @@ pub fn providers_from_env() -> std::result::Result<Vec<Provider>, String> {
             "user:read",
             true,
         ),
+        // Linked chat only, never sign-in: its own Google project, so the YouTube scope's
+        // verification never touches Google sign-in. The identity is the YouTube channel.
+        (
+            "youtube",
+            "https://accounts.google.com/o/oauth2/v2/auth",
+            "https://oauth2.googleapis.com/token",
+            "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true",
+            "",
+            true,
+        ),
     ] {
         let client_id =
             std::env::var(format!("{}_CLIENT_ID", name.to_uppercase())).unwrap_or_default();
@@ -139,6 +149,9 @@ pub async fn start(
     if !["login", "signup", "link", "reauth", "chat"].contains(&input.intent.as_str()) {
         return Err(Error::bad("Invalid OAuth action."));
     }
+    if name == "youtube" && input.intent != "chat" {
+        return Err(Error::bad("YouTube is only for linked chat."));
+    }
     // Linked chat asks for chat permissions instead of sign-in ones (docs/LINKED_CHAT.md).
     let scopes = if input.intent == "chat" {
         crate::linked_chat::scopes(&name)
@@ -203,6 +216,10 @@ pub async fn start(
                 },
             );
         }
+    }
+    // Google returns a refresh token only for offline access; chat runs while the streamer is away.
+    if p.name == "youtube" {
+        url.query_pairs_mut().append_pair("access_type", "offline");
     }
     Ok((
         jar.add(auth::cookie(
@@ -281,14 +298,20 @@ async fn exchange(app: &App, p: &Provider, code: &str, verifier: &str) -> Result
         .json()
         .await
         .map_err(|_| Error::unavailable())?;
-    // Twitch and Kick wrap the one user in `data`.
-    let body = if p.name == "twitch" || p.name == "kick" {
-        body["data"]
+    // Twitch and Kick wrap the one user in `data`, YouTube the one channel in `items`.
+    let body = if p.name == "twitch" || p.name == "kick" || p.name == "youtube" {
+        body[if p.name == "youtube" { "items" } else { "data" }]
             .as_array()
             .filter(|a| a.len() == 1)
             .and_then(|a| a.first())
             .cloned()
-            .ok_or_else(|| Error::bad("Provider did not return one identity."))?
+            .ok_or_else(|| {
+                Error::bad(if p.name == "youtube" {
+                    "That Google account has no YouTube channel. Choose the account your channel is on."
+                } else {
+                    "Provider did not return one identity."
+                })
+            })?
     } else {
         body
     };
@@ -315,12 +338,19 @@ async fn exchange(app: &App, p: &Provider, code: &str, verifier: &str) -> Result
         subject,
         email,
         verified,
-        username: body[match p.name.as_str() {
-            "twitch" => "login",
-            "discord" => "username",
-            _ => "name",
-        }]
-        .as_str()
+        // A YouTube channel's handle (`@name`) where it has one, else its title.
+        username: if p.name == "youtube" {
+            body["snippet"]["customUrl"]
+                .as_str()
+                .or(body["snippet"]["title"].as_str())
+        } else {
+            body[match p.name.as_str() {
+                "twitch" => "login",
+                "discord" => "username",
+                _ => "name",
+            }]
+            .as_str()
+        }
         .map(str::to_owned),
         tokens: token.clone(),
     })
@@ -337,7 +367,7 @@ pub async fn callback(
         Ok((jar, target)) => (jar, Redirect::to(&target)).into_response(),
         Err(error) => {
             let provider = match name.as_str() {
-                "google" | "twitch" | "discord" | "kick" => name.as_str(),
+                "google" | "twitch" | "discord" | "kick" | "youtube" => name.as_str(),
                 _ => "unknown",
             };
             eprintln!(
