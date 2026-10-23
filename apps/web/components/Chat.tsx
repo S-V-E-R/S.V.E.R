@@ -3,7 +3,7 @@ import { FounderMark, SupporterBadge, type SupporterTier } from "./Supporter";
 import Link from "next/link";
 import { LOYALTY } from "./Loyalty";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { send, useLoad } from "../lib/client-api";
+import { send, useLoad, useSignInElsewhere } from "../lib/client-api";
 import { ReportButton, TakeDownLink } from "./Report";
 import { PlayerCardButton } from "./UserChip";
 import { Crest } from "./FactionIdentity";
@@ -66,6 +66,8 @@ function MessageBody({ message, account, emotes }: { message: Message; account: 
  */
 export function Chat({ username, account, squad, variant = "full", fade = 30, top }: { username: string; account: string | null; squad?: string; variant?: "full" | "popout" | "dock" | "overlay"; fade?: number; top?: React.ReactNode }) {
   const [clock, setClock] = useState(() => Date.now());
+  // A chat dock signed out in OBS picks up a sign-in made in another dock.
+  useSignInElsewhere(variant === "dock" && !account);
   useEffect(() => {
     if (variant !== "overlay") return;
     const timer = setInterval(() => setClock(Date.now()), 1000);
@@ -433,7 +435,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       {gifs && picking && <GifPicker access={gifs} account={account} onPick={sendGif} onClose={() => setPicking(false)} />}
       {canPin && <button type="button" className="quiet small" disabled={busy || !draft.trim()} onClick={event => submit(event, true)}>Send and pin</button>}
       {error && <p role="alert" className="error">{error}</p>}
-    </form> : <p className="chat-signin panel"><Link href="/login">Log in</Link> or <Link href="/signup">enlist</Link> to chat.</p>}
+    </form> : <p className="chat-signin panel"><Link href={variant === "full" ? "/login" : `/login?${new URLSearchParams({ next: `/${username}/chat${variant === "dock" ? "?dock=1" : ""}` })}`}>Log in</Link> or <Link href="/signup">enlist</Link> to chat.</p>}
     {account && <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
       onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 500)); input.current?.focus(); }} />}
   </section>;

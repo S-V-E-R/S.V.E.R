@@ -2,6 +2,7 @@
 import { FormEvent, useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
 import { send, useLoad, type Result } from "../../../lib/client-api";
+import { osOf, sceneCollection } from "../../../lib/obs";
 
 type Kind = "follow" | "sub" | "tribute" | "skill" | "raid";
 type AlertSetting = { on: boolean; text: string; seconds: number; min?: number; show_message?: boolean; tts?: boolean; image?: string | null; audio?: string | null };
@@ -62,6 +63,16 @@ export default function OverlaysStudio() {
     setMessage("Uploading…");
     apply(await send<View>("POST", path, form), slot === "image" ? "Image saved." : "Sound saved.");
   }
+  async function download(alerts: string) {
+    const me = await send<{ username: string }>("GET", "/api/auth/me");
+    if (!me.ok) { setMessage(me.error); return; }
+    const collection = sceneCollection({ alerts, chat: `${location.origin}/${me.data.username}/chat?overlay=1`, os: osOf(navigator.userAgent) });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(collection, null, 2)], { type: "application/json" }));
+    link.download = "SVER.json";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
   async function test(kind: Kind) {
     const r = await send("POST", "/api/me/overlays/test", { kind });
     setMessage(r.ok ? "Test sent to open overlays." : r.error);
@@ -75,6 +86,7 @@ export default function OverlaysStudio() {
         <li><strong>Alert box:</strong> <code>{url}</code></li>
         <li><strong>Goal bar:</strong> <code>{`${url}?widget=goal`}</code></li>
         <li><strong>Recent events:</strong> <code>{`${url}?widget=events`}</code></li>
+        <li><strong>New to OBS?</strong> <button type="button" className="small quiet" onClick={() => void download(url)}>Download an OBS scene collection</button> with these, your chat and (on Windows) Game Capture already in place, for a 1920 × 1080 canvas. In OBS choose Scene Collection → Import. It holds this link, so keep the file private.</li>
         <li><strong>StreamElements or Streamlabs:</strong> add a Custom widget (StreamElements) or Custom Widget (Streamlabs) and paste this as its HTML, with empty CSS and JS: <code>{`<iframe src="${url}" style="border:0;width:100%;height:100%" allow="autoplay"></iframe>`}</code></li>
       </ul> : <p className="muted">{view.linked ? `A link exists${view.connected ? " and an overlay is open now" : ""}. Make a new one to see it again.` : "No link yet."}</p>}
       <div className="row wrap">
