@@ -97,6 +97,15 @@ pub async fn emit(
     {
         return Ok(());
     }
+    // Alerts also go in the streamer's Activity (the OBS dock), which lasts past this table's 10 minutes.
+    if let Some(alert) = crate::overlays::alert_of(kind) {
+        sqlx::query("INSERT INTO stream_activity(channel_id,kind,data) VALUES($1,$2,$3)")
+            .bind(channel)
+            .bind(alert)
+            .bind(&data)
+            .execute(&mut *db)
+            .await?;
+    }
     match topic {
         Some(topic) => emit_topic(db, &topic, data).await,
         None => Ok(()),
@@ -147,9 +156,16 @@ pub async fn drain(app: &App) -> Res<()> {
     }
     Ok(())
 }
-/// Retention: events older than 10 minutes go.
+/// Retention: events older than 10 minutes go; Activity after 30 days, a tribute's message after 7
+/// (as its chat message does).
 pub async fn prune(app: &App) -> Res<()> {
     sqlx::query("DELETE FROM events WHERE at<now()-interval '10 minutes'")
+        .execute(&app.db)
+        .await?;
+    sqlx::query("DELETE FROM stream_activity WHERE created_at<now()-interval '30 days'")
+        .execute(&app.db)
+        .await?;
+    sqlx::query("UPDATE stream_activity SET data=data-'message' WHERE kind='tribute' AND data ? 'message' AND created_at<now()-interval '7 days'")
         .execute(&app.db)
         .await?;
     Ok(())

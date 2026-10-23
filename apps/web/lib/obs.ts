@@ -10,6 +10,21 @@ export function onAir(broadcast: Broadcast | null, disconnectPending: boolean, h
   return { state, plain, stale, live: broadcast?.state === "LIVE" && !stale && !disconnectPending };
 }
 
+/** One alert in the dock's Activity (GET /api/me/overlays/activity); `data` is the live event's. */
+export type Activity = { id: number | null; kind: "follow" | "sub" | "tribute" | "skill" | "raid"; at: string; pending?: boolean; data: Record<string, unknown> };
+
+/** An Activity line in plain words, and the tribute's message when there is one. */
+export function activityText(a: Activity): { text: string; message?: string } {
+  const d = a.data, who = String(d.user ?? d.from ?? "Someone"), n = (v: unknown) => Number(v ?? 0).toLocaleString("en-US");
+  switch (a.kind) {
+    case "follow": return { text: a.pending ? `${who} followed (counts after 15 minutes of watching)` : `${who} followed` };
+    case "sub": return { text: `${who} subscribed at Tier ${n(d.tier || 1)}${Number(d.months) > 1 ? ` (${n(d.months)} months)` : ""}` };
+    case "tribute": return { text: `${who} paid ${n(d.valor)} Valor`, message: typeof d.message === "string" && d.message ? d.message : undefined };
+    case "skill": return { text: `${who} played ${String(d.skill ?? "a Skill")} (${n(d.valor)} Valor)` };
+    case "raid": return { text: `${who} raided${Number(d.viewers) > 0 ? ` with ${n(d.viewers)}` : ""}` };
+  }
+}
+
 export type Os = "windows" | "mac" | "linux";
 export const osOf = (userAgent: string): Os => /Windows/.test(userAgent) ? "windows" : /Mac/.test(userAgent) ? "mac" : "linux";
 

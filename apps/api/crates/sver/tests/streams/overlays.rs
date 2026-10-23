@@ -125,6 +125,61 @@ pub async fn exercise(e: &Env) {
         "the sub alert was off"
     );
 
+    // Activity (the OBS dock): every alert so far, newest first, even one whose type is off or
+    // under the tribute minimum; a follow that doesn't count yet shows as pending.
+    person(e, "ov-pending", "PendingFan", true).await;
+    sqlx::query(
+        "INSERT INTO follows(follower_id,following_id) VALUES('ov-pending','stream-owner')",
+    )
+    .execute(&e.app.db)
+    .await
+    .unwrap();
+    let activity = e
+        .call("GET", "/api/me/overlays/activity", Value::Null)
+        .await;
+    let items = activity["items"].as_array().unwrap();
+    let kinds: Vec<&str> = items
+        .iter()
+        .filter(|i| i["pending"].is_null())
+        .map(|i| i["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        &kinds[..5],
+        ["skill", "sub", "tribute", "tribute", "follow"],
+        "{activity}"
+    );
+    // Parallel parts of this suite mark everyone as having watched (Env::watched_all), so the
+    // follow may already count; it's listed as pending exactly while it doesn't.
+    let still_pending: bool = sqlx::query_scalar(
+        "SELECT counted_at IS NULL FROM follows WHERE follower_id='ov-pending' AND following_id='stream-owner'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    let listed = items
+        .iter()
+        .any(|i| i["pending"] == true && i["data"]["user"] == "PendingFan");
+    assert!(
+        listed || !still_pending,
+        "pending={still_pending} {activity}"
+    );
+    sqlx::query("DELETE FROM follows WHERE follower_id='ov-pending'")
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    // A replay plays that alert again, here a tribute under the minimum; only the owner can.
+    let small = items
+        .iter()
+        .find(|i| i["kind"] == "tribute" && i["data"]["valor"] == 50)
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let path = format!("/api/me/overlays/activity/{small}/replay");
+    e.call("POST", &path, Value::Null).await;
+    assert_eq!(next_json(&mut ws).await["text"], "OverlayFan paid 50 Valor");
+    let (status, _) = call(e, "POST", &path, Some(&fan), Value::Null).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "another person's activity");
+
     // The local-file frame's poll: newest names from the lasting records, link only, no cookies.
     for (id, valor) in [("ov-tribute-1", 150), ("ov-tribute-2", 50)] {
         sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,tribute) VALUES($1,'stream-owner','ov-fan','gg',$2)")
