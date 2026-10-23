@@ -7,6 +7,8 @@
 //!   interim `MEDIA_DIR`) into the configured bucket under the same keys, then verifies sizes.
 //!   It only writes keys recorded in `media_objects`, never lists or deletes bucket objects, and
 //!   prints aggregate counts only.
+//! - `sver-admin games seed <username> <category id> <dir>`: adds the stills in `<dir>` (one game,
+//!   one channel layout) as game detection examples. Needs GAME_DETECTION_MODEL.
 use sqlx::Row;
 use sver::media::Storage;
 
@@ -259,9 +261,87 @@ async fn media(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// Seeds game detection (docs/LIVE_STREAMS.md "Game detection") with stills of one game from one
+/// channel's recording: the layout's game area is learned from the stills themselves, blank ones
+/// are skipped, and at most the newest EXAMPLES_PER_GAME per channel and game are kept.
+async fn seed_game(username: &str, category: &str, dir: &str) -> Result<(), String> {
+    use sver::streams::detect;
+    if !detect::available() {
+        return Err("GAME_DETECTION_MODEL is required".into());
+    }
+    let db = sver::connect(&std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is required")?)
+        .await?;
+    let owner: String = sqlx::query_scalar(
+        "SELECT id FROM users WHERE lower(username)=lower($1) AND deleted_at IS NULL",
+    )
+    .bind(username)
+    .fetch_optional(&db)
+    .await
+    .map_err(|_| "Database unavailable")?
+    .ok_or("No active account has that username.")?;
+    let known: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM stream_categories WHERE id=$1 AND active)")
+            .bind(category)
+            .fetch_one(&db)
+            .await
+            .map_err(|_| "Database unavailable")?;
+    if !known {
+        return Err("No active category has that id.".into());
+    }
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .map_err(|_| "Can't read that folder")?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                ["png", "jpg", "jpeg", "webp"].contains(&e.to_lowercase().as_str())
+            })
+        })
+        .collect();
+    paths.sort();
+    let keep = detect::EXAMPLES_PER_GAME as usize;
+    let paths: Vec<_> = paths
+        .iter()
+        .step_by(paths.len().div_ceil(keep).max(1))
+        .collect();
+    let images: Vec<image::RgbImage> = paths
+        .iter()
+        .filter_map(|p| image::open(p).ok().map(|i| i.to_rgb8()))
+        .collect();
+    let layout: Vec<_> = images
+        .iter()
+        .step_by((images.len() / 12).max(1))
+        .take(12)
+        .map(detect::layout_still)
+        .collect();
+    let area = detect::game_area(&layout);
+    let (mut added, mut skipped) = (0, 0);
+    for image in &images {
+        let game = detect::crop(image, area.as_ref().map(|a| &a[..]));
+        let Some(embedding) = (!detect::blank(&game))
+            .then(|| detect::embed(&game))
+            .flatten()
+        else {
+            skipped += 1;
+            continue;
+        };
+        detect::add_example(&db, &owner, category, &embedding)
+            .await
+            .map_err(|_| "Could not save an example")?;
+        added += 1;
+    }
+    println!("detect_event=seed added={added} skipped={skipped} area={area:?}");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [scope, verb, username, category, dir] = args.as_slice()
+        && scope == "games"
+        && verb == "seed"
+    {
+        return seed_game(username, category, dir).await;
+    }
     if args == ["videos", "probe"] {
         let config = sver::Config::from_env()?;
         return video_probe(&config.videos.storage).await;
@@ -269,7 +349,7 @@ async fn main() -> Result<(), String> {
     if args.first().is_some_and(|a| a == "media") {
         return media(&args[1..]).await;
     }
-    let usage = "Usage: sver-admin role grant|revoke <username> | media probe | media sync <dir> | videos probe";
+    let usage = "Usage: sver-admin role grant|revoke <username> | media probe | media sync <dir> | videos probe | games seed <username> <category id> <dir>";
     let [scope, verb, username] = args.as_slice() else {
         return Err(usage.into());
     };
