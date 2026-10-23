@@ -270,6 +270,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .popout-chat .chat{flex:1;display:flex;flex-direction:column;min-height:0;max-height:none}
 .popout-chat .chat-messages{flex:1;overflow-y:auto}
 .popout-dock{padding:0}.chat-compact{padding:6px;font-size:0.92em}
+.obs-dock{min-height:100vh;min-width:260px;padding:8px;display:grid;gap:8px;align-content:start;background:var(--bg)}.obs-dock .panel{padding:10px;margin:0}.obs-dock-status p{margin:0 0 4px}.obs-dock :is(.field:not(.narrow),.part-picker){display:grid;width:100%}.obs-dock .field:not(.narrow) :is(input,select){width:100%;max-width:none}
 .popout-overlay{background:transparent;padding:0;min-height:0}
 .chat-overlay{background:transparent;border:0;color:#fff;text-shadow:0 1px 2px #000,0 0 4px #000}
 .chat-overlay .chat-messages{list-style:none;margin:0;padding:8px;display:flex;flex-direction:column;gap:4px}

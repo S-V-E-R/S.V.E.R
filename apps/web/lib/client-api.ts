@@ -26,6 +26,20 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
 }
 
+/** OBS docks share cookies but never reload, so a signed-out dock checks every 5 seconds whether the
+ *  person signed in elsewhere (another dock), then goes to `to` (or reloads). */
+export function useSignInElsewhere(active: boolean, to?: string) {
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(async () => {
+      if (!(await request("GET", "/api/auth/me")).ok) return;
+      clearInterval(timer);
+      if (to) window.location.assign(to); else window.location.reload();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [active, to]);
+}
+
 /** Runs an async loader on mount and whenever it changes. Loaders set state only after awaiting the
  *  network, which react-hooks/set-state-in-effect cannot tell apart from a synchronous update. */
 export function useLoad(load: () => Promise<unknown>) {

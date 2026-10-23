@@ -58,6 +58,8 @@ mod dms;
 mod engagement;
 #[path = "streams/events.rs"]
 mod events;
+#[path = "streams/game_detection.rs"]
+mod game_detection;
 #[path = "streams/gateway.rs"]
 mod gateway;
 #[path = "streams/gifs.rs"]
@@ -669,6 +671,7 @@ async fn exercise(e: &Env) {
     username_claims::exercise(e).await;
     ads::exercise(e).await;
     skirmish::exercise(e).await;
+    game_detection::exercise(e).await;
     // Live events: each flow above wrote its topic (docs/DEVELOPER_PLATFORM.md section 2).
     for kind in ["moderation", "raid:incoming"] {
         let written: bool = sqlx::query_scalar(
