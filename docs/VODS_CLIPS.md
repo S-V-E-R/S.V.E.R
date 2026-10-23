@@ -63,6 +63,19 @@ Live streams are recorded so people can catch up. Streamers keep their best mome
 - Suggestions go to the streamer's approval queue and are never published automatically.
 - They use MAGNet's room signals only, never money or viewer count ([MAGNET.md](MAGNET.md)).
 
+## Automatic clip suggestions
+
+Added October 23, 2026, after Joe asked for clips from console streams on a capture card, where no tool can read the game itself. Two kinds of moment that work for any game, plus one game-specific detector (`videos/auto.rs`):
+
+- **Room moments.** Every 10 seconds, MAGNet's own signals (chat or new follows well above the stream's normal, under all of MAGNet's anti-gaming rules) are checked for every live stream, not only when a lane features it. A raid or the streamer's flag doesn't count here: neither is something that happened in the last 35 seconds. The clip is titled with the reason ("Chat is going off").
+- **Loud moments.** Each recorded segment's audio (about 2 seconds) is decoded to 8 kHz mono and its loudest 400 ms measured. A segment at least 15 dB above the median of the stream's last 90 segments (about 3 minutes), and no quieter than -30 dBFS, is a "Loud moment". The stream's audio is one mix, so this can't tell the streamer's voice from gunfire: it finds loud moments, not reactions specifically. Measured on Joe's two MW4 sessions (3.7 hours): 5 to 8.5 an hour, mostly fights, plus a round win and a level-up menu.
+
+- **MW4 wins.** While a stream's category is Call of Duty: Modern Warfare 4 and the game detection model is configured ([LIVE_STREAMS.md](LIVE_STREAMS.md) "Game detection"), the first frame of each recorded segment (the 640-pixel still, cropped to the channel's learned game area when there is one) is embedded with CLIP and voted on against 184 labeled screens from Joe's recordings (`videos/mw4_screens.bin`: the VICTORY splash and board, ROUND WIN, and as "other" DEFEAT, ROUND LOSS, mid-match scoreboards, killcams, menus and gameplay). CLIP sees an end-of-match board but can't read the word on it, so a frame with 5% or more clearly red pixels in the top of the game area is never a win: MW4 draws losses in red (7% to 10% on the recordings) and wins in teal (3% at most). The clip is titled "Victory" or "Round win". MW4's own kill banners and BEST PLAY are not used: they show killcams of the streamer's deaths and other players' plays. Measured across Joe's two sessions (each session's examples judging the other's frames): no false wins, including all 5 losses; 5 of 7 victories caught (the 2 missed were splash-only modes whose splash had no counterpart in the other session) and 2 of 3 round wins (with no round-win examples in the other session). `auto::tests::mw4_screens` repeats the measurement and writes the file from labeled frames.
+
+Each moment becomes a clip of the last 35 seconds through the same path as MAGNet spotlights: pending until the streamer approves it in Studio → Videos & clips (where it can be watched first), never while clipping is off, held or copyright-restricted. A moment within 2 minutes of another suggestion (MAGNet's included) isn't offered again, and a recording gets at most 6 suggestions an hour. The thresholds, gap and cap are private tuning (`VOD_TUNING_FILE`); the repo's defaults are the values above. On by default; Studio → Videos & clips → **Suggest clips automatically** switches it off.
+
+Loudness baselines live in the API process: after a restart a stream relearns for about 3 minutes.
+
 ## Safety and legal
 
 - **Take It Down** ([TAKE_IT_DOWN.md](TAKE_IT_DOWN.md)) covers VODs, Highlights and clips. A valid request removes the media and every clip and Beacon made from it, and purges the CDN, within 48 hours.

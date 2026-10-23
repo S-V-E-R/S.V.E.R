@@ -8,7 +8,7 @@ import { RecordedPlayer } from "../../../components/RecordedPlayer";
 import { duration, videoPath, type Video } from "../../../lib/videos";
 import type { Chip } from "../../../lib/types";
 import "../../../styles/videos.css";
-type Settings = { recording: boolean; visibility: string; clip_permission: string; clip_approval: boolean; chat_replay: boolean; mature: boolean; copyright_restricted: boolean };
+type Settings = { recording: boolean; visibility: string; clip_permission: string; clip_approval: boolean; chat_replay: boolean; mature: boolean; auto_clips: boolean; copyright_restricted: boolean };
 type Library = { settings: Settings; videos: Video[]; has_more: boolean; editors: Chip[]; configured: boolean; highlight_used_ms: number; highlight_limit_ms: number; retention_hours: number; username: string; editing: Video[]; pending: number };
 export default function Videos() {
   const [data, setData] = useState<Library | null>(null);
@@ -39,7 +39,8 @@ export default function Videos() {
     <Section title="Clips" intro="Set who can clip your channel and whether clips need review.">
       <label className="field"><span>Who can clip?</span><select disabled={saving} value={s.clip_permission} onChange={e => void save({ clip_permission: e.target.value })}>{[['SIGNED_IN', 'Signed-in viewers'], ['FOLLOWERS', 'Followers'], ['SUBSCRIBERS', 'Subscribers'], ['MODS', 'You and your mods'], ['OFF', 'Nobody']].map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></label>
       <label className="checkbox"><input type="checkbox" disabled={saving} checked={s.clip_approval} onChange={e => void save({ clip_approval: e.target.checked })} />Review viewer clips before publishing</label>
-      <p className="muted">Your clips and your mods&apos; clips skip viewer approval. MAGNet suggestions always wait for approval.</p>
+      <label className="checkbox"><input type="checkbox" disabled={saving} checked={s.auto_clips} onChange={e => void save({ auto_clips: e.target.checked })} /><span><strong>Suggest clips automatically</strong>: when chat goes off or your stream suddenly gets loud, the last 35 seconds are saved as a clip waiting for your review below. Nothing is published until you approve it.</span></label>
+      <p className="muted">Your clips and your mods&apos; clips skip viewer approval. MAGNet and automatic suggestions always wait for approval.</p>
     </Section>
     <Section title="Highlight storage" intro={`${duration(data.highlight_used_ms)} used of ${duration(data.highlight_limit_ms)}. Delete a Highlight to free space.`}><progress value={data.highlight_used_ms} max={data.highlight_limit_ms} aria-label="Highlight storage used" /></Section>
     <Section title="Live marker" intro="Mark a moment while recording. You and your mods can also use !marker in chat."><form className="row" onSubmit={async e => { e.preventDefault(); const result = await send("POST", `/api/channels/${data.username}/marker`, { label: new FormData(e.currentTarget).get("label") }); setMessage(result.ok ? "Marker added." : result.error); }}><label className="field"><span>Label (optional)</span><input name="label" maxLength={100} /></label><button>Add marker</button></form></Section>

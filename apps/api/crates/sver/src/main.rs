@@ -262,6 +262,9 @@ async fn main() -> Result<(), String> {
             if sver::magnet::tick(&media_jobs).await.is_err() {
                 eprintln!("magnet_event=tick outcome=retry");
             }
+            if sver::videos::auto::tick(&media_jobs).await.is_err() {
+                eprintln!("auto_clip_event=tick outcome=retry");
+            }
             if sver::engagement::tick(&media_jobs).await.is_err() {
                 eprintln!("engagement_event=watch outcome=retry");
             }
