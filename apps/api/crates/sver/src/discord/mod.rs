@@ -519,6 +519,19 @@ type Due = (
     bool,
 );
 async fn deliver(app: &App) -> Res<()> {
+    // A delivered post whose stream ended is removed, so the go-live channel shows only who is live.
+    let ended: Vec<(i64, String, String)> = sqlx::query_as("SELECT p.id,p.post_channel,p.message_id FROM discord_posts p JOIN broadcasts b ON b.id=p.broadcast_id WHERE p.message_id IS NOT NULL AND b.state='ENDED' LIMIT 20")
+        .fetch_all(&app.db).await?;
+    for (id, to, message) in ended {
+        // Already deleted by hand, or the channel is gone: the post is cleared either way.
+        if matches!(call(app, Method::DELETE, &format!("/channels/{to}/messages/{message}"), None).await, Some((s, _)) if s < 300 || s == 404 || s == 403)
+        {
+            sqlx::query("UPDATE discord_posts SET message_id=NULL WHERE id=$1")
+                .bind(id)
+                .execute(&app.db)
+                .await?;
+        }
+    }
     // A go-live post older than two hours, or for a stream that already ended, is dropped.
     sqlx::query("UPDATE discord_posts p SET available_at='infinity',error='The stream ended before the post went out.' FROM broadcasts b WHERE b.id=p.broadcast_id AND p.delivered_at IS NULL AND p.available_at<>'infinity' AND (b.state='ENDED' OR p.created_at<now()-interval '2 hours')")
         .execute(&app.db).await?;
@@ -546,9 +559,9 @@ async fn deliver(app: &App) -> Res<()> {
         }
         content.push_str(&format!("\n{}/{username}", app.config.origin));
         match send_post(app, &to, &content).await {
-            Some((status, _)) if status < 300 => {
-                sqlx::query("UPDATE discord_posts SET delivered_at=now(),attempts=attempts+1,error=NULL WHERE id=$1")
-                    .bind(id).execute(&app.db).await?;
+            Some((status, body)) if status < 300 => {
+                sqlx::query("UPDATE discord_posts SET delivered_at=now(),attempts=attempts+1,error=NULL,post_channel=$2,message_id=$3 WHERE id=$1")
+                    .bind(id).bind(&to).bind(body["id"].as_str()).execute(&app.db).await?;
             }
             Some(result) if problem(&result).is_some() => {
                 set_problem(app, &channel, problem(&result)).await?;
