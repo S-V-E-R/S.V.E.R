@@ -219,7 +219,7 @@
   {
    "kind": "npm",
    "name": "@next/env",
-   "version": "16.4.1",
+   "version": "16.4.2",
    "license": "MIT",
    "url": "https://github.com/vercel/next.js#readme",
    "text": null
@@ -243,7 +243,7 @@
   {
    "kind": "npm",
    "name": "baseline-browser-mapping",
-   "version": "2.11.27",
+   "version": "2.11.30",
    "license": "Apache-2.0",
    "url": "https://github.com/web-platform-dx/baseline-browser-mapping#readme",
    "text": "283ea6cc2997a1a7"
@@ -251,7 +251,7 @@
   {
    "kind": "npm",
    "name": "browserslist",
-   "version": "4.29.3",
+   "version": "4.29.4",
    "license": "MIT",
    "url": "https://github.com/browserslist/browserslist#readme",
    "text": "2bccca04141ded40"
@@ -259,7 +259,7 @@
   {
    "kind": "npm",
    "name": "caniuse-lite",
-   "version": "1.0.30001815",
+   "version": "1.0.30001818",
    "license": "CC-BY-4.0",
    "url": "https://github.com/browserslist/caniuse-lite#readme",
    "text": "7183ef9749eb9b75"
@@ -299,7 +299,7 @@
   {
    "kind": "npm",
    "name": "electron-to-chromium",
-   "version": "1.5.449",
+   "version": "1.5.463",
    "license": "ISC",
    "url": "https://github.com/Kilian/electron-to-chromium#readme",
    "text": "94e2d6f90264f1e3"
@@ -315,7 +315,7 @@
   {
    "kind": "npm",
    "name": "framer-motion",
-   "version": "14.2.0",
+   "version": "14.5.0",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "aac842346e3368e0"
@@ -371,7 +371,7 @@
   {
    "kind": "npm",
    "name": "motion-dom",
-   "version": "14.2.0",
+   "version": "14.5.0",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "bb59eb35f694a158"
@@ -387,7 +387,7 @@
   {
    "kind": "npm",
    "name": "motion",
-   "version": "14.2.0",
+   "version": "14.5.0",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "bb59eb35f694a158"
@@ -411,7 +411,7 @@
   {
    "kind": "npm",
    "name": "next",
-   "version": "16.4.1",
+   "version": "16.4.2",
    "license": "MIT",
    "url": "https://nextjs.org",
    "text": "25afff58f46401f4"
@@ -419,7 +419,7 @@
   {
    "kind": "npm",
    "name": "node-releases",
-   "version": "2.0.57",
+   "version": "2.0.59",
    "license": "MIT",
    "url": "https://github.com/chicoxyzzy/node-releases#readme",
    "text": "b02a61dfa2f1ba35"
@@ -443,7 +443,7 @@
   {
    "kind": "npm",
    "name": "react-dom",
-   "version": "19.3.0",
+   "version": "19.3.1",
    "license": "MIT",
    "url": "https://react.dev/",
    "text": "cf9b17822d1fcd4f"
@@ -451,7 +451,7 @@
   {
    "kind": "npm",
    "name": "react",
-   "version": "19.3.0",
+   "version": "19.3.1",
    "license": "MIT",
    "url": "https://react.dev/",
    "text": "cf9b17822d1fcd4f"
@@ -523,7 +523,7 @@
   {
    "kind": "npm",
    "name": "update-browserslist-db",
-   "version": "1.3.3",
+   "version": "1.3.4",
    "license": "MIT",
    "url": "https://github.com/browserslist/update-db#readme",
    "text": "1017334f27eb7332"
