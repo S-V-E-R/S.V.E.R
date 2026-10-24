@@ -3483,8 +3483,8 @@
   {
    "kind": "rust",
    "name": "unicode-normalization",
-   "version": "0.1.25",
-   "license": "MIT OR Apache-2.0",
+   "version": "0.1.26",
+   "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
    "url": "https://github.com/unicode-rs/unicode-normalization",
    "text": "033a9383ff21d1e4"
   },
