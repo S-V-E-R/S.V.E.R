@@ -66,6 +66,8 @@ mod gateway;
 mod gifs;
 #[path = "streams/integrity.rs"]
 mod integrity;
+#[path = "streams/kick_chat.rs"]
+mod kick_chat;
 #[path = "streams/lights.rs"]
 mod lights;
 #[path = "streams/linked_chat.rs"]
@@ -542,8 +544,12 @@ async fn streaming_lifecycle_and_security() {
     admin.close().await;
     result.unwrap();
 }
+/// Tests that point outside APIs (Discord, Twitch, YouTube, Kick) at fakes through process-wide
+/// environment variables hold this, so they never run at the same time.
+static OUTSIDE_APIS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn discord_bot() {
+    let _apis = OUTSIDE_APIS.lock().await;
     let (admin, db, schema) = isolated_database().await;
     let mut config = Config::from_env().unwrap();
     config.resend_key.clear();
@@ -583,10 +589,11 @@ async fn discord_bot() {
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn youtube_linked_chat() {
+    let _apis = OUTSIDE_APIS.lock().await;
     let (admin, db, schema) = isolated_database().await;
     let google = Arc::new(Mutex::new(youtube_chat::Google::default()));
     let base = youtube_chat::serve(google.clone()).await;
-    // SAFETY: only this test reads the YouTube variables.
+    // SAFETY: tests that set these hold OUTSIDE_APIS.
     unsafe {
         std::env::set_var("YOUTUBE_API_BASE", format!("{base}/yt"));
         std::env::set_var("YOUTUBE_REVOKE_URL", format!("{base}/revoke"));
@@ -607,6 +614,48 @@ async fn youtube_linked_chat() {
     let app = App::new(db.clone(), config).await.unwrap();
     let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
     let result = tokio::spawn(async move { youtube_chat::exercise(&env, google).await }).await;
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    result.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn kick_linked_chat() {
+    let _apis = OUTSIDE_APIS.lock().await;
+    let (admin, db, schema) = isolated_database().await;
+    let kick = Arc::new(Mutex::new(kick_chat::Kick::default()));
+    let (base, key) = kick_chat::serve(kick.clone()).await;
+    // SAFETY: tests that set these hold OUTSIDE_APIS; the Discord test expects no Kick app after.
+    unsafe {
+        std::env::set_var("KICK_API_BASE", &base);
+        std::env::set_var("KICK_ID_BASE", &base);
+        std::env::set_var("KICK_CLIENT_ID", "test-kick");
+        std::env::set_var("KICK_CLIENT_SECRET", "test-only-secret");
+    }
+    let mut config = Config::from_env().unwrap();
+    config.resend_key.clear();
+    config.providers = vec![sver::oauth::Provider {
+        name: "kick".into(),
+        client_id: "test-kick".into(),
+        client_secret: "test-only-secret".into(),
+        authorize_url: "https://kick.example/authorize".into(),
+        token_url: format!("{base}/oauth/token"),
+        profile_url: format!("{base}/public/v1/users"),
+        scopes: "user:read".into(),
+        pkce: true,
+        redirect_uri: None,
+    }];
+    let app = App::new(db.clone(), config).await.unwrap();
+    let env = synthetic_owner(app, Arc::new(Mutex::new(Media::default()))).await;
+    let result = tokio::spawn(async move { kick_chat::exercise(&env, kick, key).await }).await;
+    // SAFETY: as above.
+    unsafe {
+        std::env::remove_var("KICK_CLIENT_ID");
+        std::env::remove_var("KICK_CLIENT_SECRET");
+    }
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)

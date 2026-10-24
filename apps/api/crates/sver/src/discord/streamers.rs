@@ -579,7 +579,12 @@ static KICK_TOKEN: Mutex<Token> = Mutex::new(None);
 fn kick_cached() -> std::sync::MutexGuard<'static, Token> {
     KICK_TOKEN.lock().unwrap_or_else(|e| e.into_inner())
 }
-async fn kick_token(app: &App) -> Option<String> {
+/// Forgets the cached Kick app token (Kick refused it).
+pub(crate) fn kick_token_reset() {
+    *kick_cached() = None;
+}
+/// The Kick app token (client credentials), cached; also used by linked chat.
+pub(crate) async fn kick_token(app: &App) -> Option<String> {
     if let Some((token, until)) = kick_cached().clone()
         && until > Instant::now()
     {

@@ -39,15 +39,18 @@ const EVENTS: [&str; 4] = [
     "channel.chat.clear",
 ];
 
+mod kick;
 mod youtube;
 
 /// The permissions asked for when linking a platform for chat; None where it isn't available yet.
 /// Twitch: read the streamer's chat and post as them (`user:bot`/`channel:bot` let webhooks carry chat).
 /// YouTube: its one scope that both reads live chat and posts to it.
+/// Kick: who they are, posting to chat, and chat events.
 pub fn scopes(platform: &str) -> Option<&'static str> {
     match platform {
         "twitch" => Some("user:read:chat user:write:chat user:bot channel:bot"),
         "youtube" => Some(youtube::SCOPE),
+        "kick" => Some(kick::SCOPES),
         _ => None,
     }
 }
@@ -674,7 +677,8 @@ pub async fn tick(app: &App) -> Res<()> {
         None => Ok(()),
     };
     let youtube = youtube::tick(app).await;
-    twitch.and(youtube)
+    let kick = kick::tick(app).await;
+    twitch.and(youtube).and(kick)
 }
 /// Subscribes Twitch chats of channels that went live, and unsubscribes those whose broadcast
 /// ended (they stay connected through the RECONNECTING window).
@@ -798,6 +802,9 @@ async fn unlink(
     {
         youtube::revoke(&app, refresh.as_deref().unwrap_or(access)).await;
     }
+    if let Some((access, refresh, subscriptions)) = row.as_ref().filter(|_| platform == "kick") {
+        kick::unlink(&app, refresh.as_deref().unwrap_or(access), subscriptions).await;
+    }
     if let (Some((sealed, _, subscriptions)), Some(p)) =
         (row, twitch(&app).filter(|_| platform == "twitch"))
     {
@@ -902,6 +909,9 @@ async fn reply(
     sec::reserve(&app, vec![format!("linked-reply:{}", user.id)], 20, 30).await?;
     if input.platform == "youtube" {
         return youtube::reply(&app, &user.id, &body, input.reply_to.as_deref()).await;
+    }
+    if input.platform == "kick" {
+        return kick::reply(&app, &user.id, &body, input.reply_to.as_deref()).await;
     }
     let p = twitch(&app)
         .filter(|_| input.platform == "twitch")
@@ -1074,6 +1084,7 @@ async fn unmute(
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/integrations/twitch/eventsub", post(eventsub))
+        .route("/api/integrations/kick/webhook", post(kick::webhook))
         .route("/api/me/linked-chat", get(mine))
         .route("/api/me/linked-chat/reply", post(reply))
         .route("/api/me/linked-chat/status", get(status))
