@@ -57,7 +57,7 @@ export default function LinkedChatPage() {
           </div>
         </li>;
       })}</ul>
-      <p className="muted small">Linking asks {NAMES.twitch} only for permission to read your channel&apos;s chat and post as you. S.V.E.R keeps the access encrypted and deletes it when you unlink. Some platforms don&apos;t allow other platforms&apos; chat inside the stream video, so keep linked chat off the video you send elsewhere; the S.V.E.R chat overlay for OBS leaves outside messages out.</p>
+      <p className="muted small">Linking asks each platform only for permission to read your channel&apos;s chat and post as you. YouTube chat connects once your YouTube stream is live (send it there with Restream), and replies there can be up to 200 characters. S.V.E.R keeps the access encrypted and deletes it when you unlink. Some platforms don&apos;t allow other platforms&apos; chat inside the stream video, so keep linked chat off the video you send elsewhere; the S.V.E.R chat overlay for OBS leaves outside messages out.</p>
     </Section>
     <Section title="Your recent streams" intro="How S.V.E.R chat compared with your linked platforms' chat on each stream in the last 7 days (chat is kept that long). Your own messages and the bot's don't count.">
       {data.streams.length === 0 ? <p className="muted">No streams in the last 7 days.</p>
