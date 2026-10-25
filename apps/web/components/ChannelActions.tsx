@@ -9,7 +9,7 @@ import { ReportForm, TakeDownLink } from "./Report";
 import { ShareButton } from "./ShareButton";
 import { Subscribe } from "./Subscribe";
 
-/** Follow / Following, the Block and Report menu, or Edit profile on your own channel; Share for everyone. */
+/** Follow / Following, the Block and Report menu, or Edit profile and Download card (the share card, app/[username]/opengraph-image.tsx) on your own channel; Share for everyone. */
 export function ChannelActions({ username, displayName, viewer, path }: { username: string; displayName: string; viewer: Viewer; path: string }) {
   const router = useRouter();
   const [following, setFollowing] = useState(viewer.following);
@@ -17,7 +17,7 @@ export function ChannelActions({ username, displayName, viewer, path }: { userna
   const [menu, setMenu] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [error, setError] = useState("");
-  if (viewer.is_owner) return <div className="channel-actions"><Link className="button small" href="/settings/profile">Edit profile</Link><Link className="button small quiet" href="/studio/channel">Creator Studio</Link><ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} /></div>;
+  if (viewer.is_owner) return <div className="channel-actions"><Link className="button small" href="/settings/profile">Edit profile</Link><Link className="button small quiet" href="/studio/channel">Creator Studio</Link><ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} /><a className="button small quiet" href={`/${username}/opengraph-image`} download={`${username}-sver.png`}>Download card</a></div>;
   if (!viewer.signed_in) return <div className="channel-actions"><Link className="button small" href="/login" data-from={path}>Log in to follow</Link><ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} /><TakeDownLink target={{ target_type: "profile", target_id: username }} /></div>;
   async function follow() {
     const result = await send<{ following: boolean }>(following ? "DELETE" : "PUT", `/api/follows/${encodeURIComponent(username)}`);
