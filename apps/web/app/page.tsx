@@ -67,6 +67,7 @@ export default async function Home() {
         ? <StreamGrid streams={live} viewerFaction={viewerFaction} languages={languages} shelf />
         : <div className="empty-live panel">
           <p><strong>Nothing live right now.</strong> These channels were live recently; follow them to hear when they&apos;re back.</p>
+          {!account && <p>Choose your faction, grow with your people, and get discovered: every live stream gets a fair turn. <Link href="/factions">Meet the three factions</Link>.</p>}
           {home && <RecentChannels recent={home.recent} />}
           <p><Link href="/war-map" className="button quiet">See the war map</Link> {account ? <Link href="/studio/stream" className="button">Go live</Link> : <Link href="/signup" className="button">Enlist</Link>}</p>
         </div>}

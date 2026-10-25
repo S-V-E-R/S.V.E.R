@@ -83,7 +83,7 @@ export default async function Browse({ searchParams }: { searchParams: Promise<{
     </nav>
     {!list.data ? <p className="notice" role="alert">Live channels couldn&apos;t be loaded. Please refresh.</p>
       : list.data.items.length ? <StreamGrid streams={list.data.items} viewerFaction={viewerFaction} languages={languages} />
-        : <div className="empty-live panel"><p><strong>Nothing live here right now.</strong> These channels were live recently.</p><RecentChannels recent={list.data.recent} /><p><Link href="/war-map" className="button quiet">See the war map</Link></p></div>}
+        : <div className="empty-live panel"><p><strong>Nothing live here right now.</strong> These channels were live recently.</p><RecentChannels recent={list.data.recent} /><p>{filter.size > 0 && <Link href="/browse" className="button">See everything live</Link>} <Link href="/war-map" className="button quiet">See the war map</Link> {!account && <Link href="/factions" className="button quiet">Meet the factions</Link>}</p></div>}
     <AdSlot signedIn={!!account} />
   </div>;
 }

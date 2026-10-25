@@ -15,6 +15,7 @@ import { EffortLeaders, StandingPill } from "../../../components/Loyalty";
 import { SectionHead, StreamGrid } from "../../../components/home/Shelves";
 import type { LiveCard } from "../../../components/home/types";
 import { TurfStrip } from "../../../components/TurfStrip";
+import { TheatreToggle } from "../../../components/TheatreToggle";
 import type { War } from "../../../lib/war";
 import { apiGet } from "../../../lib/server-api";
 import { CoStreamPlayers, type Squad } from "../../../components/Squads";
@@ -59,6 +60,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
       <Link href={`/${c.username}?home`} aria-label={`${c.display_name}'s channel`}>{c.faction ? <Crest faction={c.faction} size={48} /> : <Avatar sizes={c.avatar} name={c.display_name} size={48} />}</Link>
       <div className="streamer-name"><h1><Link href={`/${c.username}?home`}>{c.display_name}</Link></h1><p className="handle">@{c.username}</p><p className="streamer-tags">{c.faction && <Link href={`/factions/${c.faction}`} className="badge faction-tag">{factionInfo(c.faction).name}</Link>}<span className="muted">{c.follower_count.toLocaleString()} followers</span></p></div>
       {account && <StandingPill username={c.username} />}
+      <TheatreToggle />
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
       {account && <EditStreamInfo username={c.username} />}
     </section>
