@@ -13,7 +13,8 @@ use sqlx::PgConnection;
 
 /// Home's sections, in the default order. The owner can reorder them; none can be dropped,
 /// and empty ones are hidden from visitors.
-pub const HOME_SECTIONS: [&str; 8] = [
+pub const HOME_SECTIONS: [&str; 9] = [
+    "trailer",
     "about_me",
     "war_council",
     "wall",

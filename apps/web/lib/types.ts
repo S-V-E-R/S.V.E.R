@@ -2,6 +2,8 @@ import type { Faction } from "./factions";
 export type Sizes = Record<string, string> | null;
 export type Chip = { username: string | null; display_name: string; avatar: Sizes; linked: boolean; deleted: boolean; live?: boolean; faction?: Faction | null; guild?: { slug: string; name: string; tag: string; image: string | null } | null; name_style?: string | null };
 export type Link = { platform: string; url: string };
+/** The channel trailer (docs/PROFILES.md "Channel trailer"): one of the owner's own public clips or Highlights, or a YouTube video. */
+export type Trailer = { provider: "youtube" | "sver"; media_id: string; url: string; title: string | null; thumbnail: string | null } | null;
 export type Song = { provider: "youtube" | "soundcloud"; media_id: string; title: string | null; artist: string | null; thumbnail: string | null; volume: number } | null;
 export type Viewer = { signed_in: boolean; is_owner: boolean; following: boolean; alerts?: boolean; blocked: boolean; interaction_blocked: boolean; can_message?: boolean; relationship?: Relationship };
 /** The signed-in visitor's own ties to a channel (docs/PROFILES.md "Persona pass"). */
@@ -16,9 +18,9 @@ export type Shine = { live: { name: string; url: string } | null; badges: { char
 export const CREATOR_TIERS = ["Scout", "Trailblazer", "Pioneer", "Pathfinder"];
 /** A page block: About text, a panel, quotes, a game shelf or an answered prompt. */
 export type PageBlock = { type: "ABOUT" | "PANEL" | "QUOTES" | "GAME_SHELF" | "PROMPT"; enabled: boolean; config: { body?: string; title?: string; quotes?: { text: string; attribution: string }[]; games?: string[]; question?: string; answer?: string } };
-export const HOME_SECTIONS = ["about_me", "war_council", "wall", "up_next", "videos", "shine", "achievements", "activity"] as const;
+export const HOME_SECTIONS = ["trailer", "about_me", "war_council", "wall", "up_next", "videos", "shine", "achievements", "activity"] as const;
 export type HomeSection = typeof HOME_SECTIONS[number];
-export const SECTION_NAMES: Record<HomeSection, string> = { about_me: "About me", war_council: "War Council", wall: "Wall", up_next: "Up next", videos: "Latest videos", shine: "Shine", achievements: "Achievements", activity: "Recent activity" };
+export const SECTION_NAMES: Record<HomeSection, string> = { trailer: "Trailer", about_me: "About me", war_council: "War Council", wall: "Wall", up_next: "Up next", videos: "Latest videos", shine: "Shine", achievements: "Achievements", activity: "Recent activity" };
 /** Who someone is on their page: level, title, frame, showcase, Currently, layout and theme (docs/PROFILES.md "Persona pass"). */
 export type Persona = {
   level?: number; title?: string; frame?: number;
@@ -28,7 +30,7 @@ export type Persona = {
   song_why?: string; theme_variant?: string | null; layout?: "stream" | "persona"; home_order?: HomeSection[];
 };
 export type Channel = {
-  channel: { plays?: boolean; board?: boolean; username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; live: boolean; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[]; creator_tier?: number; shine?: Shine; supporter?: import("../components/Supporter").SupporterMarks; discord_rank?: { name: string; level: number; faction: Faction | null } | null } & Persona;
+  channel: { plays?: boolean; board?: boolean; username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; joined_at: string; follower_count: number; following_count: number; links: Link[]; song: Song; song_notice: string | null; trailer: Trailer; live: boolean; faction: Faction | null; season_rewards: { season: number; faction: Faction; awarded_at: string; valor_pending: boolean }[]; creator_tier?: number; shine?: Shine; supporter?: import("../components/Supporter").SupporterMarks; discord_rank?: { name: string; level: number; faction: Faction | null } | null } & Persona;
   tabs: { wall: boolean; schedule: boolean; about: boolean; fan_art: boolean; videos?: boolean; beacons?: boolean };
   /** About me blocks, shown on Home (docs/PROFILES.md "Persona pass"). */
   blocks?: PageBlock[];

@@ -442,7 +442,7 @@ pub async fn resolve_channel(State(app): State<App>, Path(name): Path<String>) -
     }
 }
 
-/// GET /api/channels/{username}: header, counts, song, War Council, Home previews and the
+/// GET /api/channels/{username}: header, counts, song, trailer, War Council, Home previews and the
 /// viewer relationship.
 pub async fn channel(
     State(app): State<App>,
@@ -545,6 +545,7 @@ pub async fn channel(
             "links": links_json(&mut db, &user.id).await?,
             "song": song,
             "song_notice": song_notice,
+            "trailer": crate::studio::trailer_json(&app, &mut db, &user.id, viewer.as_ref()).await?,
             "live": crate::playback::is_live(&mut db, &user.id).await?,
             "plays": crate::plays::is_channel(&mut db, &user.id).await?,
             "board": crate::boards::published(&mut db, &user.id).await?,

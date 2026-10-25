@@ -342,6 +342,7 @@ async fn profiles_acceptance() {
             bucket_redirects(&env).await;
             follows_council_and_blocks(&env).await;
             song(&env).await;
+            trailer(&env).await;
             wall(&env).await;
             persona_pass(&env).await;
             studio_sections(&env, &media_dir).await;
@@ -1125,6 +1126,135 @@ async fn song(env: &Env) {
     env.reset_limits().await;
     println!(
         "Passed: song URL forms, oEmbed error mapping, redirect/timeout/size limits, re-hosted thumbnails and the Spotify notice."
+    );
+}
+
+async fn trailer(env: &Env) {
+    let (id, owner) = env.user("TrailerOwner", true).await;
+    let (other_id, _) = env.user("TrailerOther", true).await;
+    let origin = &env.app.config.origin;
+    let (public, private, theirs) = (
+        uuid::Uuid::new_v4().to_string(),
+        uuid::Uuid::new_v4().to_string(),
+        uuid::Uuid::new_v4().to_string(),
+    );
+    for (video, owner_id, visibility) in [
+        (&public, &id, "PUBLIC"),
+        (&private, &id, "PRIVATE"),
+        (&theirs, &other_id, "PUBLIC"),
+    ] {
+        sqlx::query("INSERT INTO videos(id,owner_id,kind,status,approval,visibility,title,started_at) VALUES($1,$2,'CLIP','READY','APPROVED',$3,'Synthetic trailer',now())")
+            .bind(video).bind(owner_id).bind(visibility).execute(&env.app.db).await.unwrap();
+    }
+    let read = || async {
+        env.anon
+            .ok("GET", "/api/channels/TrailerOwner", Value::Null)
+            .await["channel"]["trailer"]
+            .clone()
+    };
+    assert!(read().await.is_null());
+    assert_eq!(
+        env.anon
+            .status(
+                "PUT",
+                "/api/me/trailer",
+                json!({"url": "https://youtu.be/dQw4w9WgXcQ"}),
+            )
+            .await,
+        StatusCode::UNAUTHORIZED
+    );
+    // Only your own public clips and Highlights, or a YouTube video.
+    for url in [
+        "https://soundcloud.com/artist/track-name".to_string(),
+        "https://open.spotify.com/track/1".to_string(),
+        "not a link".to_string(),
+        format!("{origin}/clips/{theirs}"),
+        format!("{origin}/clips/{private}"),
+    ] {
+        assert_eq!(
+            owner
+                .status("PUT", "/api/me/trailer", json!({"url": url}))
+                .await,
+            StatusCode::BAD_REQUEST,
+            "{url}"
+        );
+    }
+    assert!(read().await.is_null());
+    env.reset_limits().await;
+    let saved = owner
+        .ok(
+            "PUT",
+            "/api/me/trailer",
+            json!({"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10"}),
+        )
+        .await;
+    assert_eq!(saved["trailer"]["provider"], "youtube");
+    let trailer = read().await;
+    assert_eq!(trailer["media_id"], "dQw4w9WgXcQ");
+    assert_eq!(trailer["title"], "Synthetic Track");
+    assert_eq!(
+        trailer["url"],
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    );
+    assert!(
+        trailer["thumbnail"]
+            .as_str()
+            .unwrap()
+            .starts_with(&env.app.config.media.public_base),
+        "The thumbnail is re-hosted"
+    );
+    let ready = owner.ok("GET", "/api/me/readiness", Value::Null).await;
+    assert!(
+        ready["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["key"] == "trailer" && s["done"] == true),
+        "{ready}"
+    );
+    // Replacing it with an own clip; the clip's title and thumbnail are used.
+    owner
+        .ok(
+            "PUT",
+            "/api/me/trailer",
+            json!({"url": format!("{origin}/clips/{public}?t=3")}),
+        )
+        .await;
+    let trailer = read().await;
+    assert_eq!(trailer["provider"], "sver");
+    assert_eq!(trailer["media_id"], public);
+    assert_eq!(trailer["title"], "Synthetic trailer");
+    assert_eq!(trailer["url"], format!("{origin}/clips/{public}"));
+    let stale: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM profiles WHERE user_id=$1 AND trailer_thumb_key IS NOT NULL",
+    )
+    .bind(&id)
+    .fetch_one(&env.app.db)
+    .await
+    .unwrap();
+    assert_eq!(stale, 0, "the old YouTube thumbnail is cleared");
+    // A clip made private later drops the trailer on its own, and returns when it's public again.
+    sqlx::query("UPDATE videos SET visibility='PRIVATE' WHERE id=$1")
+        .bind(&public)
+        .execute(&env.app.db)
+        .await
+        .unwrap();
+    assert!(read().await.is_null());
+    sqlx::query("UPDATE videos SET visibility='PUBLIC' WHERE id=$1")
+        .bind(&public)
+        .execute(&env.app.db)
+        .await
+        .unwrap();
+    assert_eq!(read().await["media_id"], public);
+    owner.ok("DELETE", "/api/me/trailer", Value::Null).await;
+    assert!(read().await.is_null());
+    sqlx::query("DELETE FROM videos WHERE id=ANY($1)")
+        .bind([&public, &private, &theirs])
+        .execute(&env.app.db)
+        .await
+        .unwrap();
+    println!(
+        "Passed: trailer from YouTube or an own public clip, replace, remove, ownership and private-clip refusals, the private-later drop and the readiness step."
     );
 }
 
@@ -1928,7 +2058,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
     let ready = owner.ok("GET", "/api/me/readiness", Value::Null).await;
     assert_eq!(
         (ready["total"].as_i64(), ready["done"].as_i64()),
-        (Some(7), Some(0))
+        (Some(8), Some(0))
     );
     assert_eq!(ready["dismissed"], false);
     let keys: Vec<&str> = ready["steps"]
@@ -1940,7 +2070,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
     assert_eq!(
         keys,
         [
-            "avatar", "banner", "bio", "links", "song", "council", "schedule"
+            "avatar", "banner", "bio", "links", "song", "trailer", "council", "schedule"
         ]
     );
     let me = owner.ok("GET", "/api/me/profile", Value::Null).await;
