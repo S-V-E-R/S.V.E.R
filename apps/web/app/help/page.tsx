@@ -42,6 +42,7 @@ export default function HelpPage() {
           <li>Turn B-frames off. With the x264 encoder, set Tune to zerolatency. With a hardware encoder (AMD, NVIDIA or Intel), set B-frames to 0.</li>
           <li>Use AAC audio at 160 Kbps. In Settings → Video, use an output resolution up to 1920×1080 at up to 60 frames per second.</li>
           <li>Click Start Streaming. Studio shows you live within a few seconds, with input health readings for codec, resolution, bitrate, keyframe interval and B-frames.</li>
+          <li>Optional: keep Studio inside OBS. Choose View → Docks → Custom Browser Docks, name it S.V.E.R and paste <code>https://sver.tv/dock</code>; add another named Chat with <code>https://sver.tv/your-name/chat?dock=1</code>. Sign in with email inside the dock.</li>
         </ol>
         <p>You don&apos;t need OBS&apos;s Auto-Configuration Wizard; its bandwidth test can fail even when streaming works. The bitrate guidance is provisional while delivery testing continues. If your upload speed is under about 10 Mbps, lower the bitrate or resolution.</p>
       </details>

@@ -6,6 +6,7 @@ import type { AnimationSequence } from "motion";
 import { SignupSteps } from "../screens";
 import { Avatar } from "../../components/Avatar";
 import { Crest } from "../../components/Crest";
+import { LogoStylePicker, type LogoStyle } from "../../components/LogoStyle";
 import { useChoreography } from "../../lib/choreography";
 import { send, useLoad } from "../../lib/client-api";
 import { FACTIONS, crestSrc, factionOf, type FactionSlug } from "../../lib/factions";
@@ -13,7 +14,7 @@ import type { Chip, Sizes } from "../../lib/types";
 
 type Step = "side" | "joined" | "profile" | "follow" | "ready";
 type Standing = { faction: FactionSlug | null; can_choose: boolean; free_switch_until: string | null };
-type Profile = { display_name: string; bio: string; avatar: Sizes; revisions: { profile: number } };
+type Profile = { display_name: string; bio: string; avatar: Sizes; revisions: { profile: number }; logo_style: LogoStyle };
 
 /**
  * The onboarding wizard (legacy /onboarding, rebuilt on S.V.E.R's rules): choose your side with
@@ -203,6 +204,7 @@ function ProfileStep({ username, onNext, onBack }: { username: string; onNext: (
       </div>
       <label className="field" htmlFor="display_name"><span>Display name</span><input id="display_name" name="display_name" defaultValue={profile.display_name} maxLength={32} aria-invalid={error?.field === "display_name" || undefined} /><small>Up to 32 characters. Your @{username} always shows next to it.</small></label>
       <label className="field" htmlFor="bio"><span>Bio</span><textarea id="bio" name="bio" value={bio} onChange={e => setBio(e.target.value)} maxLength={300} rows={4} aria-invalid={error?.field === "bio" || undefined} /><small>{bio.length}/300</small></label>
+      <LogoStylePicker value={profile.logo_style} />
       <div className="onboarding-actions split">
         <button type="button" className="quiet" onClick={onBack}>Back</button>
         <span className="onboarding-actions">

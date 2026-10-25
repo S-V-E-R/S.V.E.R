@@ -222,6 +222,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .channel[data-theme]{background:radial-gradient(80% 380px at 50% 0%,var(--accent-deep),transparent)}
 /* Creator Studio navigation groups */
 .studio-nav-group{display:flex;flex-direction:column;gap:2px;margin-bottom:14px}
+.studio-nav-group>summary{cursor:pointer}
 .studio-nav-label{padding:0 10px 4px;font-family:var(--font-label);font-weight:700;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-dim)}
 .studio-nav a{padding:7px 10px}
 .studio-nav .studio-view{margin-top:4px;color:var(--accent-light)}
@@ -270,6 +271,8 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .popout-chat .chat{flex:1;display:flex;flex-direction:column;min-height:0;max-height:none}
 .popout-chat .chat-messages{flex:1;overflow-y:auto}
 .popout-dock{padding:0}.chat-compact{padding:6px;font-size:0.92em}
+.obs-dock{min-height:100vh;min-width:260px;padding:8px;display:grid;gap:8px;align-content:start;background:var(--bg)}.obs-dock .panel{padding:10px;margin:0}.obs-dock-status p{margin:0 0 4px}.obs-dock :is(.field:not(.narrow),.part-picker){display:grid;width:100%}.obs-dock .field:not(.narrow) :is(input,select){width:100%;max-width:none}
+.obs-dock-activity .list{max-height:45vh;overflow-y:auto;margin:0}.obs-dock-activity li{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center}.obs-dock-activity q{grid-column:1;font-size:.9em}.obs-dock-activity li>button{grid-column:2;grid-row:1}
 .popout-overlay{background:transparent;padding:0;min-height:0}
 .chat-overlay{background:transparent;border:0;color:#fff;text-shadow:0 1px 2px #000,0 0 4px #000}
 .chat-overlay .chat-messages{list-style:none;margin:0;padding:8px;display:flex;flex-direction:column;gap:4px}

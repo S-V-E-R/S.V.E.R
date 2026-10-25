@@ -7,6 +7,7 @@ pub mod recording;
 mod routes;
 pub mod worker;
 pub use manage::marker;
+pub mod auto;
 pub mod copyright;
 pub mod review;
 mod sharing;
@@ -71,8 +72,14 @@ pub struct Settings {
     pub clip_approval: bool,
     pub chat_replay: bool,
     pub mature: bool,
+    /// Room and loud moments become clips waiting for approval (docs/VODS_CLIPS.md).
+    #[serde(default = "on")]
+    pub auto_clips: bool,
     #[serde(default, skip_deserializing)]
     pub copyright_restricted: bool,
+}
+fn on() -> bool {
+    true
 }
 pub async fn settings(db: &mut PgConnection, owner: &str) -> Res<Settings> {
     sqlx::query("INSERT INTO video_settings(owner_id) VALUES($1) ON CONFLICT DO NOTHING")

@@ -39,12 +39,26 @@ const EVENTS: [&str; 4] = [
     "channel.chat.clear",
 ];
 
+mod kick;
+mod youtube;
+
 /// The permissions asked for when linking a platform for chat; None where it isn't available yet.
 /// Twitch: read the streamer's chat and post as them (`user:bot`/`channel:bot` let webhooks carry chat).
+/// YouTube: its one scope that both reads live chat and posts to it.
+/// Kick: who they are, posting to chat, and chat events.
 pub fn scopes(platform: &str) -> Option<&'static str> {
     match platform {
         "twitch" => Some("user:read:chat user:write:chat user:bot channel:bot"),
+        "youtube" => Some(youtube::SCOPE),
+        "kick" => Some(kick::SCOPES),
         _ => None,
+    }
+}
+fn label(platform: &str) -> &'static str {
+    match platform {
+        "youtube" => "YouTube",
+        "kick" => "Kick",
+        _ => "Twitch",
     }
 }
 fn twitch(app: &App) -> Option<&Provider> {
@@ -87,6 +101,17 @@ pub async fn save(
         .as_str()
         .ok_or_else(|| crate::Error::bad("The platform didn't return access."))?;
     let refresh = tokens["refresh_token"].as_str();
+    // Google lets people untick a permission on its consent screen; chat needs the YouTube one.
+    // Google always lists what was granted; a refresh that doesn't say keeps what was linked.
+    if platform == "youtube"
+        && tokens["scope"]
+            .as_str()
+            .is_some_and(|s| !s.split(' ').any(|x| x == youtube::SCOPE))
+    {
+        return Err(crate::Error::bad(
+            "Allow S.V.E.R to manage your YouTube account, so it can read and post in your live chat.",
+        ));
+    }
     let taken: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM linked_chat_accounts WHERE platform=$1 AND subject=$2 AND owner_id<>$3)")
         .bind(platform).bind(subject).bind(owner).fetch_one(&mut *db).await?;
     if taken {
@@ -112,7 +137,7 @@ macro_rules! outside_json {
         "jsonb_build_object('id',id,'seq',seq,'body',body,'created_at',created_at,'role',NULL,'mentions','[]'::jsonb,'reply',NULL,
     'author',jsonb_build_object('username',NULL,'display_name',sender_name,'avatar',NULL,'linked',false,'deleted',false),
     'outside',jsonb_build_object('platform',platform,'sender_id',sender_id,'name',sender_name,'login',sender_login,'role',sender_role,
-        'url',CASE platform WHEN 'twitch' THEN 'https://www.twitch.tv/'||sender_login WHEN 'kick' THEN 'https://kick.com/'||sender_login ELSE NULL END))"
+        'url',CASE platform WHEN 'twitch' THEN 'https://www.twitch.tv/'||sender_login WHEN 'kick' THEN 'https://kick.com/'||sender_login WHEN 'youtube' THEN 'https://www.youtube.com/channel/'||sender_login ELSE NULL END))"
     };
 }
 const OUTSIDE: &str = concat!("SELECT ", outside_json!(), " FROM outside_chat_messages");
@@ -632,18 +657,32 @@ async fn unsubscribe(app: &App, p: &Provider, ids: &[String]) {
             .await;
     }
 }
-async fn set_status(app: &App, owner: &str, status: &str, detail: Option<&str>) -> Res<()> {
-    sqlx::query("UPDATE linked_chat_accounts SET status=$3,detail=$4,status_at=now() WHERE owner_id=$1 AND platform='twitch'")
-        .bind(owner).bind(status).bind(detail).execute(&app.db).await?;
+async fn set_status(
+    app: &App,
+    owner: &str,
+    platform: &str,
+    status: &str,
+    detail: Option<&str>,
+) -> Res<()> {
+    sqlx::query("UPDATE linked_chat_accounts SET status=$3,detail=$4,status_at=now() WHERE owner_id=$1 AND platform=$2")
+        .bind(owner).bind(platform).bind(status).bind(detail).execute(&app.db).await?;
     Ok(())
 }
 
-/// Every few seconds: subscribe linked Twitch chats of channels that went live, and unsubscribe
-/// those whose broadcast ended (they stay connected through the RECONNECTING window).
+/// Every few seconds: connect linked chats of channels that went live and disconnect those whose
+/// broadcast ended. Twitch and YouTube each run even when the other fails.
 pub async fn tick(app: &App) -> Res<()> {
-    let Some(p) = twitch(app) else {
-        return Ok(());
+    let twitch = match twitch(app) {
+        Some(p) => supervise_twitch(app, p).await,
+        None => Ok(()),
     };
+    let youtube = youtube::tick(app).await;
+    let kick = kick::tick(app).await;
+    twitch.and(youtube).and(kick)
+}
+/// Subscribes Twitch chats of channels that went live, and unsubscribes those whose broadcast
+/// ended (they stay connected through the RECONNECTING window).
+async fn supervise_twitch(app: &App, p: &Provider) -> Res<()> {
     let rows: Vec<(String, String, Vec<String>, bool)> = sqlx::query_as("SELECT a.owner_id,a.subject,a.subscriptions,
             a.enabled AND u.email_verified AND u.mfa_enabled AND u.deleted_at IS NULL AND EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=a.owner_id AND b.state IN ('LIVE','RECONNECTING'))
         FROM linked_chat_accounts a JOIN users u ON u.id=a.owner_id
@@ -661,11 +700,11 @@ pub async fn tick(app: &App) -> Res<()> {
                 }
                 Connect::Revoked => {
                     let why = "Twitch didn't allow reading your chat. Link Twitch again.";
-                    set_status(app, &owner, "revoked", Some(why)).await?
+                    set_status(app, &owner, "twitch", "revoked", Some(why)).await?
                 }
                 Connect::Retry => {
                     let why = "Twitch chat disconnected, reconnecting.";
-                    set_status(app, &owner, "reconnecting", Some(why)).await?
+                    set_status(app, &owner, "twitch", "reconnecting", Some(why)).await?
                 }
             }
         } else if !live && !subscriptions.is_empty() {
@@ -754,9 +793,19 @@ async fn unlink(
     Path(platform): Path<String>,
 ) -> Res<Json<Value>> {
     let user = crate::profiles::signed_in(&app, &jar).await?;
-    let row: Option<(String, Vec<String>)> = sqlx::query_as("DELETE FROM linked_chat_accounts WHERE owner_id=$1 AND platform=$2 RETURNING access_sealed,subscriptions")
+    let row: Option<(String, Option<String>, Vec<String>)> = sqlx::query_as("DELETE FROM linked_chat_accounts WHERE owner_id=$1 AND platform=$2 RETURNING access_sealed,refresh_sealed,subscriptions")
         .bind(&user.id).bind(&platform).fetch_optional(&app.db).await?;
-    if let (Some((sealed, subscriptions)), Some(p)) =
+    if let Some((access, refresh)) = row
+        .as_ref()
+        .filter(|_| platform == "youtube")
+        .map(|(a, r, _)| (a, r))
+    {
+        youtube::revoke(&app, refresh.as_deref().unwrap_or(access)).await;
+    }
+    if let Some((access, refresh, subscriptions)) = row.as_ref().filter(|_| platform == "kick") {
+        kick::unlink(&app, refresh.as_deref().unwrap_or(access), subscriptions).await;
+    }
+    if let (Some((sealed, _, subscriptions)), Some(p)) =
         (row, twitch(&app).filter(|_| platform == "twitch"))
     {
         unsubscribe(&app, p, &subscriptions).await;
@@ -775,19 +824,28 @@ async fn unlink(
     view(&app, &user.id).await
 }
 type Account = (String, String, Option<String>, bool);
-/// The streamer's Twitch user token, refreshed when it's about to expire (or `force`).
+/// The streamer's user token on a platform (`p` is that platform's app), refreshed when it's about
+/// to expire (or `force`).
 async fn user_token(app: &App, p: &Provider, owner: &str, force: bool) -> Res<(String, String)> {
-    let (subject, access, refresh, fresh): Account = sqlx::query_as("SELECT subject,access_sealed,refresh_sealed,coalesce(expires_at>now()+interval '1 minute',false) FROM linked_chat_accounts WHERE owner_id=$1 AND platform='twitch' AND status<>'revoked'")
-        .bind(owner).fetch_optional(&app.db).await?
-        .ok_or_else(|| Fail::bad("Link Twitch in Creator Studio first."))?;
+    let platform = p.name.as_str();
+    let name = label(platform);
+    let (subject, access, refresh, fresh): Account = sqlx::query_as("SELECT subject,access_sealed,refresh_sealed,coalesce(expires_at>now()+interval '1 minute',false) FROM linked_chat_accounts WHERE owner_id=$1 AND platform=$2 AND status<>'revoked'")
+        .bind(owner).bind(platform).fetch_optional(&app.db).await?
+        .ok_or_else(|| Fail::bad(format!("Link {name} in Creator Studio first.")))?;
     if fresh && !force {
         return Ok((subject, sec::unseal(app, "linked-chat", &access)?));
     }
-    let refresh = refresh.ok_or_else(|| Fail::bad("Link Twitch again."))?;
+    let refresh = refresh.ok_or_else(|| Fail::bad(format!("Link {name} again.")))?;
     let refresh = sec::unseal(app, "linked-chat", &refresh)?;
+    let url = if platform == "twitch" {
+        format!("{}/oauth2/token", id_base())
+    } else {
+        p.token_url.clone()
+    };
+    let down = || Fail::unavailable(format!("{name} couldn't be reached. Try again shortly."));
     let response = app
         .http
-        .post(format!("{}/oauth2/token", id_base()))
+        .post(url)
         .form(&[
             ("client_id", p.client_id.as_str()),
             ("client_secret", p.client_secret.as_str()),
@@ -797,22 +855,27 @@ async fn user_token(app: &App, p: &Provider, owner: &str, force: bool) -> Res<(S
         .send()
         .await
         .map_err(|_| down())?;
+    // A refusal (4xx) means the access is gone; the platform's own outage (5xx) only needs a retry.
+    if response.status().is_server_error() {
+        return Err(down());
+    }
     if !response.status().is_success() {
-        let why = "Twitch access ended. Link Twitch again.";
-        set_status(app, owner, "revoked", Some(why)).await?;
-        return Err(Fail::bad(
-            "Twitch access ended. Link Twitch again in Creator Studio.",
-        ));
+        let why = format!("{name} access ended. Link {name} again.");
+        set_status(app, owner, platform, "revoked", Some(&why)).await?;
+        return Err(Fail::bad(format!(
+            "{name} access ended. Link {name} again in Creator Studio."
+        )));
     }
     let tokens: Value = response.json().await.map_err(|_| down())?;
     let mut db = app.db.acquire().await?;
     let handle: String = sqlx::query_scalar(
-        "SELECT handle FROM linked_chat_accounts WHERE owner_id=$1 AND platform='twitch'",
+        "SELECT handle FROM linked_chat_accounts WHERE owner_id=$1 AND platform=$2",
     )
     .bind(owner)
+    .bind(platform)
     .fetch_one(&mut *db)
     .await?;
-    save(app, &mut db, owner, "twitch", &subject, &handle, &tokens).await?;
+    save(app, &mut db, owner, platform, &subject, &handle, &tokens).await?;
     let access = tokens["access_token"].as_str().unwrap_or_default();
     Ok((subject, access.to_string()))
 }
@@ -831,15 +894,28 @@ async fn reply(
     Json(input): Json<Reply>,
 ) -> Res<Json<Value>> {
     let user = streamer(&app, &jar).await?;
-    crate::switches::guard(&mut *app.db.acquire().await?, "linked_chat_twitch").await?;
-    let p = twitch(&app)
-        .filter(|_| input.platform == "twitch")
-        .ok_or_else(|| Fail::bad("Replies aren't available for that platform yet."))?;
+    if !PLATFORMS.contains(&input.platform.as_str()) {
+        return Err(Fail::bad("Replies aren't available for that platform yet."));
+    }
+    crate::switches::guard(
+        &mut *app.db.acquire().await?,
+        &format!("linked_chat_{}", input.platform),
+    )
+    .await?;
     let body = clean(&input.body);
     if body.is_empty() {
         return Err(Fail::bad("Write a reply."));
     }
     sec::reserve(&app, vec![format!("linked-reply:{}", user.id)], 20, 30).await?;
+    if input.platform == "youtube" {
+        return youtube::reply(&app, &user.id, &body, input.reply_to.as_deref()).await;
+    }
+    if input.platform == "kick" {
+        return kick::reply(&app, &user.id, &body, input.reply_to.as_deref()).await;
+    }
+    let p = twitch(&app)
+        .filter(|_| input.platform == "twitch")
+        .ok_or_else(|| Fail::bad("Replies aren't available for that platform yet."))?;
     let parent = match input.reply_to.as_deref() {
         Some(id) => {
             let found: Option<String> = sqlx::query_scalar("SELECT id FROM outside_chat_messages WHERE id=$1 AND channel_id=$2 AND platform='twitch'")
@@ -1008,6 +1084,7 @@ async fn unmute(
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/integrations/twitch/eventsub", post(eventsub))
+        .route("/api/integrations/kick/webhook", post(kick::webhook))
         .route("/api/me/linked-chat", get(mine))
         .route("/api/me/linked-chat/reply", post(reply))
         .route("/api/me/linked-chat/status", get(status))

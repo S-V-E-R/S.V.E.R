@@ -51,13 +51,13 @@ export default async function Live({ params }: { params: ChannelParams }) {
     <LivePlayer username={c.username} focused signedIn={!!account}>
       <section className="watch-offline" aria-label="Stream">
         <h2>{c.display_name} is offline</h2>
-        <p><Link className="button quiet" href={`/${c.username}`}>Go to the channel</Link></p>
+        <p><Link className="button quiet" href={`/${c.username}?home`}>Go to the channel</Link></p>
       </section>
     </LivePlayer>
     </div>}
     <section className="streamer-bar" aria-label="Streamer">
-      <Link href={`/${c.username}`} aria-label={`${c.display_name}'s channel`}>{c.faction ? <Crest faction={c.faction} size={48} /> : <Avatar sizes={c.avatar} name={c.display_name} size={48} />}</Link>
-      <div className="streamer-name"><h1><Link href={`/${c.username}`}>{c.display_name}</Link></h1><p className="handle">@{c.username}</p><p className="streamer-tags">{c.faction && <Link href={`/factions/${c.faction}`} className="badge faction-tag">{factionInfo(c.faction).name}</Link>}<span className="muted">{c.follower_count.toLocaleString()} followers</span></p></div>
+      <Link href={`/${c.username}?home`} aria-label={`${c.display_name}'s channel`}>{c.faction ? <Crest faction={c.faction} size={48} /> : <Avatar sizes={c.avatar} name={c.display_name} size={48} />}</Link>
+      <div className="streamer-name"><h1><Link href={`/${c.username}?home`}>{c.display_name}</Link></h1><p className="handle">@{c.username}</p><p className="streamer-tags">{c.faction && <Link href={`/factions/${c.faction}`} className="badge faction-tag">{factionInfo(c.faction).name}</Link>}<span className="muted">{c.follower_count.toLocaleString()} followers</span></p></div>
       {account && <StandingPill username={c.username} />}
       <ChannelActions username={c.username} displayName={c.display_name} viewer={data.viewer} path={`/${c.username}/live`} />
       {account && <EditStreamInfo username={c.username} />}

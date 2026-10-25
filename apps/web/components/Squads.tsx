@@ -25,10 +25,10 @@ export function SquadStudio({ initial }: { initial: MySquads }) {
     if (r.ok) router.push(`/squads/${r.data.id}`); else setNotice(r.error);
     setBusy(false);
   }
-  return <><h1>Co-streams</h1><p>Invite up to three live streamers and watch together. Each channel keeps its own stream and viewer count.</p>
+  return <><h2 id="co-streams">Co-streams</h2><p>Invite up to three live streamers and watch together. Each channel keeps its own stream and viewer count.</p>
     {initial.current ? <p><Link className="button" href={`/squads/${initial.current}`}>Open your co-stream</Link></p> : <section className="panel section"><h2>Start a co-stream</h2>{initial.live ? <form onSubmit={create}><input type="hidden" name="mode" value="MERGED" /><p>Everyone shares one chat, moderated by every member&apos;s moderators.</p><button disabled={busy}>Create co-stream</button></form> : <p><Link href="/studio/stream">Go live</Link> before creating or joining a co-stream.</p>}</section>}
     <section className="panel section"><h2>Invitations</h2>{initial.invites.length === 0 ? <p className="muted">No pending invitations.</p> : <ul className="list">{initial.invites.map(i => <li key={i.id}><Link href={`/squads/${i.id}`}>{i.host}&apos;s co-stream</Link> · {i.mode.toLowerCase()} chat<p className="small muted">Expires {new Date(i.expires_at).toLocaleTimeString()}</p></li>)}</ul>}</section>
-    <p><Link href="/studio/guilds">Guildmates &amp; team shortcuts</Link></p>{notice && <p role="alert" className="error">{notice}</p>}
+    {notice && <p role="alert" className="error">{notice}</p>}
   </>;
 }
 export function SquadView({ initial, account }: { initial: Squad; account: string | null }) {
@@ -46,7 +46,7 @@ export function SquadView({ initial, account }: { initial: Squad; account: strin
   async function invite(event: FormEvent<HTMLFormElement>) { event.preventDefault(); await act("invites", { username: new FormData(event.currentTarget).get("username") }); }
   const chosen = squad.members.find(m => m.username === chat)?.username ?? squad.members[0]?.username;
   const host = squad.members.find(m => m.host)?.username;
-  return <div className="teams-page"><header><span className="eyebrow">Live together</span><h1>{host ? `${host}'s co-stream` : "Co-stream"}</h1><p>{squad.mode === "MERGED" ? "One shared chat. Every member's channel bans apply here." : "Choose a channel's chat below."} Select a stream to hear its audio.</p><div className="row"><Link href="/studio/squads">My co-streams</Link>{squad.joined && <button className="small quiet" disabled={busy} onClick={() => { if (!squad.host || window.confirm("End this co-stream for everyone?")) void act("leave"); }}>{squad.host ? "End co-stream" : "Leave co-stream"}</button>}<button className="small quiet" aria-pressed={audio === null} onClick={() => setAudio(null)}>Mute all</button></div></header>
+  return <div className="teams-page"><header><span className="eyebrow">Live together</span><h1>{host ? `${host}'s co-stream` : "Co-stream"}</h1><p>{squad.mode === "MERGED" ? "One shared chat. Every member's channel bans apply here." : "Choose a channel's chat below."} Select a stream to hear its audio.</p><div className="row"><Link href="/studio/guilds#co-streams">My co-streams</Link>{squad.joined && <button className="small quiet" disabled={busy} onClick={() => { if (!squad.host || window.confirm("End this co-stream for everyone?")) void act("leave"); }}>{squad.host ? "End co-stream" : "Leave co-stream"}</button>}<button className="small quiet" aria-pressed={audio === null} onClick={() => setAudio(null)}>Mute all</button></div></header>
     {notice && <p role="status" className="form-message">{notice}</p>}
     {squad.ended ? <section className="panel section"><h2>This co-stream has ended</h2><p><Link href="/">Find a live stream</Link></p></section> : <>
       {squad.invited && <section className="panel section"><h2>You&apos;re invited</h2><p>Joining adds your live stream to this page with {squad.mode.toLowerCase()} chat.</p><div className="row"><button disabled={busy} onClick={() => act("answer", { accept: true })}>Accept invitation</button><button disabled={busy} className="quiet" onClick={() => act("answer", { accept: false })}>Decline</button></div></section>}

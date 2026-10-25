@@ -366,6 +366,8 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         && req.uri().path() != "/api/stripe/webhook"
         // Twitch EventSub posts without an Origin; its HMAC signature is checked in linked_chat.
         && req.uri().path() != "/api/integrations/twitch/eventsub"
+        // Kick posts chat webhooks without an Origin; its RSA signature is checked in linked_chat.
+        && req.uri().path() != "/api/integrations/kick/webhook"
         // GitHub and Chromely post signed webhooks without an Origin (discord::community::feeds).
         && !matches!(req.uri().path(), "/api/integrations/github" | "/api/integrations/chromely")
         // OAuth clients post tokens server to server; the client and PKCE checks are in devapps.
@@ -650,6 +652,7 @@ fn profile_routes() -> Router<App> {
         )
         .route("/api/me/link-suggestions", get(p::link_suggestions))
         .route("/api/me/card-settings", put(p::card_settings))
+        .route("/api/me/logo-style", put(p::logo_style))
         // `GET /me/blocks` is the user-block list, so the custom page blocks read from
         // `/me/page-blocks`; `PUT /me/blocks` saves page blocks as the spec lists.
         .route(

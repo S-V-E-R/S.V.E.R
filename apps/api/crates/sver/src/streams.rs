@@ -1,5 +1,6 @@
 //! Module 3 stream credentials and persisted ingest lifecycle.
 pub mod catalog;
+pub mod detect;
 use crate::{App, Error, Result, auth, profiles, security as sec};
 use axum::{
     Json, Router,
@@ -420,10 +421,12 @@ pub async fn mine(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>>
     let last = crate::integrity::last_broadcast(&mut tx, &user.id)
         .await
         .map_err(|_| Error::internal())?;
+    let detection = detect::studio(&mut tx, &user.id).await?;
     tx.commit().await?;
     Ok(Json(
         json!({"configured":app.config.streaming.is_some(),"eligible":allowed,"settings":metadata,
-        "credential":credential,"broadcast":broadcast,"disconnect_pending":pending,"last_broadcast":last}),
+        "credential":credential,"broadcast":broadcast,"disconnect_pending":pending,"last_broadcast":last,
+        "detection":detection}),
     ))
 }
 #[derive(Deserialize)]
@@ -567,6 +570,7 @@ async fn apply(
         )
         .await
         .map_err(|_| Error::internal())?;
+        detect::category_changed(&mut *tx, owner).await?;
     }
     let info: Value = sqlx::query_scalar("SELECT jsonb_build_object('title',s.title,'category',k.name,'language',s.language,'mature',s.mature) FROM stream_settings s LEFT JOIN stream_categories k ON k.id=s.category_id WHERE s.owner_id=$1")
         .bind(owner).fetch_one(&mut *tx).await?;
@@ -1117,6 +1121,7 @@ pub fn routes() -> Router<App> {
         .route("/api/me/stream/key/rotate", post(rotate_key))
         .route("/api/me/stream/stop", post(stop))
         .route("/api/internal/srs/{action}", post(hook))
+        .merge(detect::routes())
 }
 
 #[derive(FromRow)]

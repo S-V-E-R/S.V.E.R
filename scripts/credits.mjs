@@ -1,6 +1,6 @@
 // Builds apps/web/app/credits/credits.json: every shipped Rust crate (normal dependencies of the
 // API on Linux) and npm package (web production dependencies), with its license and license text,
-// plus SRS, PostgreSQL and the fonts (docs/CHANNEL_ADDITIONS.md "Credits").
+// plus SRS, the CLIP weights, PostgreSQL and the fonts (docs/CHANNEL_ADDITIONS.md "Credits").
 //   node scripts/credits.mjs          regenerate
 //   node scripts/credits.mjs --check  fail if a dependency changed without regenerating (CI)
 // For a choice that includes MIT ("MIT OR Apache-2.0") S.V.E.R uses MIT, so only that notice is
@@ -46,6 +46,7 @@ function npm() {
 
 const OTHER = [
   { kind: "other", name: "SRS (Simple Realtime Server)", version: "7", license: "MIT", url: "https://github.com/ossrs/srs", file: "LICENSE-SRS.txt" },
+  { kind: "other", name: "CLIP ViT-B/32 model weights (game detection)", version: "", license: "MIT", url: "https://github.com/openai/CLIP", file: "LICENSE-CLIP.txt" },
   { kind: "other", name: "PostgreSQL", version: "17", license: "PostgreSQL", url: "https://www.postgresql.org/about/licence/", file: "LICENSE-PostgreSQL.txt" },
   { kind: "other", name: "Cinzel (font)", version: "", license: "OFL-1.1", url: "https://github.com/NDISCOVER/Cinzel", file: "OFL-cinzel.txt" },
   { kind: "other", name: "Barlow and Barlow Condensed (fonts)", version: "", license: "OFL-1.1", url: "https://github.com/jpt/barlow", file: "OFL-barlow.txt" },

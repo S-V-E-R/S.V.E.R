@@ -250,7 +250,7 @@ pub async fn create_user(
 }
 pub async fn public_config(State(app): State<App>) -> Json<Value> {
     Json(
-        json!({"turnstile_site_key":app.config.turnstile_site_key,"providers":app.config.providers.iter().map(|p| &p.name).collect::<Vec<_>>(),"development":!app.config.production}),
+        json!({"turnstile_site_key":app.config.turnstile_site_key,"providers":app.config.providers.iter().map(|p| &p.name).filter(|n| *n != "youtube").collect::<Vec<_>>(),"development":!app.config.production}),
     )
 }
 #[derive(Deserialize)]
@@ -454,11 +454,16 @@ pub async fn me(State(app): State<App>, jar: CookieJar) -> Result<(CookieJar, Js
         .await
         .map_err(|_| Error::internal())?;
     let pending_email = crate::account::pending_email(&mut tx, &user.id).await?;
+    let logo_style: String = sqlx::query_scalar("SELECT logo_style FROM profiles WHERE user_id=$1")
+        .bind(&user.id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .unwrap_or_else(|| "default".into());
     tx.commit().await?;
     Ok((
         renew(&app, jar),
         Json(
-            json!({"id":user.id,"email":user.email,"username":user.username,"faction":faction,"email_verified":user.email_verified,"mfa_enabled":user.mfa_enabled,"has_password":user.password_hash.is_some(),"providers":providers,"recovery_codes_remaining":remaining,"session_id":session.id,"reauthenticated":recent(&session).is_ok(),"deletion_due":user.deleted_at.map(|d|d+Duration::days(14)),"pending_email":pending_email}),
+            json!({"id":user.id,"email":user.email,"username":user.username,"faction":faction,"email_verified":user.email_verified,"mfa_enabled":user.mfa_enabled,"has_password":user.password_hash.is_some(),"providers":providers,"recovery_codes_remaining":remaining,"session_id":session.id,"reauthenticated":recent(&session).is_ok(),"deletion_due":user.deleted_at.map(|d|d+Duration::days(14)),"pending_email":pending_email,"logo_style":logo_style}),
         ),
     ))
 }

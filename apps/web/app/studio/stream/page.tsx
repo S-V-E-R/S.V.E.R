@@ -5,14 +5,16 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 import { GamePicker } from "../../../components/GamePicker";
+import { onAir as airState } from "../../../lib/obs";
 import { StudioAds } from "../../../components/Ads";
 
 /** A new channel's language defaults to the browser's (then "other"). */
 const defaultLanguage = () => fromBrowser(typeof navigator === "undefined" ? [] : navigator.languages)[0] ?? "other";
 type Settings = { title: string; category_id: string | null; revision: number; mature?: boolean; mature_locked?: boolean; language?: string | null; edited_by?: string | null };
 type Health = { video_codec?: string | null; audio_codec?: string | null; width?: number | null; height?: number | null; input_kbps?: number | null; codec_warning?: boolean; bitrate_warning?: boolean; keyframe_seconds?: number | null; keyframe_warning?: boolean; b_frames?: boolean | null; captions?: boolean };
+type Detection = { available: boolean; on: boolean; category: string | null; suggestion: { category_id: string; name: string; mature: boolean } | null };
 type Stream = {
-  configured: boolean; eligible: boolean; settings: Settings; disconnect_pending: boolean;
+  configured: boolean; eligible: boolean; settings: Settings; disconnect_pending: boolean; detection?: Detection;
   last_broadcast?: { ended_at: string; not_counted: number } | null;
   credential: { created_at: string; revoked: boolean } | null;
   broadcast: { state: string; started_at: string; reconnect_deadline: string | null; observed_at: string | null; end_reason?: string | null; health: Health; scouts?: number } | null;
@@ -85,6 +87,26 @@ export default function StreamStudio() {
     } else setStatus(result);
     setBusy(false);
   }
+  /** Accepting a game detection suggestion saves the category with the other saved details. */
+  async function acceptSuggestion(suggestion: NonNullable<Detection["suggestion"]>) {
+    if (!data || busy) return;
+    setBusy(true); setStatus({});
+    const saved = data.settings;
+    const result = await send<{ revision: number; category_id: string }>("PATCH", "/api/me/stream", { ...saved, category_id: suggestion.category_id, mature: saved.mature || suggestion.mature, language: saved.language ?? defaultLanguage() });
+    if (result.ok) {
+      setForm(previous => previous && { ...previous, category_id: result.data.category_id, revision: result.data.revision, mature: previous.mature || suggestion.mature });
+      setStatus({ saved: `Category changed to ${suggestion.name}.` }); await load();
+    } else setStatus(result);
+    setBusy(false);
+  }
+  async function detection(path: "" | "/dismiss", body: object, done: string) {
+    if (busy) return;
+    setBusy(true); setStatus({});
+    const result = await send<Detection>(path ? "POST" : "PUT", "/api/me/stream/detection" + path, body);
+    if (result.ok) { setData(previous => previous && { ...previous, detection: result.data }); setStatus({ saved: done }); }
+    else setStatus(result);
+    setBusy(false);
+  }
   async function reloadDetails() {
     const result = await send<Stream>("GET", "/api/me/stream");
     if (result.ok) { setForm(result.data.settings); setData(result.data); setSeenAt(Date.now()); setStatus({}); }
@@ -125,19 +147,22 @@ export default function StreamStudio() {
   if (!data || !form) return <><h1>Live stream</h1>{loadError ? <><p role="alert">{loadError}</p><button className="quiet" onClick={load}>Retry</button></> : <p className="loading">Loading your stream…</p>}</>;
   const broadcast = data.broadcast;
   const health = broadcast?.health ?? {};
-  const staleSignal = broadcast?.state === "LIVE" && (!broadcast.observed_at || seenAt - Date.parse(broadcast.observed_at) > 15000);
-  const state = data.disconnect_pending ? "Disconnecting" : staleSignal ? "Signal not confirmed" : ({ STARTING: "Connecting", LIVE: "Live", RECONNECTING: "Reconnecting", ENDED: "Offline" }[broadcast?.state ?? "ENDED"] ?? "Offline");
   const hasDetails = !!data.settings.title.trim() && !!data.settings.category_id;
   const hasKey = !!data.credential && !data.credential.revoked;
-  const onAir = broadcast?.state === "LIVE" && !staleSignal && !data.disconnect_pending;
-  const plain = state === "Offline" ? (hasKey ? "OBS isn't connected yet. Press Start Streaming in OBS" : "OBS isn't connected yet") : state === "Live" ? "You're live" : state === "Connecting" ? "OBS is connecting…" : state === "Reconnecting" ? "Connection dropped. Waiting for OBS to reconnect" : state === "Signal not confirmed" ? "Connected, but no fresh video yet" : state;
+  const { plain, stale: staleSignal, live: onAir } = airState(broadcast, data.disconnect_pending, hasKey, seenAt);
   const usable = data.configured && data.eligible && !loadError;
   const count = Array.from(form.title.trim()).length;
+  const suggestion = data.detection?.on ? data.detection.suggestion : null;
   return <><span className="eyebrow">CREATOR STUDIO / BROADCAST</span><h1>Live stream</h1>
     {loadError && <p className="panel notice" role="alert">{loadError} Status may be out of date.</p>}
     {!data.configured && <p className="panel notice">Broadcasting is not available yet. You can prepare your stream details below.</p>}
     {!data.eligible && <p className="panel notice">Streaming needs a verified email, an authenticator and a channel in good standing. <Link href="/account">Account security</Link> · <Link href="/settings/standing">Account standing</Link></p>}
     <Status state={status} />
+    {suggestion && <section className="panel notice" role="status" aria-labelledby="detected-title">
+      <h2 id="detected-title">Looks like you&apos;re playing {suggestion.name}</h2>
+      <p>Your stream picture has shown {suggestion.name} for the last few checks, but your category is still {data.detection?.category ?? "something else"}. Highlights, clips and chapters use your category.</p>
+      <div className="row"><button disabled={busy || !data.eligible} onClick={() => acceptSuggestion(suggestion)}>Switch to {suggestion.name}</button><button type="button" className="quiet" disabled={busy} onClick={() => detection("/dismiss", { category_id: suggestion.category_id }, "Got it. We won't suggest that game again this stream.")}>Not this game</button></div>
+    </section>}
     <section className="panel go-live" aria-labelledby="go-live-title"><h2 id="go-live-title">Go live in three steps</h2><ol>
       <li data-done={hasDetails ? "yes" : "no"}><strong>1. Title and category</strong><span>{hasDetails ? "Saved" : "Add them in Stream details below"}</span></li>
       <li data-done={hasKey ? "yes" : "no"}><strong>2. Stream key</strong><span>{hasKey ? "Ready. Paste it into OBS" : "Create one in OBS connection below"}</span></li>
@@ -150,10 +175,11 @@ export default function StreamStudio() {
         <label className="field narrow"><span>Language</span><select required value={form.language ?? defaultLanguage()} disabled={busy || !data.eligible} onChange={event => setForm({ ...form, language: event.target.value })}>
           {LANGUAGES.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
         </select></label>
-        <label className="checkbox"><input type="checkbox" checked={!!form.mature} disabled={busy || !data.eligible || (form.mature_locked && form.mature)} onChange={event => setForm({ ...form, mature: event.target.checked })} /> <strong>Mature</strong>: violent or horror games, strong language or mature themes. Viewers under 18 can&apos;t watch, and others see a warning first. It doesn&apos;t permit anything the <Link href="/guidelines">Community Guidelines</Link> ban. It stays on for your next streams until you turn it off.</label>
+        <label className="checkbox"><input type="checkbox" checked={!!form.mature} disabled={busy || !data.eligible || (form.mature_locked && form.mature)} onChange={event => setForm({ ...form, mature: event.target.checked })} /> <span><strong>Mature</strong>: violent or horror games, strong language or mature themes. Viewers under 18 can&apos;t watch, and others see a warning first. It doesn&apos;t permit anything the <Link href="/guidelines">Community Guidelines</Link> ban. It stays on for your next streams until you turn it off.</span></label>
         {ratedMature && form.mature && <p role="status">This game has a mature age rating (ESRB M or AO, or PEGI 18), so Mature is switched on. You can turn it off.</p>}
         {form.edited_by && <p className="muted small">Edited by @{form.edited_by}</p>}
         {form.mature_locked && <p role="status">Staff labeled this broadcast mature, so the label stays on until it ends.</p>}
+        {data.detection?.available && <label className="checkbox"><input type="checkbox" checked={data.detection.on} disabled={busy || !data.eligible} onChange={event => detection("", { on: event.target.checked }, event.target.checked ? "Game detection is on." : "Game detection is off. Your examples were deleted.")} /> <span><strong>Suggest my category</strong>: every few minutes S.V.E.R checks your stream picture on its own servers and suggests a new category when you switch games. It never changes your category by itself. Shortly after you choose a category, a few stills are saved as image fingerprints (not pictures) of that game, so detection learns it; turning this off deletes them.</span></label>}
         <div className="row"><button disabled={busy || !data.eligible || count < 1 || count > 140}>Save details</button><button type="button" className="quiet" disabled={busy} onClick={reloadDetails}>Reload saved details</button></div>
       </form>
     </Section>
@@ -197,6 +223,7 @@ export default function StreamStudio() {
     </Section>
     <Section title="OBS setup and input health" intro="Use H.264 video and AAC audio, turn B-frames off, and set a one-second keyframe interval.">
       <p>Start testing at 6 Mbps video and 160 Kbps audio, up to 1080p60. The bitrate recommendation is provisional while delivery testing continues. Step-by-step OBS setup and fixes for common problems are in <Link href="/help#obs-setup">Help</Link>.</p>
+      <p><strong>Studio inside OBS:</strong> choose View → Docks → Custom Browser Docks, name it S.V.E.R and paste <code>{`${location.origin}/dock`}</code>. It shows whether you&apos;re live, viewers and these readings, and lets you change the title and category, mark a highlight and test alerts. Sign in with email inside the dock.</p>
       <dl className="setup">
         <div><dt>Video / audio</dt><dd>{health.video_codec ?? "Not measured"} / {health.audio_codec ?? "Not measured"}</dd></div>
         <div><dt>Resolution</dt><dd>{health.width && health.height ? health.width + " × " + health.height : "Not measured"}</dd></div>

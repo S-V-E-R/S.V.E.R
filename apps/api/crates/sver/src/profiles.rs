@@ -578,12 +578,12 @@ pub async fn my_profile(State(app): State<App>, jar: CookieJar) -> Res<Json<Valu
     let me = channel_user_by_id(&mut db, &user.id)
         .await?
         .ok_or_else(Fail::missing)?;
-    let (song_notice, email_updates, show_linked): (Option<String>, bool, bool) =
-        sqlx::query_as("SELECT song_notice,email_report_updates,show_linked_accounts FROM profiles WHERE user_id=$1")
+    let (song_notice, email_updates, show_linked, logo_style): (Option<String>, bool, bool, String) =
+        sqlx::query_as("SELECT song_notice,email_report_updates,show_linked_accounts,logo_style FROM profiles WHERE user_id=$1")
             .bind(&user.id)
             .fetch_optional(&mut *db)
             .await?
-            .unwrap_or((None, false, false));
+            .unwrap_or((None, false, false, "default".into()));
     let rename = crate::rename::status(&mut db, &user).await?;
     Ok(Json(json!({
         "username": me.username,
@@ -607,6 +607,7 @@ pub async fn my_profile(State(app): State<App>, jar: CookieJar) -> Res<Json<Valu
         "mfa_enabled": user.mfa_enabled,
         "mood_presets": text::MOOD_PRESETS,
         "show_linked_accounts": show_linked,
+        "logo_style": logo_style,
     })))
 }
 
@@ -672,6 +673,32 @@ pub async fn card_settings(
     Ok(Json(
         json!({"saved": true, "show_linked_accounts": input.show_linked_accounts}),
     ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogoStyle {
+    logo_style: String,
+}
+/// PUT /api/me/logo-style: which S.V.E.R badge the site shows you (optional, not a gender field).
+pub async fn logo_style(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<LogoStyle>,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    if !matches!(input.logo_style.as_str(), "default" | "male" | "female") {
+        return Err(Fail::field("logo_style", "Choose Default, Male or Female."));
+    }
+    let mut tx = app.db.begin().await?;
+    ensure_profile(&mut tx, &user.id).await?;
+    sqlx::query("UPDATE profiles SET logo_style=$2,updated_at=now() WHERE user_id=$1")
+        .bind(&user.id)
+        .bind(&input.logo_style)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"saved": true, "logo_style": input.logo_style})))
 }
 
 #[derive(Deserialize)]

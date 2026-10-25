@@ -3,7 +3,7 @@ import { FounderMark, SupporterBadge, type SupporterTier } from "./Supporter";
 import Link from "next/link";
 import { LOYALTY } from "./Loyalty";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { send, useLoad } from "../lib/client-api";
+import { send, useLoad, useSignInElsewhere } from "../lib/client-api";
 import { ReportButton, TakeDownLink } from "./Report";
 import { PlayerCardButton } from "./UserChip";
 import { Crest } from "./FactionIdentity";
@@ -66,6 +66,8 @@ function MessageBody({ message, account, emotes }: { message: Message; account: 
  */
 export function Chat({ username, account, squad, variant = "full", fade = 30, top }: { username: string; account: string | null; squad?: string; variant?: "full" | "popout" | "dock" | "overlay"; fade?: number; top?: React.ReactNode }) {
   const [clock, setClock] = useState(() => Date.now());
+  // A chat dock signed out in OBS picks up a sign-in made in another dock.
+  useSignInElsewhere(variant === "dock" && !account);
   useEffect(() => {
     if (variant !== "overlay") return;
     const timer = setInterval(() => setClock(Date.now()), 1000);
@@ -377,7 +379,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         <span className="muted">{time(m.created_at)}</span>{" "}
         <span className={`badge platform-badge ${m.outside.platform}`} title={`From ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}>{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}<span className="sr-only"> message</span></span>{" "}
         {m.outside.url ? <a href={m.outside.url} target="_blank" rel="noopener noreferrer nofollow" title={`${m.outside.name} on ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}><strong>{m.outside.name}</strong></a> : <strong>{m.outside.name}</strong>}
-        {m.outside.role && <span className="badge">{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform} {m.outside.role === "moderator" ? "mod" : m.outside.role === "subscriber" ? "sub" : "broadcaster"}</span>}: {m.body}
+        {m.outside.role && <span className="badge">{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform} {m.outside.role === "moderator" ? "mod" : m.outside.role === "subscriber" ? (m.outside.platform === "youtube" ? "member" : "sub") : "broadcaster"}</span>}: {m.body}
         {canPin && <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.outside.name}`}>Actions</summary><div className="chat-message-controls">
           {role === "owner" && <button type="button" className="small quiet" onClick={() => { setOutsideReply({ id: m.id, platform: m.outside!.platform, name: m.outside!.name }); setReply(null); input.current?.focus(); }}>Reply on {PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}</button>}
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "hide")}>Hide here</button>
@@ -433,7 +435,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       {gifs && picking && <GifPicker access={gifs} account={account} onPick={sendGif} onClose={() => setPicking(false)} />}
       {canPin && <button type="button" className="quiet small" disabled={busy || !draft.trim()} onClick={event => submit(event, true)}>Send and pin</button>}
       {error && <p role="alert" className="error">{error}</p>}
-    </form> : <p className="chat-signin panel"><Link href="/login">Log in</Link> or <Link href="/signup">enlist</Link> to chat.</p>}
+    </form> : <p className="chat-signin panel"><Link href={variant === "full" ? "/login" : `/login?${new URLSearchParams({ next: `/${username}/chat${variant === "dock" ? "?dock=1" : ""}` })}`}>Log in</Link> or <Link href="/signup">enlist</Link> to chat.</p>}
     {account && <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
       onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 500)); input.current?.focus(); }} />}
   </section>;

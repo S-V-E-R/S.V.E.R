@@ -9,9 +9,10 @@ import { PersonaPreview } from "../../../components/persona/PersonaPreview";
 import { CosmeticsEditor } from "../../../components/persona/CosmeticsEditor";
 import { HeaderCopyEditor } from "../../../components/persona/HeaderCopyEditor";
 import { SongEditor } from "../../../components/persona/SongEditor";
+import { LogoStylePicker, type LogoStyle } from "../../../components/LogoStyle";
 import { CurrentlyEditor, HomeEditor, SongWhyEditor, ThemeEditor } from "../../../components/persona/PersonaFields";
 
-export type Me = { username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; links: SocialLink[]; platforms: string[]; revisions: { profile: number; links: number }; rename: { next_allowed_at: string | null; held_names: { name: string; released_at: string }[] }; mfa_enabled: boolean; restricted_until: string | null; internal: boolean; mood_presets: string[]; show_linked_accounts: boolean };
+export type Me = { username: string; display_name: string; bio: string; mood_emoji: string; status_text: string; avatar: Sizes; banner: Sizes; links: SocialLink[]; platforms: string[]; revisions: { profile: number; links: number }; rename: { next_allowed_at: string | null; held_names: { name: string; released_at: string }[] }; mfa_enabled: boolean; restricted_until: string | null; internal: boolean; mood_presets: string[]; show_linked_accounts: boolean; logo_style: LogoStyle };
 type Suggestions = { suggestions: { platform: string; url: string; label: string }[]; missing_handle: string[] };
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 const date = (iso: string) => new Date(iso).toLocaleDateString(undefined, { dateStyle: "long" });
@@ -49,6 +50,7 @@ export default function ProfileSettings() {
         <Images me={me} onSaved={refresh} />
         <ThemeEditor onSaved={bump} />
         <CosmeticsEditor embedded onSaved={bump} />
+        <Section title="Site logo" intro="Optional. Pick the S.V.E.R badge you see in the top bar. Only you see it."><LogoStylePicker value={me.logo_style} /></Section>
       </div>
       <div id="words" className="persona-part"><h2 className="part-title">Words</h2>
         <Identity me={me} onSaved={refresh} />
@@ -62,7 +64,7 @@ export default function ProfileSettings() {
       </div>
       <div id="home" className="persona-part"><h2 className="part-title">Home</h2>
         <HomeEditor onSaved={bump} />
-        <p className="muted">Your War Council, Wall, schedule and sponsors are in <Link href="/studio/channel/war-council">Creator Studio</Link>.</p>
+        <p className="muted">Your War Council, Wall, schedule and sponsors are in <Link href="/studio/channel#war-council">Creator Studio</Link>.</p>
       </div>
       <div id="links" className="persona-part"><h2 className="part-title">Links</h2>
         <Links me={me} onSaved={refresh} />

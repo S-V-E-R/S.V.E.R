@@ -1,15 +1,16 @@
 import { cache } from "react";
 import { isFaction, type Faction } from "../lib/factions";
 import { cookies } from "next/headers";
+import type { LogoStyle } from "../components/LogoStyle";
 
-export const currentAccount = cache(async (): Promise<{ username: string; faction: Faction | null; email_verified: boolean; deletion_due: string | null } | null> => {
+export const currentAccount = cache(async (): Promise<{ username: string; faction: Faction | null; email_verified: boolean; deletion_due: string | null; logo_style: LogoStyle } | null> => {
   const jar = await cookies();
   if (!jar.has("__Host-sver") && !jar.has("sver_dev")) return null;
   try {
     const response = await fetch(`${process.env.API_INTERNAL_ORIGIN || "http://127.0.0.1:8080"}/api/auth/me`, { headers: { cookie: jar.toString() }, cache: "no-store" });
     if (!response.ok) return null;
     const account = await response.json();
-    return typeof account.username === "string" ? { username: account.username, faction: isFaction(account.faction) ? account.faction : null, email_verified: account.email_verified === true, deletion_due: account.deletion_due ?? null } : null;
+    return typeof account.username === "string" ? { username: account.username, faction: isFaction(account.faction) ? account.faction : null, email_verified: account.email_verified === true, deletion_due: account.deletion_due ?? null, logo_style: account.logo_style === "male" || account.logo_style === "female" ? account.logo_style : "default" } : null;
   } catch {
     return null;
   }

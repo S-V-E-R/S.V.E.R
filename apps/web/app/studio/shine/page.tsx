@@ -2,6 +2,7 @@
 import { FormEvent, useCallback, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
+import { ShineMoments } from "../../../components/ShineMoments";
 
 type Stream = { id: string; charity: string; url: string; started_at: string; live: boolean; raised_cents: number | null; proof_url: string | null; status: "none" | "submitted" | "verified" | "rejected" | "revoked"; review_note: string | null };
 type Link = { status: "pending" | "approved" | "rejected"; note: string | null };
@@ -64,5 +65,6 @@ export default function StudioShine() {
       </li>)}</ul>}
     </Section>
     <Status state={state} />
+    <ShineMoments />
   </>;
 }

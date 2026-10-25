@@ -3,24 +3,14 @@ use super::*;
 /// Called by MAGNet in its feature transaction. Room signals choose the moment;
 /// this module only saves a suggestion, which always needs human approval.
 pub async fn spotlight(db: &mut PgConnection, owner: &str, feature: &str) -> Res<()> {
-    sqlx::query("SELECT pg_advisory_xact_lock(80742)")
-        .execute(&mut *db)
-        .await?;
-    let source:Option<Video>=sqlx::query_as("SELECT * FROM videos WHERE owner_id=$1 AND kind='VOD' AND status='RECORDING' AND ended_at IS NULL FOR UPDATE").bind(owner).fetch_optional(&mut *db).await?;
-    let Some(source) = source else { return Ok(()) };
+    let Some(source) = live_source(db, owner).await? else {
+        return Ok(());
+    };
     // Several lanes can feature one stream at once; the moment gets one chapter.
     let marked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM video_chapters WHERE video_id=$1 AND source='MAGNET' AND offset_ms>$2-60000)")
         .bind(&source.id).bind(source.duration_ms).fetch_one(&mut *db).await?;
     if !marked {
         chapter(db, owner, "MAGNET", Some(feature), "MAGNet spotlight").await?;
-    }
-    let settings = settings(db, owner).await?;
-    if settings.copyright_restricted
-        || settings.clip_permission == "OFF"
-        || held(db, &source.id).await?
-        || stalled(db, &source).await?
-    {
-        return Ok(());
     }
     let length = match source.genre.as_deref() {
         Some(
@@ -31,28 +21,67 @@ pub async fn spotlight(db: &mut PgConnection, owner: &str, feature: &str) -> Res
         Some("crafting_making" | "art" | "music") => 60000,
         _ => 45000,
     };
+    suggest(
+        db,
+        owner,
+        &source,
+        &format!("magnet:{feature}"),
+        "MAGNet spotlight",
+        length,
+        0,
+    )
+    .await
+    .map(|_| ())
+}
+/// The owner's live recording, locked; every suggestion is made under one lock so two can't race.
+pub(crate) async fn live_source(db: &mut PgConnection, owner: &str) -> Res<Option<Video>> {
+    sqlx::query("SELECT pg_advisory_xact_lock(80742)")
+        .execute(&mut *db)
+        .await?;
+    Ok(sqlx::query_as("SELECT * FROM videos WHERE owner_id=$1 AND kind='VOD' AND status='RECORDING' AND ended_at IS NULL FOR UPDATE").bind(owner).fetch_optional(&mut *db).await?)
+}
+/// A clip of the last `length` ms of a live recording, waiting for its owner's approval. Nothing
+/// when clipping is off, the recording is held or stalled, its tail isn't contiguous yet, or
+/// another suggested clip ends within `gap` ms of where this one would start.
+pub(crate) async fn suggest(
+    db: &mut PgConnection,
+    owner: &str,
+    source: &Video,
+    key: &str,
+    title: &str,
+    length: i64,
+    gap: i64,
+) -> Res<Option<String>> {
+    let settings = settings(db, owner).await?;
+    if settings.copyright_restricted
+        || settings.clip_permission == "OFF"
+        || held(db, &source.id).await?
+        || stalled(db, source).await?
+    {
+        return Ok(None);
+    }
     let segments:Vec<(String,i64,i64)>=sqlx::query_as("SELECT s.id,s.start_ms,s.duration_ms FROM video_segments s JOIN video_objects o ON o.key=s.object_key WHERE s.video_id=$1 AND o.ready AND s.start_ms>=greatest(0,$2-$3) ORDER BY s.start_ms").bind(&source.id).bind(source.duration_ms).bind(length).fetch_all(&mut *db).await?;
     let (Some(first), Some(last)) = (segments.first(), segments.last()) else {
-        return Ok(());
+        return Ok(None);
     };
     let start = first.1;
     let end = last.1 + last.2;
     let duration = end - start;
     if !(5000..=60000).contains(&duration) || segments.windows(2).any(|w| w[0].1 + w[0].2 != w[1].1)
     {
-        return Ok(());
+        return Ok(None);
     }
-    // Several lanes can feature one stream at once; the moment is offered for approval only once.
-    let overlapping: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM videos WHERE parent_id=$1 AND kind='CLIP' AND request_key LIKE 'magnet:%' AND source_end_ms>$2)")
-        .bind(&source.id).bind(start).fetch_one(&mut *db).await?;
+    // Several lanes, or a lane and a detector, can catch one moment; it's offered only once.
+    let overlapping: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM videos WHERE parent_id=$1 AND kind='CLIP' AND (request_key LIKE 'magnet:%' OR request_key LIKE 'auto:%') AND source_end_ms>$2-$3)")
+        .bind(&source.id).bind(start).bind(gap).fetch_one(&mut *db).await?;
     if overlapping {
-        return Ok(());
+        return Ok(None);
     }
     let id = profiles::new_id();
-    let added=sqlx::query("INSERT INTO videos(id,owner_id,clipper_id,broadcast_id,parent_id,kind,status,approval,visibility,mature,title,category_id,category,genre,faction,started_at,ended_at,duration_ms,source_start_ms,source_end_ms,request_key) VALUES($1,$2,$2,$3,$4,'CLIP','PROCESSING','PENDING',$5,$6,'MAGNet spotlight',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT(clipper_id,request_key) DO NOTHING")
-        .bind(&id).bind(owner).bind(&source.broadcast_id).bind(&source.id).bind(&source.visibility).bind(source.mature).bind(&source.category_id).bind(&source.category).bind(&source.genre).bind(&source.faction).bind(source.started_at+chrono::Duration::milliseconds(start)).bind(source.started_at+chrono::Duration::milliseconds(end)).bind(duration).bind(start).bind(end).bind(format!("magnet:{feature}")).execute(&mut *db).await?.rows_affected();
+    let added=sqlx::query("INSERT INTO videos(id,owner_id,clipper_id,broadcast_id,parent_id,kind,status,approval,visibility,mature,title,category_id,category,genre,faction,started_at,ended_at,duration_ms,source_start_ms,source_end_ms,request_key) VALUES($1,$2,$2,$3,$4,'CLIP','PROCESSING','PENDING',$5,$6,$17,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT(clipper_id,request_key) DO NOTHING")
+        .bind(&id).bind(owner).bind(&source.broadcast_id).bind(&source.id).bind(&source.visibility).bind(source.mature).bind(&source.category_id).bind(&source.category).bind(&source.genre).bind(&source.faction).bind(source.started_at+chrono::Duration::milliseconds(start)).bind(source.started_at+chrono::Duration::milliseconds(end)).bind(duration).bind(start).bind(end).bind(key).bind(title).execute(&mut *db).await?.rows_affected();
     if added == 0 {
-        return Ok(());
+        return Ok(None);
     }
     for (position, (segment, _, _)) in segments.iter().enumerate() {
         sqlx::query(
@@ -72,7 +101,8 @@ pub async fn spotlight(db: &mut PgConnection, owner: &str, feature: &str) -> Res
         Some(&format!("{id}:assemble")),
         json!({}),
     )
-    .await
+    .await?;
+    Ok(Some(id))
 }
 
 /// Moderation evidence (Joe, October 12, 2026): the last minute of a live stream when someone in

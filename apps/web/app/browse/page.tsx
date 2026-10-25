@@ -42,8 +42,9 @@ export default async function Browse({ searchParams }: { searchParams: Promise<{
   const held = holders(war);
   const order = (f: string | null | undefined) => { const i = FACTIONS.findIndex(x => x.slug === f); return i < 0 ? FACTIONS.length : i; };
   const genres = [...(browse.data?.genres ?? [])].sort((a, b) => order(held.get(a.id)) - order(held.get(b.id)));
-  const genre = genres.find(g => g.id === params.genre);
   const category = genres.flatMap(g => g.categories).find(c => c.id === params.category);
+  // Search links to a category without its genre; the breadcrumb still needs it.
+  const genre = genres.find(g => g.id === params.genre) ?? (category ? genres.find(g => g.categories.includes(category)) : undefined);
   const link = (change: Record<string, string | null>) => {
     const next = new URLSearchParams(filter);
     for (const [key, value] of Object.entries(change)) { if (value) next.set(key, value); else next.delete(key); }
@@ -53,6 +54,8 @@ export default async function Browse({ searchParams }: { searchParams: Promise<{
   const title = category?.name ?? genre?.name ?? "Browse";
   const viewerFaction = account?.faction ?? null;
   return <div className="home browse">
+    {/* Deep pages show the way back: Browse, then the genre above a category. */}
+    {genre && <nav className="eyebrow crumbs" aria-label="Breadcrumb"><Link href="/browse">Browse</Link>{category && <> › <Link href={link({ genre: genre.id, category: null })}>{genre.name}</Link></>}</nav>}
     <SectionHead id="browse-h" title={title} note={`${browse.data?.live ?? 0} live now · fair rotation, never by viewer count`} level={1} />
     {/* Genres grouped by who holds them this week, so Browse reads as the war map's ground. */}
     <nav className="genre-groups" aria-label="Genres">
