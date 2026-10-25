@@ -65,9 +65,9 @@ function StreamsByCategory({ streams, range, plays, setPlays }: { streams: Strea
     <label className="row"><input type="checkbox" checked={plays} onChange={e => setPlays(e.currentTarget.checked)} /> Include SVER Plays</label>
     <p>{hours(t.hours)} streamed · {t.streamers} streamers · {t.broadcasts} broadcasts · {t.categories} categories · {hours(t.watch_hours)} watched · peak {t.peak_viewers} viewers</p>
     <div className="table-scroll"><table className="table"><thead><tr><th scope="col">Category</th><th scope="col">Genre</th><th scope="col">Hours streamed</th><th scope="col">Streamers</th><th scope="col">Broadcasts</th><th scope="col">Watch hours</th><th scope="col">Peak viewers</th></tr></thead>
-      <tbody>{streams.categories.map(c => <tr key={c.category}><th scope="row">{c.category}</th><td>{c.genre ?? "—"}</td><td>{round(c.hours)}</td><td>{c.streamers}</td><td>{c.broadcasts}</td><td>{round(c.watch_hours)}</td><td>{c.peak_viewers}</td></tr>)}</tbody></table></div>
+      <tbody>{streams.categories.map(c => <tr key={c.category}><th scope="row">{c.category}</th><td>{c.genre?.replaceAll("_", " ") ?? "—"}</td><td>{round(c.hours)}</td><td>{c.streamers}</td><td>{c.broadcasts}</td><td>{round(c.watch_hours)}</td><td>{c.peak_viewers}</td></tr>)}</tbody></table></div>
     <h2>Hours by genre</h2>
-    <ul>{[...genres].sort((a, b) => b[1] - a[1]).map(([g, h]) => <li key={g}>{g} · {round(h)} h</li>)}</ul>
+    <ul>{[...genres].sort((a, b) => b[1] - a[1]).map(([g, h]) => <li key={g}>{g.replaceAll("_", " ")} · {round(h)} h</li>)}</ul>
     <h2>Post on X</h2>
     <p className="muted">Check each line before posting. &quot;Post on X&quot; opens X with the text filled in.</p>
     <ul className="stack">{postLines(streams, period).map(line => <PostLine key={line} text={line} />)}</ul>

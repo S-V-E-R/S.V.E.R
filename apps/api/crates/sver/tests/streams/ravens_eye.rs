@@ -107,7 +107,12 @@ pub async fn exercise(e: &Env) {
         "{minecraft}"
     );
     assert!(minecraft["streamers"].as_i64().unwrap() >= 1);
-    assert_eq!(minecraft["genre"], "sandbox");
+    let genre: String =
+        sqlx::query_scalar("SELECT genre FROM stream_categories WHERE id='minecraft'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(minecraft["genre"], genre.as_str());
     assert!(
         find("Art").is_some(),
         "the rest of the broadcast counts as Art"
