@@ -775,7 +775,37 @@ async fn beacons_publish_watermark_count_and_remove() {
             .iter()
             .all(|i| i["beacon"]["title"] != "Other 1")
     );
-    let passed = call(
+    // Signed in, the account's age decides with no prompt; only guests confirm.
+    let shows = |page: &Value| {
+        page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["beacon"]["title"] == "Other 1")
+    };
+    let adult = call(
+        &e,
+        "GET",
+        "/api/beacons/feed?seed=abc",
+        Some(&viewer),
+        Value::Null,
+    )
+    .await
+    .1;
+    assert!(shows(&adult), "an adult account isn't asked");
+    let guest = call(
+        &e,
+        "GET",
+        "/api/beacons/feed?seed=abc&age_ack=true",
+        None,
+        Value::Null,
+    )
+    .await
+    .1;
+    assert!(shows(&guest), "a guest who confirmed");
+    e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='bc-viewer'")
+        .await;
+    let minor = call(
         &e,
         "GET",
         "/api/beacons/feed?seed=abc&age_ack=true",
@@ -784,13 +814,9 @@ async fn beacons_publish_watermark_count_and_remove() {
     )
     .await
     .1;
-    assert!(
-        passed["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|i| i["beacon"]["title"] == "Other 1")
-    );
+    assert!(!shows(&minor), "an under-18 account can't click past it");
+    e.sql("UPDATE users SET date_of_birth='1990-01-01' WHERE id='bc-viewer'")
+        .await;
     e.sql("UPDATE beacons SET mature=false").await;
 
     // Views: 3 seconds of visible, advancing playback from a counted session, once a day.

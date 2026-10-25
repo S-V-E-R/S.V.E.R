@@ -25,7 +25,8 @@ export default async function BeaconPage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   const [account, result] = await Promise.all([currentAccount(), apiGet<BeaconItem>(`/api/beacons/${encodeURIComponent(id)}`)]);
   if (result.status === 404 || result.status === 400) notFound();
-  const gated = result.status === 403 && !result.data;
+  // Only guests confirm their age; a signed-in viewer's account age decides (no prompt).
+  const gated = result.status === 403 && !result.data && !account;
   return <>
     <h1 className="sr-only">{result.data?.beacon.title ?? "Beacon"}</h1>
     <BeaconFeed key={id} initial={null} start={result.data} signedIn={!!account} gateId={gated ? id : null} />
