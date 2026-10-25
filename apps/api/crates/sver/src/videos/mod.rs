@@ -216,17 +216,12 @@ async fn access(
             return Err(Fail::denied("Subscribe to watch this recording."));
         }
     }
-    if video.mature {
-        if let Some(user) = user
-            && !crate::auth::is_adult(&mut db, &user.id).await?
-        {
-            return Err(Fail::denied(
-                "This recording is for viewers aged 18 and over.",
-            ));
-        }
-        if !age_ack {
-            return Err(Fail::denied("Confirm that you are 18 or older to watch."));
-        }
+    if video.mature && !crate::auth::age_ok(&mut db, user, age_ack).await? {
+        return Err(Fail::denied(if user.is_some() {
+            "This recording is for viewers aged 18 and over."
+        } else {
+            "Confirm that you are 18 or older to watch."
+        }));
     }
     Ok(())
 }

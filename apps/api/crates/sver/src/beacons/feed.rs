@@ -23,12 +23,9 @@ fn visible(alias: &str) -> String {
         held = crate::videos::review::source_held_sql(&format!("{alias}.clip_id"))
     )
 }
-/// Only a signed-in adult, or a guest, who confirmed the 18+ gate sees 18+ Beacons.
+/// A signed-in adult sees 18+ Beacons with no prompt; a guest after confirming the 18+ gate.
 async fn passed_gate(app: &App, user: Option<&auth::User>, age_ack: bool) -> Res<bool> {
-    Ok(match user {
-        Some(user) => age_ack && auth::is_adult(&mut *app.db.acquire().await?, &user.id).await?,
-        None => age_ack,
-    })
+    Ok(auth::age_ok(&mut *app.db.acquire().await?, user, age_ack).await?)
 }
 fn seed(value: &str) -> Res<String> {
     if value.is_empty() {
