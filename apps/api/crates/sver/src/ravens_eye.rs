@@ -50,13 +50,47 @@ pub async fn compute(db: &mut PgConnection, day: NaiveDate) -> Res<Value> {
                 SELECT u.username,sum(s.counted+s.trusted) minutes FROM integrity_snapshots s JOIN broadcasts b ON b.id=s.broadcast_id JOIN users u ON u.id=b.owner_id, w
                 WHERE s.taken_at>=a AND s.taken_at<b GROUP BY u.username ORDER BY 2 DESC LIMIT 10) t),
             'top_categories', (SELECT coalesce(jsonb_agg(jsonb_build_object('category',category,'broadcast_hours',round(seconds::numeric/3600,1)) ORDER BY seconds DESC),'[]') FROM (
-                SELECT coalesce(v.category,c.name,'Uncategorized') category,sum(extract(epoch FROM least(coalesce(b.ended_at,now()),w.b)-greatest(b.started_at,w.a))) seconds
-                FROM broadcasts b LEFT JOIN videos v ON v.broadcast_id=b.id AND v.kind='VOD'
-                LEFT JOIN stream_settings st ON st.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=st.category_id, w
-                WHERE b.started_at<w.b AND coalesce(b.ended_at,now())>w.a GROUP BY 1 ORDER BY 2 DESC LIMIT 10) k)
+                SELECT k.name category,sum(extract(epoch FROM least(coalesce(k.ended_at,now()),w.b)-greatest(k.started_at,w.a))) seconds
+                FROM broadcast_categories k, w
+                WHERE k.started_at<w.b AND coalesce(k.ended_at,now())>w.a GROUP BY 1 ORDER BY 2 DESC LIMIT 10) k)
         )",
     )
     .bind(day)
+    .fetch_one(db)
+    .await?)
+}
+
+/// Streams from `from` (UTC midnight) to now, by the category actually streamed
+/// (`broadcast_categories`): hours streamed, distinct streamers and broadcasts, watch hours and the
+/// peak (Counted + Trusted sessions), and the same as totals. Computed over the whole range, so a
+/// streamer live on three days counts once. SVER Plays channels are left out unless `plays`.
+// ponytail: computed live from spans and minute snapshots; store weekly rollups if this gets slow.
+pub async fn streams(db: &mut PgConnection, from: NaiveDate, plays: bool) -> Res<Value> {
+    Ok(sqlx::query_scalar(
+        "WITH w AS (SELECT $1::date::timestamp AT TIME ZONE 'UTC' AS a, now() AS b),
+        spans AS (SELECT k.broadcast_id,k.name,k.genre,br.owner_id,greatest(k.started_at,w.a) s,least(coalesce(k.ended_at,now()),w.b) e
+            FROM broadcast_categories k JOIN broadcasts br ON br.id=k.broadcast_id, w
+            WHERE k.started_at<w.b AND coalesce(k.ended_at,now())>w.a
+            AND ($2 OR NOT EXISTS(SELECT 1 FROM plays_runtime p WHERE p.enabled AND p.channel_id=br.owner_id))),
+        watch AS (SELECT sp.name,date_trunc('minute',i.taken_at) m,sum(i.counted+i.trusted) n
+            FROM spans sp JOIN integrity_snapshots i ON i.broadcast_id=sp.broadcast_id AND i.taken_at>=sp.s AND i.taken_at<sp.e GROUP BY 1,2),
+        per AS (SELECT name,min(genre) genre,sum(extract(epoch FROM e-s)) seconds,count(DISTINCT owner_id) streamers,count(DISTINCT broadcast_id) broadcasts
+            FROM spans WHERE e>s GROUP BY name)
+        SELECT jsonb_build_object(
+            'categories',(SELECT coalesce(jsonb_agg(jsonb_build_object('category',p.name,'genre',p.genre,'hours',round(p.seconds::numeric/3600,1),
+                'streamers',p.streamers,'broadcasts',p.broadcasts,
+                'watch_hours',coalesce((SELECT round(sum(n)::numeric/60,1) FROM watch WHERE watch.name=p.name),0),
+                'peak_viewers',coalesce((SELECT max(n) FROM watch WHERE watch.name=p.name),0)) ORDER BY p.seconds DESC),'[]') FROM per p),
+            'totals',jsonb_build_object(
+                'hours',(SELECT round(coalesce(sum(extract(epoch FROM e-s)),0)::numeric/3600,1) FROM spans WHERE e>s),
+                'streamers',(SELECT count(DISTINCT owner_id) FROM spans WHERE e>s),
+                'broadcasts',(SELECT count(DISTINCT broadcast_id) FROM spans WHERE e>s),
+                'categories',(SELECT count(*) FROM per WHERE name<>'Uncategorized'),
+                'watch_hours',(SELECT round(coalesce(sum(n),0)::numeric/60,1) FROM watch),
+                'peak_viewers',(SELECT coalesce(max(t),0) FROM (SELECT sum(n) t FROM watch GROUP BY m) x)))",
+    )
+    .bind(from)
+    .bind(plays)
     .fetch_one(db)
     .await?)
 }
@@ -84,8 +118,11 @@ pub async fn tick(app: &App) -> Res<()> {
 #[derive(Deserialize)]
 pub struct Range {
     days: Option<u64>,
+    #[serde(default)]
+    plays: bool,
 }
-/// GET /api/admin/ravens-eye?days=30: the stored days in range plus today so far.
+/// GET /api/admin/ravens-eye?days=30&plays=false: the stored days in range plus today so far, and
+/// the range's streams by category (`streams`).
 async fn view(
     State(app): State<App>,
     jar: CookieJar,
@@ -109,9 +146,13 @@ async fn view(
         .into_iter()
         .map(|(day, stats)| json!({"day": day, "stats": stats, "partial": false}))
         .collect();
-    let live = compute(&mut *app.db.acquire().await?, today).await?;
+    let mut db = app.db.acquire().await?;
+    let live = compute(&mut db, today).await?;
     series.push(json!({"day": today, "stats": live, "partial": true}));
-    Ok(Json(json!({"days": series})))
+    let streams = streams(&mut db, from, range.plays).await?;
+    Ok(Json(
+        json!({"days": series, "from": from, "streams": streams}),
+    ))
 }
 
 pub fn routes() -> Router<App> {
