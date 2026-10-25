@@ -55,7 +55,7 @@ function FinishYourPage({ data }: { data: Channel }) {
     [!!c.currently, "Say what you're up to (Currently)", "/settings/profile#words"],
     [!!c.song, "Pick a profile song", "/settings/profile#sound"],
     [!!data.blocks?.length, "Add About me blocks", "/studio/channel/blocks"],
-    [data.war_council.members.length > 0, "Choose your War Council", "/studio/channel/war-council"],
+    [data.war_council.members.length > 0, "Choose your War Council", "/studio/channel#war-council"],
     [!!c.showcase?.length, "Showcase achievements", "/settings/profile#look"],
     [!!data.schedule_next.items.length || !c.streamed, "Set a schedule", "/studio/channel/schedule"],
   ];
@@ -95,7 +95,7 @@ export default async function ChannelHome({ params, searchParams }: { params: Ch
     war_council: council.length > 0 && <section key="war_council" className="panel section">
       <h2>War Council</h2>
       <ol className="council">{council.map(m => <li key={m.position} className={m.crown ? "crowned" : undefined}><CouncilTile user={m.user} crown={m.crown} /></li>)}</ol>
-      {owner && data.war_council.unavailable_count > 0 && <p className="muted">{data.war_council.unavailable_count} member(s) are no longer available and are hidden. <Link href="/studio/channel/war-council">Review</Link></p>}
+      {owner && data.war_council.unavailable_count > 0 && <p className="muted">{data.war_council.unavailable_count} member(s) are no longer available and are hidden. <Link href="/studio/channel#war-council">Review</Link></p>}
     </section>,
     wall: (posts.length > 0 || data.wall_preview.viewer.can_post) && <section key="wall" className="panel section">
       <div className="row between"><h2>Wall</h2><Link href={`/${c.username}/wall`} className="button small">{owner ? "Open the Wall" : "Sign the Wall"}</Link></div>

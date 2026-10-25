@@ -55,7 +55,7 @@ A streamer creates a guild; others apply and are accepted or declined by the lea
 
 ## Implementation and checks
 
-- Directory `/guilds`, public pages `/g/{name}`, management `/g/{name}/settings`, Creator Studio `/studio/guilds` and `/studio/squads`, squad management `/squads/{id}`, staff review `/admin/guilds`.
+- Directory `/guilds`, public pages `/g/{name}`, management `/g/{name}/settings`, Creator Studio `/studio/guilds` (co-streams on the same page; `/studio/squads` redirects there), squad management `/squads/{id}`, staff review `/admin/guilds`.
 - Co-stream viewing (changed October 6, 2026 by Joe): every member's watch page `/{username}/live` shows the co-stream: all streams by default, that streamer full width with the others in a row below, or only one of them, audio from one stream at a time, and one merged chat. New co-streams always use merged chat; `GET /api/channels/{username}/squad` finds a channel's live co-stream.
 - Guild admission and leadership changes serialize in Postgres. Deleting or banning a leader promotes the oldest eligible officer who does not already lead another guild. Orphaned archives without a remaining content owner are retained for staff only.
 - Emblems use the existing image processor, storage, review queue and Take It Down quarantine. Guild application, decision and invitation alerts and co-stream invitations reuse the notification/push queue with separate preferences and guild muting.

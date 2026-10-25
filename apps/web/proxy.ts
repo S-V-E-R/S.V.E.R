@@ -3,7 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 // Channel routing (docs/PROFILES.md, "URLs and routing"): legacy aliases, ?tab= mapping,
 // canonical casing (308) and rename-hold redirects (302, no-store). Static routes are excluded
 // by the matcher; reserved names guarantee no user shadows them.
-const STATIC = new Set(["api", "_next", "login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "account", "settings", "studio", "admin", "following", "about", "factions", "roadmap", "help", "terms", "privacy", "guidelines", "dmca", "contact", "favicon.ico", "robots.txt"]);
+// Every top-level route in app/, so static pages never spend a resolve call on the API.
+const STATIC = new Set(["api", "_next", "login", "signup", "oauth-signup", "oauth", "forgot", "reset", "verify", "mfa", "welcome", "choose-side", "choose-faction", "account", "settings", "studio", "admin", "following", "messages", "notifications", "wallet", "browse", "search", "magnet", "war-map", "factions", "guilds", "g", "squads", "wall", "supporters", "advertise", "go", "dock", "unsubscribe", "about", "roadmap", "help", "terms", "privacy", "guidelines", "dmca", "contact", "take-it-down", "open-data", "credits", "favicon.ico", "apple-icon.png", "robots.txt", "manifest.webmanifest"]);
 const TABS: Record<string, string> = { wall: "/wall", schedule: "/schedule", about: "/about", videos: "/videos" };
 const NAME = /^[A-Za-z0-9_]{1,40}$/;
 const api = () => process.env.API_INTERNAL_ORIGIN || "http://127.0.0.1:8080";
