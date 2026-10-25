@@ -4761,7 +4761,7 @@ async fn persona_pass(env: &Env) {
     assert_eq!(c["home_order"][1], "about_me");
     assert_eq!(
         c["home_order"].as_array().unwrap().len(),
-        8,
+        9,
         "the rest follow"
     );
     assert_eq!(c["currently"]["label"], "Playing");
