@@ -439,7 +439,7 @@ async fn identity_and_channel(env: &Env, media_dir: &std::path::Path) {
         channel["channel"]["layout"], "persona",
         "never streamed: persona first"
     );
-    assert_eq!(channel["channel"]["home_order"][0], "about_me");
+    assert_eq!(channel["channel"]["home_order"][0], "trailer");
     let schedule = env
         .anon
         .ok("GET", "/api/channels/Alice_Plays/schedule", Value::Null)
@@ -4732,7 +4732,7 @@ async fn persona_pass(env: &Env) {
         .unwrap();
     let mine = owner.ok("GET", "/api/me/persona", Value::Null).await;
     assert_eq!(mine["variants"], json!(["forge", "ash"]));
-    assert_eq!(mine["home_order"].as_array().unwrap().len(), 8);
+    assert_eq!(mine["home_order"].as_array().unwrap().len(), 9);
     // Another faction's variant, an unknown section or a made-up verb are refused.
     for bad in [
         json!({"theme_variant": "moon"}),
