@@ -21,10 +21,13 @@ export function SideMenu({ label, groups, footer }: { label: string; groups: Men
       <span>{current ?? "Menu"}</span><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path d={open ? "M3 9l4-4 4 4" : "M3 5l4 4 4-4"} fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>
     </button>
     <div id="side-menu-links" className={open ? "side-menu-links open" : "side-menu-links"}>
-      {groups.map(([group, links]) => <div key={group ?? "links"} className={group ? "studio-nav-group" : "side-menu-group"}>
-        {group && <span className="studio-nav-label">{group}</span>}
-        {links.map(([href, text]) => <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{text}</Link>)}
-      </div>)}
+      {groups.map(([group, links]) => {
+        const items = links.map(([href, text]) => <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{text}</Link>);
+        // Labelled groups fold; the one holding the current page starts open, so the menu reads as a few headings.
+        return group
+          ? <details key={group} className="studio-nav-group" open={links.some(([href]) => href === pathname)}><summary className="studio-nav-label">{group}</summary>{items}</details>
+          : <div key="links" className="side-menu-group">{items}</div>;
+      })}
       {footer}
     </div>
   </nav>;

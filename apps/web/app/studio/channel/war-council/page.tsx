@@ -1,3 +1,4 @@
-import { WarCouncilEditor } from "../../../../components/persona/WarCouncilEditor";
+import { redirect } from "next/navigation";
 
-export default function Page() { return <WarCouncilEditor />; }
+// Merged into the Channel overview (navigation review, October 2026).
+export default function Page() { redirect("/studio/channel#war-council"); }

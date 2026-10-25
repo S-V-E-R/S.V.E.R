@@ -64,7 +64,7 @@ export default function ProfileSettings() {
       </div>
       <div id="home" className="persona-part"><h2 className="part-title">Home</h2>
         <HomeEditor onSaved={bump} />
-        <p className="muted">Your War Council, Wall, schedule and sponsors are in <Link href="/studio/channel/war-council">Creator Studio</Link>.</p>
+        <p className="muted">Your War Council, Wall, schedule and sponsors are in <Link href="/studio/channel#war-council">Creator Studio</Link>.</p>
       </div>
       <div id="links" className="persona-part"><h2 className="part-title">Links</h2>
         <Links me={me} onSaved={refresh} />
