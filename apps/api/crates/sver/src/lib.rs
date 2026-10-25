@@ -597,6 +597,10 @@ fn profile_routes() -> Router<App> {
         )
         .route("/api/me/song/preview", post(st::song_preview))
         .route(
+            "/api/me/trailer",
+            put(st::save_trailer).delete(st::delete_trailer),
+        )
+        .route(
             "/api/me/war-council",
             get(so::my_war_council).put(so::save_war_council),
         )
