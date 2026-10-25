@@ -7,6 +7,7 @@ mod config;
 pub use config::{Config, Tuning};
 mod counters;
 mod create;
+pub(crate) use create::auto_from_clip;
 mod delivery;
 mod feed;
 pub use feed::search;

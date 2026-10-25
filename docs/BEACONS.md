@@ -15,6 +15,7 @@ Beacons are short vertical videos that lead people to creators and their live st
 ## Sources
 
 - **From a clip:** the creator picks one of their channel's approved clips ([VODS_CLIPS.md](VODS_CLIPS.md)), then drags a 9:16 crop window over it. The crop they last used is remembered. A clip from a VOD or Highlight works the same way. The Beacon links back to its clip and broadcast.
+- **Automatically from approved clips** (October 25, 2026; migration 0148): with "Make Beacons from clips I approve" on in Creator Studio → Videos & clips (off by default), each clip the streamer approves there, including automatic suggestions, is posted as a Beacon in their last crop, or a centered 9:16 window the first time. It applies the same rules as posting by hand (has streamed, not restricted or copyright-restricted, the daily limit, one Beacon per clip) and is skipped quietly when one fails; the approval always stands. With it off, an approval offers "Make a Beacon", which opens the crop tool on that clip.
 - **Upload:** MP4, MOV or WebM, up to 200 MB, 5–60 seconds.
   - The upload goes straight to private storage through a signed upload URL, then the creator marks it complete.
   - The server probes the file itself. File type, length and size come from the probe, never from the browser, and anything that isn't a real video in an allowed format is rejected.

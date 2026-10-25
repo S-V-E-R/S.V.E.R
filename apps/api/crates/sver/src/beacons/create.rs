@@ -191,11 +191,7 @@ async fn create(
         return Err(Fail::bad("You can post up to 10 Beacons a day."));
     }
     let id = profiles::new_id();
-    let seed = i64::from_le_bytes(
-        uuid::Uuid::new_v4().as_bytes()[..8]
-            .try_into()
-            .map_err(|_| Fail::internal())?,
-    );
+    let seed = new_seed()?;
     let mut upload = None;
     if input.source == "CLIP" {
         let clip_id = input
@@ -203,51 +199,21 @@ async fn create(
             .as_deref()
             .ok_or_else(|| Fail::bad("Choose a clip."))?;
         let crop = crop.ok_or_else(|| Fail::bad("Choose where to crop the clip."))?;
-        sqlx::query("SELECT id FROM videos WHERE id=$1 FOR UPDATE")
-            .bind(clip_id)
-            .execute(&mut *tx)
-            .await?;
-        let clip = crate::videos::load(&mut tx, clip_id).await?;
-        if clip.kind != "CLIP"
-            || clip.owner_id.as_deref() != Some(&user.id)
-            || clip.status != "READY"
-            || clip.approval != "APPROVED"
-            || clip.mp4_key.is_none()
-            || crate::videos::held(&mut tx, clip_id).await?
-        {
-            return Err(Fail::bad("Choose one of your channel's approved clips."));
-        }
-        let charity: Option<(String, String)> = sqlx::query_as(
-            "SELECT cs.charity_name,cs.donate_url FROM charity_streams cs WHERE cs.broadcast_id=$1 AND EXISTS(SELECT 1 FROM charity_links k WHERE k.url=cs.donate_url AND k.status='approved') LIMIT 1",
-        )
-        .bind(&clip.broadcast_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        sqlx::query("INSERT INTO beacons(id,owner_id,clipper_id,clip_id,broadcast_id,source,status,publish,title,category_id,category,genre,mature,charity_name,charity_url,crop,seed,request_key) VALUES($1,$2,$3,$4,$5,'CLIP','PROCESSING',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
-            .bind(&id).bind(&user.id).bind(&clip.clipper_id).bind(clip_id).bind(&clip.broadcast_id).bind(input.publish).bind(&title)
-            .bind(&clip.category_id).bind(&clip.category).bind(&clip.genre).bind(clip.mature)
-            .bind(charity.as_ref().map(|c| &c.0)).bind(charity.as_ref().map(|c| &c.1)).bind(&crop).bind(seed).bind(&input.request_id)
-            .execute(&mut *tx).await?;
-        // Choosing a clip for a Beacon is the streamer's approval for it; it's logged like any review.
-        sqlx::query("UPDATE videos SET beacon_approved=true WHERE id=$1")
-            .bind(clip_id)
-            .execute(&mut *tx)
-            .await?;
-        crate::safety::audit(
+        from_clip(
             &mut tx,
-            Some(&user.id),
-            "approve_clip_beacon",
-            "clip",
-            clip_id,
-            &[],
-            "Made a Beacon from this clip",
-            json!({"beacon":id}),
-            false,
+            ClipBeacon {
+                id: &id,
+                owner: &user.id,
+                clip_id,
+                title: &title,
+                crop: &crop,
+                publish: input.publish,
+                seed,
+                request_key: &input.request_id,
+                note: "Made a Beacon from this clip",
+            },
         )
         .await?;
-        sqlx::query("INSERT INTO beacon_crops(owner_id,crop) VALUES($1,$2) ON CONFLICT(owner_id) DO UPDATE SET crop=EXCLUDED.crop")
-            .bind(&user.id).bind(&crop).execute(&mut *tx).await?;
-        enqueue(&mut tx, &id, "PROCESS", json!({})).await?;
     } else {
         let category = input
             .category_id
@@ -276,6 +242,132 @@ async fn create(
         json!({"id":id,"queued":upload.is_none(),"upload":upload}),
     ))
 }
+fn new_seed() -> Res<i64> {
+    Ok(i64::from_le_bytes(
+        uuid::Uuid::new_v4().as_bytes()[..8]
+            .try_into()
+            .map_err(|_| Fail::internal())?,
+    ))
+}
+struct ClipBeacon<'a> {
+    id: &'a str,
+    owner: &'a str,
+    clip_id: &'a str,
+    title: &'a str,
+    crop: &'a Value,
+    publish: bool,
+    seed: i64,
+    request_key: &'a str,
+    /// The audit note: chosen by hand, or made automatically on approval.
+    note: &'a str,
+}
+/// A Beacon from one of the owner's approved clips, queued for processing.
+async fn from_clip(tx: &mut PgConnection, b: ClipBeacon<'_>) -> Res<()> {
+    sqlx::query("SELECT id FROM videos WHERE id=$1 FOR UPDATE")
+        .bind(b.clip_id)
+        .execute(&mut *tx)
+        .await?;
+    let clip = crate::videos::load(tx, b.clip_id).await?;
+    if clip.kind != "CLIP"
+        || clip.owner_id.as_deref() != Some(b.owner)
+        || clip.status != "READY"
+        || clip.approval != "APPROVED"
+        || clip.mp4_key.is_none()
+        || crate::videos::held(tx, b.clip_id).await?
+    {
+        return Err(Fail::bad("Choose one of your channel's approved clips."));
+    }
+    let charity: Option<(String, String)> = sqlx::query_as(
+        "SELECT cs.charity_name,cs.donate_url FROM charity_streams cs WHERE cs.broadcast_id=$1 AND EXISTS(SELECT 1 FROM charity_links k WHERE k.url=cs.donate_url AND k.status='approved') LIMIT 1",
+    )
+    .bind(&clip.broadcast_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    sqlx::query("INSERT INTO beacons(id,owner_id,clipper_id,clip_id,broadcast_id,source,status,publish,title,category_id,category,genre,mature,charity_name,charity_url,crop,seed,request_key) VALUES($1,$2,$3,$4,$5,'CLIP','PROCESSING',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)")
+        .bind(b.id).bind(b.owner).bind(&clip.clipper_id).bind(b.clip_id).bind(&clip.broadcast_id).bind(b.publish).bind(b.title)
+        .bind(&clip.category_id).bind(&clip.category).bind(&clip.genre).bind(clip.mature)
+        .bind(charity.as_ref().map(|c| &c.0)).bind(charity.as_ref().map(|c| &c.1)).bind(b.crop).bind(b.seed).bind(b.request_key)
+        .execute(&mut *tx).await?;
+    // Choosing a clip for a Beacon is the streamer's approval for it; it's logged like any review.
+    sqlx::query("UPDATE videos SET beacon_approved=true WHERE id=$1")
+        .bind(b.clip_id)
+        .execute(&mut *tx)
+        .await?;
+    crate::safety::audit(
+        &mut *tx,
+        Some(b.owner),
+        "approve_clip_beacon",
+        "clip",
+        b.clip_id,
+        &[],
+        b.note,
+        json!({"beacon":b.id}),
+        false,
+    )
+    .await?;
+    sqlx::query("INSERT INTO beacon_crops(owner_id,crop) VALUES($1,$2) ON CONFLICT(owner_id) DO UPDATE SET crop=EXCLUDED.crop")
+        .bind(b.owner).bind(b.crop).execute(&mut *tx).await?;
+    enqueue(tx, b.id, "PROCESS", json!({})).await
+}
+
+/// Auto Beacons (docs/BEACONS.md "Sources"): when the streamer approves their own clip with
+/// "Make Beacons from approved clips" on, it becomes a published Beacon in their last crop (a
+/// centered 9:16 window the first time). Skipped quietly whenever they couldn't post one by hand:
+/// restricted, never streamed, copyright-restricted, over the daily limit, or already made.
+pub(crate) async fn auto_from_clip(app: &App, owner: &str, clip_id: &str) -> Res<Option<String>> {
+    if !app.config.videos.storage.available() {
+        return Ok(None);
+    }
+    let mut tx = app.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,91))")
+        .bind(owner)
+        .execute(&mut *tx)
+        .await?;
+    let settings = crate::videos::settings(&mut tx, owner).await?;
+    let made: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM beacons WHERE clip_id=$1 AND status NOT IN ('DELETING','DELETED'))",
+    )
+    .bind(clip_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !settings.auto_beacons
+        || settings.copyright_restricted
+        || made
+        || profiles::ensure_unrestricted(&mut tx, owner).await.is_err()
+        || !has_streamed(&mut tx, owner).await?
+        || used_today(&mut tx, owner).await? >= DAILY_LIMIT
+    {
+        return Ok(None);
+    }
+    let clip = crate::videos::load(&mut tx, clip_id).await?;
+    let Ok(title) = title(&clip.title) else {
+        return Ok(None);
+    };
+    let last: Option<Value> = sqlx::query_scalar("SELECT crop FROM beacon_crops WHERE owner_id=$1")
+        .bind(owner)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let crop = last.unwrap_or_else(|| json!({"x":0.341796875,"y":0.0,"width":0.31640625}));
+    let id = profiles::new_id();
+    from_clip(
+        &mut tx,
+        ClipBeacon {
+            id: &id,
+            owner,
+            clip_id,
+            title: &title,
+            crop: &crop,
+            publish: true,
+            seed: new_seed()?,
+            request_key: &format!("auto:{clip_id}"),
+            note: "Made a Beacon automatically when the clip was approved",
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Some(id))
+}
+
 /// Where the browser sends the file: a signed URL straight to private object storage, or in
 /// development a signed local endpoint that writes to the same private store.
 fn upload_target(app: &App, id: &str, user: &auth::User, key: &str) -> Res<Value> {
