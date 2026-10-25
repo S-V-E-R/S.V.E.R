@@ -75,6 +75,9 @@ pub struct Settings {
     /// Room and loud moments become clips waiting for approval (docs/VODS_CLIPS.md).
     #[serde(default = "on")]
     pub auto_clips: bool,
+    /// Clips the streamer approves become published Beacons (docs/BEACONS.md "Sources").
+    #[serde(default)]
+    pub auto_beacons: bool,
     #[serde(default, skip_deserializing)]
     pub copyright_restricted: bool,
 }

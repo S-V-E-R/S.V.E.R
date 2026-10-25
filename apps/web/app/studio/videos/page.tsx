@@ -8,7 +8,7 @@ import { RecordedPlayer } from "../../../components/RecordedPlayer";
 import { duration, videoPath, type Video } from "../../../lib/videos";
 import type { Chip } from "../../../lib/types";
 import "../../../styles/videos.css";
-type Settings = { recording: boolean; visibility: string; clip_permission: string; clip_approval: boolean; chat_replay: boolean; mature: boolean; auto_clips: boolean; copyright_restricted: boolean };
+type Settings = { recording: boolean; visibility: string; clip_permission: string; clip_approval: boolean; chat_replay: boolean; mature: boolean; auto_clips: boolean; auto_beacons: boolean; copyright_restricted: boolean };
 type Library = { settings: Settings; videos: Video[]; has_more: boolean; editors: Chip[]; configured: boolean; highlight_used_ms: number; highlight_limit_ms: number; retention_hours: number; username: string; editing: Video[]; pending: number };
 export default function Videos() {
   const [data, setData] = useState<Library | null>(null);
@@ -19,11 +19,19 @@ export default function Videos() {
   const [download, setDownload] = useState("");
   // The pending clip open for review; one player at a time.
   const [watching, setWatching] = useState("");
+  // The clip just approved by hand, offered as a Beacon (docs/BEACONS.md "Sources").
+  const [approved, setApproved] = useState<Video | null>(null);
   const load = useCallback(async () => { const result = await send<Library>("GET", `/api/me/videos?kind=${filter}&offset=${offset}`); if (result.ok) setData(result.data); else setMessage(result.error); }, [filter, offset]);
   useLoad(load);
   async function save(change: Partial<Settings>) { if (!data || saving) return; setSaving(true); setMessage(""); const settings = { ...data.settings, ...change }; setData({ ...data, settings }); const result = await send("PUT", "/api/me/videos", settings); setSaving(false); if (result.ok) { setMessage("Saved. Recording and default visibility apply to the next broadcast."); } else { setData(data); setMessage(result.error); } }
   async function editor(username: string, enabled: boolean) { const result = await send("PUT", "/api/me/videos/editors", { username, enabled }); setMessage(result.ok ? "Editor permissions saved." : result.error); if (result.ok) await load(); }
-  async function review(v: Video, approve: boolean) { const result = await send("POST", `/api/videos/${v.id}/approval`, { approve, reason: approve ? "Approved in Creator Studio" : "Rejected in Creator Studio" }); setMessage(result.ok ? (approve ? `Approved "${v.title}".` : `Rejected "${v.title}"; it will be deleted.`) : result.error); if (result.ok) await load(); }
+  async function review(v: Video, approve: boolean) {
+    const result = await send<{ beacon: string | null }>("POST", `/api/videos/${v.id}/approval`, { approve, reason: approve ? "Approved in Creator Studio" : "Rejected in Creator Studio" });
+    const beacon = result.ok && result.data.beacon;
+    setMessage(result.ok ? (approve ? (beacon ? `Approved "${v.title}" and posted it as a Beacon.` : `Approved "${v.title}".`) : `Rejected "${v.title}"; it will be deleted.`) : result.error);
+    setApproved(result.ok && approve && !beacon ? v : null);
+    if (result.ok) await load();
+  }
   if (!data) return <p role="status">{message || "Loading recordings…"}</p>;
   const s = data.settings;
   return <><h1>Videos &amp; clips</h1>
@@ -40,6 +48,7 @@ export default function Videos() {
       <label className="field"><span>Who can clip?</span><select disabled={saving} value={s.clip_permission} onChange={e => void save({ clip_permission: e.target.value })}>{[['SIGNED_IN', 'Signed-in viewers'], ['FOLLOWERS', 'Followers'], ['SUBSCRIBERS', 'Subscribers'], ['MODS', 'You and your mods'], ['OFF', 'Nobody']].map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></label>
       <label className="checkbox"><input type="checkbox" disabled={saving} checked={s.clip_approval} onChange={e => void save({ clip_approval: e.target.checked })} />Review viewer clips before publishing</label>
       <label className="checkbox"><input type="checkbox" disabled={saving} checked={s.auto_clips} onChange={e => void save({ auto_clips: e.target.checked })} /><span><strong>Suggest clips automatically</strong>: when chat goes off or your stream suddenly gets loud, the last 35 seconds are saved as a clip waiting for your review below. Nothing is published until you approve it.</span></label>
+      <label className="checkbox"><input type="checkbox" disabled={saving} checked={s.auto_beacons} onChange={e => void save({ auto_beacons: e.target.checked })} /><span><strong>Make Beacons from clips I approve</strong>: each clip you approve here is posted as a Beacon, cropped like your last one (centered the first time). Beacons send viewers to your channel when you&apos;re live. You can edit or delete them in <Link href="/studio/beacons">Beacons</Link>.</span></label>
       <p className="muted">Your clips and your mods&apos; clips skip viewer approval. MAGNet and automatic suggestions always wait for approval.</p>
     </Section>
     <Section title="Highlight storage" intro={`${duration(data.highlight_used_ms)} used of ${duration(data.highlight_limit_ms)}. Delete a Highlight to free space.`}><progress value={data.highlight_used_ms} max={data.highlight_limit_ms} aria-label="Highlight storage used" /></Section>
@@ -50,6 +59,6 @@ export default function Videos() {
     </Section>
     <Section title="Editors" intro="Editors can download your past broadcasts and Highlights, including private recordings."><form className="row" onSubmit={async e => { e.preventDefault(); await editor(String(new FormData(e.currentTarget).get("username")), true); }}><UsernameInput label="Username" required /><button>Add editor</button></form><ul className="list">{data.editors.map(e => <li key={e.username}>{e.display_name} <button className="small quiet" onClick={() => void editor(e.username ?? "", false)}>Remove</button></li>)}</ul></Section>
     {data.editing.length > 0 && <Section title="Shared with you" intro="Recordings whose creators appointed you as an editor."><ul className="video-studio-list">{data.editing.map(v => <li key={v.id}>{v.title} <button className="small quiet" onClick={async () => { const result = await send<{ url?: string }>("POST", `/api/videos/${v.id}/download`); if (result.ok) { setDownload(result.data.url ?? ""); setMessage(result.data.url ? "Download ready." : "Preparing MP4. Check again shortly."); } else setMessage(result.error); }}>Prepare download</button></li>)}</ul>{download && <a href={download} className="button">Download MP4</a>}</Section>}
-    {message && <p role="status" className="form-message">{message}</p>}
+    {message && <p role="status" className="form-message">{message}{approved && <> <Link className="button small" href={`/studio/beacons?clip=${approved.id}`}>Make a Beacon</Link></>}</p>}
   </>;
 }
