@@ -38,6 +38,10 @@ pub struct Tuning {
     pub min_chatters: f64,
     pub min_follows: f64,
     pub raid_score: f64,
+    /// A win the game detector saw on screen in the last 90 seconds.
+    pub win_score: f64,
+    /// Fewest viewers pressing board controls or voting in polls that counts.
+    pub min_crowd: f64,
     /// The streamer's flag adds this, only alongside another signal at least `flag_elevated`.
     pub flag_bonus: f64,
     pub flag_elevated: f64,
@@ -69,6 +73,8 @@ impl Default for Tuning {
             min_chatters: 3.0,
             min_follows: 2.0,
             raid_score: 10.0,
+            win_score: 6.0,
+            min_crowd: 3.0,
             flag_bonus: 1.0,
             flag_elevated: 1.5,
             flag_cooldown_seconds: 600,
@@ -102,8 +108,15 @@ pub struct Signals {
     pub follow_base: f64,
     pub raided_by: Option<String>,
     pub flagged: bool,
-    /// Too little history for a baseline yet: chat and follows can't make a moment (a raid can).
+    /// Too little history for a baseline yet: chat, follows and the crowd can't make a moment (a
+    /// raid or a win can).
     pub unsettled: bool,
+    /// CrowdSync: viewers pressing free board controls or voting in polls this minute, and the
+    /// stream's normal per minute. Paid presses and predictions never count.
+    pub crowd: f64,
+    pub crowd_base: f64,
+    /// A win the game detector saw in the last 90 seconds ("Victory", "Round win").
+    pub won: Option<String>,
 }
 impl Signals {
     /// The moment score and its one-line reason (None when nothing is elevated).
@@ -124,6 +137,24 @@ impl Signals {
         }
         if follow > best.0 {
             best = (follow, Some("New follows are pouring in".to_string()));
+        }
+        let crowd = if self.crowd >= t.min_crowd && !self.unsettled {
+            self.crowd / self.crowd_base.max(1.0)
+        } else {
+            0.0
+        };
+        if crowd > best.0 {
+            best = (crowd, Some("Chat is playing along".to_string()));
+        }
+        if let Some(won) = &self.won
+            && t.win_score > best.0
+        {
+            let reason = if won == "Victory" {
+                "Just won the match"
+            } else {
+                "Just won a round"
+            };
+            best = (t.win_score, Some(reason.to_string()));
         }
         if let Some(raider) = &self.raided_by
             && t.raid_score > best.0
@@ -316,6 +347,9 @@ type SignalRow = (
     Option<DateTime<Utc>>,
     bool,
     bool,
+    f64,
+    f64,
+    Option<String>,
 );
 /// Eligible streams for a lane, with their signals. Eligible: live 60+ seconds and not
 /// reconnecting, an active category (the lane's genre for genre lanes), not opted out, an eligible
@@ -351,7 +385,11 @@ pub async fn candidates(
           EXISTS(SELECT 1 FROM magnet_flags g WHERE g.broadcast_id=b.id AND g.at>now()-interval '2 minutes'),
           (SELECT max(coalesce(f.ended_at,now())) FROM magnet_features f WHERE f.lane=$1 AND f.owner_id=b.owner_id),
           EXISTS(SELECT 1 FROM plays_runtime pr WHERE pr.enabled AND pr.channel_id=b.owner_id),
-          b.started_at>now()-make_interval(secs=>$8)
+          b.started_at>now()-make_interval(secs=>$8),
+          (SELECT count(DISTINCT x.u) FROM magnet_crowd(b.owner_id,now()-interval '60 seconds') x JOIN users u ON u.id=x.u AND u.email_verified WHERE x.u<>b.owner_id AND magnet_room_viewer(ARRAY[b.id],x.u))::float8,
+          (SELECT count(DISTINCT (x.u, date_trunc('minute', x.at))) FROM magnet_crowd(b.owner_id,greatest(b.started_at,now()-interval '31 minutes')) x JOIN users u ON u.id=x.u AND u.email_verified WHERE x.u<>b.owner_id AND x.at<=now()-interval '60 seconds' AND magnet_room_viewer(ARRAY[b.id],x.u))::float8
+            / greatest(1.0, extract(epoch FROM (now()-interval '60 seconds')-greatest(b.started_at,now()-interval '31 minutes'))::float8/60.0),
+          (SELECT g.title FROM game_moments g WHERE g.broadcast_id=b.id AND g.at>now()-interval '90 seconds' ORDER BY g.at DESC LIMIT 1)
          FROM broadcasts b WHERE b.id=ANY($3)",
     )
     .bind(lane)
@@ -379,6 +417,9 @@ pub async fn candidates(
         last,
         system,
         unsettled,
+        crowd,
+        crowd_base,
+        won,
     ) in rows
     {
         if !eligible || (system && others) {
@@ -395,6 +436,9 @@ pub async fn candidates(
             raided_by,
             flagged,
             unsettled,
+            crowd,
+            crowd_base,
+            won,
         };
         let (score, moment) = signals.score(t);
         out.push((
@@ -458,6 +502,10 @@ pub async fn candidates(
             raided_by: unit.iter().find_map(|o| o.2.raided_by.clone()),
             flagged: unit.iter().any(|o| o.2.flagged),
             unsettled,
+            // ponytail: members' crowds add up, so someone playing on two members' boards counts twice.
+            crowd: unit.iter().map(|o| o.2.crowd).sum(),
+            crowd_base: unit.iter().map(|o| o.2.crowd_base).sum(),
+            won: unit.iter().find_map(|o| o.2.won.clone()),
         };
         let (score, moment) = signals.score(t);
         let last_featured = if unit.iter().any(|o| o.1.last_featured.is_none()) {
@@ -967,6 +1015,16 @@ async fn save(
         .bind(&user.id).bind(input.opt_out).bind(input.chat_merge).execute(&app.db).await?;
     mine(State(app), jar).await
 }
+/// A win the game detector saw on a live stream (docs/MAGNET.md "What counts as a moment"); a day's are kept.
+pub async fn game_moment(app: &App, broadcast: &str, title: &str) -> Res<()> {
+    sqlx::query("WITH old AS (DELETE FROM game_moments WHERE at<now()-interval '1 day') INSERT INTO game_moments(broadcast_id,title) VALUES($1,$2)")
+        .bind(broadcast)
+        .bind(title)
+        .execute(&app.db)
+        .await?;
+    Ok(())
+}
+
 /// POST /api/me/magnet/flag: "Flag this moment" (also `/flag` in chat). Counts only together with
 /// another elevated signal; once every 10 minutes.
 async fn flag(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
@@ -1191,6 +1249,51 @@ mod tests {
             } => Some((broadcast.as_str(), *kind)),
             _ => None,
         }
+    }
+
+    #[test]
+    fn game_wins_and_the_crowd_make_moments() {
+        let t = t();
+        // A win on screen is a moment on its own, above a chat burst and below a raid.
+        let won = Signals {
+            won: Some("Victory".into()),
+            ..Signals::default()
+        };
+        assert_eq!(won.score(&t), (6.0, Some("Just won the match".into())));
+        let round = Signals {
+            won: Some("Round win".into()),
+            unsettled: true,
+            ..Signals::default()
+        };
+        assert_eq!(round.score(&t).1.as_deref(), Some("Just won a round"));
+        let raid = Signals {
+            won: Some("Victory".into()),
+            raided_by: Some("Raider".into()),
+            ..Signals::default()
+        };
+        assert_eq!(raid.score(&t).0, 10.0);
+        // Board presses and poll votes count like chat: against the stream's own normal, with a
+        // floor, and not before there is a normal.
+        let playing = Signals {
+            crowd: 8.0,
+            crowd_base: 2.0,
+            ..Signals::default()
+        };
+        assert_eq!(
+            playing.score(&t),
+            (4.0, Some("Chat is playing along".into()))
+        );
+        let few = Signals {
+            crowd: 2.0,
+            ..Signals::default()
+        };
+        assert_eq!(few.score(&t).0, 0.0);
+        let fresh = Signals {
+            crowd: 8.0,
+            unsettled: true,
+            ..Signals::default()
+        };
+        assert_eq!(fresh.score(&t).0, 0.0);
     }
 
     #[test]
