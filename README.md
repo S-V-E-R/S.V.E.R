@@ -2,7 +2,17 @@
 
 Live streaming for people who play, build, and make. Three factions, one seasonal war over every category.
 
-Read `AGENTS.md` before working in this repo. What's built and what's left is in [docs/ROADMAP.md](docs/ROADMAP.md), also live at https://sver.tv/roadmap. Every module and system has its specification in [docs/](docs), for example [Login](docs/LOGIN.md), [Profiles](docs/PROFILES.md), [Live streams](docs/LIVE_STREAMS.md), [Factions](docs/FACTIONS.md), [MAGNet](docs/MAGNET.md), [VODs and clips](docs/VODS_CLIPS.md) and [Beacons](docs/BEACONS.md). The platform plan, operations notes and the work log are kept private; docs that mention `PLATFORM_PLAN.md`, `OPERATIONS.md` or `ChangeLog.md` refer to those.
+Read `AGENTS.md` before working in this repo. What's built and what's left is in [docs/ROADMAP.md](docs/ROADMAP.md), also live at https://sver.tv/roadmap. Every module and system has its specification in [docs/](docs). The platform plan, operations notes and the work log are kept private; docs that mention `PLATFORM_PLAN.md`, `OPERATIONS.md` or `ChangeLog.md` refer to those.
+
+## Specifications
+
+- **Core modules:** [Login](docs/LOGIN.md), [Profiles](docs/PROFILES.md), [Live streams](docs/LIVE_STREAMS.md), [Factions](docs/FACTIONS.md), [MAGNet](docs/MAGNET.md), [Support](docs/SUPPORT.md), [CrowdSync](docs/CROWDSYNC.md), [VODs and clips](docs/VODS_CLIPS.md), [Beacons](docs/BEACONS.md)
+- **Community:** [Guilds](docs/GUILDS.md), [Linked chat and restreaming](docs/LINKED_CHAT.md), [Community additions](docs/COMMUNITY.md), [Channel additions](docs/CHANNEL_ADDITIONS.md), [Notifications](docs/NOTIFICATIONS.md), [Discord bot](docs/DISCORD_BOT.md), [The Wall](docs/WALL.md)
+- **Progression:** [Progression](docs/PROGRESSION.md), [Achievements and cosmetics](docs/ACHIEVEMENTS.md), [Platform supporters and Founders](docs/SUPPORTERS.md)
+- **Creators and developers:** [Native alerts and overlays](docs/OVERLAYS.md), [OBS](docs/OBS.md), [Developer platform](docs/DEVELOPER_PLATFORM.md), [S.V.E.R Plays](docs/PLAYS.md), [Fastmarch](docs/FASTMARCH.md)
+- **Revenue:** [S.V.E.R Ads](docs/ADVERTISERS.md), [Ad revenue sharing and Ad Valor](docs/ADS.md), [Merch store](docs/MERCH.md)
+- **Staff and safety:** [Admin tools](docs/ADMIN.md), [Take It Down removals](docs/TAKE_IT_DOWN.md), [Load test](docs/LOAD_TEST.md)
+- **Look and voice:** [Design](docs/DESIGN.md), [Motion](docs/MOTION.md), [Copy](docs/COPY.md), [Lore](docs/LORE.md)
 
 ## Layout
 
@@ -10,10 +20,10 @@ Read `AGENTS.md` before working in this repo. What's built and what's left is in
 apps/api      Rust backend (Axum, Tokio, SQLx); crates under apps/api/crates
 apps/web      Next.js frontend (TypeScript, React)
 migrations    SQLx migrations, applied by the API on startup
-infra         Dockerfiles, Nginx and backup units
-config        Example tuning files (production tuning stays private)
+infra         Dockerfiles, Nginx, backup units, media server and Plays runner config
+config        Example tuning files (production tuning stays private; more under infra)
 integrations  Game SDKs (JavaScript, Unity, Unreal), OBS bridge, Stream Deck plugin, automation bridge
-scripts       Dev script, component/navigation/media checks, legacy export query
+scripts       Dev and publish scripts, component/navigation/media/Plays checks, /credits generator, legacy exports
 docs          Module specifications and decision notes
 ```
 
@@ -42,7 +52,7 @@ cd apps/web; corepack pnpm typecheck; corepack pnpm lint; corepack pnpm build
 
 The same checks run on every push (`.github/workflows/ci.yml`), plus the integration kit tests, the `/credits` license check and a scan for leaked secrets. Integration tests require a local database named `sver_rebuild`; each run creates a uniquely named schema and removes only that schema. They use synthetic users and controlled HTTP responses, so no real email is sent. For the explicit live Resend simulator check, set `SVER_TEST_RESEND=1` only in the test process.
 
-Browser-level checks: `node scripts/check-navigation.mjs` (against a built frontend on port 13001 and the local API), `node scripts/check-signup.cjs <path-to-jsdom>` and `node scripts/check-stream-studio.cjs <path-to-jsdom>` for component checks with mocked network traffic, and `scripts/check-media.cjs` for the isolated real-media proof.
+Browser-level checks: `node scripts/check-navigation.mjs` (against a built frontend on port 13001 and the local API), `node scripts/check-signup.cjs <path-to-jsdom>` and `node scripts/check-stream-studio.cjs <path-to-jsdom>` for component checks with mocked network traffic, and `scripts/check-media.cjs` for the isolated real-media proof. The other `scripts/check-*.cjs` files (chat, discovery, factions, game catalog, Plays, roadmap, shell, teams) are component checks that take a path to jsdom or Playwright (whichever the script names) as their argument. After changing web dependencies, regenerate the license list with `node scripts/credits.mjs`; CI fails when `/credits` is stale.
 
 The anonymous removal form also has a component check: `node scripts/check-take-it-down.cjs <path-to-jsdom>`. Its backend acceptance cases run within the Profiles integration suite, using generated non-sensitive images and a fake cache-purge service.
 
