@@ -127,6 +127,8 @@ pub const RESERVED: &[&str] = &[
     "creator",
     "crowdsync",
     "dev",
+    "developer",
+    "developers",
     "dock",
     "drops",
     "emotes",

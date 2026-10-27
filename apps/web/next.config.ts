@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
   poweredByHeader: false,
+  async redirects() { return [{ source: "/dev", destination: "/developers", permanent: true }]; },
   async rewrites() { return [{ source: "/api/:path*", destination: `${process.env.API_INTERNAL_ORIGIN || "http://127.0.0.1:8080"}/api/:path*` }]; },
   async headers() { return [{ source: "/:path*", headers: [
     { key: "Referrer-Policy", value: "no-referrer" },
