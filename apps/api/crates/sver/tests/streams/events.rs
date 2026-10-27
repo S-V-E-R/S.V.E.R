@@ -440,7 +440,7 @@ pub async fn exercise(e: &Env) {
     for statement in [
         "DELETE FROM notifications WHERE kind='hook_disabled'",
         "DELETE FROM event_hooks",
-        "DELETE FROM dev_apps",
+        "DELETE FROM dev_apps WHERE owner_id IS NOT NULL",
         "DELETE FROM follows WHERE follower_id IN ('ev-fan','ev-fan2')",
     ] {
         e.sql(statement).await;

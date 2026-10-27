@@ -13,15 +13,6 @@ async fn raw(
     form: Option<&[(&str, &str)]>,
     headers: &[(&str, &str)],
 ) -> (StatusCode, Value) {
-    raw_on(&e.app, method, path, form, headers).await
-}
-async fn raw_on(
-    app: &App,
-    method: &str,
-    path: &str,
-    form: Option<&[(&str, &str)]>,
-    headers: &[(&str, &str)],
-) -> (StatusCode, Value) {
     let mut request = Request::builder()
         .method(method)
         .uri(path)
@@ -42,7 +33,7 @@ async fn raw_on(
         }
         None => Body::empty(),
     };
-    let response = sver::router(app.clone())
+    let response = sver::router(e.app.clone())
         .oneshot(request.body(body).unwrap())
         .await
         .unwrap();
@@ -81,7 +72,8 @@ pub async fn exercise(e: &Env) {
         .as_str()
         .unwrap()
         .to_string();
-    let stored: String = sqlx::query_scalar("SELECT secret_hash FROM dev_apps")
+    let stored: String = sqlx::query_scalar("SELECT secret_hash FROM dev_apps WHERE id=$1")
+        .bind(&client)
         .fetch_one(&e.app.db)
         .await
         .unwrap();
@@ -327,7 +319,7 @@ pub async fn exercise(e: &Env) {
     );
     e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
         .await;
-    let apps: i64 = sqlx::query_scalar("SELECT count(*) FROM dev_apps")
+    let apps: i64 = sqlx::query_scalar("SELECT count(*) FROM dev_apps WHERE owner_id IS NOT NULL")
         .fetch_one(&e.app.db)
         .await
         .unwrap();
@@ -432,42 +424,53 @@ async fn device(e: &Env) {
         .await;
 }
 
-/// S.V.E.R Desktop: only its client ID may ask for `stream:key` (through sver.tv/go), and the key
-/// still needs an authenticator or recovery code on every call.
+/// S.V.E.R Desktop: a built-in app with no owner. Only it may ask for `stream:key` (through
+/// sver.tv/go), no one can delete it in Settings, and the key still needs a code on every call.
 async fn desktop(e: &Env) {
     let created = e
         .call(
             "POST",
             "/api/me/apps",
-            json!({"name":"S.V.E.R Desktop","redirect_uris":["http://127.0.0.1/cb"]}),
+            json!({"name":"Not Desktop","redirect_uris":["http://127.0.0.1/cb"]}),
         )
         .await;
-    let client = created["created"]["client_id"]
+    let other = created["created"]["client_id"]
         .as_str()
         .unwrap()
         .to_string();
+    let (status, refused) = raw(
+        e,
+        "POST",
+        "/api/oauth/device",
+        Some(&[
+            ("client_id", other.as_str()),
+            ("scope", "user:read stream:key"),
+        ]),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        (status, refused["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_scope")),
+        "only S.V.E.R Desktop"
+    );
+    e.call("DELETE", &format!("/api/me/apps/{other}"), Value::Null)
+        .await;
+    let client = sver::devapps::DESKTOP_APP.to_string();
+    // Deleting someone else's (or no one's) app does nothing.
+    e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
+        .await;
     let ask = [
         ("client_id", client.as_str()),
         ("scope", "user:read stream:key"),
     ];
-    let (status, refused) = raw(e, "POST", "/api/oauth/device", Some(&ask), &[]).await;
-    assert_eq!(
-        (status, refused["error"].as_str()),
-        (StatusCode::BAD_REQUEST, Some("invalid_scope")),
-        "not the configured desktop app"
-    );
-    let mut config = (*e.app.config).clone();
-    config.desktop_client = Some(client.clone());
-    let desk = App {
-        config: Arc::new(config),
-        ..e.app.clone()
-    };
-    let (status, started) = raw_on(&desk, "POST", "/api/oauth/device", Some(&ask), &[]).await;
+    let (status, started) = raw(e, "POST", "/api/oauth/device", Some(&ask), &[]).await;
     assert_eq!(status, StatusCode::OK, "{started}");
     let code = started["user_code"].as_str().unwrap().to_string();
     let shown = e
         .call("GET", &format!("/api/oauth/device/{code}"), Value::Null)
         .await;
+    assert_eq!(shown["app"]["owner"], Value::Null, "Made by S.V.E.R");
     assert!(
         shown["scopes"][1]["text"]
             .as_str()
@@ -481,8 +484,8 @@ async fn desktop(e: &Env) {
         json!({"approve": true}),
     )
     .await;
-    let (status, tokens) = raw_on(
-        &desk,
+    let (status, tokens) = raw(
+        e,
         "POST",
         "/api/oauth/token",
         Some(&[
@@ -533,6 +536,9 @@ async fn desktop(e: &Env) {
     // Studio's own key tests start from no key.
     e.sql("DELETE FROM stream_credentials WHERE owner_id='stream-owner'")
         .await;
-    e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
-        .await;
+    let listed = e.call("GET", "/api/me/connections", Value::Null).await;
+    assert!(
+        listed.to_string().contains("S.V.E.R Desktop"),
+        "an ownerless app still lists: {listed}"
+    );
 }

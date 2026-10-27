@@ -41,7 +41,9 @@ pub const SCOPES: [(&str, &str); 10] = [
         "Run raids, polls, predictions, highlight markers and the board's pause on your channel",
     ),
 ];
-/// Only S.V.E.R Desktop (`Config::desktop_client`) may ask for this, and only through sver.tv/go.
+/// S.V.E.R Desktop's client ID: a built-in app with no owner (migration 0150).
+pub const DESKTOP_APP: &str = "sver-desktop";
+/// Only S.V.E.R Desktop may ask for this, and only through sver.tv/go.
 pub const STREAM_KEY: (&str, &str) = (
     "stream:key",
     "Get your stream key to go live (asks for your authenticator code each time)",
@@ -319,10 +321,10 @@ pub struct Authorize {
     #[serde(default)]
     approve: bool,
 }
-type Request = (String, String, Vec<String>, String);
+type Request = (String, Option<String>, Vec<String>, String);
 /// Validates an authorization request: (app name, owner, scopes, redirect).
 async fn request(app: &App, q: &Authorize) -> Res<Request> {
-    let found: Option<(String, String, Vec<String>)> = sqlx::query_as("SELECT a.name,u.username,a.redirect_uris FROM dev_apps a JOIN users u ON u.id=a.owner_id WHERE a.id=$1 AND a.suspended_at IS NULL")
+    let found: Option<(String, Option<String>, Vec<String>)> = sqlx::query_as("SELECT a.name,u.username,a.redirect_uris FROM dev_apps a LEFT JOIN users u ON u.id=a.owner_id WHERE a.id=$1 AND a.suspended_at IS NULL")
         .bind(&q.client_id).fetch_optional(&app.db).await?;
     let (name, owner, uris) = found.ok_or_else(|| Fail::bad("That app isn't available."))?;
     if !redirect_matches(&uris, &q.redirect_uri) {
@@ -636,7 +638,7 @@ async fn device(
         )
             .into_response();
     }
-    let desktop = app.config.desktop_client.as_deref() == Some(input.client_id.as_str());
+    let desktop = input.client_id == DESKTOP_APP;
     let Some(scopes) = parse_scopes(&input.scope, desktop) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -661,9 +663,15 @@ async fn device(
     let page = format!("{}/go", app.config.origin);
     Json(json!({"device_code": device, "user_code": shown, "verification_uri": page, "verification_uri_complete": format!("{page}?code={shown}"), "expires_in": 600, "interval": 5})).into_response()
 }
-type Pending = (String, String, Vec<String>, Option<String>, Option<String>);
+type Pending = (
+    String,
+    Option<String>,
+    Vec<String>,
+    Option<String>,
+    Option<String>,
+);
 async fn pending(app: &App, code: &str) -> Res<Pending> {
-    let found: Option<Pending> = sqlx::query_as("SELECT a.name,u.username,d.scopes,d.network,a.icon_key FROM oauth_devices d JOIN dev_apps a ON a.id=d.app_id AND a.suspended_at IS NULL JOIN users u ON u.id=a.owner_id
+    let found: Option<Pending> = sqlx::query_as("SELECT a.name,u.username,d.scopes,d.network,a.icon_key FROM oauth_devices d JOIN dev_apps a ON a.id=d.app_id AND a.suspended_at IS NULL LEFT JOIN users u ON u.id=a.owner_id
         WHERE d.user_code=$1 AND d.expires_at>now() AND d.decision IS NULL")
         .bind(normalize(code)).fetch_optional(&app.db).await?;
     found.ok_or_else(|| {
@@ -876,7 +884,7 @@ async fn v1_channel(
 async fn connections(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',g.id,'app',a.name,'icon',a.icon_key,'owner',u.username,'scopes',g.scopes,'created_at',g.created_at,'last_used_at',g.last_used_at)
-        FROM oauth_grants g JOIN dev_apps a ON a.id=g.app_id JOIN users u ON u.id=a.owner_id WHERE g.user_id=$1 AND g.revoked_at IS NULL ORDER BY g.created_at DESC")
+        FROM oauth_grants g JOIN dev_apps a ON a.id=g.app_id LEFT JOIN users u ON u.id=a.owner_id WHERE g.user_id=$1 AND g.revoked_at IS NULL ORDER BY g.created_at DESC")
         .bind(&user.id).fetch_all(&app.db).await?;
     icons(&app, &mut rows);
     Ok(Json(json!({"connections": rows})))
@@ -902,7 +910,7 @@ async fn staff_apps(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
     crate::safety::staff(&app, &jar).await?;
     let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('client_id',a.id,'name',a.name,'icon',a.icon_key,'owner',u.username,'redirect_uris',a.redirect_uris,'suspended',a.suspended_at IS NOT NULL,'created_at',a.created_at,
             'users',(SELECT count(*) FROM oauth_grants g WHERE g.app_id=a.id AND g.revoked_at IS NULL))
-        FROM dev_apps a JOIN users u ON u.id=a.owner_id ORDER BY a.created_at DESC LIMIT 500")
+        FROM dev_apps a LEFT JOIN users u ON u.id=a.owner_id ORDER BY a.created_at DESC LIMIT 500")
         .fetch_all(&app.db).await?;
     icons(&app, &mut rows);
     Ok(Json(json!({"apps": rows})))
