@@ -68,17 +68,24 @@ pub async fn segment(app: &App, video: &str, bytes: &[u8]) -> Res<()> {
     let Some(Recording {
         broadcast_id: broadcast,
         owner_id: Some(_),
-        auto_clips: true,
+        auto_clips,
         category,
         detect_area: area,
     }) = row
     else {
         return Ok(());
     };
+    // A win is a MAGNet moment (docs/MAGNET.md "What counts as a moment") whether or not clips are suggested.
     if category.as_deref() == Some(MW4)
         && let Some(title) = win_screen(bytes, area).await
     {
-        moment(app, &broadcast, "win", title).await?;
+        crate::magnet::game_moment(app, &broadcast, title).await?;
+        if auto_clips {
+            moment(app, &broadcast, "win", title).await?;
+        }
+    }
+    if !auto_clips {
+        return Ok(());
     }
     let Some(level) = loudness(bytes).await else {
         return Ok(());

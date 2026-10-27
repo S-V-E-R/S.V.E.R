@@ -75,6 +75,9 @@ pub struct Settings {
     /// Room and loud moments become clips waiting for approval (docs/VODS_CLIPS.md).
     #[serde(default = "on")]
     pub auto_clips: bool,
+    /// Clips the streamer approves become published Beacons (docs/BEACONS.md "Sources").
+    #[serde(default)]
+    pub auto_beacons: bool,
     #[serde(default, skip_deserializing)]
     pub copyright_restricted: bool,
 }
@@ -216,17 +219,12 @@ async fn access(
             return Err(Fail::denied("Subscribe to watch this recording."));
         }
     }
-    if video.mature {
-        if let Some(user) = user
-            && !crate::auth::is_adult(&mut db, &user.id).await?
-        {
-            return Err(Fail::denied(
-                "This recording is for viewers aged 18 and over.",
-            ));
-        }
-        if !age_ack {
-            return Err(Fail::denied("Confirm that you are 18 or older to watch."));
-        }
+    if video.mature && !crate::auth::age_ok(&mut db, user, age_ack).await? {
+        return Err(Fail::denied(if user.is_some() {
+            "This recording is for viewers aged 18 and over."
+        } else {
+            "Confirm that you are 18 or older to watch."
+        }));
     }
     Ok(())
 }

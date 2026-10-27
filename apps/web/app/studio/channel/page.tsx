@@ -3,6 +3,7 @@ import { StatusMark } from "../../../components/shell/Icons";
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
+import { WarCouncilEditor } from "../../../components/persona/WarCouncilEditor";
 import type { Readiness } from "../../../components/Readiness";
 import { send, useLoad } from "../../../lib/client-api";
 
@@ -37,5 +38,6 @@ export default function ChannelOverview() {
     {followers && <Section title="Followers" intro={`A follow counts once that person has watched you live for ${followers.watch_minutes} minutes. Only counted followers show on your page.`}>
       <p className="readiness-count"><strong>{followers.counted.toLocaleString()}</strong> counted · {followers.pending.toLocaleString()} waiting on watch time</p>
     </Section>}
+    <div id="war-council"><WarCouncilEditor embedded /></div>
   </>;
 }

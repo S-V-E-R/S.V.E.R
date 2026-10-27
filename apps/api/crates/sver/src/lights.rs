@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 const MAX_MOMENTS: usize = 10;
 const LIGHTS_PER_DAY: i64 = 3;
 /// A pinnable, showable clip or Highlight: the channel's own, public, ready, approved, not held.
-const SHOWABLE: &str = "v.kind IN ('CLIP','HIGHLIGHT') AND v.status='READY' AND v.visibility='PUBLIC' AND v.approval='APPROVED' AND NOT EXISTS(SELECT 1 FROM video_holds h WHERE h.video_id=v.id)";
+pub const SHOWABLE: &str = "v.kind IN ('CLIP','HIGHLIGHT') AND v.status='READY' AND v.visibility='PUBLIC' AND v.approval='APPROVED' AND NOT EXISTS(SELECT 1 FROM video_holds h WHERE h.video_id=v.id)";
 
 async fn channel(app: &App, name: &str) -> Res<String> {
     sqlx::query_scalar("SELECT id FROM channel_users WHERE lower(username)=lower($1) AND eligible AND deleted_at IS NULL")

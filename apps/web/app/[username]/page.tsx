@@ -11,6 +11,7 @@ import { WallPost } from "../../components/Wall";
 import { ActivityFeed } from "../../components/ActivityFeed";
 import { Achievements } from "../../components/Achievements";
 import { Shine } from "../../components/Shine";
+import { TrailerCard } from "../../components/TrailerCard";
 import { apiGet } from "../../lib/server-api";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../lib/channel";
 import { HOME_SECTIONS, type ActivityItem, type Channel, type Chip, type HomeSection } from "../../lib/types";
@@ -54,8 +55,9 @@ function FinishYourPage({ data }: { data: Channel }) {
     [!!data.header?.intro_body, "Write an intro for Home", "/settings/profile#words"],
     [!!c.currently, "Say what you're up to (Currently)", "/settings/profile#words"],
     [!!c.song, "Pick a profile song", "/settings/profile#sound"],
+    [!!c.trailer, "Add a channel trailer", "/settings/profile#sound"],
     [!!data.blocks?.length, "Add About me blocks", "/studio/channel/blocks"],
-    [data.war_council.members.length > 0, "Choose your War Council", "/studio/channel/war-council"],
+    [data.war_council.members.length > 0, "Choose your War Council", "/studio/channel#war-council"],
     [!!c.showcase?.length, "Showcase achievements", "/settings/profile#look"],
     [!!data.schedule_next.items.length || !c.streamed, "Set a schedule", "/studio/channel/schedule"],
   ];
@@ -88,6 +90,7 @@ export default async function ChannelHome({ params, searchParams }: { params: Ch
   const order: HomeSection[] = c.home_order?.length ? c.home_order : [...HOME_SECTIONS];
   // Each section renders only with content; the owner's empty ones are listed in Finish your page.
   const sections: Record<HomeSection, React.ReactNode> = {
+    trailer: c.trailer && <TrailerCard key="trailer" trailer={c.trailer} />,
     about_me: (intro || !!data.blocks?.length) && <div key="about_me">
       {intro && <section className="panel section intro-card"><h2>{intro.intro_title || "About this page"}</h2><p className="intro-body">{intro.intro_body}</p></section>}
       {!!data.blocks?.length && <PageBlocks blocks={data.blocks} />}
@@ -95,7 +98,7 @@ export default async function ChannelHome({ params, searchParams }: { params: Ch
     war_council: council.length > 0 && <section key="war_council" className="panel section">
       <h2>War Council</h2>
       <ol className="council">{council.map(m => <li key={m.position} className={m.crown ? "crowned" : undefined}><CouncilTile user={m.user} crown={m.crown} /></li>)}</ol>
-      {owner && data.war_council.unavailable_count > 0 && <p className="muted">{data.war_council.unavailable_count} member(s) are no longer available and are hidden. <Link href="/studio/channel/war-council">Review</Link></p>}
+      {owner && data.war_council.unavailable_count > 0 && <p className="muted">{data.war_council.unavailable_count} member(s) are no longer available and are hidden. <Link href="/studio/channel#war-council">Review</Link></p>}
     </section>,
     wall: (posts.length > 0 || data.wall_preview.viewer.can_post) && <section key="wall" className="panel section">
       <div className="row between"><h2>Wall</h2><Link href={`/${c.username}/wall`} className="button small">{owner ? "Open the Wall" : "Sign the Wall"}</Link></div>

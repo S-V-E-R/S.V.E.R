@@ -15,6 +15,7 @@ import { EffortLeaders, StandingPill } from "../../../components/Loyalty";
 import { SectionHead, StreamGrid } from "../../../components/home/Shelves";
 import type { LiveCard } from "../../../components/home/types";
 import { TurfStrip } from "../../../components/TurfStrip";
+import { TrailerCard } from "../../../components/TrailerCard";
 import type { War } from "../../../lib/war";
 import { apiGet } from "../../../lib/server-api";
 import { CoStreamPlayers, type Squad } from "../../../components/Squads";
@@ -49,9 +50,9 @@ export default async function Live({ params }: { params: ChannelParams }) {
     <div className="watch-stage" data-theme={c.faction ?? "neutral"}>
     {squad ? <CoStreamPlayers initial={squad} focus={c.username} account={account?.username ?? null} /> : <div className="watch-player">
     <LivePlayer username={c.username} focused signedIn={!!account}>
-      <section className="watch-offline" aria-label="Stream">
-        <h2>{c.display_name} is offline</h2>
-        <p><Link className="button quiet" href={`/${c.username}?home`}>Go to the channel</Link></p>
+      <section className={c.trailer ? "watch-offline has-trailer" : "watch-offline"} aria-label="Stream">
+        {c.trailer ? <TrailerCard trailer={c.trailer} heading="Watch the trailer" /> : <h2>{c.display_name} is offline</h2>}
+        <p>{c.trailer && <span className="muted">{c.display_name} is offline right now. </span>}<Link className="button quiet" href={`/${c.username}?home`}>Go to the channel</Link></p>
       </section>
     </LivePlayer>
     </div>}

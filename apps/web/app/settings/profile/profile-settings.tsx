@@ -9,6 +9,7 @@ import { PersonaPreview } from "../../../components/persona/PersonaPreview";
 import { CosmeticsEditor } from "../../../components/persona/CosmeticsEditor";
 import { HeaderCopyEditor } from "../../../components/persona/HeaderCopyEditor";
 import { SongEditor } from "../../../components/persona/SongEditor";
+import { TrailerEditor } from "../../../components/persona/TrailerEditor";
 import { LogoStylePicker, type LogoStyle } from "../../../components/LogoStyle";
 import { CurrentlyEditor, HomeEditor, SongWhyEditor, ThemeEditor } from "../../../components/persona/PersonaFields";
 
@@ -43,7 +44,7 @@ export default function ProfileSettings() {
   return <div className="persona-editor">
     <div className="persona-main">
       <header className="page-head"><span className="eyebrow">Your page</span><h1>Make it yours</h1>
-        <p className="lead">Your look, your words, your song and your Home. Changes show on <Link href={`/${me.username}`}>your page</Link> as soon as you save. New here? <Link href="/settings/profile/setup">Set it up step by step</Link>.</p></header>
+        <p className="lead">Your look, your words, your song, your trailer and your Home. Changes show on <Link href={`/${me.username}`}>your page</Link> as soon as you save. New here? <Link href="/settings/profile/setup">Set it up step by step</Link>.</p></header>
       <nav className="persona-jump" aria-label="Sections">{PARTS.map(([id, label]) => <a key={id} href={`#${id}`}>{label}</a>)}</nav>
       {me.restricted_until && <p className="panel notice">Your channel is restricted. See <Link href="/settings/standing">Account standing</Link>.</p>}
       <div id="look" className="persona-part"><h2 className="part-title">Look</h2>
@@ -61,10 +62,11 @@ export default function ProfileSettings() {
       <div id="sound" className="persona-part"><h2 className="part-title">Sound</h2>
         <SongEditor embedded onSaved={bump} />
         <section className="panel section"><SongWhyEditor onSaved={bump} /></section>
+        <TrailerEditor username={me.username} onSaved={bump} />
       </div>
       <div id="home" className="persona-part"><h2 className="part-title">Home</h2>
         <HomeEditor onSaved={bump} />
-        <p className="muted">Your War Council, Wall, schedule and sponsors are in <Link href="/studio/channel/war-council">Creator Studio</Link>.</p>
+        <p className="muted">Your War Council, Wall, schedule and sponsors are in <Link href="/studio/channel#war-council">Creator Studio</Link>.</p>
       </div>
       <div id="links" className="persona-part"><h2 className="part-title">Links</h2>
         <Links me={me} onSaved={refresh} />

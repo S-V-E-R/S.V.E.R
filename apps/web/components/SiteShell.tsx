@@ -9,7 +9,7 @@ const siteLinks = [
   ["/about", "About"], ["/factions", "Factions"], ["/roadmap", "Roadmap"], ["/help", "Help & FAQ"], ["/terms", "Terms"],
   ["/privacy", "Privacy"], ["/guidelines", "Guidelines"],
   ["/dmca", "Copyright & DMCA"], ["/contact", "Contact"],
-  ["/take-it-down", "Take It Down requests"], ["/open-data", "Open data"], ["/credits", "Credits"],
+  ["/take-it-down", "Take It Down requests"], ["/open-data", "Open data"], ["/developers", "Developers"], ["/credits", "Credits"],
 ] as const;
 
 export default function SiteShell({ account, alerts, actions, sidebar, banner, children }: {
@@ -57,7 +57,8 @@ function SiteFooter() {
   return <footer className="site-footer">
       <div><Link href="/" className="brand logo small" aria-label="S.V.E.R home">S.V.E.R</Link><p>Your people are here. Your destiny is yours to forge. Choose your faction.</p></div>
       <nav className="site-links" aria-label="Site information">{siteLinks.map(([href, label]) =>
-        <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{label}</Link>)}<Link href="/wall" aria-current={pathname === "/wall" ? "page" : undefined}>The Wall</Link><Link href="/supporters" aria-current={pathname === "/supporters" ? "page" : undefined}>Support S.V.E.R</Link></nav>
+        <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{label}</Link>)}{[["/guilds", "Guilds"], ["/wall", "The Wall"], ["/supporters", "Support S.V.E.R"]].map(([href, label]) =>
+        <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{label}</Link>)}</nav>
       <p className="copyright">© {new Date().getFullYear()} SVER LLC <span className="verse">Matthew 5:16</span></p>
     </footer>;
 }

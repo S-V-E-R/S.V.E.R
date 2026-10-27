@@ -1062,19 +1062,22 @@ async fn factions(e: &Env) {
     );
     taken();
     dispatch(&e.app, "GUILD_MEMBER_ADD", member).await;
-    settle().await;
-    let c = taken();
-    for role in ["63", "431", "67"] {
-        assert!(
-            has(&c, &format!("PUT /guilds/900/members/910/roles/{role} ")),
-            "{role} in {c:#?}"
-        );
+    // The rejoin sync runs in the background and records each grant after its PUT: wait for
+    // both, up to 10 seconds, rather than a fixed sleep a slow runner can outlast.
+    let puts = ["63", "431", "67"].map(|r| format!("PUT /guilds/900/members/910/roles/{r} "));
+    let grant = "SELECT count(*) FROM discord_home_grants WHERE discord_user='910' AND role='67'";
+    for _ in 0..400 {
+        let sent = puts.iter().all(|p| has(&calls.lock().unwrap(), p));
+        if sent && count(grant).await == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    assert_eq!(
-        count("SELECT count(*) FROM discord_home_grants WHERE discord_user='910' AND role='67'")
-            .await,
-        1
-    );
+    let c = taken();
+    for put in &puts {
+        assert!(has(&c, put), "{put} in {c:#?}");
+    }
+    assert_eq!(count(grant).await, 1);
     // Unlinked: everything the sync gave is taken back.
     e.sql("DELETE FROM identities WHERE subject='910'").await;
     sync::all(&e.app).await.unwrap();

@@ -387,6 +387,138 @@ pub async fn my_song(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>>
     ))
 }
 
+// ---------------------------------------------------------------- Channel trailer
+
+const NOT_TRAILER: &str = "Use one of your own public clips or Highlights, or a YouTube link.";
+/// A link to one of the channel's own recordings: `/clips/{id}`, `/videos/{id}` or a bare id.
+fn own_video_id(value: &str) -> Option<&str> {
+    let path = value.trim().split(['?', '#']).next()?.trim_end_matches('/');
+    let (head, id) = path.rsplit_once('/').unwrap_or(("", path));
+    let is_id = id.len() == 36 && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-');
+    (is_id && (head.is_empty() || head.ends_with("/clips") || head.ends_with("/videos")))
+        .then_some(id)
+}
+/// The owner's trailer as the channel shows it, or null. An own recording that is no longer
+/// public (or the owner's) drops the trailer on its own, like Shine Moments.
+pub async fn trailer_json(
+    app: &App,
+    db: &mut PgConnection,
+    owner: &str,
+    viewer: Option<&crate::auth::User>,
+) -> Res<Value> {
+    let row: Option<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as("SELECT trailer_provider,trailer_media_id,trailer_url,trailer_title,trailer_thumb_key FROM profiles WHERE user_id=$1 AND trailer_provider IS NOT NULL")
+        .bind(owner)
+        .fetch_optional(&mut *db)
+        .await?;
+    let Some((provider, media_id, url, title, thumb)) = row else {
+        return Ok(Value::Null);
+    };
+    if provider == "sver" {
+        let video: Option<crate::videos::Video> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT v.* FROM videos v WHERE v.id=$1 AND v.owner_id=$2 AND NOT v.mature AND {}",
+            crate::lights::SHOWABLE
+        )))
+        .bind(&media_id)
+        .bind(owner)
+        .fetch_optional(&mut *db)
+        .await?;
+        let Some(video) = video else {
+            return Ok(Value::Null);
+        };
+        let thumbnail = video
+            .thumbnail_key
+            .as_ref()
+            .map(|_| {
+                crate::videos::ticket(app, &video, viewer, "play", false)
+                    .map(|t| format!("/api/videos/{}/thumbnail?ticket={t}", video.id))
+            })
+            .transpose()?;
+        return Ok(
+            json!({"provider": "sver", "media_id": video.id, "url": url, "title": video.title, "thumbnail": thumbnail}),
+        );
+    }
+    Ok(
+        json!({"provider": provider, "media_id": media_id, "url": url, "title": title, "thumbnail": thumb.map(|k| media_url(app, &k))}),
+    )
+}
+#[derive(Deserialize)]
+pub struct TrailerInput {
+    url: String,
+}
+/// PUT /api/me/trailer: one of your own public clips or Highlights, or a YouTube video.
+pub async fn save_trailer(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<TrailerInput>,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut db = app.db.acquire().await?;
+    ensure_unrestricted(&mut db, &user.id).await?;
+    let (provider, media_id, url, title, thumb) = if let Some(id) = own_video_id(&input.url) {
+        let video: Option<crate::videos::Video> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT v.* FROM videos v WHERE v.id=$1 AND v.owner_id=$2 AND NOT v.mature AND {}",
+            crate::lights::SHOWABLE
+        )))
+        .bind(id)
+        .bind(&user.id)
+        .fetch_optional(&mut *db)
+        .await?;
+        let video = video.ok_or_else(|| Fail::field("url", NOT_TRAILER))?;
+        let path = if video.kind == "CLIP" {
+            "clips"
+        } else {
+            "videos"
+        };
+        let url = format!("{}/{path}/{}", app.config.origin, video.id);
+        ("sver", video.id, url, video.title, None)
+    } else {
+        let song = parse_song_url(&input.url)
+            .ok()
+            .filter(|s| s.provider == "youtube")
+            .ok_or_else(|| Fail::field("url", NOT_TRAILER))?;
+        rate(&app, format!("oembed:{}", user.id), 10, 60).await?;
+        let found = oembed(&app, &song).await?;
+        let thumb = copy_thumbnail(&app, &user.id, found.thumbnail_url.as_deref()).await;
+        ("youtube", found.media_id, song.url, found.title, thumb)
+    };
+    drop(db);
+    let mut tx = app.db.begin().await?;
+    ensure_profile(&mut tx, &user.id).await?;
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT trailer_thumb_key FROM profiles WHERE user_id=$1 FOR UPDATE")
+            .bind(&user.id)
+            .fetch_one(&mut *tx)
+            .await?;
+    sqlx::query("UPDATE profiles SET trailer_provider=$2,trailer_media_id=$3,trailer_url=$4,trailer_title=$5,trailer_thumb_key=$6,trailer_updated_at=now(),updated_at=now() WHERE user_id=$1")
+        .bind(&user.id)
+        .bind(provider)
+        .bind(&media_id)
+        .bind(&url)
+        .bind(&title)
+        .bind(&thumb)
+        .execute(&mut *tx)
+        .await?;
+    media::queue_delete(&mut tx, old.as_deref(), thumb.as_deref()).await?;
+    let trailer = trailer_json(&app, &mut tx, &user.id, Some(&user)).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"saved": true, "trailer": trailer})))
+}
+/// DELETE /api/me/trailer
+pub async fn delete_trailer(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    let mut tx = app.db.begin().await?;
+    ensure_profile(&mut tx, &user.id).await?;
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT trailer_thumb_key FROM profiles WHERE user_id=$1 FOR UPDATE")
+            .bind(&user.id)
+            .fetch_one(&mut *tx)
+            .await?;
+    sqlx::query("UPDATE profiles SET trailer_provider=NULL,trailer_media_id=NULL,trailer_url=NULL,trailer_title=NULL,trailer_thumb_key=NULL,trailer_updated_at=now() WHERE user_id=$1").bind(&user.id).execute(&mut *tx).await?;
+    media::queue_delete(&mut tx, old.as_deref(), None).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"saved": true})))
+}
+
 // ---------------------------------------------------------------- Schedule
 
 fn parse_hhmm(value: &str, field: &'static str) -> Res<i32> {
@@ -1865,13 +1997,13 @@ pub async fn save_header(
 
 // ---------------------------------------------------------------- Page readiness (P3)
 
-/// GET /api/me/readiness: the owner's 7 page steps, computed on the server.
+/// GET /api/me/readiness: the owner's 8 page steps, computed on the server.
 pub async fn my_readiness(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = signed_in(&app, &jar).await?;
     let mut db = app.db.acquire().await?;
-    let (avatar, banner, bio, links, song, council, schedule, dismissed): (bool, bool, bool, bool, bool, bool, bool, Option<DateTime<Utc>>) = sqlx::query_as(
+    let (avatar, banner, bio, links, song, trailer, council, schedule, dismissed): (bool, bool, bool, bool, bool, bool, bool, bool, Option<DateTime<Utc>>) = sqlx::query_as(
         "SELECT coalesce(p.avatar_key IS NOT NULL,false),coalesce(p.banner_key IS NOT NULL,false),coalesce(p.bio<>'',false),\
-         EXISTS(SELECT 1 FROM social_links WHERE user_id=$1),coalesce(p.song_provider IS NOT NULL,false),\
+         EXISTS(SELECT 1 FROM social_links WHERE user_id=$1),coalesce(p.song_provider IS NOT NULL,false),coalesce(p.trailer_provider IS NOT NULL,false),\
          EXISTS(SELECT 1 FROM war_council WHERE user_id=$1),\
          EXISTS(SELECT 1 FROM schedule_blocks WHERE user_id=$1) OR EXISTS(SELECT 1 FROM schedule_events WHERE user_id=$1 AND end_at>now()),\
          p.readiness_dismissed_at FROM (SELECT $1::text AS id) u LEFT JOIN profiles p ON p.user_id=u.id",
@@ -1885,6 +2017,12 @@ pub async fn my_readiness(State(app): State<App>, jar: CookieJar) -> Res<Json<Va
         ("bio", "Write a bio", bio, "/settings/profile"),
         ("links", "Add a social link", links, "/settings/profile"),
         ("song", "Set a profile song", song, "/studio/channel/song"),
+        (
+            "trailer",
+            "Add a channel trailer",
+            trailer,
+            "/settings/profile#sound",
+        ),
         (
             "council",
             "Pick your War Council",

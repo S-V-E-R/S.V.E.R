@@ -90,8 +90,8 @@ async fn save_settings(
     }
     let mut tx = app.db.begin().await?;
     settings(&mut tx, &user.id).await?;
-    sqlx::query("UPDATE video_settings SET recording=$2,visibility=$3,clip_permission=$4,clip_approval=$5,chat_replay=$6,mature=$7,auto_clips=$8 WHERE owner_id=$1")
-        .bind(&user.id).bind(input.recording).bind(input.visibility).bind(input.clip_permission).bind(input.clip_approval).bind(input.chat_replay).bind(input.mature).bind(input.auto_clips).execute(&mut *tx).await?;
+    sqlx::query("UPDATE video_settings SET recording=$2,visibility=$3,clip_permission=$4,clip_approval=$5,chat_replay=$6,mature=$7,auto_clips=$8,auto_beacons=$9 WHERE owner_id=$1")
+        .bind(&user.id).bind(input.recording).bind(input.visibility).bind(input.clip_permission).bind(input.clip_approval).bind(input.chat_replay).bind(input.mature).bind(input.auto_clips).bind(input.auto_beacons).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(json!({"saved":true})))
 }
@@ -548,7 +548,19 @@ async fn approve(
         request_delete(&mut tx, &id, false).await?;
     }
     tx.commit().await?;
-    Ok(Json(json!({"saved":true})))
+    // The streamer's own approval can make a Beacon (docs/BEACONS.md "Sources"); a failure
+    // there never undoes the approval.
+    let beacon = if input.approve && user.id == channel {
+        crate::beacons::auto_from_clip(&app, channel, &id)
+            .await
+            .unwrap_or_else(|_| {
+                eprintln!("auto_beacon_event=failed");
+                None
+            })
+    } else {
+        None
+    };
+    Ok(Json(json!({"saved":true,"beacon":beacon})))
 }
 pub fn routes() -> Router<App> {
     Router::new()
