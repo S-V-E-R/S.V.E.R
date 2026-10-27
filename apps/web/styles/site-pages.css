@@ -104,3 +104,13 @@
 .about-cta h2{margin:0;font-weight:800;font-size:30px}
 .about-cta p{margin:6px 0 0}
 @media(max-width:700px){.about-page{padding:40px 16px 64px;gap:48px}.about-lead{font-size:18px}.about-prose p{font-size:16px}.about-cta{padding:28px 20px}}
+/* Developers (/developers): code samples and reference tables */
+.site-document code{font:500 .9em/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}
+.site-document pre{margin:14px 0;padding:16px 18px;border:1px solid var(--line);background:var(--tint);overflow-x:auto}
+.site-document pre code{white-space:pre;overflow-wrap:normal}
+.site-document h3{font:700 17px/1.5 var(--font-body),sans-serif;margin:24px 0 8px}
+.dev-table{overflow-x:auto;margin:14px 0}
+.dev-table table{width:100%;border-collapse:collapse;font-size:15px}
+.dev-table th,.dev-table td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}
+.dev-table th{font:700 13px/1.5 var(--font-label),sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim)}
+.dev-table td:first-child{width:42%}

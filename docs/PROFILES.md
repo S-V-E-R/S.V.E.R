@@ -313,6 +313,18 @@ Added October 21, 2026, to make bought and bot follows worthless.
   - The Spotify record is not shown publicly. Its owner sees "Spotify links aren't supported. Add a YouTube or SoundCloud track." in song settings, and the original stays in the preserved legacy JSON.
   - Spotify embeds are not supported in v1.
 
+## Channel trailer
+One short intro video per channel, so visitors get a feel for the streamer before they watch (Joe, October 25, 2026, from the UX audit).
+- **Sources:** one of the owner's **own public clips or Highlights** (a `/clips/{id}` or `/videos/{id}` link, the same rule as Shine Moments: the channel's own, public, ready, approved, not held, and not mature-labeled), or a **YouTube video** validated and fetched exactly like the profile song (same URL forms, same oEmbed path, timeout, size cap, rate limit and error messages; the thumbnail is copied into our media bucket). Anything else gets "Use one of your own public clips or Highlights, or a YouTube link." No SoundCloud, no Spotify, no uploads.
+- **Stored** (migration `0147`): `trailer_provider` (`youtube` or `sver`), `trailer_media_id` (the YouTube ID or our video ID), `trailer_url` (canonical), `trailer_title`, `trailer_thumb_key`, `trailer_updated_at`. An own recording keeps no copy of its title or thumbnail: both come from the video at read time.
+- **Where it shows:** a 16:9 framed card with the thumbnail, the title and a Play button.
+  - On Home as its own section, `trailer`, first by default; the owner orders it with the others (`profiles.home_order`).
+  - On the watch page while the channel is offline: the player slot says "Watch the trailer" with the card, instead of a bare "is offline".
+- **Player:** never autoplays. The player is created only after the visitor presses Play: `youtube-nocookie.com/embed/ID` for YouTube, the recorded player for an own clip. One player per page.
+- **Drops on its own:** an own clip made private, removed, held or no longer the owner's leaves the channel at once (the read joins the video with the Shine Moments rule), like a Shine Moment. The owner can also remove it any time.
+- **Editing:** Your page → Sound, beside the profile song: paste the link, Save, Remove. It is a step in the page readiness checklist ("Add a channel trailer").
+- **API:** `channel.trailer` on `GET /channels/{username}` (`provider`, `media_id`, `url`, `title`, `thumbnail`; null when unset or dropped), `PUT /me/trailer {url}`, `DELETE /me/trailer`. Signed-in only; the ownership and visibility checks are the server's.
+
 ## The Wall
 - **Who can post (owner setting `who_can_post`):**
   - **ANYONE**: any signed-in user with a verified email. This is the default.
@@ -672,6 +684,7 @@ Public reads need no session. Mutations need a session and the exact Origin. Res
   - `PUT /me/links`
   - `POST`/`DELETE /me/avatar` and `POST`/`DELETE /me/banner`
 - **Song:** `POST /me/song/preview` (oEmbed lookup), `PUT /me/song`, `DELETE /me/song`.
+- **Trailer:** `PUT /me/trailer`, `DELETE /me/trailer` (see "Channel trailer").
 - **War Council:** `GET /me/war-council/search?q=`, `PUT /me/war-council`.
 - **Wall settings and pins:** `PUT /me/wall/settings`, `PUT /me/wall/pins`.
 - **Wall content:**
@@ -1134,8 +1147,9 @@ Rules:
   3. bio: the bio isn't empty
   4. links: at least one social link
   5. song: a profile song is set
-  6. council: at least one War Council member
-  7. schedule: at least one weekly block or upcoming event
+  6. trailer: a channel trailer is set (added October 25, 2026; the checklist is 8 steps since)
+  7. council: at least one War Council member
+  8. schedule: at least one weekly block or upcoming event
 - `PUT /api/me/readiness {"dismissed": true|false}` stores or clears `profiles.readiness_dismissed_at`.
 
 Edge cases:

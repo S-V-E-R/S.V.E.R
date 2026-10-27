@@ -7,6 +7,7 @@ mod config;
 pub use config::{Config, Tuning};
 mod counters;
 mod create;
+pub(crate) use create::auto_from_clip;
 mod delivery;
 mod feed;
 pub use feed::search;
@@ -147,15 +148,12 @@ pub async fn accessible(
     {
         return Err(Fail::denied("This Beacon is unavailable."));
     }
-    if beacon.mature {
-        if let Some(user) = user
-            && !auth::is_adult(&mut db, &user.id).await?
-        {
-            return Err(Fail::denied("This Beacon is for viewers aged 18 and over."));
-        }
-        if !age_ack {
-            return Err(Fail::denied("Confirm that you are 18 or older to watch."));
-        }
+    if beacon.mature && !auth::age_ok(&mut db, user, age_ack).await? {
+        return Err(Fail::denied(if user.is_some() {
+            "This Beacon is for viewers aged 18 and over."
+        } else {
+            "Confirm that you are 18 or older to watch."
+        }));
     }
     Ok(())
 }
@@ -354,6 +352,7 @@ pub async fn present(
         .chain(beacons.iter().filter_map(|b| b.clipper_id.clone()))
         .collect();
     let channels = profiles::public_channels(db, &owners).await?;
+    let age_ack = auth::age_ok(&mut *db, viewer, age_ack).await?;
     let live: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM unnest($1::text[]) AS o(id) WHERE {}",
         crate::playback::live_sql("o.id")

@@ -33,6 +33,16 @@
 .song-start small{display:block;color:var(--ink-muted);font-size:13px;font-weight:400}
 .song-icon{font-size:28px;width:64px;text-align:center}
 .song-frame{width:100%;height:166px;border:0}
+.trailer{padding:12px}
+.trailer-start{position:relative;display:block;width:100%;aspect-ratio:16/9;padding:0;background:var(--surface);border:1px solid var(--line);box-shadow:none;overflow:hidden}
+.trailer-start:hover:not(:disabled){filter:none}
+.trailer-start img{display:block;width:100%;height:100%;object-fit:cover}
+.trailer-play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border:1px solid var(--accent);background:rgba(0,0,0,.6);color:var(--accent-light);font-family:var(--font-label);font-weight:700;font-size:15px;letter-spacing:.12em;text-transform:uppercase}
+.trailer-start:hover .trailer-play,.trailer-start:focus-visible .trailer-play{background:var(--accent);color:#0A0A0C}
+.trailer-frame{display:block;width:100%;aspect-ratio:16/9;border:0;background:#000}
+.trailer-title{margin:10px 0 0;overflow-wrap:anywhere}
+.watch-offline.has-trailer{aspect-ratio:auto;display:block;text-align:left;padding:16px}
+.watch-offline.has-trailer .trailer{margin:0 0 12px}
 .channel-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:24px 0 18px;overflow-x:auto}
 .channel-tabs a{padding:10px 16px;color:var(--ink-muted);border-bottom:2px solid transparent;font-family:var(--font-label);font-weight:700;font-size:15px;letter-spacing:.12em;text-transform:uppercase}
 .channel-tabs a:hover{color:var(--ink);text-decoration:none}

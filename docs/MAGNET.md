@@ -85,10 +85,12 @@ Room signals only at launch, each compared with that stream's own recent baselin
 - **Follow burst:** new follows per minute above the stream's normal.
 - **Raid arriving:** a raid (Module 3) landing on the stream.
 - **Streamer flag:** a "Flag this moment" button in Creator Studio and `/flag` in chat. It counts only together with another elevated signal, with a cooldown (once every 10 minutes).
+- **Game win** (October 25, 2026; migration 0149): a win the game detector sees on screen in the last 90 seconds ("Just won the match", "Just won a round") scores a fixed amount, above a chat burst and below a raid. It uses the frames the auto-clip detector already reads from recorded segments (MW4 today, the category set on the stream), so it needs recording on but not clip suggestions. Wins are kept a day in `game_moments`.
+- **Crowd** (October 25, 2026): viewers pressing free board controls or voting in polls this minute, against the stream's own normal, under the same rules as chat (verified accounts, real viewers of the stream, the streamer left out, a floor of 3, and not before there's a normal). Paid presses and predictions never count, so a moment can't be bought. A merged co-stream adds its members' crowds.
 
 Not used: viewer count, follower totals, money, faction (MAGNet channels are faction-neutral; the homepage keeps its home-turf weighting).
 
-Later add-ons: game-API detectors and computer-vision moment detection for specific games and CrowdSync activity (faction MAGNet channels are built). Vision needs frame decoding, so it must be measured against the transmux-only rule before it is added.
+Later add-ons: game-API detectors, and on-screen detection for more games than MW4 (faction MAGNet channels, CrowdSync activity and MW4 wins are built). Vision needs frame decoding, so it must be measured against the transmux-only rule before it is added.
 
 ### What the viewer sees
 

@@ -771,6 +771,41 @@ async fn hardening(e: &Env, admin: &str) {
     e.sql("INSERT INTO raids(id,raider_id,broadcast_id,target_id,target_broadcast_id,execute_at,status) VALUES('mg-raid-back','mg-hd','mg-h-d','mg-hc','mg-h-c',now()-interval '3 hours','moved')").await;
     assert_eq!(signals(e, "mg-h-d").await.raided_by, None);
 
+    // A win on screen in the last 90 seconds is a moment; an older one isn't.
+    e.sql("INSERT INTO game_moments(broadcast_id,title,at) VALUES('mg-h-c','Victory',now()-interval '3 minutes')").await;
+    assert_eq!(signals(e, "mg-h-c").await.won, None);
+    sver::magnet::game_moment(&e.app, "mg-h-c", "Round win")
+        .await
+        .unwrap();
+    assert_eq!(signals(e, "mg-h-c").await.won.as_deref(), Some("Round win"));
+
+    // The crowd: free board presses and poll votes from real viewers. Paid presses, predictions,
+    // the streamer and people who aren't watching never count.
+    for (n, user) in ["mg-c1", "mg-c2", "mg-c3", "mg-hb", "mg-hc"]
+        .iter()
+        .enumerate()
+    {
+        sqlx::query("INSERT INTO board_presses(id,channel_id,user_id,broadcast_id,version,control_id,cost) VALUES($1,'mg-hb',$2,'mg-h-b',1,'jump',0)")
+            .bind(format!("mg-press-{n}")).bind(user).execute(&e.app.db).await.unwrap();
+    }
+    e.sql("INSERT INTO board_presses(id,channel_id,user_id,broadcast_id,version,control_id,cost) VALUES('mg-press-paid','mg-hb','mg-c4','mg-h-b',1,'boom',50)").await;
+    assert_eq!(signals(e, "mg-h-b").await.crowd, 3.0);
+    e.sql("INSERT INTO polls(id,channel_id,kind,question,options,broadcast_id,ends_at) VALUES('mg-poll','mg-hb','poll','Left or right?','[\"Left\",\"Right\"]','mg-h-b',now()+interval '1 minute'),('mg-bet','mg-hb','prediction','Win?','[\"Yes\",\"No\"]','mg-h-b',now()+interval '1 minute')").await;
+    e.sql("INSERT INTO poll_votes(poll_id,user_id,option,stake) VALUES('mg-bet','mg-c4',0,100)")
+        .await;
+    assert_eq!(signals(e, "mg-h-b").await.crowd, 3.0);
+    e.sql("INSERT INTO poll_votes(poll_id,user_id,option) VALUES('mg-poll','mg-c4',1)")
+        .await;
+    assert_eq!(signals(e, "mg-h-b").await.crowd, 4.0);
+    // A win is a moment, so it would decide the lane checks below.
+    for statement in [
+        "DELETE FROM game_moments WHERE broadcast_id LIKE 'mg-%'",
+        "DELETE FROM board_presses WHERE id LIKE 'mg-press-%'",
+        "DELETE FROM polls WHERE id IN ('mg-poll','mg-bet')",
+    ] {
+        e.sql(statement).await;
+    }
+
     // The next stream ends during the countdown, and so does the current one: the lane falls back
     // in the same tick instead of showing nothing until the next.
     tick(e, "global").await;

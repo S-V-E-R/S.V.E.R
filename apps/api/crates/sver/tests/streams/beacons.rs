@@ -250,6 +250,64 @@ async fn beacons_publish_watermark_count_and_remove() {
             .unwrap()
     );
 
+    // Auto Beacons: approving a waiting clip makes nothing until the streamer opts in; then the
+    // approval posts it in their last crop, once, and the approval stands either way.
+    let waiting = |id: &str| {
+        let id = id.to_string();
+        let db = db.clone();
+        let key = format!("{clip}/clip.mp4");
+        async move {
+            sqlx::query("INSERT INTO videos(id,owner_id,kind,status,approval,visibility,title,category,genre,started_at,duration_ms,mp4_key) VALUES($1,'stream-owner','CLIP','READY','PENDING','PUBLIC','Victory','Minecraft','sandbox',now(),8000,$2)")
+                .bind(&id).bind(key).execute(&db).await.unwrap();
+        }
+    };
+    let approve = json!({"approve":true,"reason":"Approved in Creator Studio"});
+    let off = uuid::Uuid::new_v4().to_string();
+    waiting(&off).await;
+    let approved = e
+        .call(
+            "POST",
+            &format!("/api/videos/{off}/approval"),
+            approve.clone(),
+        )
+        .await;
+    assert_eq!(approved["beacon"], Value::Null, "off by default");
+    let mut settings = e.call("GET", "/api/me/videos", Value::Null).await["settings"].clone();
+    assert_eq!(settings["auto_beacons"], false);
+    settings["auto_beacons"] = json!(true);
+    e.call("PUT", "/api/me/videos", settings.clone()).await;
+    let on = uuid::Uuid::new_v4().to_string();
+    waiting(&on).await;
+    let approved = e
+        .call(
+            "POST",
+            &format!("/api/videos/{on}/approval"),
+            approve.clone(),
+        )
+        .await;
+    let auto = approved["beacon"]
+        .as_str()
+        .expect("posted as a Beacon")
+        .to_string();
+    let made = beacon(&e, &auto).await;
+    assert_eq!(made["clip_id"], on.as_str());
+    assert_eq!(made["crop"], crop, "the streamer's last crop");
+    assert_eq!(made["publish"], true);
+    assert_eq!(made["status"], "PROCESSING");
+    let again = e
+        .call("POST", &format!("/api/videos/{on}/approval"), approve)
+        .await;
+    assert_eq!(again["beacon"], Value::Null, "one Beacon per clip");
+    // Out of the way of the daily limit and feed checks below.
+    for sql in [
+        "DELETE FROM beacon_jobs WHERE beacon_id=$1",
+        "DELETE FROM beacons WHERE id=$1",
+    ] {
+        sqlx::query(sql).bind(&auto).execute(&db).await.unwrap();
+    }
+    settings["auto_beacons"] = json!(false);
+    e.call("PUT", "/api/me/videos", settings).await;
+
     // Outputs: 9:16 H.264/AAC at 1080×1920 and 720×1280, fast start, metadata stripped.
     let private = root.join("private");
     let hd = private.join(row["mp4_key"].as_str().unwrap());
@@ -717,7 +775,37 @@ async fn beacons_publish_watermark_count_and_remove() {
             .iter()
             .all(|i| i["beacon"]["title"] != "Other 1")
     );
-    let passed = call(
+    // Signed in, the account's age decides with no prompt; only guests confirm.
+    let shows = |page: &Value| {
+        page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["beacon"]["title"] == "Other 1")
+    };
+    let adult = call(
+        &e,
+        "GET",
+        "/api/beacons/feed?seed=abc",
+        Some(&viewer),
+        Value::Null,
+    )
+    .await
+    .1;
+    assert!(shows(&adult), "an adult account isn't asked");
+    let guest = call(
+        &e,
+        "GET",
+        "/api/beacons/feed?seed=abc&age_ack=true",
+        None,
+        Value::Null,
+    )
+    .await
+    .1;
+    assert!(shows(&guest), "a guest who confirmed");
+    e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='bc-viewer'")
+        .await;
+    let minor = call(
         &e,
         "GET",
         "/api/beacons/feed?seed=abc&age_ack=true",
@@ -726,13 +814,9 @@ async fn beacons_publish_watermark_count_and_remove() {
     )
     .await
     .1;
-    assert!(
-        passed["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|i| i["beacon"]["title"] == "Other 1")
-    );
+    assert!(!shows(&minor), "an under-18 account can't click past it");
+    e.sql("UPDATE users SET date_of_birth='1990-01-01' WHERE id='bc-viewer'")
+        .await;
     e.sql("UPDATE beacons SET mature=false").await;
 
     // Views: 3 seconds of visible, advancing playback from a counted session, once a day.

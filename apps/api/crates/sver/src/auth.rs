@@ -39,6 +39,14 @@ pub async fn is_adult(db: &mut PgConnection, user: &str) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT coalesce(date_of_birth<=current_date-interval '18 years',false) FROM users WHERE id=$1")
         .bind(user).fetch_optional(db).await?.unwrap_or(false))
 }
+/// Whether a viewer may see 18+ media: signed in, the birth date on the account decides with no
+/// prompt; a guest has no age on file, so they confirm the 18+ gate (`age_ack`).
+pub async fn age_ok(db: &mut PgConnection, user: Option<&User>, age_ack: bool) -> Result<bool> {
+    match user {
+        Some(user) => is_adult(db, &user.id).await,
+        None => Ok(age_ack),
+    }
+}
 #[derive(FromRow)]
 pub struct Challenge {
     pub user_id: String,
