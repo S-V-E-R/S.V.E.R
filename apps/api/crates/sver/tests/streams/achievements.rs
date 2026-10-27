@@ -112,6 +112,136 @@ pub async fn exercise(e: &Env) {
         .unwrap();
     assert_eq!(
         levels,
-        [("level_10".into(), true), ("level_25".into(), false)]
+        [
+            ("level_10".into(), true),
+            ("level_20".into(), false),
+            ("level_25".into(), false),
+            ("level_5".into(), false)
+        ]
     );
+
+    // Unlock notices: one per achievement for a later earner, none for a new one's backfill.
+    person(e, "ach-two", "AchTwo", true).await;
+    e.sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO xp_days(user_id,day,source,xp) VALUES('ach-two',current_date,'chat',{})",
+        sver::progression::xp_for(10)
+    )))
+    .await;
+    e.sql("INSERT INTO creator_tiers(user_id,tier,checked_at) VALUES('ach-fan',3,now())")
+        .await;
+    sver::achievements::award(&e.app).await.unwrap();
+    sver::achievements::award(&e.app).await.unwrap();
+    let notices = |user: &'static str| async move {
+        sqlx::query_scalar::<_, String>("SELECT event_key FROM notifications WHERE user_id=$1 AND kind='achievement' ORDER BY event_key")
+            .bind(user)
+            .fetch_all(&e.app.db)
+            .await
+            .unwrap()
+    };
+    let two = notices("ach-two").await;
+    assert!(
+        two.contains(&"achievement:level_10".to_string())
+            && two.contains(&"achievement:level_5".to_string()),
+        "{two:?}"
+    );
+    assert_eq!(
+        two.len(),
+        two.iter().collect::<std::collections::HashSet<_>>().len(),
+        "one notice per achievement"
+    );
+    assert!(
+        !notices("ach-fan")
+            .await
+            .contains(&"achievement:tier_3".to_string()),
+        "a new achievement's backfill is quiet"
+    );
+    let earned_tier: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_achievements WHERE user_id='ach-fan' AND key='tier_3')",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert!(earned_tier);
+
+    // The owner sees locked achievements with progress; visitors see earned ones with rarity.
+    let own = e
+        .call("GET", "/api/users/Streamer/achievements", Value::Null)
+        .await;
+    let locked = own["locked"].as_array().expect("owner gets locked");
+    let hours = locked
+        .iter()
+        .find(|a| a["key"] == "hours_10")
+        .expect("hours_10 locked");
+    assert_eq!(
+        (hours["progress"].as_i64(), hours["need"].as_i64()),
+        (Some(1), Some(10)),
+        "{hours}"
+    );
+    assert_eq!(
+        own["achievements"].as_array().unwrap().len() + locked.len(),
+        own["total"].as_u64().unwrap() as usize
+    );
+    let (_, visitor) = call(
+        e,
+        "GET",
+        "/api/users/Streamer/achievements",
+        None,
+        Value::Null,
+    )
+    .await;
+    assert!(visitor["locked"].is_null(), "{visitor}");
+    let light = visitor["achievements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["key"] == "first_light")
+        .unwrap();
+    assert!(light["rarity"].as_f64().unwrap() > 0.0, "{light}");
+
+    // Studio → Growth: the week's numbers and streamer achievements only.
+    let growth = e.call("GET", "/api/me/growth", Value::Null).await;
+    assert!(
+        growth["this_week"]["streams"].as_i64().unwrap() >= 1,
+        "{growth}"
+    );
+    assert!(
+        growth["this_week"]["hours"].as_f64().unwrap() >= 1.0,
+        "{growth}"
+    );
+    let streamer = growth["achievements"].as_array().unwrap();
+    assert!(streamer.iter().all(|a| a["streamer"] == true));
+    assert!(
+        streamer
+            .iter()
+            .all(|a| a["category"].is_string() && a["band"].is_u64())
+    );
+    assert!(
+        streamer
+            .iter()
+            .any(|a| a["key"] == "first_light" && !a["earned_at"].is_null())
+    );
+
+    // A tier promotion notifies by site and queues an email to a verified address.
+    let mut db = e.app.db.acquire().await.unwrap();
+    let mails = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mail_jobs WHERE user_id='stream-owner'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    let before = mails().await;
+    sver::tiers::promoted(&e.app, &mut db, "stream-owner", 1)
+        .await
+        .unwrap();
+    let title: String = sqlx::query_scalar("SELECT payload->>'title' FROM notifications WHERE user_id='stream-owner' AND kind='tier' AND event_key='tier:1'")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(title, "You reached the Trailblazer creator tier");
+    let verified: bool =
+        sqlx::query_scalar("SELECT email_verified FROM users WHERE id='stream-owner'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(mails().await, before + i64::from(verified));
 }
