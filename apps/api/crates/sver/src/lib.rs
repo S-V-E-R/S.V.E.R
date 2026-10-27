@@ -93,7 +93,10 @@ pub mod wall;
 /// Endpoints an app may call with a person's bearer token (docs/DEVELOPER_PLATFORM.md).
 fn app_callable(path: &str) -> bool {
     path.starts_with("/api/hooks")
-        || matches!(path, "/api/me/raids" | "/api/me/stream")
+        || matches!(
+            path,
+            "/api/me/raids" | "/api/me/stream" | "/api/v1/stream/key"
+        )
         || (path.starts_with("/api/channels/")
             && ["/polls", "/close", "/marker", "/board/disabled"]
                 .iter()
@@ -132,6 +135,9 @@ pub struct Config {
     pub stripe: stripe::Config,
     pub videos: videos::Config,
     pub beacons: beacons::Config,
+    /// S.V.E.R Desktop's developer app, the only client that may ask for `stream:key`
+    /// (`SVER_DESKTOP_CLIENT_ID`; unset turns the scope off).
+    pub desktop_client: Option<String>,
 }
 impl Config {
     pub fn from_env() -> std::result::Result<Self, String> {
@@ -211,6 +217,7 @@ impl Config {
             stripe: stripe::Config::from_env(production)?,
             videos: videos::Config::from_env(production)?,
             beacons: beacons::Config::from_env(production)?,
+            desktop_client: Some(env("SVER_DESKTOP_CLIENT_ID")).filter(|id| !id.is_empty()),
             youtube_oembed_url: "https://www.youtube.com/oembed".into(),
             soundcloud_oembed_url: "https://soundcloud.com/oembed".into(),
             thumbnail_hosts: vec!["ytimg.com".into(), "sndcdn.com".into()],

@@ -41,6 +41,11 @@ pub const SCOPES: [(&str, &str); 10] = [
         "Run raids, polls, predictions, highlight markers and the board's pause on your channel",
     ),
 ];
+/// Only S.V.E.R Desktop (`Config::desktop_client`) may ask for this, and only through sver.tv/go.
+pub const STREAM_KEY: (&str, &str) = (
+    "stream:key",
+    "Get your stream key to go live (asks for your authenticator code each time)",
+);
 const MAX_APPS: i64 = 10;
 const ACCESS_SECONDS: i64 = 3600;
 const REFRESH_DAYS: i32 = 60;
@@ -73,11 +78,11 @@ fn redirect_matches(registered: &[String], asked: &str) -> bool {
             r == asked
         })
 }
-/// Requested scopes, deduplicated; None when one is unknown (or `stream:key`).
-fn parse_scopes(scope: &str) -> Option<Vec<String>> {
+/// Requested scopes, deduplicated; None when one is unknown, or `stream:key` unless `desktop`.
+fn parse_scopes(scope: &str, desktop: bool) -> Option<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for s in scope.split_whitespace() {
-        if !SCOPES.iter().any(|(k, _)| *k == s) {
+        if !(SCOPES.iter().any(|(k, _)| *k == s) || desktop && s == STREAM_KEY.0) {
             return None;
         }
         if !out.iter().any(|o| o == s) {
@@ -331,7 +336,7 @@ async fn request(app: &App, q: &Authorize) -> Res<Request> {
             "The app must use the authorization code flow with PKCE (S256).",
         ));
     }
-    let scopes = parse_scopes(&q.scope)
+    let scopes = parse_scopes(&q.scope, false)
         .ok_or_else(|| Fail::bad("The app asked for a permission S.V.E.R doesn't offer."))?;
     Ok((name, owner, scopes, q.redirect_uri.clone()))
 }
@@ -631,7 +636,8 @@ async fn device(
         )
             .into_response();
     }
-    let Some(scopes) = parse_scopes(&input.scope) else {
+    let desktop = app.config.desktop_client.as_deref() == Some(input.client_id.as_str());
+    let Some(scopes) = parse_scopes(&input.scope, desktop) else {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "invalid_scope"})),
@@ -675,7 +681,7 @@ async fn device_lookup(
     let (name, owner, scopes, network, icon) = pending(&app, &code).await?;
     let described: Vec<Value> = scopes
         .iter()
-        .map(|s| json!({"scope": s, "text": SCOPES.iter().find(|(k, _)| k == s).map_or("", |x| x.1)}))
+        .map(|s| json!({"scope": s, "text": SCOPES.iter().chain([&STREAM_KEY]).find(|(k, _)| k == s).map_or("", |x| x.1)}))
         .collect();
     Ok(Json(
         json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described, "network": network}),
@@ -694,7 +700,13 @@ async fn device_decide(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::rate(&app, format!("oauth-go:{}", user.id), 20, 600).await?;
-    pending(&app, &code).await?;
+    let (.., scopes, _, _) = pending(&app, &code).await?;
+    // Handing out the stream key needs what Studio needs: a verified email and two-factor sign-in.
+    if input.approve && scopes.iter().any(|s| s == STREAM_KEY.0) {
+        let (tx, user, session) = auth::session(&app, &jar, false).await?;
+        tx.commit().await?;
+        auth::authorize_streaming(&user, &session)?;
+    }
     sqlx::query("UPDATE oauth_devices SET user_id=$2,decision=$3 WHERE user_code=$1 AND decision IS NULL AND expires_at>now()")
         .bind(normalize(&code)).bind(&user.id).bind(if input.approve { "approved" } else { "denied" })
         .execute(&app.db).await?;
@@ -980,10 +992,14 @@ mod tests {
         assert!(redirect_matches(&registered, "http://127.0.0.1:51234/cb"));
         assert!(!redirect_matches(&registered, "https://example.com/other"));
         assert_eq!(
-            parse_scopes("user:read chat:read user:read"),
+            parse_scopes("user:read chat:read user:read", false),
             Some(vec!["user:read".into(), "chat:read".into()])
         );
-        assert_eq!(parse_scopes("stream:key"), None);
+        assert_eq!(parse_scopes("stream:key", false), None);
+        assert_eq!(
+            parse_scopes("user:read stream:key", true),
+            Some(vec!["user:read".into(), "stream:key".into()])
+        );
         let code = user_code();
         assert!(code.len() == 6 && code.bytes().all(|b| CODE_ALPHABET.contains(&b)));
         assert_eq!(normalize("bcd-fg h"), "BCDFGH");

@@ -13,6 +13,15 @@ async fn raw(
     form: Option<&[(&str, &str)]>,
     headers: &[(&str, &str)],
 ) -> (StatusCode, Value) {
+    raw_on(&e.app, method, path, form, headers).await
+}
+async fn raw_on(
+    app: &App,
+    method: &str,
+    path: &str,
+    form: Option<&[(&str, &str)]>,
+    headers: &[(&str, &str)],
+) -> (StatusCode, Value) {
     let mut request = Request::builder()
         .method(method)
         .uri(path)
@@ -33,7 +42,7 @@ async fn raw(
         }
         None => Body::empty(),
     };
-    let response = sver::router(e.app.clone())
+    let response = sver::router(app.clone())
         .oneshot(request.body(body).unwrap())
         .await
         .unwrap();
@@ -325,6 +334,7 @@ pub async fn exercise(e: &Env) {
     assert_eq!(apps, 0);
 
     device(e).await;
+    desktop(e).await;
 }
 
 /// Device sign-in (sver.tv/go): pending, slow down, approval, tokens once.
@@ -418,6 +428,111 @@ async fn device(e: &Env) {
         "invalid_grant",
         "a device code works once"
     );
+    e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
+        .await;
+}
+
+/// S.V.E.R Desktop: only its client ID may ask for `stream:key` (through sver.tv/go), and the key
+/// still needs an authenticator or recovery code on every call.
+async fn desktop(e: &Env) {
+    let created = e
+        .call(
+            "POST",
+            "/api/me/apps",
+            json!({"name":"S.V.E.R Desktop","redirect_uris":["http://127.0.0.1/cb"]}),
+        )
+        .await;
+    let client = created["created"]["client_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let ask = [
+        ("client_id", client.as_str()),
+        ("scope", "user:read stream:key"),
+    ];
+    let (status, refused) = raw(e, "POST", "/api/oauth/device", Some(&ask), &[]).await;
+    assert_eq!(
+        (status, refused["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_scope")),
+        "not the configured desktop app"
+    );
+    let mut config = (*e.app.config).clone();
+    config.desktop_client = Some(client.clone());
+    let desk = App {
+        config: Arc::new(config),
+        ..e.app.clone()
+    };
+    let (status, started) = raw_on(&desk, "POST", "/api/oauth/device", Some(&ask), &[]).await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let code = started["user_code"].as_str().unwrap().to_string();
+    let shown = e
+        .call("GET", &format!("/api/oauth/device/{code}"), Value::Null)
+        .await;
+    assert!(
+        shown["scopes"][1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("stream key"),
+        "{shown}"
+    );
+    e.call(
+        "POST",
+        &format!("/api/oauth/device/{code}"),
+        json!({"approve": true}),
+    )
+    .await;
+    let (status, tokens) = raw_on(
+        &desk,
+        "POST",
+        "/api/oauth/token",
+        Some(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("client_id", &client),
+            ("device_code", started["device_code"].as_str().unwrap()),
+        ]),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    assert_eq!(tokens["scope"], "user:read stream:key");
+    let bearer = format!("Bearer {}", tokens["access_token"].as_str().unwrap());
+    let key = |proof: String| {
+        let (client, bearer) = (client.clone(), bearer.clone());
+        async move {
+            let response = sver::router(e.app.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/stream/key")
+                        .header("content-type", "application/json")
+                        .header("sver-client-id", &client)
+                        .header("authorization", &bearer)
+                        .extension(ConnectInfo(
+                            "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+                        ))
+                        .body(Body::from(json!({"code": proof}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (
+                status,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
+        }
+    };
+    let (status, _) = key("RECOVERY-WRONG".into()).await;
+    assert!(status.is_client_error(), "a wrong code gets no key");
+    let (status, first) = key(e.code().await).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert!(first["key"].as_str().unwrap().contains("?key="));
+    let (_, again) = key(e.code().await).await;
+    assert_eq!(again["key"], first["key"], "revealed, not rotated");
+    // Studio's own key tests start from no key.
+    e.sql("DELETE FROM stream_credentials WHERE owner_id='stream-owner'")
+        .await;
     e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
         .await;
 }
