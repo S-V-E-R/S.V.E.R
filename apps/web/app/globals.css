@@ -493,6 +493,14 @@ a.takedown-link:hover { color: var(--ink); }
 .faction-name[data-style="outlined"] { padding: 0 3px; border: 1px solid currentColor; border-radius: 3px; }
 .achievement-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .achievement-list .showcased strong { text-decoration: underline; text-underline-offset: 3px; }
+.achievement-list .locked { display: grid; grid-template-columns: 1fr minmax(120px, 200px); gap: 4px 12px; align-items: center; }
+.achievement-list .locked strong { color: var(--ink-dim); }
+.achievement-progress { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.achievements-locked { margin-top: 10px; }
+.achievement-group h3 { margin: 12px 0 6px; font-size: 1rem; }
+.achievements-locked summary { cursor: pointer; margin-bottom: 6px; }
+.growth-up { color: var(--green); } .growth-down { color: var(--ink-muted); }
+@media (max-width: 600px) { .achievement-list .locked { grid-template-columns: 1fr; } }
 .card-showcase { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 /* Shine Moments and Lights on channel pages. */
 .moment-list, .light-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }

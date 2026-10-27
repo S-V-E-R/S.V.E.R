@@ -9,7 +9,7 @@ fn fake(calls: Calls) -> Router {
     let log = move |line: String| calls.lock().unwrap().push(line);
     let (a, b, c, d) = (log.clone(), log.clone(), log.clone(), log.clone());
     let (f, g) = (log.clone(), log.clone());
-    let (h, k) = (log.clone(), log);
+    let (h, k, e) = (log.clone(), log.clone(), log);
     Router::new()
         .route(
             "/channels/{id}/messages",
@@ -86,6 +86,13 @@ fn fake(calls: Calls) -> Router {
             post(move |body: String| async move {
                 a(format!("POST message {body}"));
                 Json(json!({"id": "m1"}))
+            }),
+        )
+        .route(
+            "/channels/10/messages/{id}",
+            delete(move |Path(id): Path<String>| async move {
+                e(format!("UNPOST {id}"));
+                StatusCode::NO_CONTENT
             }),
         )
         .route(
@@ -289,8 +296,12 @@ pub async fn exercise(e: &Env) {
     assert_eq!(posts.len(), 1, "{posts:?}");
     assert!(posts[0].contains("is live on S.V.E.R"));
     assert!(posts[0].contains("/Streamer"));
+    // The stream ends: its post comes down, once.
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now() WHERE id='dc-live'")
         .await;
+    sver::discord::tick(&e.app).await.unwrap();
+    sver::discord::tick(&e.app).await.unwrap();
+    assert_eq!(taken(&calls), ["UNPOST m1"]);
 
     // A role the bot can't give (hierarchy) shows the fix in Studio and pauses syncing.
     linked(e, "702", "dc-high", "myria").await;

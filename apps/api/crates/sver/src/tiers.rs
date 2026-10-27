@@ -164,10 +164,39 @@ pub async fn weekly(app: &App) -> Res<()> {
     .fetch_all(&mut *tx)
     .await?;
     for owner in &owners {
-        check(&mut tx, owner).await?;
+        let before = tier_of(&mut tx, owner).await?;
+        let after = check(&mut tx, owner).await?;
+        if after > before {
+            promoted(app, &mut tx, owner, after).await?;
+        }
     }
     tx.commit().await?;
     eprintln!("tiers_event=weekly checked={}", owners.len());
+    Ok(())
+}
+
+/// A promotion notice by site and, to a verified address, email (docs/NOTIFICATIONS.md).
+pub async fn promoted(app: &App, db: &mut PgConnection, owner: &str, tier: i16) -> Res<()> {
+    let t = tier as usize;
+    let title = format!("You reached the {} creator tier", NAMES[t]);
+    let body = format!(
+        "You now keep {}% of subscriptions and gift subs, and VODs stay {} hours.",
+        SPLITS[t], VOD_HOURS[t]
+    );
+    sqlx::query("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload) VALUES(gen_random_uuid()::text,$1,'tier',$1,'tier:'||$2,jsonb_build_object('title',$3::text,'body',$4::text,'url','/studio/growth')) ON CONFLICT DO NOTHING")
+        .bind(owner).bind(tier).bind(&title).bind(&body).execute(&mut *db).await?;
+    let email: Option<String> =
+        sqlx::query_scalar("SELECT email FROM users WHERE id=$1 AND email_verified")
+            .bind(owner)
+            .fetch_optional(&mut *db)
+            .await?;
+    if let Some(email) = email {
+        let text = format!(
+            "{title}.\n\n{body}\n\nSee your progress: {}/studio/growth",
+            app.config.origin
+        );
+        crate::jobs::queue_address(app, db, Some(owner), &email, &title, &text).await?;
+    }
     Ok(())
 }
 
@@ -187,8 +216,47 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     })))
 }
 
+/// One 7-day window ending `days_ago` days ago, for Studio → Growth.
+async fn week(db: &mut PgConnection, owner: &str, days_ago: i32) -> Res<Value> {
+    let (streams, hours, avg, peak, followers, subscribers): (i64, f64, f64, i32, i64, i64) = sqlx::query_as("WITH w AS (SELECT now()-make_interval(days=>$2+7) AS a, now()-make_interval(days=>$2) AS b)
+        SELECT (SELECT count(*) FROM broadcasts,w WHERE owner_id=$1 AND confirmed_live_at IS NOT NULL AND started_at>a AND started_at<=b),
+        (SELECT coalesce(sum(extract(epoch FROM coalesce(ended_at,now())-started_at)),0)::float8/3600 FROM broadcasts,w WHERE owner_id=$1 AND confirmed_live_at IS NOT NULL AND started_at>a AND started_at<=b),
+        (SELECT coalesce(avg(s.trusted),0)::float8 FROM integrity_snapshots s JOIN broadcasts b ON b.id=s.broadcast_id,w WHERE b.owner_id=$1 AND s.taken_at>a AND s.taken_at<=w.b),
+        (SELECT coalesce(max(s.trusted),0) FROM integrity_snapshots s JOIN broadcasts b ON b.id=s.broadcast_id,w WHERE b.owner_id=$1 AND s.taken_at>a AND s.taken_at<=w.b),
+        (SELECT count(*) FROM follows,w WHERE following_id=$1 AND counted_at>a AND counted_at<=b),
+        (SELECT count(*) FROM channel_subs,w WHERE channel_id=$1 AND created_at>a AND created_at<=b)")
+        .bind(owner).bind(days_ago).fetch_one(db).await?;
+    Ok(
+        json!({"streams": streams, "hours": (hours * 10.0).floor() / 10.0, "avg_viewers": (avg * 10.0).floor() / 10.0,
+        "peak_viewers": peak, "followers": followers, "subscribers": subscribers}),
+    )
+}
+/// GET /api/me/growth: this week against last week, unique Trusted viewers over 7 days and
+/// streamer achievements with progress (docs/ACHIEVEMENTS.md "Streamer growth").
+async fn growth(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let mut db = app.db.acquire().await?;
+    let unique: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM creator_viewers WHERE owner_id=$1 AND last_seen>now()-interval '7 days'",
+    )
+    .bind(&user.id)
+    .fetch_one(&mut *db)
+    .await?;
+    let achievements: Vec<Value> = crate::achievements::all(&mut db, &user.id)
+        .await?
+        .into_iter()
+        .filter(|a| a["streamer"] == true)
+        .collect();
+    Ok(Json(json!({
+        "this_week": week(&mut db, &user.id, 0).await?, "last_week": week(&mut db, &user.id, 7).await?,
+        "unique_viewers": unique, "achievements": achievements,
+    })))
+}
+
 pub fn routes() -> Router<App> {
-    Router::new().route("/api/me/tier", get(mine))
+    Router::new()
+        .route("/api/me/tier", get(mine))
+        .route("/api/me/growth", get(growth))
 }
 
 #[cfg(test)]
