@@ -27,10 +27,10 @@ export default async function RoadmapPage() {
     </section>
     <section aria-labelledby="later-title">
       <h2 id="later-title">After the core</h2>
-      <p>These follow the seven modules above. They are planned work, with no promised release date.</p>
+      <p>Several of these shipped early. What is still ahead is planned work, with no promised release date.</p>
       <div className="roadmap-later">
-        <section className="frame"><p className="eyebrow">Phase 2</p><h3>Rewards & creator tools</h3><p>Valor and progression, creator subscriptions and payouts, analytics and stronger abuse detection.</p></section>
-        <section className="frame"><p className="eyebrow">Later</p><h3>More ways to take part</h3><p>Community interactions, achievements, native alerts and overlays, followed by viewer revenue sharing and faction events.</p></section>
+        <section className="frame"><p className="eyebrow">Live now</p><h3>Earnings, rewards & creator tools</h3><p>Creator payouts are live: subscriptions, gift subs, tributes and Skills are paid out every two weeks through Stripe, with Early Pay in between (see <Link href="/terms">Creator earnings and payouts</Link>). Valor, progression, achievements, native alerts and overlays, and linked chat and restreaming are live too.</p></section>
+        <section className="frame"><p className="eyebrow">Later</p><h3>Ads and viewer earnings</h3><p>Ads and Ad Valor are not live yet. When ads arrive, the viewers who watched will share in what they earn.</p></section>
       </div>
     </section>
     <section className="site-prose" aria-labelledby="updates-title">

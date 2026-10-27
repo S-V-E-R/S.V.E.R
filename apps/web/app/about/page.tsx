@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 const how = [
   ["Fair discovery", "MAGNet gives every live stream a turn at the top of the homepage, whether it has 3 viewers or 3,000. Viewer count never decides who gets seen."],
   ["Three factions", "Myria, Aetheron and Glint will fight a seasonal war over every category. Fighting for your side gets you in front of its viewers."],
-  ["Viewers earn too", "When ads arrive, the viewers who watched will share 5% of what they earn. Payments and viewer rewards come in a later phase."],
+  ["Viewers earn too", "When ads arrive, the viewers who watched will share 5% of what they earn. Ads aren't live yet. Creator payouts are: earnings are paid every two weeks, with Early Pay in between."],
   ["Creators first", "Most of what a stream earns goes to the person making it. Stream with the software you already use, and multistreaming is welcome."],
 ] as const;
 
