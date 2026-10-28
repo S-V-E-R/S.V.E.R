@@ -105,6 +105,8 @@ Mixer's `cdk` let developers ship their own HTML controls. The S.V.E.R version:
 
 *Built October 8, 2026.* SRS bridges WHIP (`rtc_to_rtmp`, Opus to AAC) and SRT (`srt_to_rtmp`, port 10081) into the same RTMP pipeline, so HLS, CDN, WebRTC playback, recording and the publish hook are unchanged. nginx's `/rebuild/whip/` moves the bearer token into SRS's `key` parameter (infra/media/nginx-stream-playback.conf); the API's publish hook applies the RTMP rules (key, eligibility, one publisher, lifecycle). Studio's OBS connection has RTMP, WHIP and SRT tabs. Load test: LOAD_TEST.md scenario 8.
 
+**Bandwidth test.** Adding `&bandwidthtest=1` to the key (any of the three ways in) checks the key and eligibility, then accepts the connection without creating a broadcast: nothing plays it and nobody is notified. The publisher is disconnected after 30 seconds (`stream_publishers.test_until`). SVER Desktop's "Test bandwidth" uses it to measure what the connection sustains before going live, as OBS does with Twitch's `bandwidthtest`.
+
 
 - **WHIP (WebRTC) ingest** alongside RTMP, for sub-second glass-to-glass. OBS 30 and later have it built in, SRS supports it, and OBS 31 removed FTL, Mixer's old low-latency ingest. So WHIP is the modern replacement and FTL is not built.
   - **Authentication:** the stream key goes in the WHIP bearer token, never in the URL.

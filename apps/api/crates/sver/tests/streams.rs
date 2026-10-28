@@ -1229,6 +1229,63 @@ async fn exercise(e: &Env) {
         "ENDED",
         "startup expiry cannot be resurrected by a missing stream"
     );
+    // Bandwidth test: the key is checked, nothing goes live, and it is disconnected after 30 s.
+    let broadcasts = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM broadcasts")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    let before = broadcasts().await;
+    let (public_id, _) = key.split_once('?').unwrap();
+    assert_eq!(
+        e.hook(
+            &format!("{public_id}?key={}&bandwidthtest=1", "x".repeat(43)),
+            "bandwidth-forged",
+            "publish"
+        )
+        .await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        e.hook(
+            &format!("{key}&bandwidthtest=1"),
+            "bandwidth-test",
+            "publish"
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        broadcasts().await,
+        before,
+        "a bandwidth test never creates a broadcast"
+    );
+    e.publishing(&key, "bandwidth-test", 1000);
+    streams::tick(&restarted).await.unwrap();
+    assert!(
+        !e.fake
+            .lock()
+            .unwrap()
+            .kicked
+            .contains(&"bandwidth-test".to_string())
+    );
+    e.sql("UPDATE stream_publishers SET test_until=clock_timestamp() WHERE client_id='bandwidth-test'")
+        .await;
+    streams::tick(&restarted).await.unwrap();
+    assert!(
+        e.fake
+            .lock()
+            .unwrap()
+            .kicked
+            .contains(&"bandwidth-test".to_string()),
+        "the test publisher is disconnected when its 30 seconds are up"
+    );
+    assert_eq!(
+        e.hook(&key, "bandwidth-test", "unpublish").await,
+        StatusCode::OK
+    );
+    e.fake.lock().unwrap().streams.clear();
 
     assert_eq!(
         e.hook(&key, "before-rotation", "publish").await,

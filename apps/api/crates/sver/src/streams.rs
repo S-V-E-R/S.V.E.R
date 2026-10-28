@@ -989,11 +989,13 @@ pub async fn hook(
         .ok_or_else(Error::auth)?;
     if action == "publish" {
         require_eligible(&mut tx, &user).await?;
-        let keys: Vec<_> =
-            url::form_urlencoded::parse(input.param.trim_start_matches('?').as_bytes())
-                .filter(|(k, _)| k == "key")
-                .map(|(_, v)| v.into_owned())
-                .collect();
+        let params: Vec<_> =
+            url::form_urlencoded::parse(input.param.trim_start_matches('?').as_bytes()).collect();
+        let keys: Vec<_> = params
+            .iter()
+            .filter(|(k, _)| k == "key")
+            .map(|(_, v)| v.to_string())
+            .collect();
         if keys.len() != 1 || keys[0].len() != 43 {
             return Err(Error::denied("Invalid publishing credential."));
         }
@@ -1007,6 +1009,15 @@ pub async fn hook(
             .bind(&owner).bind(&input.stream).bind(sec::digest(&keys[0])).fetch_optional(&mut *tx).await?;
         let generation =
             generation.ok_or_else(|| Error::denied("Invalid publishing credential."))?;
+        // A bandwidth test (OBS's `bandwidthtest`, the desktop app's "Test bandwidth"): the key and
+        // the connection are real, but no broadcast is created, so nothing plays it and nobody is
+        // notified. The reconciler disconnects it after 30 seconds.
+        if params.iter().any(|(k, v)| k == "bandwidthtest" && v == "1") {
+            sqlx::query("INSERT INTO stream_publishers(server_id,service_id,client_id,owner_id,public_id,test_until) VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '30 seconds')")
+                .bind(&input.server_id).bind(&input.service_id).bind(&input.client_id).bind(&owner).bind(&input.stream).execute(&mut *tx).await?;
+            tx.commit().await?;
+            return Ok(Json(json!({"code":0})));
+        }
         let ready: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM stream_settings s JOIN stream_categories c ON c.id=s.category_id WHERE s.owner_id=$1 AND c.active)")
             .bind(&owner).fetch_one(&mut *tx).await?;
         if !ready {
@@ -1362,7 +1373,7 @@ pub async fn tick(app: &App) -> Result<()> {
             let Some(public_id) = stream["name"].as_str() else {
                 continue;
             };
-            let owner: Option<String> = sqlx::query_scalar("SELECT p.owner_id FROM stream_publishers p LEFT JOIN broadcasts b ON b.id=p.broadcast_id WHERE p.server_id=$1 AND p.service_id=$2 AND p.client_id=$3 AND p.public_id=$4 AND (p.retired_at IS NOT NULL OR b.state='ENDED')")
+            let owner: Option<String> = sqlx::query_scalar("SELECT p.owner_id FROM stream_publishers p LEFT JOIN broadcasts b ON b.id=p.broadcast_id WHERE p.server_id=$1 AND p.service_id=$2 AND p.client_id=$3 AND p.public_id=$4 AND (p.retired_at IS NOT NULL OR b.state='ENDED' OR p.test_until<clock_timestamp())")
                 .bind(state["server"].as_str()).bind(state["service"].as_str()).bind(client).bind(public_id).fetch_optional(&app.db).await?;
             if let Some(owner) = owner {
                 let mut tx = app.db.begin().await?;
