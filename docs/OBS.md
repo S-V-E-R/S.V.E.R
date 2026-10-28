@@ -13,7 +13,7 @@ How S.V.E.R fits into OBS Studio without a desktop app of its own. Part 1 is bui
 
 ## Part 2: native OBS plugin (plan, not started)
 
-Only worth building for what a web page can't do. A plugin can't replace the SVER Desktop work: OBS owns capture and encoding, so encoder failover, the on-disk replay ring and capture without injection stay with the desktop app.
+Only worth building for what a web page can't do. A plugin can't replace the SVER Desktop work ([DESKTOP.md](DESKTOP.md)): OBS owns capture and encoding, so encoder failover, the on-disk replay ring and capture without injection stay with the desktop app.
 
 **What it adds**
 1. **One-click setup.** "Connect S.V.E.R" in the plugin's menu starts device sign-in (`sver.tv/go`, §1), then fills Settings → Stream with the server and the stream key. With the service-list entry above, it picks the "S.V.E.R" service; until then, Custom.
