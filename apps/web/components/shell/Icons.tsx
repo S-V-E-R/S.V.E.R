@@ -23,6 +23,10 @@ export const MoreIcon = ({ size = 18 }: Props) => <svg width={size} height={size
 
 /** The MAGNet mark: three 4×10 px bars in the three faction colors (M.A.G. = Myria, Aetheron, Glint). */
 export const MagnetMark = () => <span className="magnet-mark" aria-hidden="true"><span /><span /><span /></span>;
+export const TrashIcon = ({ size = 14 }: Props) => svg(size, <path d="M2 3h8M4.5 3V1.5h3V3M3 3l.5 7.5h5L9 3" />);
+export const ClockIcon = ({ size = 14 }: Props) => svg(size, <><circle cx="6" cy="6" r="4.5" /><path d="M6 3.5V6l1.5 1.5" /></>);
+export const BanIcon = ({ size = 14 }: Props) => svg(size, <><circle cx="6" cy="6" r="4.5" /><path d="m2.8 9.2 6.4-6.4" /></>);
+export const MusicIcon = ({ size = 14 }: Props) => svg(size, <><path d="M4.5 9V2.5l5-1V8" /><circle cx="3.2" cy="9" r="1.3" /><circle cx="8.2" cy="8" r="1.3" /></>);
 export const CheckIcon = ({ size = 14 }: Props) => svg(size, <path d="m2 6.5 2.5 2.5L10 3" />);
 export const CrossIcon = ({ size = 14 }: Props) => svg(size, <path d="m3 3 6 6M9 3 3 9" />);
 export const DashIcon = ({ size = 14 }: Props) => svg(size, <path d="M3 6h6" />);

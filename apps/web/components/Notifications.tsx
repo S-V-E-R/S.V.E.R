@@ -5,6 +5,7 @@ import { send, useLoad } from "../lib/client-api";
 import type { Sizes } from "../lib/types";
 import { Avatar } from "./Avatar";
 import { Section } from "./Form";
+import { BellIcon, MutedIcon } from "./shell/Icons";
 
 type CommunityKind = "guild_application" | "guild_decision" | "guild_invite" | "squad_invite" | "dm" | "light";
 /** In-site only (no settings row): "Your subscription ends in 3 days" (docs/CHANNEL_ADDITIONS.md), "A webhook was turned off". */
@@ -123,7 +124,7 @@ export function AlertBell({ username, initial }: { username: string; initial: bo
     if (result.ok) { setOn(result.data.alerts); setError(""); } else setError(result.error);
   }
   return <>
-    <button type="button" className="small quiet" aria-pressed={on} aria-label={on ? `Go-live alerts on for @${username}` : `Go-live alerts off for @${username}`} title={on ? "Turn off go-live alerts" : "Turn on go-live alerts"} onClick={toggle}>{on ? "🔔" : "🔕"}</button>
+    <button type="button" className="small quiet" aria-pressed={on} aria-label={on ? `Go-live alerts on for @${username}` : `Go-live alerts off for @${username}`} title={on ? "Turn off go-live alerts" : "Turn on go-live alerts"} onClick={toggle}>{on ? <BellIcon size={16} /> : <MutedIcon size={16} />}</button>
     {error && <p role="alert" className="form-message">{error}</p>}
   </>;
 }

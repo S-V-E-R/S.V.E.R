@@ -10,6 +10,7 @@ import { Crest } from "./FactionIdentity";
 import { GuildChatBadge } from "./Guilds";
 import { CREATOR_TIERS, type Chip } from "../lib/types";
 import { EmoteImage, type ChannelEmote } from "./Emote";
+import { BanIcon, ClockIcon, TrashIcon } from "./shell/Icons";
 import { SignatureEmote } from "./SignatureEmote";
 import { ChatDock } from "./ChatDock";
 import { GifImage, GifPicker, type Gif, type GifAccess } from "./GifPicker";
@@ -389,12 +390,12 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         {account && role !== "owner" && <> <ReportButton target={{ target_type: "outside_message", target_id: m.id }} /></>}
       </li> : <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
-        {m.skill && <span className="badge skill-badge">✨ {m.skill}</span>}
+        {m.skill && <span className="badge skill-badge">{m.skill}</span>}
         {canDelete(m) && <span className="chat-quick-mod">
-          <button type="button" className="chat-quick" onClick={() => moderate("delete", m, true)} aria-label={`Delete message from ${m.author.display_name}`} title="Delete">🗑</button>
+          <button type="button" className="chat-quick" onClick={() => moderate("delete", m, true)} aria-label={`Delete message from ${m.author.display_name}`} title="Delete"><TrashIcon /></button>
           {canSanction(m) && <>
-            <button type="button" className="chat-quick" onClick={() => moderate("timeout", m, true)} aria-label={`Time out ${m.author.display_name} for 10 minutes`} title="Timeout 10 min">⏱</button>
-            <button type="button" className="chat-quick" onClick={() => moderate("ban", m, true)} aria-label={`Ban ${m.author.display_name}`} title="Ban">⛔</button>
+            <button type="button" className="chat-quick" onClick={() => moderate("timeout", m, true)} aria-label={`Time out ${m.author.display_name} for 10 minutes`} title="Timeout 10 min"><ClockIcon /></button>
+            <button type="button" className="chat-quick" onClick={() => moderate("ban", m, true)} aria-label={`Ban ${m.author.display_name}`} title="Ban"><BanIcon /></button>
           </>}
         </span>}
         <span className="muted">{time(m.created_at)}</span>{" "}
