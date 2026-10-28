@@ -462,7 +462,7 @@ async fn desktop(e: &Env) {
         .await;
     let ask = [
         ("client_id", client.as_str()),
-        ("scope", "user:read stream:key"),
+        ("scope", "user:read stream:key viewer:act"),
     ];
     let (status, started) = raw(e, "POST", "/api/oauth/device", Some(&ask), &[]).await;
     assert_eq!(status, StatusCode::OK, "{started}");
@@ -497,23 +497,23 @@ async fn desktop(e: &Env) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{tokens}");
-    assert_eq!(tokens["scope"], "user:read stream:key");
+    assert_eq!(tokens["scope"], "user:read stream:key viewer:act");
     let bearer = format!("Bearer {}", tokens["access_token"].as_str().unwrap());
-    let key = |proof: String| {
+    let post = |path: String, body: Value| {
         let (client, bearer) = (client.clone(), bearer.clone());
         async move {
             let response = sver::router(e.app.clone())
                 .oneshot(
                     Request::builder()
                         .method("POST")
-                        .uri("/api/v1/stream/key")
+                        .uri(path)
                         .header("content-type", "application/json")
                         .header("sver-client-id", &client)
                         .header("authorization", &bearer)
                         .extension(ConnectInfo(
                             "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
                         ))
-                        .body(Body::from(json!({"code": proof}).to_string()))
+                        .body(Body::from(body.to_string()))
                         .unwrap(),
                 )
                 .await
@@ -526,13 +526,25 @@ async fn desktop(e: &Env) {
             )
         }
     };
-    let (status, _) = key("RECOVERY-WRONG".into()).await;
+    let (status, _) = post(
+        "/api/v1/stream/key".into(),
+        json!({"code": "RECOVERY-WRONG"}),
+    )
+    .await;
     assert!(status.is_client_error(), "a wrong code gets no key");
-    let (status, first) = key(e.code().await).await;
+    let (status, first) = post("/api/v1/stream/key".into(), json!({"code": e.code().await})).await;
     assert_eq!(status, StatusCode::OK, "{first}");
     assert!(first["key"].as_str().unwrap().contains("?key="));
-    let (_, again) = key(e.code().await).await;
+    let (_, again) = post("/api/v1/stream/key".into(), json!({"code": e.code().await})).await;
     assert_eq!(again["key"], first["key"], "revealed, not rotated");
+    // The viewer actions take the desktop token (viewer:act); the owner's own beat doesn't count.
+    let (status, beat) = post(
+        "/api/channels/Streamer/live/beat".into(),
+        json!({"broadcast_id": "none", "browser_id": "desktop-0123456789ab", "visible": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{beat}");
+    assert_eq!(beat["recorded"], false);
     // Studio's own key tests start from no key.
     e.sql("DELETE FROM stream_credentials WHERE owner_id='stream-owner'")
         .await;

@@ -791,6 +791,7 @@ async fn set_block(
 /// last presses (for cooldowns) and this stream's use (for limits).
 async fn view(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path(name): Path<String>,
 ) -> Res<Json<Value>> {
@@ -801,7 +802,11 @@ async fn view(
     let Some(board) = row.published else {
         return Ok(Json(json!({"board": null})));
     };
-    let viewer = profiles::viewer(&app, &jar).await?;
+    let viewer = if headers.contains_key("authorization") {
+        Some(crate::devapps::viewer(&app, &headers, &jar).await?)
+    } else {
+        profiles::viewer(&app, &jar).await?
+    };
     let live = live(&app, &channel).await?;
     let goals: Value = sqlx::query_scalar(
         "SELECT coalesce(jsonb_object_agg(control_id,progress),'{}') FROM board_goals WHERE channel_id=$1",
@@ -852,11 +857,12 @@ pub struct Press {
 /// POST /api/channels/{username}/board/press
 async fn press(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path(name): Path<String>,
     Json(input): Json<Press>,
 ) -> Res<Json<Value>> {
-    let user = profiles::signed_in(&app, &jar).await?;
+    let user = crate::devapps::viewer(&app, &headers, &jar).await?;
     profiles::ensure_verified(&user, "Verify your email address to use the board.")?;
     let channel = channel(&app, &name).await?;
     if channel == user.id {

@@ -272,11 +272,12 @@ pub struct Vote {
 /// comes out of the channel's Engagement Valor in the same transaction.
 async fn vote(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path((name, id)): Path<(String, String)>,
     Json(input): Json<Vote>,
 ) -> Res<Json<Value>> {
-    let user = profiles::signed_in(&app, &jar).await?;
+    let user = crate::devapps::viewer(&app, &headers, &jar).await?;
     let channel = channel(&app, &name).await?;
     if channel == user.id {
         return Err(Fail::bad("You run this poll, so you can't vote in it."));

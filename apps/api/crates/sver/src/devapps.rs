@@ -48,6 +48,12 @@ pub const STREAM_KEY: (&str, &str) = (
     "stream:key",
     "Get your stream key to go live (asks for your authenticator code each time)",
 );
+/// Only S.V.E.R Desktop may ask for this: it acts for a viewer on their own clicks, so unlike other
+/// apps it counts as watching, votes and presses the board (spending their Engagement Valor).
+pub const VIEWER_ACT: (&str, &str) = (
+    "viewer:act",
+    "Count you as watching, vote in polls and press CrowdSync buttons when you choose to, spending your Engagement Valor",
+);
 const MAX_APPS: i64 = 10;
 const ACCESS_SECONDS: i64 = 3600;
 const REFRESH_DAYS: i32 = 60;
@@ -84,7 +90,9 @@ fn redirect_matches(registered: &[String], asked: &str) -> bool {
 fn parse_scopes(scope: &str, desktop: bool) -> Option<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for s in scope.split_whitespace() {
-        if !(SCOPES.iter().any(|(k, _)| *k == s) || desktop && s == STREAM_KEY.0) {
+        if !(SCOPES.iter().any(|(k, _)| *k == s)
+            || desktop && (s == STREAM_KEY.0 || s == VIEWER_ACT.0))
+        {
             return None;
         }
         if !out.iter().any(|o| o == s) {
@@ -689,7 +697,7 @@ async fn device_lookup(
     let (name, owner, scopes, network, icon) = pending(&app, &code).await?;
     let described: Vec<Value> = scopes
         .iter()
-        .map(|s| json!({"scope": s, "text": SCOPES.iter().chain([&STREAM_KEY]).find(|(k, _)| k == s).map_or("", |x| x.1)}))
+        .map(|s| json!({"scope": s, "text": SCOPES.iter().chain([&STREAM_KEY, &VIEWER_ACT]).find(|(k, _)| k == s).map_or("", |x| x.1)}))
         .collect();
     Ok(Json(
         json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described, "network": network}),
@@ -854,6 +862,10 @@ pub async fn actor(
         .await?
         .ok_or_else(|| Fail::denied("This account can't do that right now."))
 }
+/// The viewer: S.V.E.R Desktop's token with `viewer:act`, or else the signed-in person.
+pub async fn viewer(app: &App, headers: &HeaderMap, jar: &CookieJar) -> Res<auth::User> {
+    actor(app, headers, jar, VIEWER_ACT.0).await
+}
 /// GET /api/v1/me (user:read)
 async fn v1_me(State(app): State<App>, headers: HeaderMap) -> Res<Json<Value>> {
     let (_, user) = caller(&app, &headers, Some("user:read")).await?;
@@ -1004,6 +1016,7 @@ mod tests {
             Some(vec!["user:read".into(), "chat:read".into()])
         );
         assert_eq!(parse_scopes("stream:key", false), None);
+        assert_eq!(parse_scopes("viewer:act", false), None);
         assert_eq!(
             parse_scopes("user:read stream:key", true),
             Some(vec!["user:read".into(), "stream:key".into()])
