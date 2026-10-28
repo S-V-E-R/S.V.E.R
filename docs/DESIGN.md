@@ -157,7 +157,7 @@ The discovery modules have shipped, so the earlier interim rules are retired. Wh
 Approved by Joe after the Fable UI review. These hold for every page from now on.
 
 - **Page heads.** Every top-level page opens with `.page-head`: an eyebrow, the Cinzel h1 and one lead line. The diamond-and-rule pattern is only for sections inside a page.
-- **Spacing.** Gaps and padding use the `--space-1` to `--space-7` scale (4, 8, 12, 16, 24, 32 and 48 px).
+- **Spacing.** Gaps and padding use the `--space-1` to `--space-7` scale (4, 8, 12, 16, 24, 32 and 48 px). Hairlines of 1 to 3 px and layout sizes above 48 px in steps of 8 are allowed; `scripts/check-spacing.cjs` enforces it.
 - **Chips.** One `.chip` style. Tags are small; chips you can press are 44 px tall. Chip and tab rows scroll sideways on phones instead of wrapping.
 - **Empty states.** `.empty-state`: framed, with a next step ("No channels match." plus a link to Browse).
 - **Side menus.** Creator Studio and Settings share `SideMenu`: framed, the current page marked, and on phones folded behind one button that names the current page. The Studio menu is six short folding groups (Go live, Chat & community, Tools, Channel page, Earnings, Recordings) with only the current page's group open; Shine Moments, co-streams and the War Council live on the Shine, Guilds and Channel overview pages.

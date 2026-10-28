@@ -1,8 +1,8 @@
 /* Home (docs/DESIGN.md "Home"; the Main board of the design canvas). */
-.home { padding: 20px 24px 0; display: flex; flex-direction: column; gap: 40px; }
+.home { padding: 24px 24px 0; display: flex; flex-direction: column; gap: 48px; }
 
 /* Front-line banner */
-.front { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 14px 18px; }
+.front { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 16px 16px; }
 .front-crests { display: flex; gap: 4px; flex: none; }
 .front-crests img { display: block; }
 .front-text { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; }
@@ -11,7 +11,7 @@
 .front .button { min-height: 42px; font-size: 14px; letter-spacing: .08em; }
 
 /* Section headings: Cinzel title, diamond, note, then a rule to the right edge. */
-.section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 14px; }
+.section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 16px; }
 .section-head h1, .section-head h2 { margin: 0; font-weight: 800; font-size: 24px; letter-spacing: .04em; }
 .section-head h1 { font-size: 22px; }
 .section-head .dia { width: 8px; height: 8px; transform: rotate(45deg); background: var(--accent); flex: none; }
@@ -20,33 +20,33 @@
 
 /* Tags shared by cards and the carousel */
 .stream-tags { position: absolute; left: 8px; top: 8px; display: flex; gap: 4px; }
-.tag-live, .tag-ally { font-family: var(--font-label); font-weight: 700; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; padding: 0 7px; line-height: 1.6; }
+.tag-live, .tag-ally { font-family: var(--font-label); font-weight: 700; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; padding: 0 8px; line-height: 1.6; }
 .tag-live { background: var(--live); color: #fff; }
 .tag-ally { background: var(--accent); color: var(--on-accent); }
 
 /* Rotation carousel */
 .rotation { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-.rotation-row { position: relative; width: 100%; display: flex; align-items: center; justify-content: center; gap: 14px; overflow: hidden; }
+.rotation-row { position: relative; width: 100%; display: flex; align-items: center; justify-content: center; gap: 16px; overflow: hidden; }
 .rotation-peek { position: relative; flex: 0 0 130px; height: 250px; opacity: .4; border: 1px solid var(--line); background: var(--surface); overflow: hidden; }
-.rotation-card { flex: 1 1 820px; min-width: 0; max-width: 900px; display: flex; flex-wrap: wrap; padding: 6px; }
+.rotation-card { flex: 1 1 820px; min-width: 0; max-width: 900px; display: flex; flex-wrap: wrap; padding: 8px; }
 .rotation-stage { position: relative; background: var(--surface); flex: 999 1 520px; min-width: 0; aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; color: inherit; }
 .rotation-stage:hover { text-decoration: none; }
 .rotation-stage .stream-thumb-mark { font-size: clamp(18px, 3vw, 44px); }
 .rotation-stage .stream-tags { left: 12px; top: 12px; }
 .rotation-info { flex: 1 1 260px; min-width: 0; padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 12px; }
-.rotation-who { display: flex; align-items: center; gap: 10px; }
+.rotation-who { display: flex; align-items: center; gap: 12px; }
 .rotation-who > span { min-width: 0; display: flex; flex-direction: column; }
 .rotation-name { font-weight: 600; font-size: 17px; }
 .rotation-faction { font-size: 12px; }
 .rotation-title { margin: 0; font-size: 17px; font-weight: 500; line-height: 1.35; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
 /* One chip style everywhere: tags are small, chips you can press are 44 px tall. */
-.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 10px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+.chip { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 12px; border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
 a.chip, button.chip { min-height: 44px; padding: 0 12px; }
 a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .rotation-actions { display: flex; gap: 8px; margin-top: auto; }
 .rotation-actions .button { flex: 1 1 auto; min-height: 46px; font-size: 16px; }
-.rotation-next { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-dim); }
+.rotation-next { margin: 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-dim); }
 .rotation-next strong { color: var(--ink); }
 .rotation-arrow {
   position: absolute; top: calc(50% - 38px); width: 44px; min-height: 44px; height: 44px; padding: 0; border-radius: 0;
@@ -55,31 +55,31 @@ a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .rotation-arrow:hover:not(:disabled) { background: var(--tint); filter: none; }
 .rotation-arrow.prev { left: 100px; }
 .rotation-arrow.next { right: 100px; }
-.rotation-controls { display: flex; align-items: center; justify-content: center; gap: 14px; }
-.rotation-dots { display: flex; justify-content: center; gap: 6px; }
+.rotation-controls { display: flex; align-items: center; justify-content: center; gap: 16px; }
+.rotation-dots { display: flex; justify-content: center; gap: 8px; }
 .rotation-dots button { min-height: 24px; min-width: 24px; padding: 0 2px; background: none; border: 0; box-shadow: none; filter: none; }
 .rotation-dots button span { display: block; width: 8px; height: 4px; background: var(--line); }
 .rotation-dots button.on span { width: 22px; background: var(--accent); }
 
 /* Stream grids */
-.stream-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px 14px; }
-.stream-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; color: var(--ink); }
+.stream-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 24px 16px; }
+.stream-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; color: var(--ink); }
 .stream-card:hover { text-decoration: none; color: var(--ink); }
 .stream-card:hover .stream-thumb { border-color: var(--accent); }
 .stream-thumb { position: relative; background: var(--surface); aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid rgba(242, 240, 234, .08); display: flex; align-items: center; justify-content: center; }
 .stream-card.ally .stream-thumb { border-color: var(--accent); }
-.stream-thumb-mark { padding: 0 10px; text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 18px; color: rgba(242, 240, 234, .12); }
-.stream-viewers, .stream-uptime, .stream-started { position: absolute; bottom: 8px; font-size: 12px; padding: 0 7px; background: var(--scrim); }
+.stream-thumb-mark { padding: 0 12px; text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 18px; color: rgba(242, 240, 234, .12); }
+.stream-viewers, .stream-uptime, .stream-started { position: absolute; bottom: 8px; font-size: 12px; padding: 0 8px; background: var(--scrim); }
 .stream-viewers { left: 8px; }
 .stream-uptime { right: 8px; color: var(--ink); }
 .stream-started { right: 8px; background: var(--accent); color: var(--on-accent); font-weight: 700; }
-.stream-meta { display: flex; gap: 10px; min-width: 0; }
+.stream-meta { display: flex; gap: 12px; min-width: 0; }
 .stream-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .stream-title { font-size: 14px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .stream-name { font-size: 13px; color: var(--ink); }
-.stream-category { align-self: flex-start; font-size: 11px; padding: 0 7px; border: 1px solid var(--line); color: var(--ink-muted); }
+.stream-category { align-self: flex-start; font-size: 11px; padding: 0 8px; border: 1px solid var(--line); color: var(--ink-muted); }
 
-.empty-live { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; }
+.empty-live { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px; }
 .empty-live p { margin: 0; color: var(--ink-muted); }
 .empty-live strong { color: var(--ink); }
 
@@ -103,26 +103,26 @@ a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .live-preview video.on { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .live-preview video { transition: none; } }
 .magnet-next-thumbnail { position: relative; flex: 0 0 160px; width: 160px; aspect-ratio: 16 / 9; }
-.tag-label { background: var(--surface); color: var(--text); padding: 1px 6px; font-size: .75rem; }
+.tag-label { background: var(--surface); color: var(--text); padding: 1px 8px; font-size: .75rem; }
 .section-link { margin-left: auto; white-space: nowrap; }
-.spotlight-card { display: flex; flex-direction: column; gap: 6px; }
-.spotlight-card.offline { padding: 14px; gap: 4px; }
+.spotlight-card { display: flex; flex-direction: column; gap: 8px; }
+.spotlight-card.offline { padding: 16px; gap: 4px; }
 .spotlight-reason { margin: 0; font-weight: 600; color: var(--accent-light); }
 .recent-channels { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
-.recent-channels a { display: flex; gap: 10px; align-items: center; }
+.recent-channels a { display: flex; gap: 12px; align-items: center; }
 .recent-channels span span { display: block; }
-.browse-filters, .browse-genres, .browse-categories { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.browse-filters, .browse-genres, .browse-categories { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .chip[aria-current="page"] { border-color: var(--accent); color: var(--accent-light); }
 .search-form { display: flex; gap: 8px; margin: 8px 0 16px; max-width: 560px; }
 .search-form input { flex: 1; }
-.search-results { list-style: none; padding: 0; display: grid; gap: 6px; }
-.search-results a { display: flex; gap: 10px; align-items: center; }
-.up-next { margin: 8px 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.search-results { list-style: none; padding: 0; display: grid; gap: 8px; }
+.search-results a { display: flex; gap: 12px; align-items: center; }
+.up-next { margin: 8px 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .up-next p { margin: 0; }
 
 /* MAGNet. */
 .magnet-why { margin: 8px 0; }
-.magnet-mark-inline { font-size: .7rem; letter-spacing: .08em; padding: 1px 6px; border: 1px solid var(--accent); color: var(--accent-light); }
+.magnet-mark-inline { font-size: .7rem; letter-spacing: .08em; padding: 1px 8px; border: 1px solid var(--accent); color: var(--accent-light); }
 .magnet-countdown { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .magnet-holding { padding: 16px; }
 .magnet-badge { border-color: var(--accent); color: var(--accent-light); }
@@ -132,31 +132,31 @@ a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .staff-picks .eyebrow { color: var(--accent); }
 
 /* Front-line banner (Main mockup): crest, headline, the real three-part standing, call to action. */
-.front-line { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px; padding: 16px 20px; }
-.front-line-crests { display: flex; gap: 6px; flex: none; }
+.front-line { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 24px; padding: 16px 24px; }
+.front-line-crests { display: flex; gap: 8px; flex: none; }
 .front-line-crests a { display: flex; align-items: center; min-height: 44px; }
 .front-line-status { flex: 1 1 320px; min-width: 0; }
 .front-line-status h2 { margin: 0 0 4px; font-size: 18px; letter-spacing: .04em; text-transform: uppercase; }
 .front-line-status p { margin: 0; font-size: 13px; color: var(--ink-muted); }
 .front-line-bar { flex: 1 1 280px; display: flex; gap: 3px; min-width: 0; }
-.front-line-bar span { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.front-line-bar span { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .front-line-bar i { display: block; height: 8px; background: var(--accent); }
 .front-line-bar small { font-size: 12px; color: var(--ink-dim); white-space: nowrap; }
 .front-line > .button { flex: none; }
 
 /* Territories (Home and Browse): 3:4 tiles, holder crest in the corner, live count. */
-.territory-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px; }
+.territory-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
 .territory-tile { position: relative; aspect-ratio: 3 / 4; padding: 12px; border: 1px solid var(--line); background: linear-gradient(180deg, var(--tint), rgba(0, 0, 0, .25)), var(--surface); display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; color: var(--ink); min-width: 0; }
 .territory-tile:hover { border-color: var(--accent); text-decoration: none; color: var(--ink); }
 .territory-crest { position: absolute; top: 10px; right: 10px; }
-.territory-tile h3 { margin: 0 0 6px; font-size: 17px; line-height: 1.2; overflow-wrap: anywhere; }
+.territory-tile h3 { margin: 0 0 8px; font-size: 17px; line-height: 1.2; overflow-wrap: anywhere; }
 .territory-turf { font-size: 12px; color: var(--accent); }
 .territory-live { font-size: 12px; color: var(--ink-dim); }
 @media (max-width: 700px) { .territory-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .front-line-bar { flex-basis: 100%; } }
 
 /* Browse genre tabs (Barlow Condensed, --accent underline on the current tab). */
-.genre-tabs { display: flex; flex-wrap: wrap; gap: 2px 18px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
-.genre-tabs a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font: 700 14px/1 var(--font-label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted); }
+.genre-tabs { display: flex; flex-wrap: wrap; gap: 2px 16px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+.genre-tabs a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font: 700 14px/1 var(--font-label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted); }
 .genre-tabs a:hover { color: var(--ink); text-decoration: none; }
 .genre-tabs a[aria-current="page"] { color: var(--accent-light); box-shadow: inset 0 -2px 0 var(--accent); }
 .browse .territory-grid { margin-bottom: 32px; }
@@ -185,7 +185,7 @@ a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .season-replay { min-height: 24px; padding: 0; background: none; border: 0; box-shadow: none; color: var(--accent); font: inherit; letter-spacing: 0; text-transform: none; text-decoration: underline; }
 .season-replay:hover:not(:disabled) { color: var(--accent-light); filter: none; }
 /* Home shelves: one row that scrolls sideways, so a row never ends with one stranded card. */
-.stream-grid.shelf, .territory-grid.shelf { grid-auto-flow: column; grid-template-columns: none; overflow-x: auto; scrollbar-width: thin; padding-bottom: 6px; scroll-snap-type: x proximity; }
+.stream-grid.shelf, .territory-grid.shelf { grid-auto-flow: column; grid-template-columns: none; overflow-x: auto; scrollbar-width: thin; padding-bottom: 8px; scroll-snap-type: x proximity; }
 .stream-grid.shelf { grid-auto-columns: minmax(220px, 280px); }
 .territory-grid.shelf { grid-auto-columns: minmax(150px, 160px); }
 .stream-grid.shelf > *, .territory-grid.shelf > * { scroll-snap-align: start; }
@@ -206,17 +206,17 @@ a.chip:hover { border-color: var(--accent); text-decoration: none; }
 }
 /* Page titles: eyebrow, Cinzel title, optional lead (the war map's pattern). */
 /* MAGNet: lanes in two labelled groups, and the featured stream's turn. */
-.magnet-lanes { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 0 0 16px; }
-.lane-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.magnet-lanes { display: flex; flex-wrap: wrap; gap: 12px 32px; margin: 0 0 16px; }
+.lane-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .magnet-turn { height: 3px; margin: 8px 0 0; background: var(--line); }
 .magnet-turn span { display: block; height: 100%; background: var(--accent); transition: width .25s linear; }
-.magnet-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 8px 0 0; }
+.magnet-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 8px 0 0; }
 .magnet-also { margin-top: 24px; }
-.magnet-also h2 { margin: 0 0 10px; }
+.magnet-also h2 { margin: 0 0 12px; }
 /* Browse: genres grouped by holder; tiles in the holder's color, contested ones hatched. */
-.genre-groups { display: flex; flex-wrap: wrap; gap: 10px 32px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
+.genre-groups { display: flex; flex-wrap: wrap; gap: 12px 32px; margin-bottom: 24px; border-bottom: 1px solid var(--line); }
 .genre-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.genre-group .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--accent-light); }
+.genre-group .eyebrow { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-light); }
 .genre-groups .genre-tabs { border-bottom: 0; margin-bottom: 0; }
 .territory-tile[data-theme] { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .territory-tile.contested { background-image: repeating-linear-gradient(135deg, transparent 0 10px, color-mix(in srgb, var(--accent) 10%, transparent) 10px 12px); }
@@ -230,5 +230,5 @@ a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .territory-tile.has-art .territory-live { color: rgba(255, 255, 255, .78); }
 .territory-tile.has-art h3 { color: #fff; }
 .territory-tile .contested-tag { display: block; margin-top: 2px; font: 700 11px/1.2 var(--font-label); letter-spacing: .1em; text-transform: uppercase; color: var(--accent-light); }
-@media (max-width: 700px) { .genre-groups, .magnet-lanes { flex-direction: column; flex-wrap: nowrap; gap: 6px; } }
+@media (max-width: 700px) { .genre-groups, .magnet-lanes { flex-direction: column; flex-wrap: nowrap; gap: 8px; } }
 
