@@ -5,7 +5,7 @@ import { send, useLoad } from "../../lib/client-api";
 import { Avatar } from "../../components/Avatar";
 import type { Sizes } from "../../lib/types";
 
-type Pending = { app: { name: string; owner: string; icon: Sizes }; scopes: { scope: string; text: string }[]; network: string | null };
+type Pending = { app: { name: string; owner: string | null; icon: Sizes }; scopes: { scope: string; text: string }[]; network: string | null };
 
 /** sver.tv/go: approve a desktop, TV or console app with the code it shows (docs/DEVELOPER_PLATFORM.md §1). */
 export default function Go() {
@@ -47,7 +47,7 @@ export default function Go() {
         {pending && <div className="stack">
           <Avatar sizes={pending.app.icon} name={pending.app.name} size={64} />
           <h2>{pending.app.name} wants to use your account</h2>
-          <p className="muted">Made by @{pending.app.owner}. The device asking is on {pending.network ?? "a network we couldn't identify"}. If that isn&apos;t your device, or someone sent you this code, choose Cancel.</p>
+          <p className="muted">Made by {pending.app.owner ? `@${pending.app.owner}` : "S.V.E.R"}. The device asking is on {pending.network ?? "a network we couldn't identify"}. If that isn&apos;t your device, or someone sent you this code, choose Cancel.</p>
           <ul>{pending.scopes.map(s => <li key={s.scope}>{s.text}</li>)}{pending.scopes.length === 0 && <li>Confirm that you have a S.V.E.R account</li>}</ul>
           <div className="row"><button type="button" onClick={() => decide(true)}>Allow</button><button type="button" className="quiet" onClick={() => decide(false)}>Cancel</button></div>
         </div>}

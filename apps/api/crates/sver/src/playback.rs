@@ -416,7 +416,12 @@ pub async fn beat(
     let ip = sec::client_ip(&app, peer, &headers);
     sec::reserve(&app, vec![format!("playback-beat:{ip}")], 240, 60).await?;
     let owner = owner_id(&app, &name).await?;
-    let viewer = profiles::viewer(&app, &jar).await?;
+    // S.V.E.R Desktop's player beats with the viewer's token (`viewer:act`).
+    let viewer = if headers.contains_key("authorization") {
+        Some(crate::devapps::viewer(&app, &headers, &jar).await?)
+    } else {
+        profiles::viewer(&app, &jar).await?
+    };
     let key = match &viewer {
         Some(v) if v.id == owner => return Ok(Json(json!({"recorded":false}))),
         Some(v) if crate::moderation::banned(&app, &owner, &v.id).await? => {

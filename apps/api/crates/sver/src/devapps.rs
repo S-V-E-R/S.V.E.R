@@ -41,6 +41,19 @@ pub const SCOPES: [(&str, &str); 10] = [
         "Run raids, polls, predictions, highlight markers and the board's pause on your channel",
     ),
 ];
+/// S.V.E.R Desktop's client ID: a built-in app with no owner (migration 0150).
+pub const DESKTOP_APP: &str = "sver-desktop";
+/// Only S.V.E.R Desktop may ask for this, and only through sver.tv/go.
+pub const STREAM_KEY: (&str, &str) = (
+    "stream:key",
+    "Get your stream key to go live (asks for your authenticator code each time)",
+);
+/// Only S.V.E.R Desktop may ask for this: it acts for a viewer on their own clicks, so unlike other
+/// apps it counts as watching, votes and presses the board (spending their Engagement Valor).
+pub const VIEWER_ACT: (&str, &str) = (
+    "viewer:act",
+    "Count you as watching, vote in polls and press CrowdSync buttons when you choose to, spending your Engagement Valor",
+);
 const MAX_APPS: i64 = 10;
 const ACCESS_SECONDS: i64 = 3600;
 const REFRESH_DAYS: i32 = 60;
@@ -73,11 +86,13 @@ fn redirect_matches(registered: &[String], asked: &str) -> bool {
             r == asked
         })
 }
-/// Requested scopes, deduplicated; None when one is unknown (or `stream:key`).
-fn parse_scopes(scope: &str) -> Option<Vec<String>> {
+/// Requested scopes, deduplicated; None when one is unknown, or `stream:key` unless `desktop`.
+fn parse_scopes(scope: &str, desktop: bool) -> Option<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for s in scope.split_whitespace() {
-        if !SCOPES.iter().any(|(k, _)| *k == s) {
+        if !(SCOPES.iter().any(|(k, _)| *k == s)
+            || desktop && (s == STREAM_KEY.0 || s == VIEWER_ACT.0))
+        {
             return None;
         }
         if !out.iter().any(|o| o == s) {
@@ -314,10 +329,10 @@ pub struct Authorize {
     #[serde(default)]
     approve: bool,
 }
-type Request = (String, String, Vec<String>, String);
+type Request = (String, Option<String>, Vec<String>, String);
 /// Validates an authorization request: (app name, owner, scopes, redirect).
 async fn request(app: &App, q: &Authorize) -> Res<Request> {
-    let found: Option<(String, String, Vec<String>)> = sqlx::query_as("SELECT a.name,u.username,a.redirect_uris FROM dev_apps a JOIN users u ON u.id=a.owner_id WHERE a.id=$1 AND a.suspended_at IS NULL")
+    let found: Option<(String, Option<String>, Vec<String>)> = sqlx::query_as("SELECT a.name,u.username,a.redirect_uris FROM dev_apps a LEFT JOIN users u ON u.id=a.owner_id WHERE a.id=$1 AND a.suspended_at IS NULL")
         .bind(&q.client_id).fetch_optional(&app.db).await?;
     let (name, owner, uris) = found.ok_or_else(|| Fail::bad("That app isn't available."))?;
     if !redirect_matches(&uris, &q.redirect_uri) {
@@ -331,7 +346,7 @@ async fn request(app: &App, q: &Authorize) -> Res<Request> {
             "The app must use the authorization code flow with PKCE (S256).",
         ));
     }
-    let scopes = parse_scopes(&q.scope)
+    let scopes = parse_scopes(&q.scope, false)
         .ok_or_else(|| Fail::bad("The app asked for a permission S.V.E.R doesn't offer."))?;
     Ok((name, owner, scopes, q.redirect_uri.clone()))
 }
@@ -631,7 +646,8 @@ async fn device(
         )
             .into_response();
     }
-    let Some(scopes) = parse_scopes(&input.scope) else {
+    let desktop = input.client_id == DESKTOP_APP;
+    let Some(scopes) = parse_scopes(&input.scope, desktop) else {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "invalid_scope"})),
@@ -655,9 +671,15 @@ async fn device(
     let page = format!("{}/go", app.config.origin);
     Json(json!({"device_code": device, "user_code": shown, "verification_uri": page, "verification_uri_complete": format!("{page}?code={shown}"), "expires_in": 600, "interval": 5})).into_response()
 }
-type Pending = (String, String, Vec<String>, Option<String>, Option<String>);
+type Pending = (
+    String,
+    Option<String>,
+    Vec<String>,
+    Option<String>,
+    Option<String>,
+);
 async fn pending(app: &App, code: &str) -> Res<Pending> {
-    let found: Option<Pending> = sqlx::query_as("SELECT a.name,u.username,d.scopes,d.network,a.icon_key FROM oauth_devices d JOIN dev_apps a ON a.id=d.app_id AND a.suspended_at IS NULL JOIN users u ON u.id=a.owner_id
+    let found: Option<Pending> = sqlx::query_as("SELECT a.name,u.username,d.scopes,d.network,a.icon_key FROM oauth_devices d JOIN dev_apps a ON a.id=d.app_id AND a.suspended_at IS NULL LEFT JOIN users u ON u.id=a.owner_id
         WHERE d.user_code=$1 AND d.expires_at>now() AND d.decision IS NULL")
         .bind(normalize(code)).fetch_optional(&app.db).await?;
     found.ok_or_else(|| {
@@ -675,7 +697,7 @@ async fn device_lookup(
     let (name, owner, scopes, network, icon) = pending(&app, &code).await?;
     let described: Vec<Value> = scopes
         .iter()
-        .map(|s| json!({"scope": s, "text": SCOPES.iter().find(|(k, _)| k == s).map_or("", |x| x.1)}))
+        .map(|s| json!({"scope": s, "text": SCOPES.iter().chain([&STREAM_KEY, &VIEWER_ACT]).find(|(k, _)| k == s).map_or("", |x| x.1)}))
         .collect();
     Ok(Json(
         json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described, "network": network}),
@@ -694,7 +716,13 @@ async fn device_decide(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::rate(&app, format!("oauth-go:{}", user.id), 20, 600).await?;
-    pending(&app, &code).await?;
+    let (.., scopes, _, _) = pending(&app, &code).await?;
+    // Handing out the stream key needs what Studio needs: a verified email and two-factor sign-in.
+    if input.approve && scopes.iter().any(|s| s == STREAM_KEY.0) {
+        let (tx, user, session) = auth::session(&app, &jar, false).await?;
+        tx.commit().await?;
+        auth::authorize_streaming(&user, &session)?;
+    }
     sqlx::query("UPDATE oauth_devices SET user_id=$2,decision=$3 WHERE user_code=$1 AND decision IS NULL AND expires_at>now()")
         .bind(normalize(&code)).bind(&user.id).bind(if input.approve { "approved" } else { "denied" })
         .execute(&app.db).await?;
@@ -834,6 +862,10 @@ pub async fn actor(
         .await?
         .ok_or_else(|| Fail::denied("This account can't do that right now."))
 }
+/// The viewer: S.V.E.R Desktop's token with `viewer:act`, or else the signed-in person.
+pub async fn viewer(app: &App, headers: &HeaderMap, jar: &CookieJar) -> Res<auth::User> {
+    actor(app, headers, jar, VIEWER_ACT.0).await
+}
 /// GET /api/v1/me (user:read)
 async fn v1_me(State(app): State<App>, headers: HeaderMap) -> Res<Json<Value>> {
     let (_, user) = caller(&app, &headers, Some("user:read")).await?;
@@ -864,7 +896,7 @@ async fn v1_channel(
 async fn connections(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',g.id,'app',a.name,'icon',a.icon_key,'owner',u.username,'scopes',g.scopes,'created_at',g.created_at,'last_used_at',g.last_used_at)
-        FROM oauth_grants g JOIN dev_apps a ON a.id=g.app_id JOIN users u ON u.id=a.owner_id WHERE g.user_id=$1 AND g.revoked_at IS NULL ORDER BY g.created_at DESC")
+        FROM oauth_grants g JOIN dev_apps a ON a.id=g.app_id LEFT JOIN users u ON u.id=a.owner_id WHERE g.user_id=$1 AND g.revoked_at IS NULL ORDER BY g.created_at DESC")
         .bind(&user.id).fetch_all(&app.db).await?;
     icons(&app, &mut rows);
     Ok(Json(json!({"connections": rows})))
@@ -890,7 +922,7 @@ async fn staff_apps(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
     crate::safety::staff(&app, &jar).await?;
     let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('client_id',a.id,'name',a.name,'icon',a.icon_key,'owner',u.username,'redirect_uris',a.redirect_uris,'suspended',a.suspended_at IS NOT NULL,'created_at',a.created_at,
             'users',(SELECT count(*) FROM oauth_grants g WHERE g.app_id=a.id AND g.revoked_at IS NULL))
-        FROM dev_apps a JOIN users u ON u.id=a.owner_id ORDER BY a.created_at DESC LIMIT 500")
+        FROM dev_apps a LEFT JOIN users u ON u.id=a.owner_id ORDER BY a.created_at DESC LIMIT 500")
         .fetch_all(&app.db).await?;
     icons(&app, &mut rows);
     Ok(Json(json!({"apps": rows})))
@@ -980,10 +1012,15 @@ mod tests {
         assert!(redirect_matches(&registered, "http://127.0.0.1:51234/cb"));
         assert!(!redirect_matches(&registered, "https://example.com/other"));
         assert_eq!(
-            parse_scopes("user:read chat:read user:read"),
+            parse_scopes("user:read chat:read user:read", false),
             Some(vec!["user:read".into(), "chat:read".into()])
         );
-        assert_eq!(parse_scopes("stream:key"), None);
+        assert_eq!(parse_scopes("stream:key", false), None);
+        assert_eq!(parse_scopes("viewer:act", false), None);
+        assert_eq!(
+            parse_scopes("user:read stream:key", true),
+            Some(vec!["user:read".into(), "stream:key".into()])
+        );
         let code = user_code();
         assert!(code.len() == 6 && code.bytes().all(|b| CODE_ALPHABET.contains(&b)));
         assert_eq!(normalize("bcd-fg h"), "BCDFGH");

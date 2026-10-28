@@ -5,7 +5,7 @@ import { send, useLoad } from "../../../lib/client-api";
 import { Avatar } from "../../../components/Avatar";
 import type { Sizes } from "../../../lib/types";
 
-type Consent = { app: { name: string; owner: string; icon: Sizes }; scopes: { scope: string; text: string }[] };
+type Consent = { app: { name: string; owner: string | null; icon: Sizes }; scopes: { scope: string; text: string }[] };
 
 /** The consent screen for an app asking to use the person's account (docs/DEVELOPER_PLATFORM.md §1). */
 export default function Authorize() {
@@ -33,7 +33,7 @@ export default function Authorize() {
       : <>
         <Avatar sizes={consent.app.icon} name={consent.app.name} size={64} />
         <h1>{consent.app.name} wants to use your account</h1>
-        <p className="muted">Made by @{consent.app.owner}. It isn&apos;t made by S.V.E.R.</p>
+        <p className="muted">{consent.app.owner ? <>Made by @{consent.app.owner}. It isn&apos;t made by S.V.E.R.</> : "Made by S.V.E.R."}</p>
         <p>It will be able to:</p>
         <ul>{consent.scopes.map(s => <li key={s.scope}>{s.text}</li>)}{consent.scopes.length === 0 && <li>Confirm that you have a S.V.E.R account</li>}</ul>
         <p className="muted small">It can never spend your Valor, see your email or password, or move money. You can remove it any time in Settings → Connected apps.</p>

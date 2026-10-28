@@ -72,7 +72,8 @@ pub async fn exercise(e: &Env) {
         .as_str()
         .unwrap()
         .to_string();
-    let stored: String = sqlx::query_scalar("SELECT secret_hash FROM dev_apps")
+    let stored: String = sqlx::query_scalar("SELECT secret_hash FROM dev_apps WHERE id=$1")
+        .bind(&client)
         .fetch_one(&e.app.db)
         .await
         .unwrap();
@@ -318,13 +319,14 @@ pub async fn exercise(e: &Env) {
     );
     e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
         .await;
-    let apps: i64 = sqlx::query_scalar("SELECT count(*) FROM dev_apps")
+    let apps: i64 = sqlx::query_scalar("SELECT count(*) FROM dev_apps WHERE owner_id IS NOT NULL")
         .fetch_one(&e.app.db)
         .await
         .unwrap();
     assert_eq!(apps, 0);
 
     device(e).await;
+    desktop(e).await;
 }
 
 /// Device sign-in (sver.tv/go): pending, slow down, approval, tokens once.
@@ -420,4 +422,135 @@ async fn device(e: &Env) {
     );
     e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
         .await;
+}
+
+/// S.V.E.R Desktop: a built-in app with no owner. Only it may ask for `stream:key` (through
+/// sver.tv/go), no one can delete it in Settings, and the key still needs a code on every call.
+async fn desktop(e: &Env) {
+    let created = e
+        .call(
+            "POST",
+            "/api/me/apps",
+            json!({"name":"Not Desktop","redirect_uris":["http://127.0.0.1/cb"]}),
+        )
+        .await;
+    let other = created["created"]["client_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, refused) = raw(
+        e,
+        "POST",
+        "/api/oauth/device",
+        Some(&[
+            ("client_id", other.as_str()),
+            ("scope", "user:read stream:key"),
+        ]),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        (status, refused["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_scope")),
+        "only S.V.E.R Desktop"
+    );
+    e.call("DELETE", &format!("/api/me/apps/{other}"), Value::Null)
+        .await;
+    let client = sver::devapps::DESKTOP_APP.to_string();
+    // Deleting someone else's (or no one's) app does nothing.
+    e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
+        .await;
+    let ask = [
+        ("client_id", client.as_str()),
+        ("scope", "user:read stream:key viewer:act"),
+    ];
+    let (status, started) = raw(e, "POST", "/api/oauth/device", Some(&ask), &[]).await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let code = started["user_code"].as_str().unwrap().to_string();
+    let shown = e
+        .call("GET", &format!("/api/oauth/device/{code}"), Value::Null)
+        .await;
+    assert_eq!(shown["app"]["owner"], Value::Null, "Made by S.V.E.R");
+    assert!(
+        shown["scopes"][1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("stream key"),
+        "{shown}"
+    );
+    e.call(
+        "POST",
+        &format!("/api/oauth/device/{code}"),
+        json!({"approve": true}),
+    )
+    .await;
+    let (status, tokens) = raw(
+        e,
+        "POST",
+        "/api/oauth/token",
+        Some(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("client_id", &client),
+            ("device_code", started["device_code"].as_str().unwrap()),
+        ]),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    assert_eq!(tokens["scope"], "user:read stream:key viewer:act");
+    let bearer = format!("Bearer {}", tokens["access_token"].as_str().unwrap());
+    let post = |path: String, body: Value| {
+        let (client, bearer) = (client.clone(), bearer.clone());
+        async move {
+            let response = sver::router(e.app.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .header("sver-client-id", &client)
+                        .header("authorization", &bearer)
+                        .extension(ConnectInfo(
+                            "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+                        ))
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (
+                status,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
+        }
+    };
+    let (status, _) = post(
+        "/api/v1/stream/key".into(),
+        json!({"code": "RECOVERY-WRONG"}),
+    )
+    .await;
+    assert!(status.is_client_error(), "a wrong code gets no key");
+    let (status, first) = post("/api/v1/stream/key".into(), json!({"code": e.code().await})).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert!(first["key"].as_str().unwrap().contains("?key="));
+    let (_, again) = post("/api/v1/stream/key".into(), json!({"code": e.code().await})).await;
+    assert_eq!(again["key"], first["key"], "revealed, not rotated");
+    // The viewer actions take the desktop token (viewer:act); the owner's own beat doesn't count.
+    let (status, beat) = post(
+        "/api/channels/Streamer/live/beat".into(),
+        json!({"broadcast_id": "none", "browser_id": "desktop-0123456789ab", "visible": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{beat}");
+    assert_eq!(beat["recorded"], false);
+    // Studio's own key tests start from no key.
+    e.sql("DELETE FROM stream_credentials WHERE owner_id='stream-owner'")
+        .await;
+    let listed = e.call("GET", "/api/me/connections", Value::Null).await;
+    assert!(
+        listed.to_string().contains("S.V.E.R Desktop"),
+        "an ownerless app still lists: {listed}"
+    );
 }

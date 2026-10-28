@@ -730,12 +730,22 @@ struct Credential {
     revoked_at: Option<DateTime<Utc>>,
 }
 async fn key_action(app: &App, jar: &CookieJar, code: &str, action: &str) -> Result<Value> {
-    let config = configured(app)?;
+    configured(app)?;
     if code.len() > 64 {
         return Err(Error::bad("Invalid authenticator/recovery code."));
     }
-    let (mut tx, user, session) = auth::sensitive(app, jar, code).await?;
+    let (tx, user, session) = auth::sensitive(app, jar, code).await?;
     auth::authorize_streaming(&user, &session)?;
+    issue_key(app, tx, user, action).await
+}
+/// Creates, reveals or rotates the key once the person has proved who they are.
+async fn issue_key(
+    app: &App,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    user: auth::User,
+    action: &str,
+) -> Result<Value> {
+    let config = configured(app)?;
     require_eligible(&mut tx, &user).await?;
     settings(&mut tx, &user).await?;
     let previous: Option<Credential> = sqlx::query_as("SELECT public_id,generation,secret_cipher,revoked_at FROM stream_credentials WHERE owner_id=$1")
@@ -794,6 +804,41 @@ async fn key_action(app: &App, jar: &CookieJar, code: &str, action: &str) -> Res
         "srt":config.srt_url.as_ref().map(|u| format!("{u}?streamid=#!::r={}/{public_id}?key={secret},m=publish",config.app)),
         "disconnect_pending":pending,"message":"Keep this key private. Rotation or Stop revokes the previous key."}),
     )
+}
+/// POST /api/v1/stream/key (`stream:key`, S.V.E.R Desktop only): the stream key, created when
+/// there is none. Like Studio, every call needs an authenticator or recovery code; rotation and
+/// Stop stay on the website.
+pub async fn app_key(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Json(input): Json<Proof>,
+) -> profiles::Res<Json<Value>> {
+    configured(&app)?;
+    if input.code.len() > 64 {
+        return Err(Error::bad("Invalid authenticator/recovery code.").into());
+    }
+    let (_, id) =
+        crate::devapps::caller(&app, &headers, Some(crate::devapps::STREAM_KEY.0)).await?;
+    let id = id.ok_or_else(Error::auth)?;
+    let mut tx = app.db.begin().await?;
+    let user = auth::lock_user(&mut tx, &id).await?;
+    if user.deleted_at.is_some() || !user.email_verified || !user.mfa_enabled {
+        return Err(Error::denied(
+            "Enable an authenticator before accessing streaming credentials.",
+        )
+        .into());
+    }
+    let permits = sec::reserve(&app, vec![format!("sensitive:{}", user.id)], 5, 900).await?;
+    sec::prove_mfa(&app, &mut tx, &user, &input.code).await?;
+    sec::release(&app, permits).await?;
+    let live: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM stream_credentials WHERE owner_id=$1 AND revoked_at IS NULL)",
+    )
+    .bind(&user.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let action = if live { "reveal" } else { "create" };
+    Ok(Json(issue_key(&app, tx, user, action).await?))
 }
 pub async fn create_key(
     State(app): State<App>,
@@ -1119,6 +1164,7 @@ pub fn routes() -> Router<App> {
         .route("/api/me/stream/key", post(create_key))
         .route("/api/me/stream/key/reveal", post(reveal_key))
         .route("/api/me/stream/key/rotate", post(rotate_key))
+        .route("/api/v1/stream/key", post(app_key))
         .route("/api/me/stream/stop", post(stop))
         .route("/api/internal/srs/{action}", post(hook))
         .merge(detect::routes())
