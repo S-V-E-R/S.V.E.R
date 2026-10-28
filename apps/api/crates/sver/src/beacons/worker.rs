@@ -128,7 +128,7 @@ async fn fence(db: &mut PgConnection, job: &Job, token: &str) -> Res<()> {
 }
 
 /// The temporary working directory is removed however processing ends.
-struct Scratch(PathBuf);
+pub struct Scratch(pub PathBuf);
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);

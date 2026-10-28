@@ -54,6 +54,8 @@ pub const VIEWER_ACT: (&str, &str) = (
     "viewer:act",
     "Count you as watching, vote in polls and press CrowdSync buttons when you choose to, spending your Engagement Valor",
 );
+/// Only S.V.E.R Desktop may ask for this: it uploads clips the streamer exported from their Library.
+pub const CLIPS_UPLOAD: (&str, &str) = ("clips:upload", "Upload clips to your channel");
 const MAX_APPS: i64 = 10;
 const ACCESS_SECONDS: i64 = 3600;
 const REFRESH_DAYS: i32 = 60;
@@ -91,7 +93,7 @@ fn parse_scopes(scope: &str, desktop: bool) -> Option<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for s in scope.split_whitespace() {
         if !(SCOPES.iter().any(|(k, _)| *k == s)
-            || desktop && (s == STREAM_KEY.0 || s == VIEWER_ACT.0))
+            || desktop && (s == STREAM_KEY.0 || s == VIEWER_ACT.0 || s == CLIPS_UPLOAD.0))
         {
             return None;
         }
@@ -697,7 +699,7 @@ async fn device_lookup(
     let (name, owner, scopes, network, icon) = pending(&app, &code).await?;
     let described: Vec<Value> = scopes
         .iter()
-        .map(|s| json!({"scope": s, "text": SCOPES.iter().chain([&STREAM_KEY, &VIEWER_ACT]).find(|(k, _)| k == s).map_or("", |x| x.1)}))
+        .map(|s| json!({"scope": s, "text": SCOPES.iter().chain([&STREAM_KEY, &VIEWER_ACT, &CLIPS_UPLOAD]).find(|(k, _)| k == s).map_or("", |x| x.1)}))
         .collect();
     Ok(Json(
         json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described, "network": network}),

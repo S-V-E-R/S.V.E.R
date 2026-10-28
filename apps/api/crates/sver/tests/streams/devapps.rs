@@ -462,7 +462,7 @@ async fn desktop(e: &Env) {
         .await;
     let ask = [
         ("client_id", client.as_str()),
-        ("scope", "user:read stream:key viewer:act"),
+        ("scope", "user:read stream:key viewer:act clips:upload"),
     ];
     let (status, started) = raw(e, "POST", "/api/oauth/device", Some(&ask), &[]).await;
     assert_eq!(status, StatusCode::OK, "{started}");
@@ -497,7 +497,10 @@ async fn desktop(e: &Env) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{tokens}");
-    assert_eq!(tokens["scope"], "user:read stream:key viewer:act");
+    assert_eq!(
+        tokens["scope"],
+        "user:read stream:key viewer:act clips:upload"
+    );
     let bearer = format!("Bearer {}", tokens["access_token"].as_str().unwrap());
     let post = |path: String, body: Value| {
         let (client, bearer) = (client.clone(), bearer.clone());
@@ -545,6 +548,14 @@ async fn desktop(e: &Env) {
     .await;
     assert_eq!(status, StatusCode::OK, "{beat}");
     assert_eq!(beat["recorded"], false);
+    // Clip uploads take the desktop token (clips:upload) with no Origin; here the title is wrong,
+    // so a 400 shows the token got past sign-in (tests/streams/clip_uploads.rs covers the rest).
+    let (status, _) = post(
+        "/api/me/clips".into(),
+        json!({"title": "", "request_id": uuid::Uuid::new_v4().to_string()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     // Studio's own key tests start from no key.
     e.sql("DELETE FROM stream_credentials WHERE owner_id='stream-owner'")
         .await;

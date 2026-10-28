@@ -93,6 +93,7 @@ pub mod wall;
 /// Endpoints an app may call with a person's bearer token (docs/DEVELOPER_PLATFORM.md).
 fn app_callable(path: &str) -> bool {
     path.starts_with("/api/hooks")
+        || path.starts_with("/api/me/clips")
         || matches!(
             path,
             "/api/me/raids" | "/api/me/stream" | "/api/v1/stream/key"

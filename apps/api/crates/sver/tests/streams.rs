@@ -36,6 +36,8 @@ mod boards;
 mod chat;
 #[path = "streams/chat_social.rs"]
 mod chat_social;
+#[path = "streams/clip_uploads.rs"]
+mod clip_uploads;
 #[path = "streams/commands.rs"]
 mod commands;
 #[path = "streams/crowd.rs"]
