@@ -95,8 +95,9 @@ fn app_callable(path: &str) -> bool {
     path.starts_with("/api/hooks")
         || matches!(
             path,
-            "/api/me/raids" | "/api/me/stream" | "/api/v1/stream/key"
+            "/api/me/raids" | "/api/me/stream" | "/api/v1/stream/key" | "/api/me/overlays/activity"
         )
+        || (path.starts_with("/api/channels/") && path.contains("/chat/messages/"))
         || (path.starts_with("/api/channels/")
             && [
                 "/polls",
@@ -106,6 +107,8 @@ fn app_callable(path: &str) -> bool {
                 "/vote",
                 "/board/press",
                 "/live/beat",
+                "/chatters",
+                "/chat/restrictions",
             ]
             .iter()
             .any(|end| path.ends_with(end)))

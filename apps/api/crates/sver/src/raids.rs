@@ -122,8 +122,12 @@ async fn raid_json(app: &App, id: &str) -> Res<Value> {
 }
 
 /// DELETE /api/me/raids: the raider cancels during the countdown.
-async fn cancel(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
-    let user = signed_in(&app, &jar).await?;
+async fn cancel(
+    State(app): State<App>,
+    headers: axum::http::HeaderMap,
+    jar: CookieJar,
+) -> Res<Json<Value>> {
+    let user = crate::devapps::actor(&app, &headers, &jar, "channel:run").await?;
     let cancelled: Option<String> = sqlx::query_scalar("UPDATE raids SET status='cancelled' WHERE raider_id=$1 AND status='countdown' AND execute_at>now() RETURNING id")
         .bind(&user.id)
         .fetch_optional(&app.db)
