@@ -333,6 +333,36 @@ pub async fn exercise(e: &Env) {
 
     // A ban stops chat and signed-in playback; logged-out viewing still gets playback.
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('mod-b','stream-owner','pub-mod',1,'LIVE','s','v','c',now(),now(),now()+interval '15 seconds')").await;
+
+    // The viewer list names people who chatted during this broadcast, for the owner and mods.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(say(e, &chatter, "live now").await.0, StatusCode::OK);
+    let (status, list) = owner(e, "GET", &format!("{BASE}/chatters"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let names: Vec<&str> = list["chatters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["username"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        ["ModChatter"],
+        "earlier chat and the owner aren't listed: {list}"
+    );
+    assert_eq!(list["watching"], 0);
+    assert_eq!(
+        call(
+            e,
+            "GET",
+            &format!("{BASE}/chatters"),
+            Some(&outsider),
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(
         restrict(e, &moderator, "ModChatter", "ban", None).await,
         StatusCode::OK

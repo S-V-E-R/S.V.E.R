@@ -510,12 +510,13 @@ pub struct Reason {
 }
 pub async fn delete_message(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path((name, id)): Path<(String, String)>,
     Json(input): Json<Reason>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
-    let (user, role) = actor(&app, &jar, &channel).await?;
+    let (user, role) = actor_any(&app, &headers, &jar, &channel, "channel:moderate").await?;
     let reason = delete_reason(&input.reason)?;
     let author: String = sqlx::query_scalar(
         "SELECT author_id FROM chat_messages WHERE id=$1 AND channel_id=$2 AND squad_id IS NULL",
@@ -572,12 +573,13 @@ pub struct Restrict {
 }
 pub async fn restrict(
     State(app): State<App>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Path(name): Path<String>,
     Json(input): Json<Restrict>,
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
-    let (user, role) = actor(&app, &jar, &channel).await?;
+    let (user, role) = actor_any(&app, &headers, &jar, &channel, "channel:moderate").await?;
     // Act first, review later: without a reason it takes effect now and waits for review.
     let review = input.reason.trim().is_empty();
     let reason = optional_reason(&input.reason, NO_REASON_YET)?;
@@ -1019,8 +1021,51 @@ pub async fn dismiss(
     Ok(Json(json!({"moderator": false})))
 }
 
+/// GET /api/channels/{username}/chatters: the owner's or a moderator's viewer list for the live
+/// stream (S.V.E.R Desktop's dock, `channel:read`). Like Twitch's, it names only people who
+/// chatted during this broadcast, which chat already shows; everyone else is a count.
+async fn chatters(
+    State(app): State<App>,
+    headers: axum::http::HeaderMap,
+    jar: CookieJar,
+    Path(name): Path<String>,
+) -> Res<Json<Value>> {
+    let channel = channel(&app, &name).await?;
+    actor_any(&app, &headers, &jar, &channel, "channel:read").await?;
+    let rows: Vec<(String, String, i64, DateTime<Utc>, bool)> = sqlx::query_as(
+        "SELECT u.username, u.display_name, count(*), max(m.created_at),
+            EXISTS(SELECT 1 FROM channel_moderators d WHERE d.channel_id=$1 AND d.user_id=u.id)
+         FROM broadcasts b
+         JOIN chat_messages m ON m.channel_id=$1 AND m.created_at>=b.started_at
+         JOIN channel_users u ON u.id=m.author_id
+         WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING')
+           AND m.author_id<>$1 AND m.origin IS NULL AND u.deleted_at IS NULL
+         GROUP BY u.id, u.username, u.display_name ORDER BY max(m.created_at) DESC LIMIT 500",
+    )
+    .bind(&channel)
+    .fetch_all(&app.db)
+    .await?;
+    let watching: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM broadcasts b JOIN playback_leases l ON l.broadcast_id=b.id
+         WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING') AND l.expires_at>now()
+           AND l.level IN ('counted','trusted')",
+    )
+    .bind(&channel)
+    .fetch_one(&app.db)
+    .await?;
+    let chatters: Vec<Value> = rows
+        .into_iter()
+        .map(|(username, display, messages, last, moderator)| {
+            json!({"username": username, "display_name": display, "messages": messages,
+                "last_at": last, "role": if moderator { "moderator" } else { "viewer" }})
+        })
+        .collect();
+    Ok(Json(json!({"chatters": chatters, "watching": watching})))
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
+        .route("/api/channels/{username}/chatters", get(chatters))
         .route("/api/channels/{username}/chat/moderation", get(view))
         .route("/api/channels/{username}/chat/settings", put(save_settings))
         .route("/api/channels/{username}/chat/protect", put(protect))
