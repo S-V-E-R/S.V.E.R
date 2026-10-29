@@ -105,6 +105,7 @@ async fn process(app: &App, job: &Job) -> Res<bool> {
         "THUMBNAIL" => thumbnail(app, job).await.map(|_| true),
         "ASSEMBLE" => assemble(app, job).await.map(|_| true),
         "DOWNLOAD" => mp4(app, job, true).await.map(|_| true),
+        "UPLOAD" => upload(app, job).await.map(|_| true),
         "DELETE" => remove(app, job).await,
         "FRAMES" => {
             let video = load(&mut *app.db.acquire().await?, &job.video_id).await?;
@@ -372,6 +373,160 @@ async fn mp4(app: &App, job: &Job, download: bool) -> Res<()> {
         finish_cut(app, job, Some(&key)).await
     }
 }
+/// An uploaded clip (videos/upload.rs): ffprobe checks it, then FFmpeg copies its H.264 video and
+/// first audio track into a faststart MP4 without metadata, chapters or other streams. A file
+/// that fails the check fails the clip (the streamer sees why); storage trouble retries.
+async fn upload(app: &App, job: &Job) -> Res<()> {
+    let video = load(&mut *app.db.acquire().await?, &job.video_id).await?;
+    if video.status != "PROCESSING" {
+        return Ok(());
+    }
+    let source = job.object_key.as_deref().ok_or_else(Fail::internal)?;
+    let storage = &app.config.videos.storage;
+    let length = storage.head(&app.http, source).await?.unwrap_or(0);
+    if length == 0 || length > super::upload::MAX_UPLOAD_BYTES {
+        return refuse(app, job, source, "The uploaded file is missing or too big.").await;
+    }
+    let dir = std::env::temp_dir().join(format!("sver-upload-{}", job.lease_token));
+    std::fs::create_dir_all(&dir).map_err(|_| Fail::internal())?;
+    let _scratch = crate::beacons::worker::Scratch(dir.clone());
+    let (input, output) = (dir.join("in.mp4"), dir.join("out.mp4"));
+    let mut file = tokio::fs::File::create(&input)
+        .await
+        .map_err(|_| Fail::internal())?;
+    let mut at = 0;
+    while at < length {
+        let end = (at + 8 * 1024 * 1024 - 1).min(length - 1);
+        file.write_all(&storage.range(&app.http, source, at, end).await?)
+            .await
+            .map_err(|_| Fail::internal())?;
+        at = end + 1;
+    }
+    file.flush().await.map_err(|_| Fail::internal())?;
+    let probe = tokio::time::timeout(
+        Duration::from_secs(60),
+        Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+            ])
+            .arg(&input)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| Fail::unavailable("Clip processing will retry."))?
+    .map_err(|_| Fail::unavailable("Media processing is unavailable."))?;
+    let checked = serde_json::from_slice(&probe.stdout)
+        .ok()
+        .filter(|_| probe.status.success())
+        .ok_or("That file isn't an MP4 clip we can read.")
+        .and_then(|info| super::upload::check(&info));
+    let duration = match checked {
+        Ok(duration) => duration,
+        Err(reason) => return refuse(app, job, source, reason).await,
+    };
+    let remux = tokio::time::timeout(
+        Duration::from_secs(300),
+        Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i"])
+            .arg(&input)
+            .args([
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-c",
+                "copy",
+                "-map_metadata",
+                "-1",
+                "-map_chapters",
+                "-1",
+                "-movflags",
+                "+faststart",
+                "-f",
+                "mp4",
+            ])
+            .arg(&output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .status(),
+    )
+    .await
+    .map_err(|_| Fail::unavailable("Clip processing will retry."))?
+    .map_err(|_| Fail::unavailable("Media processing is unavailable."))?;
+    if !remux.success() {
+        return refuse(
+            app,
+            job,
+            source,
+            "That clip couldn't be processed. Export it again.",
+        )
+        .await;
+    }
+    let key = format!("{}/{}.mp4", job.video_id, job.lease_token);
+    sqlx::query("INSERT INTO video_objects(key,video_id,content_type,delete_after) VALUES($1,$2,'video/mp4',now()+interval '1 day') ON CONFLICT DO NOTHING").bind(&key).bind(&job.video_id).execute(&app.db).await?;
+    let upload = storage.begin_mp4(&app.http, &key).await?;
+    let opened = tokio::fs::File::open(&output)
+        .await
+        .map_err(|_| Fail::internal())?;
+    let bytes = match storage
+        .finish_mp4(&app.http, &key, upload.as_deref(), opened)
+        .await
+    {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            if let Some(upload) = upload {
+                let _ = storage.abort_mp4(&app.http, &key, &upload).await;
+            }
+            return Err(error);
+        }
+    };
+    let mut tx = app.db.begin().await?;
+    fence(&mut tx, job).await?;
+    sqlx::query("UPDATE video_objects SET ready=true,bytes=$2 WHERE key=$1")
+        .bind(&key)
+        .bind(bytes as i64)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE videos SET duration_ms=$2,source_end_ms=$2,ended_at=started_at+make_interval(secs=>$2/1000.0) WHERE id=$1")
+        .bind(&job.video_id)
+        .bind(duration)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    finish_cut(app, job, Some(&key)).await?;
+    // The original is no longer needed once the clip is published.
+    sqlx::query("UPDATE video_objects SET delete_after=now() WHERE key=$1")
+        .bind(source)
+        .execute(&app.db)
+        .await?;
+    Ok(())
+}
+async fn refuse(app: &App, job: &Job, source: &str, reason: &str) -> Res<()> {
+    let mut tx = app.db.begin().await?;
+    fence(&mut tx, job).await?;
+    sqlx::query("UPDATE videos SET status='FAILED',failure=$2,revision=revision+1 WHERE id=$1 AND status='PROCESSING'")
+        .bind(&job.video_id)
+        .bind(reason)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE video_objects SET delete_after=now() WHERE key=$1")
+        .bind(source)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    eprintln!("video_event=upload outcome=refused");
+    Ok(())
+}
 /// Segments fed to the thumbnail decoder: at least 6 s of video, so keyframes up to 6 s apart
 /// still give a frame.
 const THUMBNAIL_SEGMENTS: usize = 6;
@@ -390,15 +545,24 @@ async fn thumbnail(app: &App, job: &Job) -> Res<()> {
             end > wanted
         })
         .unwrap_or(source.len().saturating_sub(1));
-    if source.is_empty() {
-        return Err(Fail::unavailable("Thumbnail source is not ready."));
-    }
-    // A segment can start mid-GOP and hold no keyframe (keyframes further apart than the 2 s
-    // segments), so decode from the wanted one onward until the next keyframe.
-    let mut bytes = Vec::new();
-    for s in source.iter().skip(first).take(THUMBNAIL_SEGMENTS) {
-        bytes.extend(object(app, &s.object_key).await?);
-    }
+    // An uploaded clip (or one whose segments are gone) has only its MP4: seek in that instead.
+    let (format, skip, bytes) = match (&video.mp4_key, source.is_empty()) {
+        (Some(key), true) => (
+            "mp4",
+            format!("{:.3}", wanted as f64 / 1000.0),
+            object(app, key).await?,
+        ),
+        (None, true) => return Err(Fail::unavailable("Thumbnail source is not ready.")),
+        _ => {
+            // A segment can start mid-GOP and hold no keyframe (keyframes further apart than the
+            // 2 s segments), so decode from the wanted one onward until the next keyframe.
+            let mut bytes = Vec::new();
+            for s in source.iter().skip(first).take(THUMBNAIL_SEGMENTS) {
+                bytes.extend(object(app, &s.object_key).await?);
+            }
+            ("mpegts", "0".into(), bytes)
+        }
+    };
     let mut child = Command::new("ffmpeg")
         .args([
             "-hide_banner",
@@ -407,8 +571,10 @@ async fn thumbnail(app: &App, job: &Job) -> Res<()> {
             "-nostdin",
             "-skip_frame",
             "nokey",
+            "-ss",
+            &skip,
             "-f",
-            "mpegts",
+            format,
             "-i",
             "pipe:0",
             "-frames:v",
@@ -588,6 +754,12 @@ pub async fn maintain(app: &App) -> Res<()> {
     let due:Vec<String>=sqlx::query_scalar("SELECT id FROM videos v WHERE status='READY' AND (expires_at<=now() OR (kind='VOD' AND NOT recording)) AND NOT EXISTS(SELECT 1 FROM video_holds WHERE video_id=v.id) ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED").fetch_all(&mut *tx).await?;
     for id in due {
         request_delete(&mut tx, &id, true).await?;
+    }
+    // A clip upload never completed: its signed upload link expired an hour after it was made.
+    let abandoned: Vec<String> = sqlx::query_scalar("SELECT id FROM videos WHERE status='UPLOADING' AND created_at<now()-interval '2 hours' LIMIT 100 FOR UPDATE SKIP LOCKED")
+        .fetch_all(&mut *tx).await?;
+    for id in abandoned {
+        request_delete(&mut tx, &id, false).await?;
     }
     // Videos saved before frame matching, or never sampled live, are compared once.
     let unindexed: Vec<String> = sqlx::query_scalar("SELECT id FROM videos v WHERE status='READY' AND NOT EXISTS(SELECT 1 FROM frame_sources WHERE source='video:'||v.id) AND NOT EXISTS(SELECT 1 FROM video_jobs j WHERE j.video_id=v.id AND j.kind IN ('FRAMES','DELETE')) ORDER BY created_at LIMIT 20")

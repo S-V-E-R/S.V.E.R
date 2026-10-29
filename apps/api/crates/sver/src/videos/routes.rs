@@ -5,13 +5,13 @@ use axum::{
     routing::{get, post},
 };
 
-fn visibility(value: &str) -> Res<()> {
+pub(super) fn visibility(value: &str) -> Res<()> {
     if !matches!(value, "PUBLIC" | "SUBSCRIBERS" | "PRIVATE") {
         return Err(Fail::bad("Choose Public, Subscribers or Private."));
     }
     Ok(())
 }
-fn title(value: &str, limit: usize) -> Res<String> {
+pub(super) fn title(value: &str, limit: usize) -> Res<String> {
     let value = crate::text::clean(value, "title", false)?;
     if value.is_empty() || value.chars().count() > limit {
         return Err(Fail::bad(format!("Use a title of 1–{limit} characters.")));
@@ -570,6 +570,7 @@ pub fn routes() -> Router<App> {
         .merge(super::sharing::routes())
         .merge(super::copyright::routes())
         .merge(super::review::routes())
+        .merge(super::upload::routes())
         .route("/api/me/videos", get(mine).put(save_settings))
         .route("/api/channels/{name}/videos", get(channel))
         .route("/api/clips/latest", get(latest))

@@ -12,6 +12,7 @@ pub mod copyright;
 pub mod review;
 mod sharing;
 mod spotlight;
+pub mod upload;
 mod views;
 use crate::{
     App, auth, moderation,
@@ -63,6 +64,8 @@ pub struct Video {
     pub download_key: Option<String>,
     pub download_until: Option<DateTime<Utc>>,
     pub beacon_approved: bool,
+    /// Why an uploaded clip was refused (videos/upload.rs).
+    pub failure: Option<String>,
 }
 #[derive(sqlx::FromRow, Serialize, Deserialize)]
 pub struct Settings {
