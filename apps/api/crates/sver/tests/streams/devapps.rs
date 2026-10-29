@@ -462,7 +462,10 @@ async fn desktop(e: &Env) {
         .await;
     let ask = [
         ("client_id", client.as_str()),
-        ("scope", "user:read stream:key viewer:act clips:upload"),
+        (
+            "scope",
+            "user:read stream:key viewer:act channel:read events:private clips:upload",
+        ),
     ];
     let (status, started) = raw(e, "POST", "/api/oauth/device", Some(&ask), &[]).await;
     assert_eq!(status, StatusCode::OK, "{started}");
@@ -499,7 +502,7 @@ async fn desktop(e: &Env) {
     assert_eq!(status, StatusCode::OK, "{tokens}");
     assert_eq!(
         tokens["scope"],
-        "user:read stream:key viewer:act clips:upload"
+        "user:read stream:key viewer:act channel:read events:private clips:upload"
     );
     let bearer = format!("Bearer {}", tokens["access_token"].as_str().unwrap());
     let post = |path: String, body: Value| {
@@ -556,6 +559,35 @@ async fn desktop(e: &Env) {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // The dock reads the viewer list and the activity feed with the same token.
+    for path in [
+        "/api/channels/Streamer/chatters",
+        "/api/me/overlays/activity",
+    ] {
+        let response = sver::router(e.app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("sver-client-id", &client)
+                    .header("authorization", &bearer)
+                    .extension(ConnectInfo(
+                        "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{path}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
     // Studio's own key tests start from no key.
     e.sql("DELETE FROM stream_credentials WHERE owner_id='stream-owner'")
         .await;

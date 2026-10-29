@@ -270,8 +270,13 @@ async fn test(State(app): State<App>, jar: CookieJar, Json(input): Json<Test>) -
 /// GET /api/me/overlays/activity: the channel's last 50 alerts for the OBS dock (docs/OBS.md),
 /// newest first, with follows from the last 7 days that don't count yet marked `pending`. People
 /// the streamer has blocked since are left out.
-async fn activity(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
-    let me = profiles::signed_in(&app, &jar).await?;
+async fn activity(
+    State(app): State<App>,
+    headers: axum::http::HeaderMap,
+    jar: CookieJar,
+) -> Res<Json<Value>> {
+    // S.V.E.R Desktop's activity feed reads it with `events:private`.
+    let me = crate::devapps::actor(&app, &headers, &jar, "events:private").await?;
     let rows: Vec<(i64, String, Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as("SELECT a.id,a.kind,a.data,a.created_at FROM stream_activity a WHERE a.channel_id=$1
         AND NOT EXISTS(SELECT 1 FROM user_blocks k JOIN users b ON b.id=k.blocked_id WHERE k.blocker_id=$1 AND lower(b.username)=lower(coalesce(a.data->>'user',a.data->>'from')))
         ORDER BY a.id DESC LIMIT 50")
