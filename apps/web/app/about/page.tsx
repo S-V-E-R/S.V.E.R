@@ -56,7 +56,7 @@ export default function AboutPage() {
       <h2 id="open" className="rule-heading">Built in the open<span className="dia" aria-hidden="true" /></h2>
       <div className="about-prose">
         <p>S.V.E.R is open source under the GNU AGPL. Anyone can read the code, report a problem or contribute. Live streaming, factions, MAGNet discovery, subscriptions, past broadcasts, clips and Beacons are all live; the <Link href="/roadmap">roadmap</Link> shows what is being built next.</p>
-        <p>The money terms are public on <Link href="/help/creator-tiers">Creator tiers and payouts</Link>, and the <Link href="/guidelines">Community Guidelines</Link> explain how rules are enforced and appealed. We never use your streams, clips or chat to train AI (see the <Link href="/terms">Terms</Link>).</p>
+        <p>The money terms are public on <Link href="/help/creator-tiers">Creator tiers and payouts</Link>, and the <Link href="/guidelines">Community Guidelines</Link> explain how rules are enforced and appealed. <Link href="/help/safety">Safety and fair discovery</Link> lists every moderation tool and how MAGNet keeps viewbots out. We never use your streams, clips or chat to train AI (see the <Link href="/terms">Terms</Link>).</p>
         <p>S.V.E.R is built with AI assistance, mostly Anthropic&apos;s Claude, with Joe deciding what gets built and what ships. Changes Claude helped write are credited to it in the commit history on GitHub.</p>
       </div>
       <div className="about-links">
