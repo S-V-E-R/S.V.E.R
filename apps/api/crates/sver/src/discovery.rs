@@ -194,6 +194,16 @@ pub async fn turns(db: &mut PgConnection, owner: &str) -> Res<Value> {
         .bind(owner).bind(ROTATE_SECONDS as f64).fetch_one(db).await?)
 }
 
+/// When a streamer was on top of Live Now since `from` (turns someone saw), as (start, end).
+pub async fn turn_windows(
+    db: &mut PgConnection,
+    owner: &str,
+    from: DateTime<Utc>,
+) -> Res<Vec<(DateTime<Utc>, DateTime<Utc>)>> {
+    Ok(sqlx::query_as("SELECT to_timestamp(r.slot*$3),to_timestamp((r.slot+1)*$3) FROM rotation_turns r JOIN broadcasts b ON b.id=r.broadcast_id WHERE b.owner_id=$1 AND to_timestamp((r.slot+1)*$3)>$2 ORDER BY r.slot")
+        .bind(owner).bind(from).bind(ROTATE_SECONDS as f64).fetch_all(db).await?)
+}
+
 /// The home genres of a faction (Module 4's territories at season start).
 async fn home_genres(db: &mut PgConnection, faction: Option<&str>) -> Res<Vec<String>> {
     let Some(faction) = faction else {

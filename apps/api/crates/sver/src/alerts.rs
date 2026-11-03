@@ -194,7 +194,7 @@ pub async fn fan_out(app: &App) -> Res<()> {
             let page = format!("{}/unsubscribe?token={token}", app.config.origin);
             let subject = format!("{display_name} is live on S.V.E.R");
             let text = format!(
-                "{subject}\n\nWatch: {}/{username}\n\nYou follow this channel and turned on go-live emails. Stop these emails: {page}\nYou can also change alerts in your notification settings: {}/settings/notifications\n\n{}",
+                "{subject}\n\nWatch: {}/{username}?src=alert\n\nYou follow this channel and turned on go-live emails. Stop these emails: {page}\nYou can also change alerts in your notification settings: {}/settings/notifications\n\n{}",
                 app.config.origin, app.config.origin, app.config.mail_postal_address
             );
             let payload = json!({"to":[email],"subject":subject,"text":text,
@@ -243,7 +243,7 @@ pub async fn deliver(app: &App) -> Res<()> {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok());
         let payload = json!({"id":job,"tag":format!("sver-live-{}",username.to_lowercase()),
-            "title":format!("{display_name} is live"),"body":"Watch now on S.V.E.R.","url":format!("/{username}")});
+            "title":format!("{display_name} is live"),"body":"Watch now on S.V.E.R.","url":format!("/{username}?src=alert")});
         let sent = match &input {
             // A failed send (timeout, push service down) retries; only the service saying the
             // subscription is gone removes it.

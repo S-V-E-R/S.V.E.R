@@ -11,7 +11,7 @@ export function StreamCard({ s, viewerFaction, fresh = false, languages }: { s: 
   const foreign = !!s.language && !!languages && !languages.includes(s.language);
   const f = factionOf(s.faction);
   const ally = !!viewerFaction && s.faction === viewerFaction;
-  return <Link href={`/${s.username}/live`} className={ally ? "stream-card ally" : "stream-card"}>
+  return <Link href={`/${s.username}/live`} className={ally ? "stream-card ally" : "stream-card"} data-broadcast={s.broadcast_id}>
     <span className="stream-thumb">
       <LiveThumbnail src={s.thumbnail} label={s.category ?? s.display_name} />
       <span className="stream-tags"><span className="tag-live">Live</span>{s.mature && <span className="tag-label mature-tag">Mature</span>}{ally && <span className="tag-ally">Ally</span>}{s.label && <span className="tag-label">{s.label}</span>}{foreign && <span className="tag-label">{languageName(s.language!)}</span>}</span>

@@ -30,7 +30,7 @@ export function Rotation({ streams, viewerFaction, reasons = {} }: { streams: Li
     <div className="rotation-row">
     {n > 1 && <span className="rotation-peek" aria-hidden="true"><LiveThumbnail src={prev.thumbnail} label={prev.category ?? prev.display_name} /></span>}
     <div className="rotation-card frame" role="group" aria-roledescription="slide" aria-label={`${index % n + 1} of ${n}: ${cur.display_name}`}>
-      <Link href={`/${cur.username}/live`} className="rotation-stage" aria-label={`Watch ${cur.display_name}`}>
+      <Link href={`/${cur.username}/live`} className="rotation-stage" aria-label={`Watch ${cur.display_name}`} data-broadcast={cur.broadcast_id}>
         <LivePreview key={cur.broadcast_id ?? cur.username} username={cur.username} thumbnail={cur.thumbnail} label={cur.category ?? cur.display_name} />
         <span className="stream-tags"><span className="tag-live">Live</span>{ally && <span className="tag-ally">Ally</span>}</span>
       </Link>

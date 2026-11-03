@@ -26,6 +26,8 @@ mod adnet;
 mod ads;
 #[path = "streams/alerts.rs"]
 mod alerts;
+#[path = "streams/analytics.rs"]
+mod analytics;
 #[path = "streams/bans.rs"]
 mod bans;
 #[path = "streams/beacons.rs"]
@@ -752,6 +754,7 @@ async fn exercise(e: &Env) {
     discovery::exercise(e).await;
     plays::exercise(e).await;
     magnet::exercise(e).await;
+    analytics::exercise(e).await;
     ravens_eye::exercise(e).await;
     achievements::exercise(e).await;
     lights::exercise(e).await;

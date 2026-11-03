@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SeenCards } from "../components/SeenCards";
 import { Rotation } from "../components/home/Rotation";
 import { RecentChannels, SectionHead, StreamGrid } from "../components/home/Shelves";
 import type { LiveCard, Recent } from "../components/home/types";
@@ -48,7 +49,7 @@ export default async function Home() {
   const rotation = [...spotlit.map(s => s.stream!), ...live.filter(s => !reasons[s.username])].slice(0, 8);
   const staffPicks = (home?.spotlights ?? []).filter(s => !s.stream && s.user);
 
-  return <div className="home">
+  return <div className="home"><SeenCards surface="home" />
     {war?.season?.finished && war.season.winners.length
       ? <SeasonReveal war={war} season={war.season} faction={isFaction(viewerFaction) ? viewerFaction : null} signedIn={!!account} />
       : <FrontLine war={war} faction={isFaction(viewerFaction) ? viewerFaction : null} signedIn={!!account} />}

@@ -29,6 +29,9 @@ pub async fn erase(db: &mut PgConnection, user_id: &str) -> Result<()> {
         .bind(user_id)
         .execute(&mut *db)
         .await?;
+    crate::analytics::forget_viewer(db, user_id)
+        .await
+        .map_err(|_| crate::Error::internal())?;
     // Media they own, and fan art others submitted to their channel, is queued for storage deletion.
     // Setup photos are queued too, except content-addressed keys another user's setup photo still uses.
     sqlx::query("UPDATE media_objects m SET delete_after=now() WHERE (m.owner_id=$1 OR m.key LIKE ANY(SELECT image_key||'%' FROM fan_art WHERE channel_id=$1 OR submitter_id=$1) OR m.key LIKE ANY(SELECT image_key||'/%' FROM setup_photos WHERE user_id=$1)) AND NOT EXISTS(SELECT 1 FROM setup_photos o WHERE o.user_id<>$1 AND m.key LIKE o.image_key||'/%')").bind(user_id).execute(&mut *db).await?;

@@ -17,6 +17,7 @@ pub mod adnet;
 pub mod ads;
 pub mod adserve;
 pub mod alerts;
+pub mod analytics;
 pub mod auth;
 pub mod bans;
 pub mod beacons;
@@ -512,6 +513,7 @@ pub fn router(app: App) -> Router {
         .merge(alerts::routes())
         .merge(raids::routes())
         .merge(discovery::routes())
+        .merge(analytics::routes())
         .merge(magnet::routes())
         .merge(staff_streams::routes())
         .merge(factions::routes())

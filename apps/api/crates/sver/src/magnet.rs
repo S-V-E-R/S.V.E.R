@@ -1016,6 +1016,15 @@ async fn save(
         .bind(&user.id).bind(input.opt_out).bind(input.chat_merge).execute(&app.db).await?;
     mine(State(app), jar).await
 }
+/// When a streamer was featured on any MAGNet channel since `from`, as (start, end).
+pub async fn feature_windows(
+    db: &mut PgConnection,
+    owner: &str,
+    from: DateTime<Utc>,
+) -> Res<Vec<(DateTime<Utc>, DateTime<Utc>)>> {
+    Ok(sqlx::query_as("SELECT started_at,coalesce(ended_at,now()) FROM magnet_features WHERE owner_id=$1 AND coalesce(ended_at,now())>$2 ORDER BY started_at")
+        .bind(owner).bind(from).fetch_all(db).await?)
+}
 /// A win the game detector saw on a live stream (docs/MAGNET.md "What counts as a moment"); a day's are kept.
 pub async fn game_moment(app: &App, broadcast: &str, title: &str) -> Res<()> {
     sqlx::query("WITH old AS (DELETE FROM game_moments WHERE at<now()-interval '1 day') INSERT INTO game_moments(broadcast_id,title) VALUES($1,$2)")
