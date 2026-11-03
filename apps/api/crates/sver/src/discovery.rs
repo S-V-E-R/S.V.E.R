@@ -163,8 +163,35 @@ async fn leader(db: &mut PgConnection, streams: &[Stream], slot: i64) -> Res<Opt
         .bind(&reached).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO discovery_rotation(singleton,slot,leader_started_at,leader_id) VALUES(true,$1,$2,$3) ON CONFLICT(singleton) DO UPDATE SET slot=greatest(discovery_rotation.slot,EXCLUDED.slot),leader_started_at=EXCLUDED.leader_started_at,leader_id=EXCLUDED.leader_id")
         .bind(slot.max(at)).bind(current.as_ref().map(|c| c.0)).bind(current.as_ref().map(|c| &c.1)).execute(&mut *tx).await?;
+    // The turn someone is seeing now, for the streamer's own stats; 30 days are kept.
+    if let Some((_, broadcast)) = &current {
+        let new = sqlx::query(
+            "INSERT INTO rotation_turns(slot,broadcast_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(slot.max(at))
+        .bind(broadcast)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            > 0;
+        if new {
+            sqlx::query("DELETE FROM rotation_turns WHERE slot<$1")
+                .bind(slot.max(at) - 30 * 86_400 / ROTATE_SECONDS)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     tx.commit().await?;
     Ok(current)
+}
+
+/// A streamer's turns at the top of Live Now in the last 30 days (Creator Studio → MAGNet): how
+/// many someone saw, and new follows during a turn or the 10 minutes after it.
+pub async fn turns(db: &mut PgConnection, owner: &str) -> Res<Value> {
+    Ok(sqlx::query_scalar("WITH t AS (SELECT to_timestamp(r.slot*$2) AS s, to_timestamp((r.slot+1)*$2) AS e FROM rotation_turns r JOIN broadcasts b ON b.id=r.broadcast_id WHERE b.owner_id=$1)
+        SELECT jsonb_build_object('turns',(SELECT count(*) FROM t),'last',(SELECT max(s) FROM t),
+          'followed',(SELECT count(*) FROM follows w WHERE w.following_id=$1 AND EXISTS(SELECT 1 FROM t WHERE w.created_at BETWEEN t.s AND t.e+interval '10 minutes')))")
+        .bind(owner).bind(ROTATE_SECONDS as f64).fetch_one(db).await?)
 }
 
 /// The home genres of a faction (Module 4's territories at season start).

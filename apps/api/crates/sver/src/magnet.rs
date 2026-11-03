@@ -995,8 +995,9 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         'chatted',(SELECT count(DISTINCT m.author_id) FROM chat_messages m JOIN playback_leases l ON l.broadcast_id=f.broadcast_id AND l.magnet_lane=f.lane AND l.viewer_key='u:'||m.author_id WHERE m.channel_id=f.owner_id AND m.squad_id IS NULL AND m.created_at BETWEEN f.started_at AND coalesce(f.ended_at,now())+interval '10 minutes'))
         FROM magnet_features f LEFT JOIN faction_genres g ON g.id=f.lane WHERE f.owner_id=$1 AND f.started_at>now()-interval '30 days' ORDER BY f.started_at DESC LIMIT 50")
         .bind(&user.id).fetch_all(&mut *db).await?;
+    let live_now = crate::discovery::turns(&mut db, &user.id).await?;
     Ok(Json(
-        json!({"opt_out":opt_out,"chat_merge":chat_merge,"featured_now":now,"history":history}),
+        json!({"opt_out":opt_out,"chat_merge":chat_merge,"featured_now":now,"history":history,"live_now":live_now}),
     ))
 }
 #[derive(Deserialize)]

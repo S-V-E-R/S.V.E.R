@@ -98,7 +98,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
   const [highlight, setHighlight] = useState<number | null>(null);
   const [rewardsVersion, setRewardsVersion] = useState(0);
   const [notice, setNotice] = useState("");
-  // Spike protection: followers-only chat with an end time; moderators get a one-click prompt.
+  // Shield mode: followers-only chat (and its floors) with an end time; moderators get a one-click prompt on a spike.
   const [followersOnly, setFollowersOnly] = useState<string | null>(null);
   const [subsOnly, setSubsOnly] = useState(false);
   const [spike, setSpike] = useState(false);
@@ -160,8 +160,9 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     const result = await send<{ subs_only: boolean }>("PUT", `${path}/subs-only`, { on });
     if (result.ok) setSubsOnly(result.data.subs_only); else setError(result.error);
   }
-  async function protect(on: boolean) {
-    const result = await send<{ followers_only_until: string | null }>("PUT", `${path}/protect`, { on });
+  // Shield mode (docs/LIVE_STREAMS.md "Shield mode"): 10, 30 or 60 minutes, always ends by itself.
+  async function protect(on: boolean, minutes = 10) {
+    const result = await send<{ followers_only_until: string | null }>("PUT", `${path}/protect`, { on, minutes });
     if (result.ok) { setFollowersOnly(result.data.followers_only_until); setSpike(false); } else setError(result.error);
   }
 
@@ -363,10 +364,11 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     </aside>}
     {notice && <p className="chat-system" role="status">{notice}</p>}
     {linkedDown.map(text => <p key={text} className="chat-system" role="status">{text} <Link href="/studio/linked-chat">Linked chat settings</Link></p>)}
-    {followersOnly && <p className="chat-system" role="status">Followers-only chat until {time(followersOnly)} (followers of at least 10 minutes can chat).{canPin && <> <button type="button" className="small quiet" onClick={() => protect(false)}>End now</button></>}</p>}
+    {followersOnly && <p className="chat-system" role="status">Shield mode until {time(followersOnly)}: only followers of at least 10 minutes with accounts 7+ days old can chat, links are off and slow mode is on.{canPin && <> <button type="button" className="small quiet" onClick={() => protect(false)}>End now</button></>}</p>}
+    {canPin && !followersOnly && !spike && <p className="chat-system">Shield mode: {[10, 30, 60].map(m => <button key={m} type="button" className="small quiet" onClick={() => protect(true, m)} aria-label={`Shield mode for ${m} minutes`}>{m} min</button>)}</p>}
     {subsOnly ? <p className="chat-system" role="status">Subscriber-only chat.{canPin && <> <button type="button" className="small quiet" onClick={() => limitToSubs(false)}>Open to everyone</button></>}</p>
       : canPin && <p className="chat-system"><button type="button" className="small quiet" onClick={() => limitToSubs(true)}>Subscriber-only chat</button></p>}
-    {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Followers-only chat for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
+    {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Shield mode for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
     <ol className="chat-messages" ref={list} aria-live="polite">
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
       {messages.map(m => m.outside?.platform === "bot" ? <li key={m.id} className="chat-bot">

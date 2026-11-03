@@ -80,7 +80,7 @@ export default function LiveStreams({ catalogOnly = false }: { catalogOnly?: boo
           <p className="muted">{s.health.video_codec ?? "codec not measured"}{s.health.input_kbps != null && ` · ${Math.round(s.health.input_kbps)} Kbps`}{s.health.keyframe_seconds != null && ` · keyframes ${s.health.keyframe_seconds} s`}{s.health.b_frames != null && ` · B-frames ${s.health.b_frames ? "on" : "off"}`}
             {(s.health.codec_warning || s.health.bitrate_warning || s.health.keyframe_warning || s.health.b_frames) && <strong> · OBS warning</strong>}</p>
           {Object.keys(s.playback_problems ?? {}).length > 0 && <p className="muted">Viewer playback reports: {Object.entries(s.playback_problems ?? {}).map(([k, n]) => `${PROBLEM_NAMES[k] ?? k} ${n}`).join(" · ")}</p>}
-          {(s.open_reports > 0 || s.followers_only_until) && <p>{s.open_reports > 0 && <Link href="/admin/reports">{s.open_reports} open report{s.open_reports === 1 ? "" : "s"}</Link>}{s.followers_only_until && <span className="muted"> Followers-only chat on</span>}</p>}
+          {(s.open_reports > 0 || s.followers_only_until) && <p>{s.open_reports > 0 && <Link href="/admin/reports">{s.open_reports} open report{s.open_reports === 1 ? "" : "s"}</Link>}{s.followers_only_until && <span className="muted"> Shield mode on</span>}</p>}
           <div className="row">{s.mature_locked ? <span className="muted">Labeled mature by staff (locked until this broadcast ends)</span> : <button type="button" className="small quiet" onClick={() => lockMature(s)}>{s.mature ? "Lock the Mature label" : "Label mature and lock"}</button>}
           <button type="button" className="small quiet danger-text" onClick={() => stop(s)}>Stop stream</button></div>
         </li>)}</ul>}

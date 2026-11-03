@@ -1,5 +1,6 @@
 //! Staff stream operations (live list, audited stop, categories) and spike protection
-//! (the prompt flag, followers-only chat for 10 minutes, who can still chat, ending early).
+//! and shield mode (the prompt flag, followers-only chat for 10, 30 or 60 minutes, the link,
+//! slow-mode and account-age floors, refused raids, who can still chat, ending early).
 use super::Env;
 use super::bans::staff;
 use super::chat::{call, id, person};
@@ -24,6 +25,10 @@ pub async fn exercise(e: &Env) {
     let newcomer = person(e, "so-new", "OpsNewcomer", true).await;
     let regular = person(e, "so-fan", "OpsRegular", true).await;
     let fresh = person(e, "so-fresh", "OpsFresh", true).await;
+    let young = person(e, "so-young", "OpsYoung", true).await;
+    // Shield mode's account-age floor is 7 days, so the regular is an older account.
+    e.sql("UPDATE users SET created_at=now()-interval '30 days' WHERE id='so-fan'")
+        .await;
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,alert_state,health) VALUES('so-b','so-owner','so-b',1,'LIVE','s','v','c',now(),now(),now(),'skipped','{\"video_codec\":\"H264\",\"b_frames\":true}')").await;
 
     // The live list: staff only, with counts and health.
@@ -72,6 +77,19 @@ pub async fn exercise(e: &Env) {
         .0,
         StatusCode::FORBIDDEN
     );
+    // Shield mode runs for 10, 30 or 60 minutes only.
+    assert_eq!(
+        call(
+            e,
+            "PUT",
+            "/api/channels/OpsOwner/chat/protect",
+            Some(&owner),
+            json!({"on":true,"minutes":15})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
     let (status, on) = call(
         e,
         "PUT",
@@ -91,11 +109,33 @@ pub async fn exercise(e: &Env) {
         "always ends after 10 minutes: {minutes}"
     );
     // Only followers of at least 10 minutes (and the channel's roles) can chat meanwhile.
-    e.sql("INSERT INTO follows(follower_id,following_id,created_at) VALUES('so-fan','so-owner',now()-interval '1 day'),('so-fresh','so-owner',now())").await;
+    e.sql("INSERT INTO follows(follower_id,following_id,created_at) VALUES('so-fan','so-owner',now()-interval '1 day'),('so-fresh','so-owner',now()),('so-young','so-owner',now()-interval '1 day')").await;
     assert_eq!(say(e, &newcomer).await, StatusCode::FORBIDDEN);
     assert_eq!(say(e, &fresh).await, StatusCode::FORBIDDEN);
+    // A follower whose account is under 7 days old waits too.
+    assert_eq!(say(e, &young).await, StatusCode::FORBIDDEN);
+    // Links are blocked for everyone without a channel role, even with link blocking off.
+    let link = call(
+        e,
+        "POST",
+        "/api/channels/OpsOwner/chat",
+        Some(&regular),
+        json!({"id":id(),"body":"look at example.com"}),
+    )
+    .await
+    .0;
+    assert_ne!(link, StatusCode::OK);
     assert_eq!(say(e, &regular).await, StatusCode::OK);
+    // Slow mode is at least 10 seconds for them; the owner is exempt.
+    assert_ne!(say(e, &regular).await, StatusCode::OK);
     assert_eq!(say(e, &owner).await, StatusCode::OK);
+    // Incoming raids are refused while the shield is up.
+    let refusal: Option<String> =
+        sqlx::query_scalar("SELECT viewer_send_refusal('so-new','so-owner',false)")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(refusal.as_deref(), Some("shielded"));
     let (_, history) = call(e, "GET", "/api/channels/OpsOwner/chat", None, Value::Null).await;
     assert!(history["followers_only_until"].is_string());
     // Ending early opens chat again, and both changes are logged.
@@ -108,11 +148,40 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert_eq!(say(e, &newcomer).await, StatusCode::OK);
+    let refusal: Option<String> =
+        sqlx::query_scalar("SELECT viewer_send_refusal('so-new','so-owner',false)")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_ne!(refusal.as_deref(), Some("shielded"));
+    // A longer shield: 60 minutes, then ended again (four log entries in all).
+    let (status, _) = call(
+        e,
+        "PUT",
+        "/api/channels/OpsOwner/chat/protect",
+        Some(&owner),
+        json!({"on":true,"minutes":60}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let minutes: f64 = sqlx::query_scalar("SELECT extract(epoch FROM followers_only_until-now())::float8/60 FROM chat_settings WHERE channel_id='so-owner'")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert!((59.0..=60.0).contains(&minutes), "{minutes}");
+    call(
+        e,
+        "PUT",
+        "/api/channels/OpsOwner/chat/protect",
+        Some(&owner),
+        json!({"on":false}),
+    )
+    .await;
     let logged: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_moderation_log WHERE channel_id='so-owner' AND action LIKE 'followers_only_%'")
         .fetch_one(&e.app.db)
         .await
         .unwrap();
-    assert_eq!(logged, 2);
+    assert_eq!(logged, 4);
 
     // Mature label: a report reason, a catalog rating that Studio uses, and the audited staff lock.
     let (status, report) = call(
