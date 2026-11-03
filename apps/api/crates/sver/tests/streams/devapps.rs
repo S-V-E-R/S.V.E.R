@@ -464,7 +464,7 @@ async fn desktop(e: &Env) {
         ("client_id", client.as_str()),
         (
             "scope",
-            "user:read stream:key viewer:act channel:read events:private clips:upload",
+            "user:read stream:key viewer:act channel:read events:private clips:upload alerts:edit",
         ),
     ];
     let (status, started) = raw(e, "POST", "/api/oauth/device", Some(&ask), &[]).await;
@@ -502,7 +502,7 @@ async fn desktop(e: &Env) {
     assert_eq!(status, StatusCode::OK, "{tokens}");
     assert_eq!(
         tokens["scope"],
-        "user:read stream:key viewer:act channel:read events:private clips:upload"
+        "user:read stream:key viewer:act channel:read events:private clips:upload alerts:edit"
     );
     let bearer = format!("Bearer {}", tokens["access_token"].as_str().unwrap());
     let post = |path: String, body: Value| {
@@ -588,6 +588,52 @@ async fn desktop(e: &Env) {
             String::from_utf8_lossy(&body)
         );
     }
+    // Alerts: settings, a test alert and a new overlay link (alerts:edit), with no Origin.
+    let response = sver::router(e.app.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/me/overlays")
+                .header("sver-client-id", &client)
+                .header("authorization", &bearer)
+                .extension(ConnectInfo(
+                    "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let mut settings = serde_json::from_slice::<Value>(&bytes).unwrap()["settings"].clone();
+    settings["follow"]["on"] = json!(false);
+    let response = sver::router(e.app.clone())
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/me/overlays")
+                .header("content-type", "application/json")
+                .header("sver-client-id", &client)
+                .header("authorization", &bearer)
+                .extension(ConnectInfo(
+                    "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+                ))
+                .body(Body::from(settings.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).unwrap()["settings"]["follow"]["on"],
+        false
+    );
+    let (status, sent) = post("/api/me/overlays/test".into(), json!({"kind": "raid"})).await;
+    assert_eq!((status, &sent["sent"]), (StatusCode::OK, &json!(true)));
+    let (status, link) = post("/api/me/overlays/link".into(), Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{link}");
+    assert!(link["url"].as_str().unwrap().contains("/overlay/alerts/"));
     // Studio's own key tests start from no key.
     e.sql("DELETE FROM stream_credentials WHERE owner_id='stream-owner'")
         .await;

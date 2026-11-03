@@ -2,7 +2,8 @@
 //! gateway. The S.V.E.R bridge (OBS on the streamer's PC) and games connect here with a scoped
 //! token from Creator Studio, never to the database, Redis or internal services. Both receive the
 //! channel's board presses, joystick moves and board changes; a game can also send board state
-//! back (labels, availability, goal progress), which viewers see at once.
+//! back (labels, availability, goal progress), which viewers see at once. An app's access token
+//! with `board:control` works too: S.V.E.R Desktop connects as the bridge, other apps as a game.
 use crate::{
     App, boards,
     chat::Event,
@@ -32,6 +33,8 @@ const MAX_TOKENS: i64 = 10;
 /// Messages a client may send per second.
 const MESSAGES_PER_SECOND: u32 = 10;
 const FRAME: usize = 16 * 1024;
+/// The app scope with a Studio token's powers over the board.
+const BOARD_SCOPE: &str = "board:control";
 
 // ---- Creator Studio: tokens ----
 
@@ -129,9 +132,13 @@ async fn revoke(
 #[derive(Deserialize)]
 pub struct TokenQuery {
     token: Option<String>,
+    /// An app's client ID, for an app token sent as `?token=`.
+    client_id: Option<String>,
 }
 struct Connection {
+    /// The Studio token's id, or the app's client ID for an app token.
     id: String,
+    app: bool,
     /// This socket, so a game's reconnect isn't undone by the old socket closing.
     session: String,
     channel: String,
@@ -140,7 +147,8 @@ struct Connection {
 }
 /// GET /api/integrations/ws: the token comes in `Authorization: Bearer …` (native apps) or
 /// `?token=` (browser games, which can't set headers). There's no origin check: the scoped token
-/// is the only credential, and it reaches one channel's board events and state.
+/// is the only credential, and it reaches one channel's board events and state. An app token also
+/// needs its client ID (`SVER-Client-Id`, or `?client_id=`).
 async fn socket(
     State(app): State<App>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -165,14 +173,45 @@ async fn socket(
     .bind(sec::digest(&token))
     .fetch_optional(&app.db)
     .await?;
-    let Some((id, channel, username, kind)) = found else {
-        return Err(Fail::new(
-            StatusCode::UNAUTHORIZED,
-            "That token isn't valid.",
-        ));
+    let client = headers
+        .get("sver-client-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .or(query.client_id);
+    let (id, app_token, channel, username, kind) = match (found, client) {
+        (Some((id, channel, username, kind)), _) => (id, false, channel, username, kind),
+        (None, Some(client)) => {
+            let (user, scopes) = crate::devapps::identify(&app, &client, Some(&token))
+                .await?
+                .ok_or_else(Fail::missing)?;
+            if !scopes.iter().any(|s| s == BOARD_SCOPE) {
+                return Err(Fail::denied(
+                    "This token doesn't have the permission for that.",
+                ));
+            }
+            let username: String =
+                sqlx::query_scalar("SELECT username FROM channel_users WHERE id=$1 AND eligible")
+                    .bind(&user)
+                    .fetch_optional(&app.db)
+                    .await?
+                    .ok_or_else(|| Fail::denied("This account can't do that right now."))?;
+            let kind = if client == crate::devapps::DESKTOP_APP {
+                "bridge"
+            } else {
+                "game"
+            };
+            (client, true, user, username, kind.to_string())
+        }
+        (None, None) => {
+            return Err(Fail::new(
+                StatusCode::UNAUTHORIZED,
+                "That token isn't valid.",
+            ));
+        }
     };
     let connection = Connection {
         id,
+        app: app_token,
         session: profiles::new_id(),
         channel,
         username,
@@ -246,9 +285,17 @@ async fn run(app: &App, c: &Connection, mut ws: WebSocket) {
     loop {
         tokio::select! {
             _ = check.tick() => {
-                // A revoked token (or an account that can no longer stream) closes the connection.
-                let still = sqlx::query("UPDATE integration_tokens t SET last_used_at=now() FROM channel_users u WHERE t.id=$1 AND t.revoked_at IS NULL AND u.id=t.channel_id AND u.eligible")
-                    .bind(&c.id).execute(&app.db).await;
+                // A revoked token or grant (or an account that can no longer stream) closes the
+                // connection. An app's grant outlives its hour-long access token.
+                let still = if c.app {
+                    sqlx::query("UPDATE oauth_grants g SET last_used_at=now() FROM dev_apps a, channel_users u
+                        WHERE g.app_id=$1 AND g.user_id=$2 AND g.revoked_at IS NULL AND $3=ANY(g.scopes)
+                        AND a.id=g.app_id AND a.suspended_at IS NULL AND u.id=g.user_id AND u.eligible")
+                        .bind(&c.id).bind(&c.channel).bind(BOARD_SCOPE).execute(&app.db).await
+                } else {
+                    sqlx::query("UPDATE integration_tokens t SET last_used_at=now() FROM channel_users u WHERE t.id=$1 AND t.revoked_at IS NULL AND u.id=t.channel_id AND u.eligible")
+                        .bind(&c.id).execute(&app.db).await
+                };
                 if !matches!(still, Ok(r) if r.rows_affected() == 1) {
                     let _ = ws.send(Message::Close(Some(CloseFrame { code: 4001, reason: "revoked".into() }))).await;
                     return;

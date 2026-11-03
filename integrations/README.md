@@ -20,7 +20,7 @@ Creator Studio → Board → Connections → Create token. Choose **OBS bridge**
 
 ## The gateway protocol
 
-Connect a WebSocket to `wss://sver.tv/api/integrations/ws` with the token as `Authorization: Bearer <token>`, or as `?token=<token>` where headers aren't possible (browsers). Messages are JSON text frames.
+Connect a WebSocket to `wss://sver.tv/api/integrations/ws` with the token as `Authorization: Bearer <token>`, or as `?token=<token>` where headers aren't possible (browsers). Messages are JSON text frames. An app signed in through OAuth can connect with its access token instead, if it has the `board:control` scope: send its client ID as `SVER-Client-Id` (or `?client_id=`). It connects as a game; S.V.E.R Desktop connects as the bridge.
 
 From S.V.E.R:
 

@@ -50,6 +50,11 @@ Reusing Mixer's code: MIT repositories (`carina`, `shortcode-oauth`, `interactiv
 
 The server's own ffprobe decides what passes: an MP4 with H.264 video (16–4096 px each way) and AAC or Opus audio or none, 1 second to 5 minutes long. Anything else fails the clip with its reason. A passing file is remuxed without re-encoding into a faststart MP4 with only its first video and audio track, no metadata and no chapters, and the original is deleted. From there it is an ordinary clip, already approved since it is the streamer's own: thumbnail, Take It Down frame matching, reports, staff review and deletion work as for any clip, and it shows in `/api/channels/{name}/videos` and `/api/clips/latest`. An upload never completed is deleted two hours after it was created.
 
+**Desktop board bridge and alerts (November 3, 2026; `gateway.rs`, `overlays.rs`).** S.V.E.R Desktop drives the CrowdSync board and alerts with its own sign-in, so the streamer pastes no Studio token or overlay link.
+
+- **`board:control` is wired.** The integration gateway (`wss://sver.tv/api/integrations/ws`) also takes an app's access token with `board:control`, plus its client ID (`SVER-Client-Id`, or `?client_id=` beside `?token=`). S.V.E.R Desktop connects as the channel's bridge; any other app connects as a game, the powers this scope promises. The 30-second check follows the grant rather than the hour-long access token, so an open connection closes once the grant is removed, the scope is gone, the app is suspended or the account can no longer stream.
+- **A fourth desktop-only scope, `alerts:edit`** (same gate as `stream:key`: `sver-desktop` only, device sign-in only). It covers `GET`/`PUT /api/me/overlays` (settings), `POST /api/me/overlays/test` and `POST /api/me/overlays/link`, which makes a new overlay link and stops the old one. Studio keeps the same calls with its cookie. Images, sounds and removing the link stay on the website.
+
 ## 2. Live events (Mixer's "Constellation")
 
 One WebSocket, `wss://sver.tv/api/events`, where apps subscribe to topics instead of polling. This is the backbone for overlays, alerts, bots, SVER Desktop and Discord integrations.
