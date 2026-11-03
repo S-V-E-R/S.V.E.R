@@ -241,6 +241,61 @@ pub async fn exercise(e: &Env) {
     let (_, theirs) = call(e, "GET", "/api/me/analytics", Some(&other), Value::Null).await;
     assert_eq!(theirs["totals"]["visits"], json!(0));
 
+    // The platform view: staff only, every channel, with the top channels.
+    let admin = super::bans::staff(e, "va-staff", "VaStaff").await;
+    assert_eq!(
+        call(
+            e,
+            "GET",
+            "/api/admin/analytics?days=7",
+            Some(&owner),
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, all) = call(
+        e,
+        "GET",
+        "/api/admin/analytics?days=7",
+        Some(&admin),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{all}");
+    assert!(all["totals"]["visits"].as_i64().unwrap() >= 3, "{all}");
+    assert!(
+        all["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["username"] == "VaOwner"),
+        "{all}"
+    );
+    assert!(
+        all["lift"]["live_now"]["arrivals"].as_i64().unwrap() >= 1,
+        "{}",
+        all["lift"]
+    );
+    assert_eq!(
+        report["channels"],
+        json!([]),
+        "a creator's report lists no other channels"
+    );
+    // Open data: the weekly viewer figures are computed and withheld under 10 channels.
+    sver::open_data::compute(&e.app).await.unwrap();
+    let hours: f64 = sqlx::query_scalar("SELECT value FROM public_stats WHERE period=to_char(now(),'IYYY-\"W\"IW') AND metric='watch_hours'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert!(hours >= 0.6, "{hours}");
+    let (_, data) = guest(e, "GET", "/api/open-data", Value::Null).await;
+    let this = data["weekly"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(
+        (&this["watch_hours"], &this["discovery_lift"]),
+        (&Value::Null, &Value::Null),
+        "{this}"
+    );
+
     // Deleting a viewer's account removes their visits.
     let mut db = e.app.db.acquire().await.unwrap();
     sver::analytics::forget_viewer(&mut db, "va-fan")

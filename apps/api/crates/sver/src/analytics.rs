@@ -1,4 +1,4 @@
-//! Viewer analytics for streamers (docs/ANALYTICS.md): visits and where they came from, how long
+//! Viewer analytics for streamers and, for staff, the platform as a whole (docs/ANALYTICS.md): visits and where they came from, how long
 //! they stay, which discovery surfaces showed the stream and how often that turned into a visit,
 //! and whether Live Now turns and MAGNet features brought more arrivals. Streamers see totals
 //! only, never a viewer. Nothing here feeds discovery, MAGNet, factions or money.
@@ -164,19 +164,33 @@ async fn mine(
     Query(range): Query<Range>,
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
+    report(&app, Some(&user.id), since(&range)?).await.map(Json)
+}
+/// GET /api/admin/analytics?days=7|30|90: the same report for the whole platform, with the top
+/// channels (staff, Raven's Eye).
+async fn platform(
+    State(app): State<App>,
+    jar: CookieJar,
+    Query(range): Query<Range>,
+) -> Res<Json<Value>> {
+    crate::safety::staff(&app, &jar).await?;
+    report(&app, None, since(&range)?).await.map(Json)
+}
+fn since(range: &Range) -> Res<DateTime<Utc>> {
     let days = range.days.unwrap_or(30);
     if ![7, 30, 90].contains(&days) {
         return Err(Fail::field("days", "Choose 7, 30 or 90 days."));
     }
-    let from = Utc::now() - Duration::days(days);
-    report(&app, &user.id, from).await.map(Json)
+    Ok(Utc::now() - Duration::days(days))
 }
 
-/// The analytics for one channel since `from`. Only visits viewer integrity counted are used.
-pub async fn report(app: &App, channel: &str, from: DateTime<Utc>) -> Res<Value> {
+/// The analytics for one channel, or the whole platform with `channel` None, since `from`. Only
+/// visits viewer integrity counted are used.
+pub async fn report(app: &App, channel: Option<&str>, from: DateTime<Utc>) -> Res<Value> {
     let mut db = app.db.acquire().await?;
-    let totals: Value = sqlx::query_scalar("WITH v AS (SELECT * FROM watch_visits WHERE channel_id=$1 AND counted AND started_at>=$2),
-        firsts AS (SELECT viewer_key,min(started_at) AS first FROM watch_visits WHERE channel_id=$1 AND counted GROUP BY 1)
+    let totals: Value = sqlx::query_scalar("WITH v AS (SELECT * FROM watch_visits WHERE ($1::text IS NULL OR channel_id=$1) AND counted AND started_at>=$2),
+        firsts AS (SELECT viewer_key,min(started_at) AS first FROM watch_visits WHERE ($1::text IS NULL OR channel_id=$1) AND counted GROUP BY 1),
+        m AS (SELECT date_trunc('minute',s.taken_at),sum(s.counted+s.trusted) AS n FROM integrity_snapshots s JOIN broadcasts b ON b.id=s.broadcast_id WHERE ($1::text IS NULL OR b.owner_id=$1) AND s.taken_at>=$2 GROUP BY 1)
         SELECT jsonb_build_object(
           'visits',(SELECT count(*) FROM v),
           'viewers',(SELECT count(DISTINCT viewer_key) FROM v),
@@ -187,47 +201,48 @@ pub async fn report(app: &App, channel: &str, from: DateTime<Utc>) -> Res<Value>
           'returning_viewers',(SELECT count(DISTINCT v.viewer_key) FROM v JOIN firsts f USING(viewer_key) WHERE f.first<$2),
           'follower_watch_share',coalesce((SELECT round((sum(seconds) FILTER (WHERE follower)/nullif(sum(seconds),0))::numeric,3) FROM v),0),
           'signed_in_share',coalesce((SELECT round((count(*) FILTER (WHERE viewer_key LIKE 'u:%'))::numeric/nullif(count(*),0),3) FROM v),0),
-          'new_follows',(SELECT count(*) FROM follows WHERE following_id=$1 AND created_at>=$2),
-          'chatters',(SELECT count(DISTINCT author_id) FROM chat_messages WHERE channel_id=$1 AND squad_id IS NULL AND created_at>=$2),
-          'live_hours',round(coalesce((SELECT sum(extract(epoch FROM coalesce(ended_at,now())-greatest(started_at,$2))) FROM broadcasts WHERE owner_id=$1 AND coalesce(ended_at,now())>$2 AND started_at IS NOT NULL),0)::numeric/3600,1),
-          'peak_viewers',coalesce((SELECT max(s.counted+s.trusted) FROM integrity_snapshots s JOIN broadcasts b ON b.id=s.broadcast_id WHERE b.owner_id=$1 AND s.taken_at>=$2),0),
-          'avg_viewers',coalesce((SELECT round(avg(s.counted+s.trusted)::numeric,1) FROM integrity_snapshots s JOIN broadcasts b ON b.id=s.broadcast_id WHERE b.owner_id=$1 AND s.taken_at>=$2),0))")
+          'new_follows',(SELECT count(*) FROM follows WHERE ($1::text IS NULL OR following_id=$1) AND created_at>=$2),
+          'chatters',(SELECT count(DISTINCT author_id) FROM chat_messages WHERE ($1::text IS NULL OR channel_id=$1) AND squad_id IS NULL AND created_at>=$2),
+          'live_hours',round(coalesce((SELECT sum(extract(epoch FROM coalesce(ended_at,now())-greatest(started_at,$2))) FROM broadcasts WHERE ($1::text IS NULL OR owner_id=$1) AND coalesce(ended_at,now())>$2 AND started_at IS NOT NULL),0)::numeric/3600,1),
+          'peak_viewers',coalesce((SELECT max(n) FROM m),0),
+          'avg_viewers',coalesce((SELECT round(avg(n)::numeric,1) FROM m),0))")
         .bind(channel).bind(from).fetch_one(&mut *db).await?;
     // A follow "came from" a visit when that signed-in viewer followed during it or within 10 minutes.
-    let sources: Vec<Value> = sqlx::query_scalar("WITH v AS (SELECT * FROM watch_visits WHERE channel_id=$1 AND counted AND started_at>=$2)
+    let sources: Vec<Value> = sqlx::query_scalar("WITH v AS (SELECT * FROM watch_visits WHERE ($1::text IS NULL OR channel_id=$1) AND counted AND started_at>=$2)
         SELECT jsonb_build_object('source',source,'visits',count(*),'viewers',count(DISTINCT viewer_key),
           'watch_hours',round((sum(seconds)/3600)::numeric,1),'avg_minutes',round((avg(seconds)/60)::numeric,1),
           'stayed_5_share',round((count(*) FILTER (WHERE seconds>=300))::numeric/count(*),3),
-          'follows',count(DISTINCT viewer_key) FILTER (WHERE NOT follower AND EXISTS(SELECT 1 FROM follows f WHERE 'u:'||f.follower_id=v.viewer_key AND f.following_id=$1 AND f.created_at BETWEEN v.started_at AND v.last_at+interval '10 minutes')))
+          'follows',count(DISTINCT viewer_key) FILTER (WHERE NOT follower AND EXISTS(SELECT 1 FROM follows f WHERE 'u:'||f.follower_id=v.viewer_key AND f.following_id=v.channel_id AND f.created_at BETWEEN v.started_at AND v.last_at+interval '10 minutes')))
         FROM v GROUP BY source ORDER BY sum(seconds) DESC")
         .bind(channel).bind(from).fetch_all(&mut *db).await?;
-    let lengths: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('bucket',b,'visits',n) FROM (SELECT CASE WHEN seconds<60 THEN 0 WHEN seconds<300 THEN 1 WHEN seconds<900 THEN 2 WHEN seconds<3600 THEN 3 ELSE 4 END AS b,count(*) AS n FROM watch_visits WHERE channel_id=$1 AND counted AND started_at>=$2 GROUP BY 1) x ORDER BY b")
+    let lengths: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('bucket',b,'visits',n) FROM (SELECT CASE WHEN seconds<60 THEN 0 WHEN seconds<300 THEN 1 WHEN seconds<900 THEN 2 WHEN seconds<3600 THEN 3 ELSE 4 END AS b,count(*) AS n FROM watch_visits WHERE ($1::text IS NULL OR channel_id=$1) AND counted AND started_at>=$2 GROUP BY 1) x ORDER BY b")
         .bind(channel).bind(from).fetch_all(&mut *db).await?;
     // Impressions per surface, and visits that came from that surface (the click-through).
-    let exposure: Vec<Value> = sqlx::query_scalar("WITH shown AS (SELECT i.surface,sum(i.shown) AS shown FROM discovery_impressions i JOIN broadcasts b ON b.id=i.broadcast_id WHERE b.owner_id=$1 AND i.hour>=date_trunc('hour',$2::timestamptz) GROUP BY 1),
-        clicked AS (SELECT source AS surface,count(*) AS visits FROM watch_visits WHERE channel_id=$1 AND counted AND started_at>=$2 AND source=ANY($3) GROUP BY 1)
+    let exposure: Vec<Value> = sqlx::query_scalar("WITH shown AS (SELECT i.surface,sum(i.shown) AS shown FROM discovery_impressions i JOIN broadcasts b ON b.id=i.broadcast_id WHERE ($1::text IS NULL OR b.owner_id=$1) AND i.hour>=date_trunc('hour',$2::timestamptz) GROUP BY 1),
+        clicked AS (SELECT source AS surface,count(*) AS visits FROM watch_visits WHERE ($1::text IS NULL OR channel_id=$1) AND counted AND started_at>=$2 AND source=ANY($3) GROUP BY 1)
         SELECT jsonb_build_object('surface',surface,'shown',coalesce(shown,0),'visits',coalesce(visits,0),
           'conversion',CASE WHEN coalesce(shown,0)>0 THEN round(coalesce(visits,0)::numeric/shown,3) END)
         FROM shown FULL JOIN clicked USING(surface) ORDER BY coalesce(shown,0) DESC")
         .bind(channel).bind(from).bind(&SURFACES[..]).fetch_all(&mut *db).await?;
     // MAGNet: viewers who watched inside a MAGNet channel, and how many then opened the channel.
-    let magnet: Value = sqlx::query_scalar("WITH v AS (SELECT * FROM watch_visits WHERE channel_id=$1 AND counted AND started_at>=$2)
+    let magnet: Value = sqlx::query_scalar("WITH v AS (SELECT * FROM watch_visits WHERE ($1::text IS NULL OR channel_id=$1) AND counted AND started_at>=$2)
         SELECT jsonb_build_object('viewers',(SELECT count(DISTINCT viewer_key) FROM v WHERE source='magnet_channel'),
           'watch_hours',round(coalesce((SELECT sum(seconds) FROM v WHERE source='magnet_channel'),0)::numeric/3600,1),
-          'opened_channel',(SELECT count(DISTINCT a.viewer_key) FROM v a WHERE a.source='magnet' AND EXISTS(SELECT 1 FROM v m WHERE m.source='magnet_channel' AND m.viewer_key=a.viewer_key AND m.started_at<=a.started_at)))")
+          'opened_channel',(SELECT count(DISTINCT a.viewer_key) FROM v a WHERE a.source='magnet' AND EXISTS(SELECT 1 FROM v m WHERE m.source='magnet_channel' AND m.viewer_key=a.viewer_key AND m.channel_id=a.channel_id AND m.started_at<=a.started_at)))")
         .bind(channel).bind(from).fetch_one(&mut *db).await?;
     // Did exposure bring more people? Arrivals per live hour while on top of Live Now or featured
-    // in MAGNet, against the rest of the channel's live time in the range.
+    // in MAGNet, against the rest of live time in the range (each channel's own windows and live
+    // time, summed for the platform).
     let (live_now, featured) = (
         crate::discovery::turn_windows(&mut db, channel, from).await?,
         crate::magnet::feature_windows(&mut db, channel, from).await?,
     );
-    let lift: Value = sqlx::query_scalar("WITH w AS (SELECT 'live_now' AS kind,s,e FROM unnest($3::timestamptz[],$4::timestamptz[]) AS t(s,e)
-            UNION ALL SELECT 'magnet',s,e FROM unnest($5::timestamptz[],$6::timestamptz[]) AS t(s,e)),
-        v AS (SELECT started_at FROM watch_visits WHERE channel_id=$1 AND counted AND started_at>=$2),
-        live AS (SELECT coalesce(sum(extract(epoch FROM coalesce(ended_at,now())-greatest(started_at,$2))),0)/3600 AS hours FROM broadcasts WHERE owner_id=$1 AND coalesce(ended_at,now())>$2 AND started_at IS NOT NULL),
-        k AS (SELECT kind,sum(extract(epoch FROM e-s))/3600 AS hours,(SELECT count(*) FROM v WHERE EXISTS(SELECT 1 FROM w x WHERE x.kind=w.kind AND v.started_at>=x.s AND v.started_at<x.e)) AS arrivals FROM w GROUP BY kind),
-        inside AS (SELECT count(*) AS arrivals FROM v WHERE EXISTS(SELECT 1 FROM w WHERE v.started_at>=w.s AND v.started_at<w.e)),
+    let lift: Value = sqlx::query_scalar("WITH w AS (SELECT 'live_now' AS kind,o,s,e FROM unnest($3::text[],$4::timestamptz[],$5::timestamptz[]) AS t(o,s,e)
+            UNION ALL SELECT 'magnet',o,s,e FROM unnest($6::text[],$7::timestamptz[],$8::timestamptz[]) AS t(o,s,e)),
+        v AS (SELECT channel_id,started_at FROM watch_visits WHERE ($1::text IS NULL OR channel_id=$1) AND counted AND started_at>=$2),
+        live AS (SELECT coalesce(sum(extract(epoch FROM coalesce(ended_at,now())-greatest(started_at,$2))),0)/3600 AS hours FROM broadcasts WHERE ($1::text IS NULL OR owner_id=$1) AND coalesce(ended_at,now())>$2 AND started_at IS NOT NULL),
+        k AS (SELECT kind,sum(extract(epoch FROM e-s))/3600 AS hours,(SELECT count(*) FROM v WHERE EXISTS(SELECT 1 FROM w x WHERE x.kind=w.kind AND x.o=v.channel_id AND v.started_at>=x.s AND v.started_at<x.e)) AS arrivals FROM w GROUP BY kind),
+        inside AS (SELECT count(*) AS arrivals FROM v WHERE EXISTS(SELECT 1 FROM w WHERE w.o=v.channel_id AND v.started_at>=w.s AND v.started_at<w.e)),
         exposed AS (SELECT coalesce(sum(hours),0) AS hours FROM k)
         SELECT jsonb_build_object(
           'live_now',(SELECT jsonb_build_object('hours',round(hours::numeric,2),'arrivals',arrivals,'per_hour',round((arrivals/nullif(hours,0))::numeric,1)) FROM k WHERE kind='live_now'),
@@ -235,14 +250,14 @@ pub async fn report(app: &App, channel: &str, from: DateTime<Utc>) -> Res<Value>
           'otherwise',(SELECT jsonb_build_object('hours',round(greatest(live.hours-exposed.hours,0)::numeric,2),'arrivals',(SELECT count(*) FROM v)-inside.arrivals,
              'per_hour',round((((SELECT count(*) FROM v)-inside.arrivals)/nullif(greatest(live.hours-exposed.hours,0),0))::numeric,1)) FROM live,exposed,inside))")
         .bind(channel).bind(from)
-        .bind(live_now.iter().map(|w| w.0).collect::<Vec<_>>()).bind(live_now.iter().map(|w| w.1).collect::<Vec<_>>())
-        .bind(featured.iter().map(|w| w.0).collect::<Vec<_>>()).bind(featured.iter().map(|w| w.1).collect::<Vec<_>>())
+        .bind(live_now.iter().map(|w| w.0.clone()).collect::<Vec<_>>()).bind(live_now.iter().map(|w| w.1).collect::<Vec<_>>()).bind(live_now.iter().map(|w| w.2).collect::<Vec<_>>())
+        .bind(featured.iter().map(|w| w.0.clone()).collect::<Vec<_>>()).bind(featured.iter().map(|w| w.1).collect::<Vec<_>>()).bind(featured.iter().map(|w| w.2).collect::<Vec<_>>())
         .fetch_one(&mut *db).await?;
-    let referrers: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('host',referrer_host,'visits',count(*)) FROM watch_visits WHERE channel_id=$1 AND counted AND started_at>=$2 AND referrer_host IS NOT NULL GROUP BY referrer_host ORDER BY count(*) DESC LIMIT 10")
+    let referrers: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('host',referrer_host,'visits',count(*)) FROM watch_visits WHERE ($1::text IS NULL OR channel_id=$1) AND counted AND started_at>=$2 AND referrer_host IS NOT NULL GROUP BY referrer_host ORDER BY count(*) DESC LIMIT 10")
         .bind(channel).bind(from).fetch_all(&mut *db).await?;
     let daily: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('day',d,'watch_hours',round((sum(seconds)/3600)::numeric,1),'viewers',count(DISTINCT viewer_key),
           'discovery_hours',round((coalesce(sum(seconds) FILTER (WHERE source IN ('home','magnet','magnet_channel','browse','search','suggestion','faction')),0)/3600)::numeric,1))
-        FROM (SELECT date_trunc('day',started_at) AS d,* FROM watch_visits WHERE channel_id=$1 AND counted AND started_at>=$2) x GROUP BY d ORDER BY d DESC")
+        FROM (SELECT date_trunc('day',started_at) AS d,* FROM watch_visits WHERE ($1::text IS NULL OR channel_id=$1) AND counted AND started_at>=$2) x GROUP BY d ORDER BY d DESC")
         .bind(channel).bind(from).fetch_all(&mut *db).await?;
     let broadcasts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',b.id,'started_at',b.started_at,'ended_at',b.ended_at,
           'category',(SELECT name FROM broadcast_categories c WHERE c.broadcast_id=b.id ORDER BY c.started_at LIMIT 1),
@@ -252,10 +267,20 @@ pub async fn report(app: &App, channel: &str, from: DateTime<Utc>) -> Res<Value>
           'peak_viewers',coalesce((SELECT max(counted+trusted) FROM integrity_snapshots s WHERE s.broadcast_id=b.id),0),
           'new_follows',(SELECT count(*) FROM follows f WHERE f.following_id=b.owner_id AND f.created_at BETWEEN b.started_at AND coalesce(b.ended_at,now())),
           'top_source',(SELECT source FROM watch_visits v WHERE v.broadcast_id=b.id AND v.counted GROUP BY source ORDER BY sum(seconds) DESC LIMIT 1))
-        FROM broadcasts b WHERE b.owner_id=$1 AND b.started_at IS NOT NULL AND coalesce(b.ended_at,now())>=$2 ORDER BY b.started_at DESC LIMIT 30")
+        FROM broadcasts b WHERE ($1::text IS NULL OR b.owner_id=$1) AND b.started_at IS NOT NULL AND coalesce(b.ended_at,now())>=$2 ORDER BY b.started_at DESC LIMIT 30")
         .bind(channel).bind(from).fetch_all(&mut *db).await?;
+    // The platform view lists the top channels by watch hours instead of one channel's broadcasts.
+    let channels: Vec<Value> = if channel.is_none() {
+        sqlx::query_scalar("SELECT jsonb_build_object('username',u.username,'watch_hours',round((sum(v.seconds)/3600)::numeric,1),'viewers',count(DISTINCT v.viewer_key),
+              'avg_minutes',round((avg(v.seconds)/60)::numeric,1),
+              'discovery_share',round((coalesce(sum(v.seconds) FILTER (WHERE v.source IN ('home','magnet','magnet_channel','browse','search','suggestion','faction')),0)/nullif(sum(v.seconds),0))::numeric,3))
+            FROM watch_visits v JOIN users u ON u.id=v.channel_id WHERE v.counted AND v.started_at>=$1 GROUP BY u.username ORDER BY sum(v.seconds) DESC LIMIT 20")
+            .bind(from).fetch_all(&mut *db).await?
+    } else {
+        Vec::new()
+    };
     Ok(
-        json!({"from":from,"totals":totals,"sources":sources,"lengths":lengths,"exposure":exposure,
+        json!({"from":from,"channels":channels,"totals":totals,"sources":sources,"lengths":lengths,"exposure":exposure,
         "magnet":magnet,"lift":lift,"referrers":referrers,"daily":daily,"broadcasts":broadcasts}),
     )
 }
@@ -264,6 +289,7 @@ pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/discovery/seen", post(seen))
         .route("/api/me/analytics", get(mine))
+        .route("/api/admin/analytics", get(platform))
 }
 
 #[cfg(test)]

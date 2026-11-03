@@ -1,6 +1,10 @@
 # Viewer analytics
 
-Added November 3, 2026 at Joe's direction (`analytics.rs`, migration 0155). Creator Studio → Analytics shows a streamer where their viewers come from, how long they stay, whether discovery brought them, and how often a live card that was seen turned into a visit.
+Added November 3, 2026 at Joe's direction (`analytics.rs`, migration 0155). The same report exists at three levels:
+
+- **Creators:** Creator Studio → Analytics shows a streamer where their viewers come from, how long they stay, whether discovery brought them, and how often a live card that was seen turned into a visit.
+- **Staff:** Raven's Eye shows the same report for the whole platform, plus the top 20 channels by watch hours with each one's share from discovery (`GET /api/admin/analytics`, staff only).
+- **Public:** Open data shows six weekly platform figures from it (below).
 
 ## Rules
 
@@ -53,6 +57,14 @@ A live card counts as seen when at least half of it is on screen for a second, o
 - **Other websites:** the top 10 referring sites.
 - **By day:** watch hours, the part from discovery (Home, MAGNet, Browse, Search, Suggested, Faction pages) and viewers.
 - **Broadcasts:** the last 30 in the range with category, length, watch hours, viewers, peak, average visit, new follows and the top source.
+
+## The platform view
+
+`report(None, from)` is the creator report with every channel included: totals across channels (new viewers are new to S.V.E.R within the 90 days kept), per-minute concurrent viewers summed across live channels, sources, click-through per surface, visit lengths, referring sites and days. The discovery comparison uses each channel's own Live Now and MAGNet windows against that channel's other live time, summed. Instead of one channel's broadcasts it lists the top 20 channels.
+
+## Open data
+
+Weekly, on `/open-data` and in `weekly.csv` (computed with the other figures, `open_data.rs`): hours watched, the percent of watch time from discovery, the average visit in minutes, the percent of homepage card views that led to a visit, the percent of MAGNet viewers who then opened the channel, and arrivals per hour while featured (on top of Live Now or on MAGNet) as a multiple of the rate the rest of the time. Like creators' hours, they're hidden until 10 channels had viewers that week, so no single channel's numbers show. Live Now turns are kept 90 days for these figures; Studio → MAGNet still shows 30.
 
 ## Known ceilings
 

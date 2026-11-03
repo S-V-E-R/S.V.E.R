@@ -134,7 +134,7 @@ In Creator Studio:
 - Live: whether they're featured, on which channel, and why.
 - After: feature history with how long each feature lasted and how many MAGNet viewers stayed to follow or chat (shown to the streamer only, never used for scoring).
 - Settings: opt out of MAGNet; turn chat merging off or on; the flag-moment button.
-- Last 30 days (November 3, 2026; migration 0154): turns at the top of Live Now that viewers saw, with new follows during a turn or the 10 minutes after, and totals of the feature history. A turn is recorded once per 3-minute slot when the homepage's rotation is loaded (`rotation_turns`, kept 30 days), so slots nobody looked at aren't counted. Shown to the streamer only, never used for scoring.
+- Last 30 days (November 3, 2026; migration 0154): turns at the top of Live Now that viewers saw, with new follows during a turn or the 10 minutes after, and totals of the feature history. A turn is recorded once per 3-minute slot when the homepage's rotation is loaded (`rotation_turns`, kept 90 days for viewer analytics; this view shows 30), so slots nobody looked at aren't counted. Shown to the streamer only, never used for scoring.
 
 ### Staff controls
 

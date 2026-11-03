@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
+import { ViewerAnalytics } from "../../../components/ViewerAnalytics";
 
 type Money = Record<string, { count: number; valor: number; usd_cents: number }>;
 type Stats = {
@@ -117,5 +118,8 @@ export default function RavensEye() {
       </div>
       {streams && <StreamsByCategory streams={streams} range={range} plays={plays} setPlays={setPlays} />}
     </>}
+    <h2>Viewer analytics</h2>
+    <p className="muted">Where viewers come from, how long they stay and whether discovery brings them, across every channel (docs/ANALYTICS.md). Creators see the same for their own channel in Studio → Analytics.</p>
+    <ViewerAnalytics endpoint="/api/admin/analytics" platform />
   </section>;
 }
