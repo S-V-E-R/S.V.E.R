@@ -396,6 +396,12 @@ pub struct Beat {
     /// The MAGNet Hype lane this viewer is watching from, for the streamer's feature history.
     #[serde(default)]
     magnet: Option<String>,
+    /// How the viewer reached this player, for the streamer's analytics (docs/ANALYTICS.md).
+    #[serde(default)]
+    source: Option<String>,
+    /// For an outside link: the referring site's host name.
+    #[serde(default)]
+    referrer: Option<String>,
 }
 
 /// Sent every ten seconds by a player whose media is advancing. Signed-in viewers count once per
@@ -465,12 +471,37 @@ pub async fn beat(
     if let (Some(_), Some(raid)) = (&outcome, &input.raid) {
         crate::raids::arrived(&app, &input.broadcast_id, &key, raid).await?;
     }
+    let mut in_magnet = false;
     if let (Some(_), Some(lane)) = (&outcome, &input.magnet) {
         // Only a session that started while that lane features this broadcast is MAGNet's: the
         // tag keeps it out of the stream's moment signals and explains its arrival to viewer
         // integrity, so a client can't claim it for any other session.
         sqlx::query("UPDATE playback_leases l SET magnet_lane=$3 WHERE l.broadcast_id=$1 AND l.viewer_key=$2 AND l.magnet_lane IS NULL AND EXISTS(SELECT 1 FROM magnet_features f WHERE f.lane=$3 AND f.broadcast_id=$1 AND f.ended_at IS NULL AND l.created_at>=f.started_at-interval '15 seconds')")
             .bind(&input.broadcast_id).bind(&key).bind(lane).execute(&app.db).await?;
+        in_magnet = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM magnet_features WHERE lane=$2 AND broadcast_id=$1 AND ended_at IS NULL)")
+            .bind(&input.broadcast_id).bind(lane).fetch_one(&app.db).await?;
+    }
+    if let Some((level, _)) = &outcome {
+        // MAGNet and raids are decided here; every other source is the player's claim.
+        let source = if in_magnet {
+            "magnet_channel"
+        } else if input.raid.is_some() {
+            "raid"
+        } else {
+            crate::analytics::source(input.source.as_deref())
+        };
+        let referrer = crate::analytics::referrer_host(input.referrer.as_deref());
+        let counted = matches!(level.name(), "counted" | "trusted");
+        crate::analytics::beat(
+            &app,
+            &input.broadcast_id,
+            &owner,
+            &key,
+            source,
+            referrer.as_deref(),
+            counted,
+        )
+        .await?;
     }
     Ok(Json(match outcome {
         None => json!({"recorded":false}),

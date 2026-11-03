@@ -995,8 +995,9 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         'chatted',(SELECT count(DISTINCT m.author_id) FROM chat_messages m JOIN playback_leases l ON l.broadcast_id=f.broadcast_id AND l.magnet_lane=f.lane AND l.viewer_key='u:'||m.author_id WHERE m.channel_id=f.owner_id AND m.squad_id IS NULL AND m.created_at BETWEEN f.started_at AND coalesce(f.ended_at,now())+interval '10 minutes'))
         FROM magnet_features f LEFT JOIN faction_genres g ON g.id=f.lane WHERE f.owner_id=$1 AND f.started_at>now()-interval '30 days' ORDER BY f.started_at DESC LIMIT 50")
         .bind(&user.id).fetch_all(&mut *db).await?;
+    let live_now = crate::discovery::turns(&mut db, &user.id).await?;
     Ok(Json(
-        json!({"opt_out":opt_out,"chat_merge":chat_merge,"featured_now":now,"history":history}),
+        json!({"opt_out":opt_out,"chat_merge":chat_merge,"featured_now":now,"history":history,"live_now":live_now}),
     ))
 }
 #[derive(Deserialize)]
@@ -1014,6 +1015,16 @@ async fn save(
     sqlx::query("INSERT INTO magnet_settings(user_id,opt_out,chat_merge) VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET opt_out=$2,chat_merge=$3")
         .bind(&user.id).bind(input.opt_out).bind(input.chat_merge).execute(&app.db).await?;
     mine(State(app), jar).await
+}
+/// When streams were featured on any MAGNet channel since `from`, as (owner, start, end): one
+/// channel's, or every channel's with `owner` None.
+pub async fn feature_windows(
+    db: &mut PgConnection,
+    owner: Option<&str>,
+    from: DateTime<Utc>,
+) -> Res<Vec<(String, DateTime<Utc>, DateTime<Utc>)>> {
+    Ok(sqlx::query_as("SELECT owner_id,started_at,coalesce(ended_at,now()) FROM magnet_features WHERE ($1::text IS NULL OR owner_id=$1) AND coalesce(ended_at,now())>$2 ORDER BY started_at")
+        .bind(owner).bind(from).fetch_all(db).await?)
 }
 /// A win the game detector saw on a live stream (docs/MAGNET.md "What counts as a moment"); a day's are kept.
 pub async fn game_moment(app: &App, broadcast: &str, title: &str) -> Res<()> {

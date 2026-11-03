@@ -132,12 +132,23 @@ pub async fn subs_only(app: &App, channel: &str) -> Res<bool> {
     .await?)
 }
 
+/// Floors shield mode puts on chat for everyone without a channel role (docs/LIVE_STREAMS.md
+/// "Shield mode"): slow mode of at least this many seconds and accounts at least this many days old.
+pub const SHIELD_SLOW_SECONDS: i32 = 10;
+pub const SHIELD_ACCOUNT_DAYS: i16 = 7;
+/// How long shield mode can run, in minutes; it always ends by itself.
+const SHIELD_MINUTES: [i32; 3] = [10, 30, 60];
+
 #[derive(Deserialize)]
 pub struct Protect {
     on: bool,
+    #[serde(default)]
+    minutes: Option<i32>,
 }
-/// PUT /api/channels/{username}/chat/protect: the one-click spike prompt. Owners and moderators
-/// turn on followers-only chat for 10 minutes (it always ends by itself) or end it early.
+/// PUT /api/channels/{username}/chat/protect: shield mode, also the one-click spike prompt. Owners
+/// and moderators raise it for 10, 30 or 60 minutes (it always ends by itself) or end it early.
+/// While it's up: followers-only chat, links blocked, slow mode and account age at least the
+/// shield floors, and incoming raids refused (`viewer_send_refusal`, migration 0153).
 pub async fn protect(
     State(app): State<App>,
     jar: CookieJar,
@@ -146,10 +157,18 @@ pub async fn protect(
 ) -> Res<Json<Value>> {
     let channel = channel(&app, &name).await?;
     let (user, role) = actor(&app, &jar, &channel).await?;
+    let minutes = input.minutes.unwrap_or(SHIELD_MINUTES[0]);
+    if !SHIELD_MINUTES.contains(&minutes) {
+        return Err(Fail::field(
+            "minutes",
+            "Shield mode runs for 10, 30 or 60 minutes.",
+        ));
+    }
     let mut tx = app.db.begin().await?;
-    let until: Option<DateTime<Utc>> = sqlx::query_scalar("INSERT INTO chat_settings(channel_id,followers_only_until) VALUES($1,CASE WHEN $2 THEN now()+interval '10 minutes' END) ON CONFLICT(channel_id) DO UPDATE SET followers_only_until=EXCLUDED.followers_only_until RETURNING followers_only_until")
+    let until: Option<DateTime<Utc>> = sqlx::query_scalar("INSERT INTO chat_settings(channel_id,followers_only_until) VALUES($1,CASE WHEN $2 THEN now()+make_interval(mins=>$3) END) ON CONFLICT(channel_id) DO UPDATE SET followers_only_until=EXCLUDED.followers_only_until RETURNING followers_only_until")
         .bind(&channel)
         .bind(input.on)
+        .bind(minutes)
         .fetch_one(&mut *tx)
         .await?;
     log(
@@ -164,8 +183,8 @@ pub async fn protect(
         },
         None,
         None,
-        json!({"until": until}),
-        "Spike protection",
+        json!({"until": until, "minutes": input.on.then_some(minutes)}),
+        "Shield mode",
     )
     .await?;
     tx.commit().await?;
@@ -330,12 +349,19 @@ pub(crate) async fn check_words(
         return Ok(0);
     };
     let exempt = role_of(app, channel, user).await?.is_some();
-    check_content(body, &words, links, exempt)?;
+    // Shield mode raises the link block and slow mode to its floors (roles stay exempt).
+    let shield = followers_only(app, channel).await?.is_some();
+    check_content(body, &words, links || shield, exempt)?;
+    let slow = if shield {
+        slow.max(SHIELD_SLOW_SECONDS)
+    } else {
+        slow
+    };
     Ok(if exempt { 0 } else { slow })
 }
 pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<()> {
     check_restriction(app, channel, &user.id).await?;
-    // Spike protection: while followers-only chat is on, only people who followed at least 10
+    // Shield mode (and the spike prompt): while it is up, only people who followed at least 10
     // minutes ago (and channel roles) can chat, so a burst of new accounts can't flood it.
     if followers_only(app, channel).await?.is_some() && role_of(app, channel, user).await?.is_none()
     {
@@ -346,7 +372,7 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
             .await?;
         if !follower {
             return Err(Fail::denied(
-                "Chat is followers-only for a few minutes (followers of at least 10 minutes can chat).",
+                "Shield mode is on: for a few minutes only followers of at least 10 minutes can chat.",
             ));
         }
     }
@@ -357,6 +383,11 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
     .bind(channel)
     .fetch_one(&app.db)
     .await?;
+    let min_days = if followers_only(app, channel).await?.is_some() {
+        min_days.max(SHIELD_ACCOUNT_DAYS)
+    } else {
+        min_days
+    };
     if min_days > 0 && role_of(app, channel, user).await?.is_none() {
         let new: bool = sqlx::query_scalar(
             "SELECT created_at>now()-make_interval(days=>$2) FROM users WHERE id=$1",

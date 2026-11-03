@@ -5,7 +5,8 @@ import { Section } from "../../../components/Form";
 import { send, useLoad } from "../../../lib/client-api";
 
 type Feature = { lane: string; name: string; kind: string; reason: string; started_at: string; ended_at: string | null; seconds: number; hype_viewers: number; followed: number; chatted: number };
-type Mine = { opt_out: boolean; chat_merge: boolean; featured_now: { lane: string; name: string; reason: string; since: string }[]; history: Feature[] };
+type Mine = { opt_out: boolean; chat_merge: boolean; featured_now: { lane: string; name: string; reason: string; since: string }[]; history: Feature[];
+  live_now?: { turns: number; last: string | null; followed: number } };
 const minutes = (s: number) => s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 
 /** Creator Studio → MAGNet (docs/MAGNET.md "What the streamer sees"). */
@@ -36,6 +37,12 @@ export default function StudioMagnet() {
     <Section title="Settings">
       <label className="checkbox"><input type="checkbox" checked={!data.opt_out} onChange={e => save({ opt_out: !e.target.checked })} /> Feature my streams in MAGNet</label>
       <label className="checkbox"><input type="checkbox" checked={data.chat_merge} onChange={e => save({ chat_merge: e.target.checked })} /> Merge MAGNet chat into my chat while I&apos;m featured</label>
+    </Section>
+    <Section title="Last 30 days" intro="Shown to you only and never used for scoring.">
+      <ul className="list">
+        <li><strong>{data.live_now?.turns ?? 0}</strong> turn{data.live_now?.turns === 1 ? "" : "s"} at the top of Live Now that viewers saw (3 minutes each){data.live_now?.last && <>, most recently {new Date(data.live_now.last).toLocaleString()}</>}, with <strong>{data.live_now?.followed ?? 0}</strong> new follow{data.live_now?.followed === 1 ? "" : "s"} during a turn or the 10 minutes after.</li>
+        <li><strong>{data.history.length}</strong> MAGNet feature{data.history.length === 1 ? "" : "s"}{data.history.length >= 50 && " (the latest 50)"} ({minutes(data.history.reduce((n, f) => n + f.seconds, 0))} in all), bringing <strong>{data.history.reduce((n, f) => n + f.hype_viewers, 0)}</strong> MAGNet viewers; <strong>{data.history.reduce((n, f) => n + f.followed, 0)}</strong> of them followed and <strong>{data.history.reduce((n, f) => n + f.chatted, 0)}</strong> chatted.</li>
+      </ul>
     </Section>
     <Section title="Feature history" intro="The last 30 days. Who stayed to follow or chat is shown to you only and never used for scoring.">
       {data.history.length === 0 ? <p className="muted">No features yet.</p> : <table className="table"><thead><tr><th>Started</th><th>Lane</th><th>Why</th><th>Length</th><th>MAGNet viewers</th><th>Followed</th><th>Chatted</th></tr></thead>

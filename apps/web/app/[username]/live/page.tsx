@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SeenCards } from "../../../components/SeenCards";
 import { Board } from "../../../components/Board";
 import { Chat } from "../../../components/Chat";
 import { Crowd } from "../../../components/Crowd";
@@ -44,7 +45,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
   // The streamer's colors frame their stream (player and streamer bar); everything that belongs to
   // the viewer (Up next, rally, chat) stays in the viewer's own colors, so ALLY and "Rally for
   // Myria" always mean the viewer's side.
-  return <div className="channel watch">
+  return <div className="channel watch"><SeenCards surface="suggestion" />
     <div className="watch-main">
     {ground && <TurfStrip genre={{ id: ground.id, name: ground.name }} holder={ground.holder} viewer={account?.faction ?? null} />}
     <div className="watch-stage" data-theme={c.faction ?? "neutral"}>

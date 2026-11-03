@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
+import { trackClicks } from "../lib/view-source";
 import { Chrome } from "./shell/Chrome";
 import { Logo, type LogoStyle } from "./LogoStyle";
 
@@ -22,6 +24,8 @@ export default function SiteShell({ account, alerts, actions, sidebar, banner, c
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  // Where views come from, for streamers' analytics (docs/ANALYTICS.md).
+  useEffect(() => trackClicks(), []);
   if (pathname?.startsWith("/embed/")) return <main id="main">{children}</main>;
   // The OBS board overlay is a bare, transparent browser source.
   if (pathname?.startsWith("/overlay/")) return <>{children}</>;

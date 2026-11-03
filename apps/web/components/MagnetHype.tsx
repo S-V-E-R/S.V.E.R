@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { SeenCards } from "./SeenCards";
 import { useCallback, useEffect, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { LivePlayer } from "./LivePlayer";
@@ -67,7 +68,7 @@ export function MagnetHype({ lane, account, viewerFaction }: { lane: string; acc
   const genres = open.filter(l => !sides.includes(l));
   // How far through its turn the featured stream is (a turn lasts at most until moves_on_by).
   const turn = featured?.moves_on_by ? Math.min(1, Math.max(0, (now - Date.parse(featured.since)) / Math.max(1, Date.parse(featured.moves_on_by) - Date.parse(featured.since)))) : null;
-  return <div className="magnet-hype channel watch"><div className="watch-main">
+  return <div className="magnet-hype channel watch"><SeenCards surface="magnet" /><div className="watch-main">
     <nav className="magnet-lanes" aria-label="MAGNet lanes">
       {([["Sides", sides], ["Genres", genres]] as const).map(([label, group]) => group.length > 0 && <div key={label} className="lane-group"><span className="eyebrow">{label}</span><div className="chips scroll">{group.map(l => { const f = factionOf(l.id); return <Link key={l.id} href={l.id === "global" ? "/magnet" : `/magnet/${l.id}`} aria-current={l.id === lane ? "page" : undefined} className="chip" data-theme={f?.slug}>{f && <Crest faction={f.slug} initial="" size={18} />}{l.name}</Link>; })}</div></div>)}
     </nav>

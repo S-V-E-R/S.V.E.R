@@ -28,6 +28,9 @@ fn refusal_message(refusal: &str, hosting: bool) -> Fail {
             "That channel isn't accepting raids."
         }),
         "followed_only" => Fail::bad("That channel only accepts raids from channels it follows."),
+        "shielded" => {
+            Fail::bad("That channel has shield mode on and isn't accepting raids right now.")
+        }
         "unavailable" => Fail::channel_missing(),
         _ => Fail::bad(format!("You can't {verb} that channel.")),
     }

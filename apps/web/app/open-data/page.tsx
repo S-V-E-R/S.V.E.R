@@ -12,6 +12,9 @@ const WEEKLY: Metric[] = [
   { key: "accounts_total", title: "Accounts" }, { key: "accounts_new", title: "New accounts" }, { key: "channels_streamed", title: "Channels that streamed" },
   { key: "hours_streamed", title: "Hours streamed", unit: " hours", withheld: "hidden until 10 creators stream", under: { key: "hours_always_on", title: "24/7 channel" } }, { key: "rotation_reach", title: "Streams the fair rotation put first", unit: "%" },
   { key: "faction_myria", title: "Myria members" }, { key: "faction_aetheron", title: "Aetheron members" }, { key: "faction_glint", title: "Glint members" },
+  ...[["watch_hours", "Hours watched", " hours"], ["discovery_watch_share", "Watch time from discovery", "%"], ["avg_visit_minutes", "Average visit", " min"],
+    ["home_click_through", "Homepage cards that led to a visit", "%"], ["magnet_to_channel", "MAGNet viewers who opened the channel", "%"], ["discovery_lift", "Arrivals while featured, vs usual", "×"]]
+    .map(([key, title, unit]) => ({ key, title, unit, withheld: "hidden until 10 channels have viewers" })),
 ];
 const MONTHLY: Metric[] = [["creators_cents", "Creators' share"], ["platform_cents", "S.V.E.R's share"], ["payouts_cents", "Payouts sent"], ["wall_cents", "Wall seats sold"], ["ads_cents", "Ad revenue"], ["supporters_cents", "Platform supporters"]].map(([key, title]) => ({ key, title, money: true }));
 

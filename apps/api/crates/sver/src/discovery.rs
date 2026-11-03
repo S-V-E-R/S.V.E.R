@@ -163,8 +163,46 @@ async fn leader(db: &mut PgConnection, streams: &[Stream], slot: i64) -> Res<Opt
         .bind(&reached).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO discovery_rotation(singleton,slot,leader_started_at,leader_id) VALUES(true,$1,$2,$3) ON CONFLICT(singleton) DO UPDATE SET slot=greatest(discovery_rotation.slot,EXCLUDED.slot),leader_started_at=EXCLUDED.leader_started_at,leader_id=EXCLUDED.leader_id")
         .bind(slot.max(at)).bind(current.as_ref().map(|c| c.0)).bind(current.as_ref().map(|c| &c.1)).execute(&mut *tx).await?;
+    // The turn someone is seeing now, for the streamer's own stats and viewer analytics; 90 days are kept.
+    if let Some((_, broadcast)) = &current {
+        let new = sqlx::query(
+            "INSERT INTO rotation_turns(slot,broadcast_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(slot.max(at))
+        .bind(broadcast)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            > 0;
+        if new {
+            sqlx::query("DELETE FROM rotation_turns WHERE slot<$1")
+                .bind(slot.max(at) - 90 * 86_400 / ROTATE_SECONDS)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     tx.commit().await?;
     Ok(current)
+}
+
+/// A streamer's turns at the top of Live Now in the last 30 days (Creator Studio → MAGNet): how
+/// many someone saw, and new follows during a turn or the 10 minutes after it.
+pub async fn turns(db: &mut PgConnection, owner: &str) -> Res<Value> {
+    Ok(sqlx::query_scalar("WITH t AS (SELECT to_timestamp(r.slot*$2) AS s, to_timestamp((r.slot+1)*$2) AS e FROM rotation_turns r JOIN broadcasts b ON b.id=r.broadcast_id WHERE b.owner_id=$1 AND r.slot>=floor(extract(epoch FROM now()-interval '30 days')/$2))
+        SELECT jsonb_build_object('turns',(SELECT count(*) FROM t),'last',(SELECT max(s) FROM t),
+          'followed',(SELECT count(*) FROM follows w WHERE w.following_id=$1 AND EXISTS(SELECT 1 FROM t WHERE w.created_at BETWEEN t.s AND t.e+interval '10 minutes')))")
+        .bind(owner).bind(ROTATE_SECONDS as f64).fetch_one(db).await?)
+}
+
+/// When streams were on top of Live Now since `from` (turns someone saw), as (owner, start, end):
+/// one channel's, or every channel's with `owner` None.
+pub async fn turn_windows(
+    db: &mut PgConnection,
+    owner: Option<&str>,
+    from: DateTime<Utc>,
+) -> Res<Vec<(String, DateTime<Utc>, DateTime<Utc>)>> {
+    Ok(sqlx::query_as("SELECT b.owner_id,to_timestamp(r.slot*$3),to_timestamp((r.slot+1)*$3) FROM rotation_turns r JOIN broadcasts b ON b.id=r.broadcast_id WHERE ($1::text IS NULL OR b.owner_id=$1) AND to_timestamp((r.slot+1)*$3)>$2 ORDER BY r.slot")
+        .bind(owner).bind(from).bind(ROTATE_SECONDS as f64).fetch_all(db).await?)
 }
 
 /// The home genres of a faction (Module 4's territories at season start).

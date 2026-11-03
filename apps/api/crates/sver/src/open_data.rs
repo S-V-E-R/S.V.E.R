@@ -46,6 +46,27 @@ const WEEKLY: &[(&str, &str)] = &[
         "faction_glint",
         "Glint members at the end of the week, shown exactly: the member directory is public",
     ),
+    (
+        "watch_hours",
+        "Hours real viewers watched that week (sessions viewer integrity counted); these viewer figures are hidden until 10 channels had viewers",
+    ),
+    (
+        "discovery_watch_share",
+        "Percent of that watch time that came from discovery: the homepage, MAGNet, Browse, Search, suggestions and faction pages",
+    ),
+    ("avg_visit_minutes", "Average length of a visit, in minutes"),
+    (
+        "home_click_through",
+        "Percent of times a live card was seen on the homepage that led to a visit",
+    ),
+    (
+        "magnet_to_channel",
+        "Percent of viewers who watched a stream inside MAGNet and then opened that channel",
+    ),
+    (
+        "discovery_lift",
+        "New arrivals per hour while a stream was on top of Live Now or featured on MAGNet, as a multiple of the rate the rest of the time",
+    ),
 ];
 const MONTHLY: &[(&str, &str)] = &[
     (
@@ -86,7 +107,12 @@ pub async fn tick(app: &App) -> Res<()> {
 /// Writes the figures (also run by the tests).
 pub async fn compute(app: &App) -> Res<()> {
     let mut tx = app.db.begin().await?;
-    sqlx::query("INSERT INTO public_stats(period,metric,value) SELECT to_char(w,'IYYY-\"W\"IW'),m.metric,m.value FROM generate_series(date_trunc('week',now())-interval '11 weeks',date_trunc('week',now()),interval '1 week') w
+    // Viewer analytics (docs/ANALYTICS.md): `exp` is each channel's exposed time, on top of Live
+    // Now or featured on MAGNet; `wv` real visits by ISO week.
+    sqlx::query("WITH exp AS (SELECT b.owner_id AS o,to_timestamp(r.slot*180) AS s,to_timestamp((r.slot+1)*180) AS e FROM rotation_turns r JOIN broadcasts b ON b.id=r.broadcast_id
+            UNION ALL SELECT owner_id,started_at,coalesce(ended_at,now()) FROM magnet_features),
+        wv AS (SELECT v.*,date_trunc('week',v.started_at) AS wk FROM watch_visits v WHERE v.counted)
+        INSERT INTO public_stats(period,metric,value) SELECT to_char(w,'IYYY-\"W\"IW'),m.metric,m.value FROM generate_series(date_trunc('week',now())-interval '11 weeks',date_trunc('week',now()),interval '1 week') w
         CROSS JOIN LATERAL (VALUES
           ('accounts_total',(SELECT count(*) FROM users WHERE created_at<w+interval '1 week' AND (deleted_at IS NULL OR deleted_at>=w+interval '1 week'))::float8),
           ('accounts_new',(SELECT count(*) FROM users WHERE created_at>=w AND created_at<w+interval '1 week')::float8),
@@ -98,7 +124,18 @@ pub async fn compute(app: &App) -> Res<()> {
           ('rotation_reach',(SELECT CASE WHEN count(*)=0 THEN 0 ELSE 100.0*count(f.broadcast_id)/count(*) END FROM broadcasts b LEFT JOIN rotation_firsts f ON f.broadcast_id=b.id WHERE b.confirmed_live_at>=w AND b.confirmed_live_at<w+interval '1 week' AND coalesce(b.ended_at,now())-b.confirmed_live_at>=interval '10 minutes')::float8),
           ('faction_myria',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='myria' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8),
           ('faction_aetheron',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='aetheron' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8),
-          ('faction_glint',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='glint' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8)
+          ('faction_glint',(SELECT count(*) FROM faction_members f JOIN users u ON u.id=f.user_id WHERE faction='glint' AND joined_at<w+interval '1 week' AND (u.deleted_at IS NULL OR u.deleted_at>=w+interval '1 week'))::float8),
+          ('analytics_base',(SELECT count(DISTINCT channel_id) FROM wv WHERE wk=w)::float8),
+          ('watch_hours',(SELECT coalesce(sum(seconds),0)/3600 FROM wv WHERE wk=w)::float8),
+          ('discovery_watch_share',(SELECT coalesce(100*sum(seconds) FILTER (WHERE source IN ('home','magnet','magnet_channel','browse','search','suggestion','faction'))/nullif(sum(seconds),0),0) FROM wv WHERE wk=w)::float8),
+          ('avg_visit_minutes',(SELECT coalesce(avg(seconds),0)/60 FROM wv WHERE wk=w)::float8),
+          ('home_click_through',(SELECT coalesce(100.0*(SELECT count(*) FROM wv WHERE wk=w AND source='home')/nullif((SELECT sum(shown) FROM discovery_impressions WHERE surface='home' AND hour>=w AND hour<w+interval '1 week'),0),0))::float8),
+          ('magnet_to_channel',(SELECT coalesce(100.0*count(DISTINCT (a.channel_id,a.viewer_key)) FILTER (WHERE EXISTS(SELECT 1 FROM wv c WHERE c.source='magnet' AND c.channel_id=a.channel_id AND c.viewer_key=a.viewer_key AND c.started_at>=a.started_at AND c.wk=w))/nullif(count(DISTINCT (a.channel_id,a.viewer_key)),0),0) FROM wv a WHERE a.wk=w AND a.source='magnet_channel')::float8),
+          ('discovery_lift',(SELECT CASE WHEN eh>0 AND lh>eh AND va>ea THEN (ea/eh)/((va-ea)/(lh-eh)) ELSE 0 END FROM (SELECT
+              (SELECT count(*) FROM wv v WHERE v.wk=w AND EXISTS(SELECT 1 FROM exp x WHERE x.o=v.channel_id AND v.started_at>=x.s AND v.started_at<x.e))::float8 AS ea,
+              (SELECT coalesce(sum(extract(epoch FROM least(x.e,w+interval '1 week')-greatest(x.s,w))),0)/3600 FROM exp x WHERE x.s<w+interval '1 week' AND x.e>w)::float8 AS eh,
+              (SELECT count(*) FROM wv WHERE wk=w)::float8 AS va,
+              (SELECT coalesce(sum(extract(epoch FROM least(coalesce(ended_at,now()),w+interval '1 week')-greatest(confirmed_live_at,w))),0)/3600 FROM broadcasts WHERE confirmed_live_at<w+interval '1 week' AND coalesce(ended_at,now())>w)::float8 AS lh) q))
         ) m(metric,value)
         ON CONFLICT(period,metric) DO UPDATE SET value=EXCLUDED.value,computed_at=now()")
         .execute(&mut *tx).await?;
@@ -179,6 +216,13 @@ async fn figures(app: &App) -> Res<(Vec<Value>, Vec<Value>)> {
                 }
                 // Faction membership is public in each faction's member directory.
                 "hours_always_on" | "faction_myria" | "faction_aetheron" | "faction_glint" => 10.0,
+                // Viewer figures need 10 channels with viewers behind them, so no one's show.
+                "watch_hours"
+                | "discovery_watch_share"
+                | "avg_visit_minutes"
+                | "home_click_through"
+                | "magnet_to_channel"
+                | "discovery_lift" => get(period, "analytics_base").unwrap_or(0.0),
                 _ => value,
             };
             row[*metric] = if base < 10.0 {

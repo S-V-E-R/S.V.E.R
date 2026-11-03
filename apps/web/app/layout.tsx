@@ -88,7 +88,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       </Link>)}
     <SideNav faction={faction ? { name: faction.name, slug: faction.slug } : null} />
     {account && <DailyOrders />}
-    {(account || live.length > 0) && <section className="side-section" aria-labelledby="side-live">
+    {(account || live.length > 0) && <section className="side-section" aria-labelledby="side-live" data-src={account ? "following" : "suggestion"}>
       <div className="side-label"><span id="side-live">{account ? "Following · live" : "Picked for you"}</span><span className="magnet"><MagnetMark />MAGNet</span></div>
       {live.length === 0
         ? <p className="side-empty">Nobody you follow is live.</p>

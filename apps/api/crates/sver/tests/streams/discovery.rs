@@ -92,6 +92,25 @@ pub async fn exercise(e: &Env) {
     );
     let anon = names(&after["live"]);
     assert_eq!(anon.len(), 4);
+    // The stream on top had a turn someone saw, recorded once per slot for its own stats
+    // (Creator Studio → MAGNet), with follows during the turn counted.
+    let (top, turns_in_slot): (String, i64) = sqlx::query_as("SELECT b.owner_id,(SELECT count(*) FROM rotation_turns t WHERE t.slot=r.slot) FROM discovery_rotation r JOIN rotation_turns t ON t.slot=r.slot AND t.broadcast_id=r.leader_id JOIN broadcasts b ON b.id=r.leader_id")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(turns_in_slot, 1, "two loads in one slot are one turn");
+    sqlx::query(
+        "INSERT INTO follows(follower_id,following_id) VALUES('dv-off',$1) ON CONFLICT DO NOTHING",
+    )
+    .bind(&top)
+    .execute(&e.app.db)
+    .await
+    .unwrap();
+    let mut db = e.app.db.acquire().await.unwrap();
+    let turns = sver::discovery::turns(&mut db, &top).await.unwrap();
+    assert!(
+        turns["turns"].as_i64().unwrap() >= 1 && turns["followed"].as_i64().unwrap() >= 1,
+        "{turns}"
+    );
+    drop(db);
     assert!(!anon.contains(&"DvHidden".to_string()));
     let card = |list: &Value, name: &str| {
         list.as_array()

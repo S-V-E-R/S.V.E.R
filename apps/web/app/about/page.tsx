@@ -3,15 +3,17 @@ import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "About | S.V.E.R",
-  description: "A live streaming community for people who play, build and make. Why S.V.E.R exists and what comes next.",
+  description: "A live streaming community for people who play, build and make. Why S.V.E.R exists and how it works.",
   alternates: { canonical: "https://sver.tv/about" },
 };
 
 const how = [
   ["Fair discovery", "MAGNet gives every live stream a turn at the top of the homepage, whether it has 3 viewers or 3,000. Viewer count never decides who gets seen."],
-  ["Three factions", "Myria, Aetheron and Glint will fight a seasonal war over every category. Fighting for your side gets you in front of its viewers."],
-  ["Viewers earn too", "When ads arrive, the viewers who watched will share 5% of what they earn. Ads aren't live yet. Creator payouts are: earnings are paid every two weeks, with Early Pay in between."],
-  ["Creators first", "Most of what a stream earns goes to the person making it. Stream with the software you already use, and multistreaming is welcome."],
+  ["Three factions", "Myria, Aetheron and Glint fight a seasonal war over every category. Streaming and watching for your side wins it ground and puts you in front of its viewers."],
+  ["Creators first", "Streamers keep 65% to 80% of every subscription, rising with their creator tier, and S.V.E.R pays the card fees. Payday is every two weeks, with Early Pay in between."],
+  ["Stream your way", "Use the software you already use, over RTMP, WHIP or SRT. Restream the same broadcast to up to three other destinations, with nothing re-encoded."],
+  ["Chat you can trust", "Channel moderators, timeouts and bans, slow mode, link blocking, banned words, followers-only chat and account-age limits. Viewer counts only count real playback."],
+  ["Viewers matter too", "Watching is free and needs no account. Viewers earn loyalty in the channels they support, and when ads arrive they will share 5% of what ads earn."],
 ] as const;
 
 // Layout follows the About board of the design canvas (docs/design/README.md).
@@ -53,7 +55,8 @@ export default function AboutPage() {
     <section aria-labelledby="open" className="about-section">
       <h2 id="open" className="rule-heading">Built in the open<span className="dia" aria-hidden="true" /></h2>
       <div className="about-prose">
-        <p>S.V.E.R is being rebuilt in stages and is open source under the GNU AGPL. Anyone can read the code, report a problem or contribute. Accounts, channel pages and live streaming come first; factions, discovery, past broadcasts, clips and Beacons follow.</p>
+        <p>S.V.E.R is open source under the GNU AGPL. Anyone can read the code, report a problem or contribute. Live streaming, factions, MAGNet discovery, subscriptions, past broadcasts, clips and Beacons are all live; the <Link href="/roadmap">roadmap</Link> shows what is being built next.</p>
+        <p>The money terms are public on <Link href="/help/creator-tiers">Creator tiers and payouts</Link>, and the <Link href="/guidelines">Community Guidelines</Link> explain how rules are enforced and appealed. We never use your streams, clips or chat to train AI (see the <Link href="/terms">Terms</Link>).</p>
         <p>S.V.E.R is built with AI assistance, mostly Anthropic&apos;s Claude, with Joe deciding what gets built and what ships. Changes Claude helped write are credited to it in the commit history on GitHub.</p>
       </div>
       <div className="about-links">

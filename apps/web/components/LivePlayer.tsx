@@ -12,6 +12,7 @@ import { LiveVideoTools } from "./LiveVideoTools";
 import { PlayerSettings, Uptime } from "./PlayerSettings";
 import { CaptionOverlay, type CaptionStyle } from "./CaptionOverlay";
 import { AdBreak } from "./Ads";
+import { takeSource } from "../lib/view-source";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string; mature?: boolean } };
@@ -153,6 +154,9 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   const [now, setNow] = useState(() => Date.now());
   const arrivedFrom = useRef<string | null>(null);
   useEffect(() => { arrivedFrom.current = new URLSearchParams(window.location.search).get("raid"); }, []);
+  // How this viewer got here, for the streamer's analytics; a hosted stream counts as a host.
+  const viewSource = useRef<{ source: string; referrer?: string }>({ source: "direct" });
+  useEffect(() => { viewSource.current = nested ? { source: "host" } : takeSource(username); }, [nested, username]);
   useEffect(() => {
     const onRaid = (event: Event) => {
       const detail = (event as CustomEvent<{ channel: string; raid: Raid | null }>).detail;
@@ -286,7 +290,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       run.last = element.currentTime;
       const check = token.current;
       token.current = "";
-      void send<{ recorded: boolean; needs_turnstile?: boolean }>("POST", `${path}/beat`, { broadcast_id: broadcast, browser_id: browserId(), visible: !document.hidden, media_time: element.currentTime - run.base, turnstile: check || undefined, raid: arrivedFrom.current || undefined, magnet: magnetLane }).then(async result => {
+      void send<{ recorded: boolean; needs_turnstile?: boolean }>("POST", `${path}/beat`, { broadcast_id: broadcast, browser_id: browserId(), visible: !document.hidden, media_time: element.currentTime - run.base, turnstile: check || undefined, raid: arrivedFrom.current || undefined, magnet: magnetLane, source: viewSource.current.source, referrer: viewSource.current.referrer }).then(async result => {
         if (!result.ok || !result.data.needs_turnstile) { setSitekey(null); return; }
         const config = await send<{ turnstile_site_key: string }>("GET", "/api/auth/config");
         if (config.ok) setSitekey(config.data.turnstile_site_key);

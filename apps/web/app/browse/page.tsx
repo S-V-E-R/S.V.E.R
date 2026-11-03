@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SeenCards } from "../../components/SeenCards";
 import { RecentChannels, SectionHead, StreamGrid } from "../../components/home/Shelves";
 import type { LiveCard, Recent } from "../../components/home/types";
 import { apiGet, viewerLanguages } from "../../lib/server-api";
@@ -53,7 +54,7 @@ export default async function Browse({ searchParams }: { searchParams: Promise<{
   };
   const title = category?.name ?? genre?.name ?? "Browse";
   const viewerFaction = account?.faction ?? null;
-  return <div className="home browse">
+  return <div className="home browse"><SeenCards surface="browse" />
     {/* Deep pages show the way back: Browse, then the genre above a category. */}
     {genre && <nav className="eyebrow crumbs" aria-label="Breadcrumb"><Link href="/browse">Browse</Link>{category && <> › <Link href={link({ genre: genre.id, category: null })}>{genre.name}</Link></>}</nav>}
     <SectionHead id="browse-h" title={title} note={`${browse.data?.live ?? 0} live now · fair rotation, never by viewer count`} level={1} />
