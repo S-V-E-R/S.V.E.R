@@ -496,6 +496,43 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK
     );
     assert!(connect(Some(game_token), None).await.is_err(), "revoked");
+
+    // ---- An app token with board:control and its client ID; S.V.E.R Desktop is the bridge ----
+    e.sql("INSERT INTO oauth_grants(id,app_id,user_id,scopes) VALUES('gw-board','sver-desktop','gw-owner','{board:control}'),('gw-plain','sver-desktop','gw-viewer','{user:read}')").await;
+    for (token, grant) in [("gw-app-board", "gw-board"), ("gw-app-plain", "gw-plain")] {
+        e.sql(sqlx::AssertSqlSafe(format!("INSERT INTO oauth_tokens(token_hash,grant_id,kind,expires_at) VALUES('{}','{grant}','access',now()+interval '1 hour')", sver::security::digest(token)))).await;
+    }
+    let connect_app = |token: &'static str| async move {
+        let mut request = format!("ws://{address}/api/integrations/ws")
+            .into_client_request()
+            .unwrap();
+        let headers = request.headers_mut();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        headers.insert("sver-client-id", "sver-desktop".parse().unwrap());
+        tokio_tungstenite::connect_async(request).await
+    };
+    assert!(
+        connect_app("gw-app-plain").await.is_err(),
+        "needs board:control"
+    );
+    assert!(
+        connect(Some("gw-app-board".into()), None).await.is_err(),
+        "and the client ID"
+    );
+    let (mut desktop, _) = connect_app("gw-app-board").await.unwrap();
+    let hello = next(&mut desktop, "hello").await;
+    assert_eq!(
+        (&hello["kind"], &hello["channel"]),
+        (&json!("bridge"), &json!("GwOwner"))
+    );
+    assert_eq!(
+        say(&mut desktop, json!({"type": "ping", "id": 9})).await["type"],
+        "pong"
+    );
+    e.sql("UPDATE oauth_grants SET revoked_at=now() WHERE id='gw-board'")
+        .await;
+    assert!(connect_app("gw-app-board").await.is_err(), "grant removed");
+    drop(desktop);
     drop(game);
     drop(bridge);
     server.abort();

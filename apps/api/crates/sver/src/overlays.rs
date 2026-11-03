@@ -4,7 +4,7 @@
 //! whatever those leave out (blocked people, refused chat, Valor that didn't move) never shows.
 //! Templates are filled here; the page only draws plain text.
 use crate::{
-    App,
+    App, auth,
     media::{self, Kind},
     profiles::{self, Fail, Res},
     security as sec,
@@ -183,24 +183,32 @@ fn alert(settings: &Value, topic_kind: &str, data: &Value, id: i64, base: &str) 
     )
 }
 
+/// Studio, or S.V.E.R Desktop with `alerts:edit`.
+async fn editor(app: &App, headers: &HeaderMap, jar: &CookieJar) -> Res<auth::User> {
+    crate::devapps::actor(app, headers, jar, crate::devapps::ALERTS_EDIT.0).await
+}
 /// GET /api/me/overlays: settings, and whether a link exists (the link itself is shown once).
-async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
-    let me = profiles::signed_in(&app, &jar).await?;
+async fn mine(State(app): State<App>, headers: HeaderMap, jar: CookieJar) -> Res<Json<Value>> {
+    let me = editor(&app, &headers, &jar).await?;
+    overview(&app, &me.id).await
+}
+async fn overview(app: &App, me: &str) -> Res<Json<Value>> {
     let linked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM overlay_settings WHERE channel_id=$1 AND token_hash IS NOT NULL)")
-        .bind(&me.id).fetch_one(&app.db).await?;
+        .bind(me).fetch_one(&app.db).await?;
     let seen: bool = sqlx::query_scalar("SELECT coalesce((SELECT seen_at>now()-interval '30 seconds' FROM overlay_settings WHERE channel_id=$1),false)")
-        .bind(&me.id).fetch_one(&app.db).await?;
+        .bind(me).fetch_one(&app.db).await?;
     Ok(Json(
-        json!({"settings": settings(&app, &me.id).await?, "linked": linked, "connected": seen}),
+        json!({"settings": settings(app, me).await?, "linked": linked, "connected": seen}),
     ))
 }
 /// PUT /api/me/overlays: saves settings; open overlays update at once.
 async fn save(
     State(app): State<App>,
+    headers: HeaderMap,
     jar: CookieJar,
     Json(input): Json<Value>,
 ) -> Res<Json<Value>> {
-    let me = profiles::signed_in(&app, &jar).await?;
+    let me = editor(&app, &headers, &jar).await?;
     let mut settings = validate(&input)?;
     // Images and sounds change only through their upload routes.
     let old = self::settings(&app, &me.id).await?;
@@ -220,11 +228,11 @@ async fn save(
         0,
         json!({"type": "settings", "settings": settings, "goal_count": count}),
     );
-    mine(State(app), jar).await
+    overview(&app, &me.id).await
 }
 /// POST /api/me/overlays/link: a new private link (the old one stops working).
-async fn link(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
-    let me = profiles::signed_in(&app, &jar).await?;
+async fn link(State(app): State<App>, headers: HeaderMap, jar: CookieJar) -> Res<Json<Value>> {
+    let me = editor(&app, &headers, &jar).await?;
     profiles::ensure_unrestricted(&mut *app.db.acquire().await?, &me.id).await?;
     let token = sec::token();
     sqlx::query("INSERT INTO overlay_settings(channel_id,token_hash) VALUES($1,$2) ON CONFLICT(channel_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,seen_at=NULL")
@@ -240,15 +248,20 @@ async fn revoke(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         .bind(&me.id)
         .execute(&app.db)
         .await?;
-    mine(State(app), jar).await
+    overview(&app, &me.id).await
 }
 #[derive(Deserialize)]
 pub struct Test {
     kind: String,
 }
 /// POST /api/me/overlays/test: a sample alert on open overlays only; nothing is recorded.
-async fn test(State(app): State<App>, jar: CookieJar, Json(input): Json<Test>) -> Res<Json<Value>> {
-    let me = profiles::signed_in(&app, &jar).await?;
+async fn test(
+    State(app): State<App>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Json(input): Json<Test>,
+) -> Res<Json<Value>> {
+    let me = editor(&app, &headers, &jar).await?;
     profiles::rate(&app, format!("overlay-test:{}", me.id), 30, 60).await?;
     let topic = KINDS
         .iter()
@@ -270,11 +283,7 @@ async fn test(State(app): State<App>, jar: CookieJar, Json(input): Json<Test>) -
 /// GET /api/me/overlays/activity: the channel's last 50 alerts for the OBS dock (docs/OBS.md),
 /// newest first, with follows from the last 7 days that don't count yet marked `pending`. People
 /// the streamer has blocked since are left out.
-async fn activity(
-    State(app): State<App>,
-    headers: axum::http::HeaderMap,
-    jar: CookieJar,
-) -> Res<Json<Value>> {
+async fn activity(State(app): State<App>, headers: HeaderMap, jar: CookieJar) -> Res<Json<Value>> {
     // S.V.E.R Desktop's activity feed reads it with `events:private`.
     let me = crate::devapps::actor(&app, &headers, &jar, "events:private").await?;
     let rows: Vec<(i64, String, Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as("SELECT a.id,a.kind,a.data,a.created_at FROM stream_activity a WHERE a.channel_id=$1
@@ -391,7 +400,7 @@ async fn upload_image(
     media::record(&mut tx, &me, Kind::AlertImage, &processed).await?;
     tx.commit().await?;
     set_media(&app, &me, kind, "image", Some(&processed.stored)).await?;
-    mine(State(app), jar).await
+    overview(&app, &me).await
 }
 /// POST /api/me/overlays/{kind}/sound: a sound for that alert, cut to 10 seconds and re-encoded,
 /// so nothing the streamer uploaded is served as is.
@@ -404,7 +413,7 @@ async fn upload_sound(
     let (me, kind) = uploader(&app, &jar, &kind).await?;
     let key = store_sound(&app, &me, multipart).await?;
     set_media(&app, &me, kind, "audio", Some(&key)).await?;
-    mine(State(app), jar).await
+    overview(&app, &me).await
 }
 /// Reads an uploaded sound, re-encodes it (10 seconds, mono WAV) and stores it; returns its key.
 /// Alerts and custom Skills share it.
@@ -448,7 +457,7 @@ async fn remove_image(
 ) -> Res<Json<Value>> {
     let me = profiles::signed_in(&app, &jar).await?;
     set_media(&app, &me.id, alert_kind(&kind)?, "image", None).await?;
-    mine(State(app), jar).await
+    overview(&app, &me.id).await
 }
 /// DELETE /api/me/overlays/{kind}/sound
 async fn remove_sound(
@@ -458,7 +467,7 @@ async fn remove_sound(
 ) -> Res<Json<Value>> {
     let me = profiles::signed_in(&app, &jar).await?;
     set_media(&app, &me.id, alert_kind(&kind)?, "audio", None).await?;
-    mine(State(app), jar).await
+    overview(&app, &me.id).await
 }
 /// Decodes any sound ffmpeg reads from a pipe into mono 16-bit PCM, at most 10 seconds, wrapped in
 /// a WAV header. None when it isn't a sound or is shorter than a fifth of a second.
