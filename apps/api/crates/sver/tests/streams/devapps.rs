@@ -605,7 +605,8 @@ async fn desktop(e: &Env) {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let mut settings = serde_json::from_slice::<Value>(&bytes).unwrap()["settings"].clone();
+    let original = serde_json::from_slice::<Value>(&bytes).unwrap()["settings"].clone();
+    let mut settings = original.clone();
     settings["follow"]["on"] = json!(false);
     let response = sver::router(e.app.clone())
         .oneshot(
@@ -634,6 +635,8 @@ async fn desktop(e: &Env) {
     let (status, link) = post("/api/me/overlays/link".into(), Value::Null).await;
     assert_eq!(status, StatusCode::OK, "{link}");
     assert!(link["url"].as_str().unwrap().contains("/overlay/alerts/"));
+    // The overlay tests that follow expect follow alerts on.
+    e.call("PUT", "/api/me/overlays", original).await;
     // Studio's own key tests start from no key.
     e.sql("DELETE FROM stream_credentials WHERE owner_id='stream-owner'")
         .await;
