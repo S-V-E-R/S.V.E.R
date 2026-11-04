@@ -182,6 +182,43 @@ const CAPTION_SIGNATURE: &[u8] = &[0xb5, 0x00, 0x31, b'G', b'A', b'9', b'4', 0x0
 
 /// Decodes one frame of a segment to a 640-pixel-wide WebP. The stream itself is never altered.
 pub async fn snapshot(ts: Vec<u8>) -> Option<Vec<u8>> {
+    let out = first_frame(
+        ts,
+        &[
+            "-vf",
+            "scale=640:-2",
+            "-c:v",
+            "libwebp",
+            "-quality",
+            "70",
+            "-f",
+            // The WebP muxer needs seeking to finish its RIFF header; stdout cannot seek.
+            "image2pipe",
+            "pipe:1",
+        ],
+    )
+    .await?;
+    (out.len() > 32 && out.len() < 2_000_000).then_some(out)
+}
+/// One frame's area `[x0, y0, x1, y1]` (fractions of the frame), cut at the stream's own
+/// resolution and scaled to `width`×`height` raw RGB: small HUD text the 640-pixel still loses.
+pub async fn region(ts: Vec<u8>, area: [f32; 4], width: u32, height: u32) -> Option<Vec<u8>> {
+    let [x0, y0, x1, y1] = area;
+    let filter = format!(
+        "crop=iw*{}:ih*{}:iw*{x0}:ih*{y0},scale={width}:{height}",
+        x1 - x0,
+        y1 - y0
+    );
+    let out = first_frame(
+        ts,
+        &[
+            "-vf", &filter, "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1",
+        ],
+    )
+    .await?;
+    (out.len() == (width * height * 3) as usize).then_some(out)
+}
+async fn first_frame(ts: Vec<u8>, output: &[&str]) -> Option<Vec<u8>> {
     use tokio::io::AsyncWriteExt;
     let mut child = tokio::process::Command::new("ffmpeg")
         .args([
@@ -193,18 +230,7 @@ pub async fn snapshot(ts: Vec<u8>) -> Option<Vec<u8>> {
             "-frames:v",
             "1",
         ])
-        .args([
-            "-vf",
-            "scale=640:-2",
-            "-c:v",
-            "libwebp",
-            "-quality",
-            "70",
-            "-f",
-            // The WebP muxer needs seeking to finish its RIFF header; stdout cannot seek.
-            "image2pipe",
-            "pipe:1",
-        ])
+        .args(output)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -221,8 +247,7 @@ pub async fn snapshot(ts: Vec<u8>) -> Option<Vec<u8>> {
         .ok()?
         .ok()?;
     let _ = feed.await;
-    (output.status.success() && output.stdout.len() > 32 && output.stdout.len() < 2_000_000)
-        .then_some(output.stdout)
+    output.status.success().then_some(output.stdout)
 }
 /// About once a minute per live stream: a fresh still for discovery cards. Each still gets a new
 /// key (immutable caching) and the previous one is deleted.

@@ -115,8 +115,9 @@ pub struct Signals {
     /// stream's normal per minute. Paid presses and predictions never count.
     pub crowd: f64,
     pub crowd_base: f64,
-    /// A win the game detector saw in the last 90 seconds ("Victory", "Round win").
-    pub won: Option<String>,
+    /// What the game detector saw in the last 90 seconds: a win ("Victory", "Round win") or an
+    /// endgame ("Endgame: 5 players left").
+    pub game: Option<String>,
 }
 impl Signals {
     /// The moment score and its one-line reason (None when nothing is elevated).
@@ -146,13 +147,13 @@ impl Signals {
         if crowd > best.0 {
             best = (crowd, Some("Chat is playing along".to_string()));
         }
-        if let Some(won) = &self.won
+        if let Some(game) = &self.game
             && t.win_score > best.0
         {
-            let reason = if won == "Victory" {
-                "Just won the match"
-            } else {
-                "Just won a round"
+            let reason = match game.as_str() {
+                "Victory" => "Just won the match",
+                "Round win" => "Just won a round",
+                other => other,
             };
             best = (t.win_score, Some(reason.to_string()));
         }
@@ -419,7 +420,7 @@ pub async fn candidates(
         unsettled,
         crowd,
         crowd_base,
-        won,
+        game,
     ) in rows
     {
         if !eligible || (system && others) {
@@ -438,7 +439,7 @@ pub async fn candidates(
             unsettled,
             crowd,
             crowd_base,
-            won,
+            game,
         };
         let (score, moment) = signals.score(t);
         out.push((
@@ -505,7 +506,7 @@ pub async fn candidates(
             // ponytail: members' crowds add up, so someone playing on two members' boards counts twice.
             crowd: unit.iter().map(|o| o.2.crowd).sum(),
             crowd_base: unit.iter().map(|o| o.2.crowd_base).sum(),
-            won: unit.iter().find_map(|o| o.2.won.clone()),
+            game: unit.iter().find_map(|o| o.2.game.clone()),
         };
         let (score, moment) = signals.score(t);
         let last_featured = if unit.iter().any(|o| o.1.last_featured.is_none()) {
@@ -1267,18 +1268,27 @@ mod tests {
         let t = t();
         // A win on screen is a moment on its own, above a chat burst and below a raid.
         let won = Signals {
-            won: Some("Victory".into()),
+            game: Some("Victory".into()),
             ..Signals::default()
         };
         assert_eq!(won.score(&t), (6.0, Some("Just won the match".into())));
         let round = Signals {
-            won: Some("Round win".into()),
+            game: Some("Round win".into()),
             unsettled: true,
             ..Signals::default()
         };
         assert_eq!(round.score(&t).1.as_deref(), Some("Just won a round"));
+        // A Fortnite endgame scores like a win, with the count as its reason.
+        let endgame = Signals {
+            game: Some("Endgame: 4 players left".into()),
+            ..Signals::default()
+        };
+        assert_eq!(
+            endgame.score(&t),
+            (6.0, Some("Endgame: 4 players left".into()))
+        );
         let raid = Signals {
-            won: Some("Victory".into()),
+            game: Some("Victory".into()),
             raided_by: Some("Raider".into()),
             ..Signals::default()
         };

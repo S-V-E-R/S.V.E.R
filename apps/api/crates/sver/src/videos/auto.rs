@@ -75,14 +75,35 @@ pub async fn segment(app: &App, video: &str, bytes: &[u8]) -> Res<()> {
     else {
         return Ok(());
     };
-    // A win is a MAGNet moment (docs/MAGNET.md "What counts as a moment") whether or not clips are suggested.
-    if category.as_deref() == Some(MW4)
-        && let Some(title) = win_screen(bytes, area).await
-    {
-        crate::magnet::game_moment(app, &broadcast, title).await?;
-        if auto_clips {
-            moment(app, &broadcast, "win", title).await?;
+    // A win or an endgame is a MAGNet moment (docs/MAGNET.md "What counts as a moment") whether or
+    // not clips are suggested.
+    match category.as_deref() {
+        Some(MW4) => {
+            if let Some(title) = win_screen(bytes, area).await {
+                crate::magnet::game_moment(app, &broadcast, title).await?;
+                if auto_clips {
+                    moment(app, &broadcast, "win", title).await?;
+                }
+            }
         }
+        Some(name) => {
+            if let Some(counter) = super::hud::for_category(name)
+                && let Some(left) = endgame(counter, video, bytes, area.as_deref()).await
+            {
+                let title = format!("Endgame: {left} {} left", counter.unit);
+                crate::magnet::game_moment(app, &broadcast, &title).await?;
+            }
+            if let Some(banner) = super::hud::banner_for_category(name) {
+                use super::hud::{BANNER_HEIGHT, BANNER_WIDTH};
+                let at = within(area.as_deref(), banner.area);
+                let crop =
+                    crate::probe::region(bytes.to_vec(), at, BANNER_WIDTH, BANNER_HEIGHT).await;
+                if let Some(title) = crop.as_deref().and_then(|c| banner.read(c)) {
+                    crate::magnet::game_moment(app, &broadcast, title).await?;
+                }
+            }
+        }
+        None => {}
     }
     if !auto_clips {
         return Ok(());
@@ -156,6 +177,43 @@ async fn win_screen(bytes: &[u8], area: Option<Vec<f32>>) -> Option<&'static str
         "round_win" => Some("Round win"),
         _ => None,
     }
+}
+
+/// `rect` (fractions of the game area) as fractions of the frame, inside the channel's learned game
+/// area if any.
+fn within(area: Option<&[f32]>, rect: [f32; 4]) -> [f32; 4] {
+    let [gx0, gy0, gx1, gy1] = match area {
+        Some(&[x0, y0, x1, y1]) if x1 > x0 && y1 > y0 => [x0, y0, x1, y1],
+        _ => [0.0, 0.0, 1.0, 1.0],
+    };
+    let [x0, y0, x1, y1] = rect;
+    let (w, h) = (gx1 - gx0, gy1 - gy0);
+    [gx0 + x0 * w, gy0 + y0 * h, gx0 + x1 * w, gy0 + y1 * h]
+}
+/// The count when this segment shows a battle royale endgame (`hud::Endgame`). The counter is
+/// cut from the frame at full resolution, inside the channel's learned game area if any.
+async fn endgame(
+    counter: &super::hud::Counter,
+    video: &str,
+    bytes: &[u8],
+    area: Option<&[f32]>,
+) -> Option<u32> {
+    use super::hud::{Endgame, HEIGHT, WIDTH};
+    let at = within(area, counter.area);
+    // ponytail: a second decode of each 2-second segment per battle royale stream; past a few
+    // dozen at once, read every other segment.
+    let crop = crate::probe::region(bytes.to_vec(), at, WIDTH, HEIGHT).await;
+    let count = crop.as_deref().and_then(|c| counter.read(c));
+    static READS: LazyLock<Mutex<HashMap<String, (Instant, Endgame)>>> =
+        LazyLock::new(Default::default);
+    let mut reads = READS.lock().unwrap();
+    // ponytail: in this process, like loudness baselines; after a restart one read relearns it.
+    reads.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(600));
+    let (at, state) = reads
+        .entry(video.to_string())
+        .or_insert_with(|| (Instant::now(), Endgame::default()));
+    *at = Instant::now();
+    state.read(count, counter.endgame)
 }
 
 /// Share of clearly red pixels in the top 40% of the game area. MW4 draws DEFEAT and ROUND LOSS
