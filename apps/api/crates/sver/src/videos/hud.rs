@@ -1,6 +1,7 @@
 //! Battle royale counters read from a recorded segment for MAGNet endgame moments (docs/MAGNET.md
-//! "What counts as a moment"): Fortnite's players left and Apex Legends' squads left. CLIP can't
-//! read numbers, so each game's digits are matched against 10 digit templates instead.
+//! "What counts as a moment"): Fortnite's and Warzone's players left and Apex Legends' squads
+//! left. CLIP can't read numbers, so each game's digits are matched against 10 digit templates
+//! instead.
 //!
 //! A game's `area` is where its counter can be, as fractions of the game area. It is cut at the
 //! stream's own resolution and scaled to 44×18 (the counter's size at 720p). The reader tries each
@@ -11,7 +12,9 @@
 //! The templates (`<game>_digits.bin`: 10 × the slot size in little-endian f32, each z-normalized,
 //! row-major) are averages of hand-labeled counters from long recordings of each game. Training on
 //! half the labels and reading the other half: Fortnite 175 of 181 (5 of the 6 misses read nothing),
-//! Apex 191 of 191. `Endgame::read` turns reads into moments a lone misread can't fake.
+//! Apex 191 of 191, Warzone 205 of 232 (its see-through counter fades into bright skies; 12 misses
+//! read nothing, and every wrong read dropped a digit, which `Endgame::read` refuses). `Endgame::read`
+//! turns reads into moments a lone misread can't fake.
 //!
 //! League of Legends has no counter but announces its big moments in a banner at the top of the
 //! screen. `Banner` matches the banner's text rows against one template per announcement: "Ally
@@ -76,11 +79,27 @@ pub static APEX: Counter = Counter {
     templates: include_bytes!("apex_digits.bin"),
 };
 
+/// Centred under the players-left icon, top right; see-through digits with a narrow 1.
+pub static WARZONE: Counter = Counter {
+    area: [1154.0 / 1280.0, 70.0 / 720.0, 1198.0 / 1280.0, 88.0 / 720.0],
+    endgame: 10,
+    unit: "players",
+    sizes: &[(5, 8)],
+    xs: 14..32,
+    ys: 2..8,
+    steps: 4..8,
+    max_digits: 3,
+    next: MIN_MATCH,
+    right_blank: true,
+    templates: include_bytes!("warzone_digits.bin"),
+};
+
 /// The counter for a stream category, if it has one.
 pub fn for_category(name: &str) -> Option<&'static Counter> {
     match name.trim_end_matches(['™', '®']) {
         "Fortnite" => Some(&FORTNITE),
         "Apex Legends" => Some(&APEX),
+        "Call of Duty: Warzone" | "Call of Duty: Warzone 2.0" => Some(&WARZONE),
         _ => None,
     }
 }
@@ -346,31 +365,44 @@ impl Counter {
 /// clearly higher read is a new match. A plausible read goes stale after 30 seconds, so a real
 /// fall of more than 8 at once (or a long stretch with the map open) costs one read, not the moment.
 /// 1 is never a count: the game is over and its win screen covers the counter.
+///
+/// An endgame is one the count was seen falling into from above `endgame` in the same match, or,
+/// when the stream was joined in its endgame, one that holds for a minute. Between matches Warzone
+/// counts down from 10 in the counter's place, which falls like an endgame but lasts half a minute.
 #[derive(Default)]
 pub struct Endgame {
-    last: Option<(u32, std::time::Instant)>,
+    /// The last plausible count, when it was read, whether the count has been above the endgame
+    /// since this run of plausible reads began, and when that run began.
+    last: Option<(u32, std::time::Instant, bool, std::time::Instant)>,
 }
 impl Endgame {
     /// The count, if this read is a plausible endgame count (`endgame` or fewer).
     pub fn read(&mut self, count: Option<u32>, endgame: u32) -> Option<u32> {
+        self.read_at(count, endgame, std::time::Instant::now())
+    }
+    fn read_at(
+        &mut self,
+        count: Option<u32>,
+        endgame: u32,
+        now: std::time::Instant,
+    ) -> Option<u32> {
+        use std::time::Duration;
         let count = count.filter(|&v| v > 1)?;
-        let now = std::time::Instant::now();
         let fresh = self
             .last
-            .filter(|(_, at)| now.duration_since(*at) < std::time::Duration::from_secs(30));
+            .filter(|(_, at, ..)| now.duration_since(*at) < Duration::from_secs(30));
         match fresh {
-            Some((last, _)) if count + 8 >= last && count <= last + 2 => {
-                self.last = Some((count, now));
-                (count <= endgame).then_some(count)
+            Some((last, _, entered, since)) if count + 8 >= last && count <= last + 2 => {
+                let entered = entered || count > endgame;
+                self.last = Some((count, now, entered, since));
+                let held = now.duration_since(since) >= Duration::from_secs(60);
+                (count <= endgame && (entered || held)).then_some(count)
             }
-            // A new match (or the first read): remember it, but it can't be a moment yet.
-            Some((last, _)) if count > last + 2 => {
-                self.last = Some((count, now));
-                None
-            }
-            Some(_) => None,
-            None => {
-                self.last = Some((count, now));
+            // An implausible fall: a misread.
+            Some((last, ..)) if count <= last + 2 => None,
+            // The first read, a stale one, or a new match: a fresh run that can't be a moment yet.
+            _ => {
+                self.last = Some((count, now, count > endgame, now));
                 None
             }
         }
@@ -406,7 +438,7 @@ mod tests {
 
     #[test]
     fn the_shipped_templates_parse() {
-        for game in [&FORTNITE, &APEX] {
+        for game in [&FORTNITE, &APEX, &WARZONE] {
             let (tw, th) = game.sizes[0];
             assert_eq!(game.templates.len(), 10 * tw * th * 4);
             for t in game.templates() {
@@ -445,6 +477,8 @@ mod tests {
         assert!(for_category("Fortnite").is_some_and(|c| c.unit == "players"));
         assert!(for_category("Apex Legends™").is_some_and(|c| c.unit == "squads"));
         assert!(for_category("Apex Legends Mobile").is_none());
+        assert!(for_category("Call of Duty: Warzone 2.0").is_some_and(|c| c.unit == "players"));
+        assert!(for_category("Call of Duty: Warzone Mobile").is_none());
         assert!(for_category("Call of Duty: Modern Warfare 4").is_none());
         assert!(banner_for_category("League of Legends").is_some());
         assert!(banner_for_category("League of Legends: Wild Rift").is_none());
@@ -516,40 +550,66 @@ mod tests {
 
     #[test]
     fn endgame_needs_a_plausible_fall_and_ignores_dropped_digits() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        // Seen falling in: 12 -> 9 is a moment at once.
         let mut e = Endgame::default();
         assert_eq!(
-            e.read(Some(9), 10),
+            e.read_at(Some(12), 10, at(0)),
             None,
             "the first read only sets the level"
         );
-        assert_eq!(e.read(Some(9), 10), Some(9));
-        assert_eq!(e.read(None, 10), None, "no counter on this frame");
-        assert_eq!(e.read(Some(7), 10), Some(7));
+        assert_eq!(e.read_at(Some(9), 10, at(6)), Some(9));
         assert_eq!(
-            e.read(Some(1), 10),
+            e.read_at(None, 10, at(12)),
+            None,
+            "no counter on this frame"
+        );
+        assert_eq!(e.read_at(Some(7), 10, at(18)), Some(7));
+        assert_eq!(
+            e.read_at(Some(1), 10, at(24)),
             None,
             "1 is the win screen, never a count"
         );
-        assert_eq!(e.read(Some(70), 10), None, "a new match");
+        assert_eq!(e.read_at(Some(70), 10, at(30)), None, "a new match");
+        // Dropped digits never count.
         let mut e = Endgame::default();
-        for v in [33, 32, 30] {
-            assert_eq!(e.read(Some(v), 10), None);
+        for (s, v) in [(0, 33), (6, 32), (12, 30)] {
+            assert_eq!(e.read_at(Some(v), 10, at(s)), None);
         }
-        assert_eq!(e.read(Some(3), 10), None, "30 read as 3");
+        assert_eq!(e.read_at(Some(3), 10, at(18)), None, "30 read as 3");
         assert_eq!(
-            e.read(Some(3), 10),
+            e.read_at(Some(3), 10, at(24)),
             None,
             "still 27 below the last plausible read"
         );
-        for v in [28, 22, 15, 11] {
-            assert_eq!(e.read(Some(v), 10), None);
+        for (s, v) in [(30, 28), (36, 22), (42, 15), (48, 11)] {
+            assert_eq!(e.read_at(Some(v), 10, at(s)), None);
         }
-        assert_eq!(e.read(Some(10), 10), Some(10));
+        assert_eq!(e.read_at(Some(10), 10, at(54)), Some(10));
+        // A between-matches countdown after a stale gap: 8, 6, 5, 2 over half a minute is never one.
         let mut e = Endgame::default();
-        for v in [5, 4] {
-            e.read(Some(v), 3);
+        assert_eq!(e.read_at(Some(125), 10, at(0)), None);
+        for (s, v) in [(40, 8), (46, 6), (52, 5), (58, 5), (70, 2)] {
+            assert_eq!(e.read_at(Some(v), 10, at(s)), None, "countdown {v}");
         }
-        assert_eq!(e.read(Some(3), 3), Some(3), "Apex: 3 squads left");
+        // Joined in the endgame: it counts once the low count has held for a minute.
+        let mut e = Endgame::default();
+        assert_eq!(e.read_at(Some(4), 10, at(0)), None);
+        assert_eq!(e.read_at(Some(4), 10, at(20)), None);
+        assert_eq!(e.read_at(Some(3), 10, at(40)), None);
+        assert_eq!(e.read_at(Some(3), 10, at(60)), Some(3));
+        // Apex: 3 squads left after 5 and 4.
+        let mut e = Endgame::default();
+        for (s, v) in [(0, 5), (6, 4)] {
+            e.read_at(Some(v), 3, at(s));
+        }
+        assert_eq!(
+            e.read_at(Some(3), 3, at(12)),
+            Some(3),
+            "Apex: 3 squads left"
+        );
     }
 
     /// A real MPEG-TS segment through the production crop: HUD_GAME is the category, HUD_SEGMENT
@@ -600,6 +660,12 @@ mod tests {
             }
         }
         eprintln!("{same}/{total} read as labeled");
-        assert!(same as f64 >= 0.95 * total as f64);
+        // Warzone's see-through counter often reads nothing against a bright sky.
+        let floor = if std::ptr::eq(game, &WARZONE) {
+            0.85
+        } else {
+            0.95
+        };
+        assert!(same as f64 >= floor * total as f64);
     }
 }
