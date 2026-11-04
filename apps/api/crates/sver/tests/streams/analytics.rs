@@ -308,4 +308,74 @@ pub async fn exercise(e: &Env) {
             .await
             .unwrap();
     assert_eq!(left, 0);
+    growth(e).await;
+}
+
+/// The growth tracker's endpoint: hidden without its token, platform totals only with it.
+async fn growth(e: &Env) {
+    use axum::{body::Body, extract::ConnectInfo, http::Request};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let token = "growth-token-for-tests-0123456789abcdef";
+    let get = |path: &str, auth: Option<String>| {
+        let mut r = Request::get(path)
+            .header("x-real-ip", "127.0.0.1")
+            .extension(ConnectInfo(
+                "127.0.0.1:1".parse::<std::net::SocketAddr>().unwrap(),
+            ));
+        if let Some(a) = auth {
+            r = r.header("authorization", a);
+        }
+        let app = e.app.clone();
+        let req = r.body(Body::empty()).unwrap();
+        async move {
+            let res = sver::router(app).oneshot(req).await.unwrap();
+            let status = res.status();
+            let bytes = res.into_body().collect().await.unwrap().to_bytes();
+            (
+                status,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
+        }
+    };
+    // Unset: the route looks like any unknown path, even with a token.
+    assert_eq!(
+        get("/api/growth", Some(format!("Bearer {token}"))).await.0,
+        StatusCode::NOT_FOUND
+    );
+    // SAFETY: the stream tests run one after another; nothing else reads this variable.
+    unsafe { std::env::set_var("GROWTH_TOKEN", token) };
+    assert_eq!(get("/api/growth", None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get("/api/growth", Some("Bearer wrong".into())).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get("/api/growth?days=91", Some(format!("Bearer {token}")))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, body) = get("/api/growth?days=7", Some(format!("Bearer {token}"))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for key in [
+        "accounts_total",
+        "accounts_new",
+        "active_users",
+        "streams_live",
+        "streams_started",
+        "chat_messages",
+        "peak_viewers",
+        "viewers",
+    ] {
+        assert!(body[key].is_number(), "{key}: {body}");
+    }
+    assert!(body["accounts_total"].as_i64().unwrap() >= 3, "{body}");
+    assert!(body["streams_live"].as_i64().unwrap() >= 1, "{body}");
+    // Totals only: no usernames or channel lists.
+    assert!(
+        !body.to_string().contains("VaOwner") && body.get("channels").is_none(),
+        "{body}"
+    );
+    unsafe { std::env::remove_var("GROWTH_TOKEN") };
 }

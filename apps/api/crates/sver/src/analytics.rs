@@ -10,7 +10,7 @@ use crate::{
 use axum::{
     Json, Router,
     extract::{ConnectInfo, Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, header},
     routing::{get, post},
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -285,11 +285,61 @@ pub async fn report(app: &App, channel: Option<&str>, from: DateTime<Utc>) -> Re
     )
 }
 
+#[derive(Deserialize)]
+struct Window {
+    days: Option<i64>,
+}
+/// GET /api/growth?days=1..90 for an outside growth tracker: platform totals since `days` ago,
+/// nothing per person or per channel. Needs `Authorization: Bearer <GROWTH_TOKEN>`; with the
+/// variable unset (or shorter than 32 characters) the route answers 404 like any unknown path.
+/// Chat messages are kept 7 days, so a longer window undercounts them.
+async fn growth(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(window): Query<Window>,
+) -> Res<Json<Value>> {
+    let token = std::env::var("GROWTH_TOKEN").unwrap_or_default();
+    let given = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    // Digests are compared, so the check takes as long however much of the token matches.
+    if token.len() < 32 || sec::digest(given) != sec::digest(&token) {
+        return Err(Fail::missing());
+    }
+    let days = window.days.unwrap_or(1);
+    if !(1..=KEEP_DAYS).contains(&days) {
+        return Err(Fail::field("days", "Choose 1 to 90 days."));
+    }
+    let from = Utc::now() - Duration::days(days);
+    let mut out: Value = sqlx::query_scalar("SELECT jsonb_build_object(
+          'accounts_total',(SELECT count(*) FROM users WHERE deleted_at IS NULL),
+          'accounts_new',(SELECT count(*) FROM users WHERE created_at>=$1),
+          'active_users',(SELECT count(DISTINCT user_id) FROM sessions WHERE last_seen_at>=$1),
+          'streams_live',(SELECT count(*) FROM broadcasts WHERE state IN ('LIVE','RECONNECTING')),
+          'streams_started',(SELECT count(*) FROM broadcasts WHERE confirmed_live_at>=$1),
+          'channels_streamed',(SELECT count(DISTINCT owner_id) FROM broadcasts WHERE confirmed_live_at>=$1),
+          'follows_total',(SELECT count(*) FROM follows),
+          'chat_messages',(SELECT count(*) FROM chat_messages WHERE created_at>=$1 AND deleted_at IS NULL))")
+        .bind(from).fetch_one(&app.db).await?;
+    // Viewing totals (peak and unique viewers, watch hours, follows, chatters) from the staff report.
+    if let (Some(o), Value::Object(t)) = (
+        out.as_object_mut(),
+        report(&app, None, from).await?["totals"].take(),
+    ) {
+        o.extend(t);
+    }
+    out["from"] = json!(from);
+    Ok(Json(out))
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/discovery/seen", post(seen))
         .route("/api/me/analytics", get(mine))
         .route("/api/admin/analytics", get(platform))
+        .route("/api/growth", get(growth))
 }
 
 #[cfg(test)]
