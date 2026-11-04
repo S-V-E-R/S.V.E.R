@@ -243,6 +243,80 @@ impl Banner {
     }
 }
 
+/// A top bar of agent portraits that shows only the players still alive, packed toward the
+/// centre (VALORANT). A slot holds a portrait when it has a face's detail; an empty slot is the
+/// bar's flat tint. Across 2.6 hours of footage, slot detail splits cleanly: empty under 9,
+/// portraits 27 and up.
+pub struct Roster {
+    /// The bar, as `[x0, y0, x1, y1]` fractions of the game area, read at `width`×`height`.
+    pub area: [f32; 4],
+    pub width: u32,
+    pub height: u32,
+    /// Slot centres in the crop: the streamer's team, outermost first, then the enemies.
+    team: [usize; 5],
+    enemies: [usize; 5],
+    rows: Range<usize>,
+    half: usize,
+}
+pub static VALORANT: Roster = Roster {
+    area: [
+        420.0 / 1920.0,
+        10.0 / 1080.0,
+        1500.0 / 1920.0,
+        70.0 / 1080.0,
+    ],
+    width: 720,
+    height: 40,
+    team: [31, 73, 118, 161, 205],
+    enemies: [513, 556, 600, 643, 686],
+    rows: 10..38,
+    half: 13,
+};
+const PORTRAIT_DETAIL: f32 = 18.0;
+
+/// The roster for a stream category, if it has one.
+pub fn roster_for_category(name: &str) -> Option<&'static Roster> {
+    (plain(name) == "valorant").then_some(&VALORANT)
+}
+
+impl Roster {
+    /// Enemies alive when a `width`×`height` RGB crop of `area` shows the streamer's team down to
+    /// one player (the slot nearest the centre) against at least one enemy.
+    pub fn clutch(&self, rgb: &[u8]) -> Option<u32> {
+        let w = self.width as usize;
+        if rgb.len() != w * self.height as usize * 3 {
+            return None;
+        }
+        let gray = |r: usize, c: usize| {
+            rgb[(r * w + c) * 3..][..3]
+                .iter()
+                .map(|&v| f32::from(v))
+                .sum::<f32>()
+                / 3.0
+        };
+        // Mean absolute step between neighbouring pixels across, plus the same down.
+        let filled = |cx: usize| {
+            let cols = cx - self.half..cx + self.half;
+            let (mut across, mut down) = (0.0, 0.0);
+            for r in self.rows.clone() {
+                for c in cols.clone() {
+                    if c + 1 < cols.end {
+                        across += (gray(r, c + 1) - gray(r, c)).abs();
+                    }
+                    if r + 1 < self.rows.end {
+                        down += (gray(r + 1, c) - gray(r, c)).abs();
+                    }
+                }
+            }
+            let (h, w) = (self.rows.len() as f32, cols.len() as f32);
+            across / (h * (w - 1.0)) + down / ((h - 1.0) * w) > PORTRAIT_DETAIL
+        };
+        let team: Vec<bool> = self.team.iter().map(|&c| filled(c)).collect();
+        let enemies = self.enemies.iter().filter(|&&c| filled(c)).count() as u32;
+        (team == [false, false, false, false, true] && enemies > 0).then_some(enemies)
+    }
+}
+
 /// Grayscale crop, row-major.
 struct Gray {
     px: Vec<f32>,
@@ -545,6 +619,60 @@ mod tests {
         assert!(banner_for_category("Tom Clancy’s Rainbow Six® Siege X").is_some());
         assert!(banner_for_category("Tom Clancy's Rainbow Six Extraction").is_none());
         assert!(for_category("FORTNITE").is_some(), "any case");
+        assert!(roster_for_category("VALORANT").is_some());
+        assert!(roster_for_category("Valorant Mobile").is_none());
+    }
+
+    #[test]
+    fn a_roster_down_to_one_is_a_clutch() {
+        let r = &VALORANT;
+        let w = r.width as usize;
+        // The bar's flat tint, with "portraits" (busy detail) in the given slots.
+        let bar = |team: &[usize], enemies: &[usize]| {
+            let mut px = vec![90u8; w * r.height as usize];
+            for &cx in team
+                .iter()
+                .map(|&k| &r.team[k])
+                .chain(enemies.iter().map(|&k| &r.enemies[k]))
+            {
+                for row in r.rows.clone() {
+                    for c in cx - r.half..cx + r.half {
+                        px[row * w + c] = if (row + c) % 2 == 0 { 40 } else { 200 };
+                    }
+                }
+            }
+            px.iter().flat_map(|&v| [v; 3]).collect::<Vec<u8>>()
+        };
+        assert_eq!(r.clutch(&bar(&[4], &[0, 1, 2])), Some(3));
+        assert_eq!(r.clutch(&bar(&[4], &[4])), Some(1));
+        assert_eq!(r.clutch(&bar(&[3, 4], &[0, 1])), None, "two left");
+        assert_eq!(r.clutch(&bar(&[4], &[])), None, "round won");
+        assert_eq!(r.clutch(&bar(&[], &[])), None, "no bar");
+        assert_eq!(r.clutch(&[0; 9]), None);
+    }
+
+    /// Valorant footage: HUD_CROPS a file of RGB crops of `VALORANT.area` at its size, HUD_LABELS a
+    /// CSV of `index,value` with the enemies alive in a clutch frame (checked by eye) or nothing.
+    #[test]
+    #[ignore = "needs local footage crops; run explicitly with --ignored"]
+    fn reads_labeled_rosters() {
+        let crops = std::fs::read(std::env::var("HUD_CROPS").unwrap()).unwrap();
+        let labels = std::fs::read_to_string(std::env::var("HUD_LABELS").unwrap()).unwrap();
+        let size = (VALORANT.width * VALORANT.height * 3) as usize;
+        let (mut same, mut total) = (0, 0);
+        for line in labels.lines().skip(1) {
+            let (i, v) = line.split_once(',').unwrap();
+            let i: usize = i.parse().unwrap();
+            let got = VALORANT.clutch(&crops[i * size..(i + 1) * size]);
+            total += 1;
+            if got == v.parse().ok() {
+                same += 1;
+            } else {
+                eprintln!("{i}: labeled {v:?}, read {got:?}");
+            }
+        }
+        eprintln!("{same}/{total} read as labeled");
+        assert_eq!(same, total);
     }
 
     #[test]
@@ -690,6 +818,14 @@ mod tests {
     async fn reads_a_real_segment() {
         let name = std::env::var("HUD_GAME").unwrap();
         let ts = std::fs::read(std::env::var("HUD_SEGMENT").unwrap()).unwrap();
+        if let Some(roster) = roster_for_category(&name) {
+            let crop = crate::probe::region(ts, roster.area, roster.width, roster.height)
+                .await
+                .unwrap();
+            let enemies: u32 = std::env::var("HUD_COUNT").unwrap().parse().unwrap();
+            assert_eq!(roster.clutch(&crop), Some(enemies));
+            return;
+        }
         if let Some(banner) = banner_for_category(&name) {
             let crop = crate::probe::region(ts, banner.area, banner.width, banner.height)
                 .await

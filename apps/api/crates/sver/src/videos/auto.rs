@@ -101,6 +101,12 @@ pub async fn segment(app: &App, video: &str, bytes: &[u8]) -> Res<()> {
                     crate::magnet::game_moment(app, &broadcast, title).await?;
                 }
             }
+            if let Some(roster) = super::hud::roster_for_category(name)
+                && let Some(enemies) = clutch(roster, video, bytes, area.as_deref()).await
+            {
+                let title = format!("Clutch: 1 vs {enemies}");
+                crate::magnet::game_moment(app, &broadcast, &title).await?;
+            }
         }
         None => {}
     }
@@ -188,6 +194,26 @@ fn within(area: Option<&[f32]>, rect: [f32; 4]) -> [f32; 4] {
     let [x0, y0, x1, y1] = rect;
     let (w, h) = (gx1 - gx0, gy1 - gy0);
     [gx0 + x0 * w, gy0 + y0 * h, gx0 + x1 * w, gy0 + y1 * h]
+}
+/// Enemies alive when this segment and the one before it (within 10 seconds) both show the
+/// streamer's team down to one player, so a single odd frame can't make a clutch.
+async fn clutch(
+    roster: &super::hud::Roster,
+    video: &str,
+    bytes: &[u8],
+    area: Option<&[f32]>,
+) -> Option<u32> {
+    let at = within(area, roster.area);
+    let crop = crate::probe::region(bytes.to_vec(), at, roster.width, roster.height).await;
+    let enemies = crop.as_deref().and_then(|c| roster.clutch(c));
+    static LAST: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(Default::default);
+    let mut last = LAST.lock().unwrap();
+    last.retain(|_, at| at.elapsed() < Duration::from_secs(600));
+    let before = match enemies {
+        Some(_) => last.insert(video.to_string(), Instant::now()),
+        None => last.remove(video),
+    };
+    enemies.filter(|_| before.is_some_and(|at| at.elapsed() < Duration::from_secs(10)))
 }
 /// The count when this segment shows a battle royale endgame (`hud::Endgame`). The counter is
 /// cut from the frame at full resolution, inside the channel's learned game area if any.
