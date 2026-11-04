@@ -93,7 +93,9 @@ pub async fn segment(app: &App, video: &str, bytes: &[u8]) -> Res<()> {
                 let title = format!("Endgame: {left} {} left", counter.unit);
                 crate::magnet::game_moment(app, &broadcast, &title).await?;
             }
-            if let Some(banner) = super::hud::banner_for_category(name) {
+            // ponytail: one decode per banner position (two for League); merge the crops if
+            // League streams get numerous.
+            for banner in super::hud::banners_for_category(name) {
                 let at = within(area.as_deref(), banner.area);
                 let crop =
                     crate::probe::region(bytes.to_vec(), at, banner.width, banner.height).await;

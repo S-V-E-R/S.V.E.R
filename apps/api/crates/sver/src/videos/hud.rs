@@ -128,6 +128,9 @@ pub struct Banner {
     part: Option<Range<usize>>,
     whole_min: f32,
     part_min: f32,
+    /// Match only the bright text: pixels above this become 1, the rest 0 (small text over a
+    /// see-through banner, where the scene behind would swamp a grayscale match).
+    text_above: Option<f32>,
     /// The moment title for each template, in the file's order.
     titles: &'static [&'static str],
     /// Per title, z-normalized templates (little-endian f32, row-major): over `rows` × `cols`, then
@@ -146,8 +149,28 @@ pub static LEAGUE: Banner = Banner {
     part: None,
     whole_min: 0.55,
     part_min: 0.0,
+    text_above: None,
     titles: &["Took an inhibitor", "Lost an inhibitor"],
     templates: include_bytes!("league_banners.bin"),
+};
+/// Today's League client draws the same banners higher and smaller, and announces Baron: "Ally
+/// super minions now spawning!" and "Your team has slain Baron Nashor!". From 4 hours of 2025
+/// footage (2,372 keyframes): the 11 inhibitor banners scored 0.48 or more against each other's
+/// average, the 2 Baron banners 0.54, and nothing else above 0.36. The losing side's versions never
+/// came up in that footage, so they aren't matched in this position yet.
+pub static LEAGUE_NOW: Banner = Banner {
+    area: [384.0 / 1280.0, 50.0 / 720.0, 896.0 / 1280.0, 90.0 / 720.0],
+    width: 256,
+    height: 20,
+    rows: 3..17,
+    cols: 30..226,
+    slide: 0,
+    part: None,
+    whole_min: 0.44,
+    part_min: 0.0,
+    text_above: Some(150.0),
+    titles: &["Took an inhibitor", "Took Baron"],
+    templates: include_bytes!("league_banners_now.bin"),
 };
 /// "1 VS n", upper centre: the streamer's team is down to its last player. Across 3.7 hours of
 /// footage (3,212 keyframes) all 13 such banners matched and nothing else did; other "n VS m"
@@ -162,19 +185,23 @@ pub static SIEGE: Banner = Banner {
     part: Some(54..68),
     whole_min: 0.6,
     part_min: 0.75,
+    text_above: None,
     titles: &["Clutch: last one standing"],
     templates: include_bytes!("siege_banner.bin"),
 };
 
-/// The banner for a stream category, if it has one.
-pub fn banner_for_category(name: &str) -> Option<&'static Banner> {
+static LEAGUE_BANNERS: [&Banner; 2] = [&LEAGUE_NOW, &LEAGUE];
+static SIEGE_BANNERS: [&Banner; 1] = [&SIEGE];
+
+/// The banners for a stream category: League's in both positions seen.
+pub fn banners_for_category(name: &str) -> &'static [&'static Banner] {
     let name = plain(name);
     if name == "league of legends" {
-        Some(&LEAGUE)
+        &LEAGUE_BANNERS
     } else if name.starts_with("tom clancy's rainbow six siege") {
-        Some(&SIEGE)
+        &SIEGE_BANNERS
     } else {
-        None
+        &[]
     }
 }
 
@@ -190,6 +217,7 @@ impl Banner {
             .0
             .iter()
             .map(|p| p.iter().map(|&v| f32::from(v)).sum::<f32>() / 3.0)
+            .map(|v| self.text_above.map_or(v, |t| f32::from(u8::from(v > t))))
             .collect();
         // Normalized cross-correlation of `rows` × `cols` moved `dx` sideways against `t`.
         let ncc = |cols: &Range<usize>, dx: i32, t: &[f32]| -> f32 {
@@ -614,10 +642,13 @@ mod tests {
         assert!(for_category("Call of Duty: Warzone 2.0").is_some_and(|c| c.unit == "players"));
         assert!(for_category("Call of Duty: Warzone Mobile").is_none());
         assert!(for_category("Call of Duty: Modern Warfare 4").is_none());
-        assert!(banner_for_category("League of Legends").is_some());
-        assert!(banner_for_category("League of Legends: Wild Rift").is_none());
-        assert!(banner_for_category("Tom Clancy’s Rainbow Six® Siege X").is_some());
-        assert!(banner_for_category("Tom Clancy's Rainbow Six Extraction").is_none());
+        assert_eq!(banners_for_category("League of Legends").len(), 2);
+        assert!(banners_for_category("League of Legends: Wild Rift").is_empty());
+        assert_eq!(
+            banners_for_category("Tom Clancy’s Rainbow Six® Siege X").len(),
+            1
+        );
+        assert!(banners_for_category("Tom Clancy's Rainbow Six Extraction").is_empty());
         assert!(for_category("FORTNITE").is_some(), "any case");
         assert!(roster_for_category("VALORANT").is_some());
         assert!(roster_for_category("Valorant Mobile").is_none());
@@ -677,7 +708,7 @@ mod tests {
 
     #[test]
     fn banners_parse_and_match_only_themselves() {
-        for banner in [&LEAGUE, &SIEGE] {
+        for banner in [&LEAGUE_NOW, &LEAGUE, &SIEGE] {
             let whole = banner.rows.len() * banner.cols.len();
             let part = banner
                 .part
@@ -724,7 +755,9 @@ mod tests {
     #[test]
     #[ignore = "needs local footage crops; run explicitly with --ignored"]
     fn reads_labeled_banners() {
-        let banner = banner_for_category(&std::env::var("HUD_GAME").unwrap()).unwrap();
+        // HUD_BANNER picks one of the game's banner positions (0 by default).
+        let which: usize = std::env::var("HUD_BANNER").map_or(0, |v| v.parse().unwrap());
+        let banner = banners_for_category(&std::env::var("HUD_GAME").unwrap())[which];
         let crops = std::fs::read(std::env::var("HUD_CROPS").unwrap()).unwrap();
         let labels = std::fs::read_to_string(std::env::var("HUD_LABELS").unwrap()).unwrap();
         let size = (banner.width * banner.height * 3) as usize;
@@ -826,12 +859,17 @@ mod tests {
             assert_eq!(roster.clutch(&crop), Some(enemies));
             return;
         }
-        if let Some(banner) = banner_for_category(&name) {
-            let crop = crate::probe::region(ts, banner.area, banner.width, banner.height)
-                .await
-                .unwrap();
-            let title = std::env::var("HUD_TITLE").unwrap();
-            assert_eq!(banner.read(&crop), Some(title.as_str()));
+        let banners = banners_for_category(&name);
+        if !banners.is_empty() {
+            let mut read = None;
+            for banner in banners {
+                let crop =
+                    crate::probe::region(ts.clone(), banner.area, banner.width, banner.height)
+                        .await
+                        .unwrap();
+                read = read.or(banner.read(&crop));
+            }
+            assert_eq!(read, Some(std::env::var("HUD_TITLE").unwrap().as_str()));
             return;
         }
         let game = for_category(&name).unwrap();
