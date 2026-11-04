@@ -9,7 +9,7 @@ pub mod worker;
 pub use manage::marker;
 pub mod auto;
 pub mod copyright;
-pub mod fortnite;
+pub mod hud;
 pub mod review;
 mod sharing;
 mod spotlight;
