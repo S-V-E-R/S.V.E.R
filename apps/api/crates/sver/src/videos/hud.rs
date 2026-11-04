@@ -12,6 +12,13 @@
 //! row-major) are averages of hand-labeled counters from long recordings of each game. Training on
 //! half the labels and reading the other half: Fortnite 175 of 181 (5 of the 6 misses read nothing),
 //! Apex 191 of 191. `Endgame::read` turns reads into moments a lone misread can't fake.
+//!
+//! League of Legends has no counter but announces its big moments in a banner at the top of the
+//! screen. `Banner` matches the banner's text rows against one template per announcement: "Ally
+//! super minions now spawning!" shows the moment the streamer's team takes an inhibitor, "Enemy
+//! super minions now spawning!" when they lose one. Across 12 hours of footage (7,999 keyframes,
+//! every other banner included) the 31 inhibitor banners scored 0.70 or more, apart from one caught
+//! mid-fade, and nothing else above 0.32.
 use std::ops::Range;
 
 pub struct Counter {
@@ -75,6 +82,85 @@ pub fn for_category(name: &str) -> Option<&'static Counter> {
         "Fortnite" => Some(&FORTNITE),
         "Apex Legends" => Some(&APEX),
         _ => None,
+    }
+}
+
+/// A game's announcement banner, centred at the top of the screen.
+pub struct Banner {
+    /// The banner, as `[x0, y0, x1, y1]` fractions of the game area, read at `BANNER_WIDTH`×`BANNER_HEIGHT`.
+    pub area: [f32; 4],
+    /// The text rows and columns within that crop.
+    rows: Range<usize>,
+    cols: Range<usize>,
+    /// The moment title for each template, in the file's order.
+    titles: &'static [&'static str],
+    /// One z-normalized template per title (little-endian f32, row-major over `rows` × `cols`).
+    templates: &'static [u8],
+}
+pub const BANNER_WIDTH: u32 = 256;
+pub const BANNER_HEIGHT: u32 = 20;
+const BANNER_MATCH: f32 = 0.55;
+
+pub static LEAGUE: Banner = Banner {
+    area: [384.0 / 1280.0, 86.0 / 720.0, 896.0 / 1280.0, 126.0 / 720.0],
+    rows: 5..16,
+    cols: 40..216,
+    titles: &["Took an inhibitor", "Lost an inhibitor"],
+    templates: include_bytes!("league_banners.bin"),
+};
+
+/// The banner for a stream category, if it has one.
+pub fn banner_for_category(name: &str) -> Option<&'static Banner> {
+    (name.trim_end_matches(['™', '®']) == "League of Legends").then_some(&LEAGUE)
+}
+
+impl Banner {
+    /// The moment title when a `BANNER_WIDTH`×`BANNER_HEIGHT` RGB crop of `area` shows one of the
+    /// banners.
+    pub fn read(&self, rgb: &[u8]) -> Option<&'static str> {
+        let w = BANNER_WIDTH as usize;
+        if rgb.len() != w * BANNER_HEIGHT as usize * 3 {
+            return None;
+        }
+        let gray: Vec<f32> = self
+            .rows
+            .clone()
+            .flat_map(|r| self.cols.clone().map(move |c| (r, c)))
+            .map(|(r, c)| {
+                rgb[(r * w + c) * 3..][..3]
+                    .iter()
+                    .map(|&v| f32::from(v))
+                    .sum::<f32>()
+                    / 3.0
+            })
+            .collect();
+        let mean = gray.iter().sum::<f32>() / gray.len() as f32;
+        let sd = std_dev(&gray);
+        if sd < 1e-3 {
+            return None;
+        }
+        let values: Vec<f32> = self
+            .templates
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect();
+        values
+            .chunks(gray.len())
+            .zip(self.titles)
+            .map(|(t, title)| {
+                let ncc = gray
+                    .iter()
+                    .zip(t)
+                    .map(|(v, t)| (v - mean) / sd * t)
+                    .sum::<f32>()
+                    / gray.len() as f32;
+                (*title, ncc)
+            })
+            .filter(|(_, ncc)| *ncc >= BANNER_MATCH)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(title, _)| title)
     }
 }
 
@@ -360,6 +446,72 @@ mod tests {
         assert!(for_category("Apex Legends™").is_some_and(|c| c.unit == "squads"));
         assert!(for_category("Apex Legends Mobile").is_none());
         assert!(for_category("Call of Duty: Modern Warfare 4").is_none());
+        assert!(banner_for_category("League of Legends").is_some());
+        assert!(banner_for_category("League of Legends: Wild Rift").is_none());
+    }
+
+    #[test]
+    fn league_banners_parse_and_match_only_themselves() {
+        let size = LEAGUE.rows.len() * LEAGUE.cols.len();
+        assert_eq!(LEAGUE.templates.len(), LEAGUE.titles.len() * size * 4);
+        // Draw each template into a crop over a busy background: it reads as its own title.
+        let values: Vec<f32> = LEAGUE
+            .templates
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect();
+        let w = BANNER_WIDTH as usize;
+        for (t, title) in values.chunks(size).zip(LEAGUE.titles) {
+            let mut px: Vec<u8> = (0..w * BANNER_HEIGHT as usize)
+                .map(|i| (60 + (i * 37) % 41) as u8)
+                .collect();
+            for (k, v) in t.iter().enumerate() {
+                let (r, c) = (
+                    LEAGUE.rows.start + k / LEAGUE.cols.len(),
+                    LEAGUE.cols.start + k % LEAGUE.cols.len(),
+                );
+                px[r * w + c] = (120.0 + 40.0 * v).clamp(0.0, 255.0) as u8;
+            }
+            let rgb: Vec<u8> = px.iter().flat_map(|&v| [v; 3]).collect();
+            assert_eq!(LEAGUE.read(&rgb), Some(*title));
+        }
+        let busy: Vec<u8> = (0..w * BANNER_HEIGHT as usize * 3)
+            .map(|i| (i * 31 % 251) as u8)
+            .collect();
+        assert_eq!(LEAGUE.read(&busy), None);
+        assert_eq!(LEAGUE.read(&[0; 9]), None);
+    }
+
+    /// League banners in real footage: HUD_CROPS a file of 256×20 RGB crops of `LEAGUE.area`,
+    /// HUD_LABELS a CSV of `index,value` with value "ally", "enemy" or empty.
+    #[test]
+    #[ignore = "needs local footage crops; run explicitly with --ignored"]
+    fn reads_labeled_league_banners() {
+        let crops = std::fs::read(std::env::var("HUD_CROPS").unwrap()).unwrap();
+        let labels = std::fs::read_to_string(std::env::var("HUD_LABELS").unwrap()).unwrap();
+        let size = (BANNER_WIDTH * BANNER_HEIGHT * 3) as usize;
+        let (mut found, mut banners, mut false_alarms) = (0, 0, 0);
+        for line in labels.lines().skip(1) {
+            let (i, v) = line.split_once(',').unwrap();
+            let i: usize = i.parse().unwrap();
+            let expected = match v {
+                "ally" => Some("Took an inhibitor"),
+                "enemy" => Some("Lost an inhibitor"),
+                _ => None,
+            };
+            let got = LEAGUE.read(&crops[i * size..(i + 1) * size]);
+            banners += usize::from(expected.is_some());
+            found += usize::from(expected.is_some() && got == expected);
+            if expected.is_none() && got.is_some() {
+                false_alarms += 1;
+                eprintln!("{i}: read {got:?} with no banner");
+            }
+        }
+        eprintln!("{found}/{banners} banners read, {false_alarms} false alarms");
+        assert_eq!(false_alarms, 0);
+        assert!(found + 1 >= banners);
     }
 
     #[test]
@@ -401,12 +553,22 @@ mod tests {
     }
 
     /// A real MPEG-TS segment through the production crop: HUD_GAME is the category, HUD_SEGMENT
-    /// the segment's path, HUD_COUNT the count on its first frame.
+    /// the segment's path, HUD_COUNT the count on its first frame (HUD_TITLE the banner's moment
+    /// title, for League).
     #[tokio::test]
     #[ignore = "needs ffmpeg and a local segment; run explicitly with --ignored"]
     async fn reads_a_real_segment() {
-        let game = for_category(&std::env::var("HUD_GAME").unwrap()).unwrap();
+        let name = std::env::var("HUD_GAME").unwrap();
         let ts = std::fs::read(std::env::var("HUD_SEGMENT").unwrap()).unwrap();
+        if let Some(banner) = banner_for_category(&name) {
+            let crop = crate::probe::region(ts, banner.area, BANNER_WIDTH, BANNER_HEIGHT)
+                .await
+                .unwrap();
+            let title = std::env::var("HUD_TITLE").unwrap();
+            assert_eq!(banner.read(&crop), Some(title.as_str()));
+            return;
+        }
+        let game = for_category(&name).unwrap();
         let crop = crate::probe::region(ts, game.area, WIDTH, HEIGHT)
             .await
             .unwrap();

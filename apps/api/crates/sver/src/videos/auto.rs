@@ -93,6 +93,15 @@ pub async fn segment(app: &App, video: &str, bytes: &[u8]) -> Res<()> {
                 let title = format!("Endgame: {left} {} left", counter.unit);
                 crate::magnet::game_moment(app, &broadcast, &title).await?;
             }
+            if let Some(banner) = super::hud::banner_for_category(name) {
+                use super::hud::{BANNER_HEIGHT, BANNER_WIDTH};
+                let at = within(area.as_deref(), banner.area);
+                let crop =
+                    crate::probe::region(bytes.to_vec(), at, BANNER_WIDTH, BANNER_HEIGHT).await;
+                if let Some(title) = crop.as_deref().and_then(|c| banner.read(c)) {
+                    crate::magnet::game_moment(app, &broadcast, title).await?;
+                }
+            }
         }
         None => {}
     }
@@ -170,6 +179,17 @@ async fn win_screen(bytes: &[u8], area: Option<Vec<f32>>) -> Option<&'static str
     }
 }
 
+/// `rect` (fractions of the game area) as fractions of the frame, inside the channel's learned game
+/// area if any.
+fn within(area: Option<&[f32]>, rect: [f32; 4]) -> [f32; 4] {
+    let [gx0, gy0, gx1, gy1] = match area {
+        Some(&[x0, y0, x1, y1]) if x1 > x0 && y1 > y0 => [x0, y0, x1, y1],
+        _ => [0.0, 0.0, 1.0, 1.0],
+    };
+    let [x0, y0, x1, y1] = rect;
+    let (w, h) = (gx1 - gx0, gy1 - gy0);
+    [gx0 + x0 * w, gy0 + y0 * h, gx0 + x1 * w, gy0 + y1 * h]
+}
 /// The count when this segment shows a battle royale endgame (`hud::Endgame`). The counter is
 /// cut from the frame at full resolution, inside the channel's learned game area if any.
 async fn endgame(
@@ -179,13 +199,7 @@ async fn endgame(
     area: Option<&[f32]>,
 ) -> Option<u32> {
     use super::hud::{Endgame, HEIGHT, WIDTH};
-    let [gx0, gy0, gx1, gy1] = match area {
-        Some(&[x0, y0, x1, y1]) if x1 > x0 && y1 > y0 => [x0, y0, x1, y1],
-        _ => [0.0, 0.0, 1.0, 1.0],
-    };
-    let [x0, y0, x1, y1] = counter.area;
-    let (w, h) = (gx1 - gx0, gy1 - gy0);
-    let at = [gx0 + x0 * w, gy0 + y0 * h, gx0 + x1 * w, gy0 + y1 * h];
+    let at = within(area, counter.area);
     // ponytail: a second decode of each 2-second segment per battle royale stream; past a few
     // dozen at once, read every other segment.
     let crop = crate::probe::region(bytes.to_vec(), at, WIDTH, HEIGHT).await;
