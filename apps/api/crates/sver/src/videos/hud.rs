@@ -94,70 +94,127 @@ pub static WARZONE: Counter = Counter {
     templates: include_bytes!("warzone_digits.bin"),
 };
 
+/// A category name the way the catalog and Steam spell it: any case, no ™ or ®, plain apostrophes.
+fn plain(name: &str) -> String {
+    name.replace(['™', '®'], "")
+        .replace('’', "'")
+        .trim()
+        .to_lowercase()
+}
+
 /// The counter for a stream category, if it has one.
 pub fn for_category(name: &str) -> Option<&'static Counter> {
-    match name.trim_end_matches(['™', '®']) {
-        "Fortnite" => Some(&FORTNITE),
-        "Apex Legends" => Some(&APEX),
-        "Call of Duty: Warzone" | "Call of Duty: Warzone 2.0" => Some(&WARZONE),
+    match plain(name).as_str() {
+        "fortnite" => Some(&FORTNITE),
+        "apex legends" => Some(&APEX),
+        "call of duty: warzone" | "call of duty: warzone 2.0" => Some(&WARZONE),
         _ => None,
     }
 }
 
-/// A game's announcement banner, centred at the top of the screen.
+/// A game's announcement banner.
 pub struct Banner {
-    /// The banner, as `[x0, y0, x1, y1]` fractions of the game area, read at `BANNER_WIDTH`×`BANNER_HEIGHT`.
+    /// The banner, as `[x0, y0, x1, y1]` fractions of the game area, read at `width`×`height`.
     pub area: [f32; 4],
+    pub width: u32,
+    pub height: u32,
     /// The text rows and columns within that crop.
     rows: Range<usize>,
     cols: Range<usize>,
+    /// How far sideways the text may sit (a centred line moves with the width of what's in it).
+    slide: i32,
+    /// Columns of a part that must also match on its own, at the same place: Siege's "1" before
+    /// "VS", which the whole line can't tell from a 3.
+    part: Option<Range<usize>>,
+    whole_min: f32,
+    part_min: f32,
     /// The moment title for each template, in the file's order.
     titles: &'static [&'static str],
-    /// One z-normalized template per title (little-endian f32, row-major over `rows` × `cols`).
+    /// Per title, z-normalized templates (little-endian f32, row-major): over `rows` × `cols`, then
+    /// over `rows` × `part` when there is one.
     templates: &'static [u8],
 }
-pub const BANNER_WIDTH: u32 = 256;
-pub const BANNER_HEIGHT: u32 = 20;
-const BANNER_MATCH: f32 = 0.55;
 
+/// "Ally/Enemy super minions now spawning!", top centre: an inhibitor just fell.
 pub static LEAGUE: Banner = Banner {
     area: [384.0 / 1280.0, 86.0 / 720.0, 896.0 / 1280.0, 126.0 / 720.0],
+    width: 256,
+    height: 20,
     rows: 5..16,
     cols: 40..216,
+    slide: 0,
+    part: None,
+    whole_min: 0.55,
+    part_min: 0.0,
     titles: &["Took an inhibitor", "Lost an inhibitor"],
     templates: include_bytes!("league_banners.bin"),
+};
+/// "1 VS n", upper centre: the streamer's team is down to its last player. Across 3.7 hours of
+/// footage (3,212 keyframes) all 13 such banners matched and nothing else did; other "n VS m"
+/// banners score at most 0.65 on the "1" alone, the real ones 0.82 or more.
+pub static SIEGE: Banner = Banner {
+    area: [480.0 / 1280.0, 140.0 / 720.0, 800.0 / 1280.0, 200.0 / 720.0],
+    width: 160,
+    height: 30,
+    rows: 5..27,
+    cols: 54..88,
+    slide: 4,
+    part: Some(54..68),
+    whole_min: 0.6,
+    part_min: 0.75,
+    titles: &["Clutch: last one standing"],
+    templates: include_bytes!("siege_banner.bin"),
 };
 
 /// The banner for a stream category, if it has one.
 pub fn banner_for_category(name: &str) -> Option<&'static Banner> {
-    (name.trim_end_matches(['™', '®']) == "League of Legends").then_some(&LEAGUE)
+    let name = plain(name);
+    if name == "league of legends" {
+        Some(&LEAGUE)
+    } else if name.starts_with("tom clancy's rainbow six siege") {
+        Some(&SIEGE)
+    } else {
+        None
+    }
 }
 
 impl Banner {
-    /// The moment title when a `BANNER_WIDTH`×`BANNER_HEIGHT` RGB crop of `area` shows one of the
-    /// banners.
+    /// The moment title when a `width`×`height` RGB crop of `area` shows one of the banners.
     pub fn read(&self, rgb: &[u8]) -> Option<&'static str> {
-        let w = BANNER_WIDTH as usize;
-        if rgb.len() != w * BANNER_HEIGHT as usize * 3 {
+        let w = self.width as usize;
+        if rgb.len() != w * self.height as usize * 3 {
             return None;
         }
-        let gray: Vec<f32> = self
-            .rows
-            .clone()
-            .flat_map(|r| self.cols.clone().map(move |c| (r, c)))
-            .map(|(r, c)| {
-                rgb[(r * w + c) * 3..][..3]
-                    .iter()
-                    .map(|&v| f32::from(v))
-                    .sum::<f32>()
-                    / 3.0
-            })
+        let gray: Vec<f32> = rgb
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| p.iter().map(|&v| f32::from(v)).sum::<f32>() / 3.0)
             .collect();
-        let mean = gray.iter().sum::<f32>() / gray.len() as f32;
-        let sd = std_dev(&gray);
-        if sd < 1e-3 {
-            return None;
-        }
+        // Normalized cross-correlation of `rows` × `cols` moved `dx` sideways against `t`.
+        let ncc = |cols: &Range<usize>, dx: i32, t: &[f32]| -> f32 {
+            let px: Vec<f32> = self
+                .rows
+                .clone()
+                .flat_map(|r| cols.clone().map(move |c| (r, c as i32 + dx)))
+                .map(|(r, c)| {
+                    usize::try_from(c)
+                        .ok()
+                        .filter(|&c| c < w)
+                        .map_or(0.0, |c| gray[r * w + c])
+                })
+                .collect();
+            let mean = px.iter().sum::<f32>() / px.len() as f32;
+            let sd = std_dev(&px);
+            if sd < 1e-3 {
+                return 0.0;
+            }
+            px.iter()
+                .zip(t)
+                .map(|(v, t)| (v - mean) / sd * t)
+                .sum::<f32>()
+                / px.len() as f32
+        };
         let values: Vec<f32> = self
             .templates
             .as_chunks::<4>()
@@ -165,19 +222,22 @@ impl Banner {
             .iter()
             .map(|b| f32::from_le_bytes(*b))
             .collect();
+        let whole = self.rows.len() * self.cols.len();
+        let part = self.part.as_ref().map_or(0, |p| self.rows.len() * p.len());
         values
-            .chunks(gray.len())
+            .chunks(whole + part)
             .zip(self.titles)
-            .map(|(t, title)| {
-                let ncc = gray
-                    .iter()
-                    .zip(t)
-                    .map(|(v, t)| (v - mean) / sd * t)
-                    .sum::<f32>()
-                    / gray.len() as f32;
-                (*title, ncc)
+            .filter_map(|(t, title)| {
+                let (t_whole, t_part) = t.split_at(whole);
+                let (dx, score) = (-self.slide..=self.slide)
+                    .map(|dx| (dx, ncc(&self.cols, dx, t_whole)))
+                    .max_by(|a, b| a.1.total_cmp(&b.1))?;
+                let part_ok = self
+                    .part
+                    .as_ref()
+                    .is_none_or(|p| ncc(p, dx, t_part) >= self.part_min);
+                (score >= self.whole_min && part_ok).then_some((*title, score))
             })
-            .filter(|(_, ncc)| *ncc >= BANNER_MATCH)
             .max_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(title, _)| title)
     }
@@ -482,60 +542,70 @@ mod tests {
         assert!(for_category("Call of Duty: Modern Warfare 4").is_none());
         assert!(banner_for_category("League of Legends").is_some());
         assert!(banner_for_category("League of Legends: Wild Rift").is_none());
+        assert!(banner_for_category("Tom Clancy’s Rainbow Six® Siege X").is_some());
+        assert!(banner_for_category("Tom Clancy's Rainbow Six Extraction").is_none());
+        assert!(for_category("FORTNITE").is_some(), "any case");
     }
 
     #[test]
-    fn league_banners_parse_and_match_only_themselves() {
-        let size = LEAGUE.rows.len() * LEAGUE.cols.len();
-        assert_eq!(LEAGUE.templates.len(), LEAGUE.titles.len() * size * 4);
-        // Draw each template into a crop over a busy background: it reads as its own title.
-        let values: Vec<f32> = LEAGUE
-            .templates
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|b| f32::from_le_bytes(*b))
-            .collect();
-        let w = BANNER_WIDTH as usize;
-        for (t, title) in values.chunks(size).zip(LEAGUE.titles) {
-            let mut px: Vec<u8> = (0..w * BANNER_HEIGHT as usize)
-                .map(|i| (60 + (i * 37) % 41) as u8)
+    fn banners_parse_and_match_only_themselves() {
+        for banner in [&LEAGUE, &SIEGE] {
+            let whole = banner.rows.len() * banner.cols.len();
+            let part = banner
+                .part
+                .as_ref()
+                .map_or(0, |p| banner.rows.len() * p.len());
+            assert_eq!(
+                banner.templates.len(),
+                banner.titles.len() * (whole + part) * 4
+            );
+            let values: Vec<f32> = banner
+                .templates
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_le_bytes(*b))
                 .collect();
-            for (k, v) in t.iter().enumerate() {
-                let (r, c) = (
-                    LEAGUE.rows.start + k / LEAGUE.cols.len(),
-                    LEAGUE.cols.start + k % LEAGUE.cols.len(),
-                );
-                px[r * w + c] = (120.0 + 40.0 * v).clamp(0.0, 255.0) as u8;
+            let w = banner.width as usize;
+            // Each template drawn over a busy background reads as its own title.
+            for (t, title) in values.chunks(whole + part).zip(banner.titles) {
+                let mut px: Vec<u8> = (0..w * banner.height as usize)
+                    .map(|i| (60 + (i * 37) % 41) as u8)
+                    .collect();
+                for (k, v) in t[..whole].iter().enumerate() {
+                    let (r, c) = (
+                        banner.rows.start + k / banner.cols.len(),
+                        banner.cols.start + k % banner.cols.len(),
+                    );
+                    px[r * w + c] = (120.0 + 40.0 * v).clamp(0.0, 255.0) as u8;
+                }
+                let rgb: Vec<u8> = px.iter().flat_map(|&v| [v; 3]).collect();
+                assert_eq!(banner.read(&rgb), Some(*title));
             }
-            let rgb: Vec<u8> = px.iter().flat_map(|&v| [v; 3]).collect();
-            assert_eq!(LEAGUE.read(&rgb), Some(*title));
+            let busy: Vec<u8> = (0..w * banner.height as usize * 3)
+                .map(|i| (i * 31 % 251) as u8)
+                .collect();
+            assert_eq!(banner.read(&busy), None);
+            assert_eq!(banner.read(&[0; 9]), None);
         }
-        let busy: Vec<u8> = (0..w * BANNER_HEIGHT as usize * 3)
-            .map(|i| (i * 31 % 251) as u8)
-            .collect();
-        assert_eq!(LEAGUE.read(&busy), None);
-        assert_eq!(LEAGUE.read(&[0; 9]), None);
     }
 
-    /// League banners in real footage: HUD_CROPS a file of 256×20 RGB crops of `LEAGUE.area`,
-    /// HUD_LABELS a CSV of `index,value` with value "ally", "enemy" or empty.
+    /// Banners in real footage: HUD_GAME is the category, HUD_CROPS a file of RGB crops of the
+    /// banner's `area` at its size, HUD_LABELS a CSV of `index,value` with the expected moment
+    /// title or nothing. Allows one missed banner (one caught mid-fade) and no false alarms.
     #[test]
     #[ignore = "needs local footage crops; run explicitly with --ignored"]
-    fn reads_labeled_league_banners() {
+    fn reads_labeled_banners() {
+        let banner = banner_for_category(&std::env::var("HUD_GAME").unwrap()).unwrap();
         let crops = std::fs::read(std::env::var("HUD_CROPS").unwrap()).unwrap();
         let labels = std::fs::read_to_string(std::env::var("HUD_LABELS").unwrap()).unwrap();
-        let size = (BANNER_WIDTH * BANNER_HEIGHT * 3) as usize;
+        let size = (banner.width * banner.height * 3) as usize;
         let (mut found, mut banners, mut false_alarms) = (0, 0, 0);
         for line in labels.lines().skip(1) {
             let (i, v) = line.split_once(',').unwrap();
             let i: usize = i.parse().unwrap();
-            let expected = match v {
-                "ally" => Some("Took an inhibitor"),
-                "enemy" => Some("Lost an inhibitor"),
-                _ => None,
-            };
-            let got = LEAGUE.read(&crops[i * size..(i + 1) * size]);
+            let expected = (!v.is_empty()).then_some(v);
+            let got = banner.read(&crops[i * size..(i + 1) * size]);
             banners += usize::from(expected.is_some());
             found += usize::from(expected.is_some() && got == expected);
             if expected.is_none() && got.is_some() {
@@ -621,7 +691,7 @@ mod tests {
         let name = std::env::var("HUD_GAME").unwrap();
         let ts = std::fs::read(std::env::var("HUD_SEGMENT").unwrap()).unwrap();
         if let Some(banner) = banner_for_category(&name) {
-            let crop = crate::probe::region(ts, banner.area, BANNER_WIDTH, BANNER_HEIGHT)
+            let crop = crate::probe::region(ts, banner.area, banner.width, banner.height)
                 .await
                 .unwrap();
             let title = std::env::var("HUD_TITLE").unwrap();

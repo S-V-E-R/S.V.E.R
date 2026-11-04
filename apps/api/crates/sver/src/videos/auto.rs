@@ -94,10 +94,9 @@ pub async fn segment(app: &App, video: &str, bytes: &[u8]) -> Res<()> {
                 crate::magnet::game_moment(app, &broadcast, &title).await?;
             }
             if let Some(banner) = super::hud::banner_for_category(name) {
-                use super::hud::{BANNER_HEIGHT, BANNER_WIDTH};
                 let at = within(area.as_deref(), banner.area);
                 let crop =
-                    crate::probe::region(bytes.to_vec(), at, BANNER_WIDTH, BANNER_HEIGHT).await;
+                    crate::probe::region(bytes.to_vec(), at, banner.width, banner.height).await;
                 if let Some(title) = crop.as_deref().and_then(|c| banner.read(c)) {
                     crate::magnet::game_moment(app, &broadcast, title).await?;
                 }
