@@ -75,14 +75,24 @@ pub async fn segment(app: &App, video: &str, bytes: &[u8]) -> Res<()> {
     else {
         return Ok(());
     };
-    // A win is a MAGNet moment (docs/MAGNET.md "What counts as a moment") whether or not clips are suggested.
-    if category.as_deref() == Some(MW4)
-        && let Some(title) = win_screen(bytes, area).await
-    {
-        crate::magnet::game_moment(app, &broadcast, title).await?;
-        if auto_clips {
-            moment(app, &broadcast, "win", title).await?;
+    // A win or an endgame is a MAGNet moment (docs/MAGNET.md "What counts as a moment") whether or
+    // not clips are suggested.
+    match category.as_deref() {
+        Some(MW4) => {
+            if let Some(title) = win_screen(bytes, area).await {
+                crate::magnet::game_moment(app, &broadcast, title).await?;
+                if auto_clips {
+                    moment(app, &broadcast, "win", title).await?;
+                }
+            }
         }
+        Some(FORTNITE) => {
+            if let Some(left) = endgame(video, bytes, area.as_deref()).await {
+                let title = format!("Endgame: {left} players left");
+                crate::magnet::game_moment(app, &broadcast, &title).await?;
+            }
+        }
+        _ => {}
     }
     if !auto_clips {
         return Ok(());
@@ -156,6 +166,34 @@ async fn win_screen(bytes: &[u8], area: Option<Vec<f32>>) -> Option<&'static str
         "round_win" => Some("Round win"),
         _ => None,
     }
+}
+
+const FORTNITE: &str = "Fortnite";
+/// Players left when this segment shows a Fortnite endgame (`fortnite::Endgame`). The counter is
+/// cut from the frame at full resolution, inside the channel's learned game area if any.
+async fn endgame(video: &str, bytes: &[u8], area: Option<&[f32]>) -> Option<u32> {
+    use super::fortnite::{COUNTER, Endgame, HEIGHT, WIDTH, players_left};
+    let [gx0, gy0, gx1, gy1] = match area {
+        Some(&[x0, y0, x1, y1]) if x1 > x0 && y1 > y0 => [x0, y0, x1, y1],
+        _ => [0.0, 0.0, 1.0, 1.0],
+    };
+    let [x0, y0, x1, y1] = COUNTER;
+    let (w, h) = (gx1 - gx0, gy1 - gy0);
+    let at = [gx0 + x0 * w, gy0 + y0 * h, gx0 + x1 * w, gy0 + y1 * h];
+    // ponytail: a second decode of each 2-second segment per Fortnite stream; past a few dozen
+    // Fortnite streams at once, read every other segment.
+    let crop = crate::probe::region(bytes.to_vec(), at, WIDTH, HEIGHT).await;
+    let left = crop.as_deref().and_then(players_left);
+    static READS: LazyLock<Mutex<HashMap<String, (Instant, Endgame)>>> =
+        LazyLock::new(Default::default);
+    let mut reads = READS.lock().unwrap();
+    // ponytail: in this process, like loudness baselines; after a restart one read relearns it.
+    reads.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(600));
+    let (at, state) = reads
+        .entry(video.to_string())
+        .or_insert_with(|| (Instant::now(), Endgame::default()));
+    *at = Instant::now();
+    state.read(left)
 }
 
 /// Share of clearly red pixels in the top 40% of the game area. MW4 draws DEFEAT and ROUND LOSS

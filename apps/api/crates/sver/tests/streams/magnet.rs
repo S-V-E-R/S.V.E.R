@@ -773,11 +773,14 @@ async fn hardening(e: &Env, admin: &str) {
 
     // A win on screen in the last 90 seconds is a moment; an older one isn't.
     e.sql("INSERT INTO game_moments(broadcast_id,title,at) VALUES('mg-h-c','Victory',now()-interval '3 minutes')").await;
-    assert_eq!(signals(e, "mg-h-c").await.won, None);
+    assert_eq!(signals(e, "mg-h-c").await.game, None);
     sver::magnet::game_moment(&e.app, "mg-h-c", "Round win")
         .await
         .unwrap();
-    assert_eq!(signals(e, "mg-h-c").await.won.as_deref(), Some("Round win"));
+    assert_eq!(
+        signals(e, "mg-h-c").await.game.as_deref(),
+        Some("Round win")
+    );
 
     // The crowd: free board presses and poll votes from real viewers. Paid presses, predictions,
     // the streamer and people who aren't watching never count.
