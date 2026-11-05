@@ -28,6 +28,7 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 **What viewers see**
 - **Under 18:** a labeled stream, VOD or clip doesn't play. The player is replaced by a short panel ("This stream is labeled mature, so it isn't available on your account") with Up next. Labeled streams are left out of every list for them: home, Browse, search, the sidebar, Up next and MAGNet lanes. Chat is closed to them too.
 - **Adults:** the first time they open a labeled channel, a framed warning covers the player with **Watch** and **Go back**. The choice is remembered for that channel for 30 days. Settings → Preferences has "Don't warn me about mature streams" (default off).
+- **No date of birth on file** (some imported accounts): treated as under 18. Settings → Preferences asks for it; it can be set once and not changed there afterwards.
 - **Signed out:** the same warning, remembered for the browser session only.
 - Labeled stream cards carry a **Mature** tag next to LIVE (dark background, `--ink` text). Their still image shows normally to adults and signed-out visitors.
 - Embeds show the warning first, the same way.

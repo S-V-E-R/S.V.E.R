@@ -216,6 +216,36 @@ pub async fn exercise(e: &Env) {
     );
     assert_eq!(prefer(&adult, true).await.0, StatusCode::OK);
     assert_eq!(call(&adult).await.1["mature_warn"], false, "Don't warn me");
+    // An account with no date of birth on file (some imported accounts) counts as under 18 until
+    // it adds one, once; nobody can change one already on file.
+    let unknown = super::chat::person(e, "dob-unknown", "DobUnknown", true).await;
+    e.sql("UPDATE users SET date_of_birth=NULL WHERE id='dob-unknown'")
+        .await;
+    assert_eq!(call(&unknown).await.1["mature_blocked"], true);
+    let birth = |token, dob: &str| {
+        super::chat::call(
+            e,
+            "PUT",
+            "/api/me/preferences",
+            Some(token),
+            json!({"date_of_birth": dob}),
+        )
+    };
+    assert_eq!(
+        birth(&unknown, "1990-05-01").await.1["date_of_birth_on_file"],
+        true
+    );
+    assert!(call(&unknown).await.1["playback"].is_object());
+    assert_eq!(
+        birth(&unknown, "2015-05-01").await.0,
+        StatusCode::BAD_REQUEST,
+        "set once"
+    );
+    assert_eq!(
+        birth(&minor, "1990-05-01").await.0,
+        StatusCode::BAD_REQUEST,
+        "a minor can't age up"
+    );
     let chat = |token| {
         super::chat::call(
             e,
