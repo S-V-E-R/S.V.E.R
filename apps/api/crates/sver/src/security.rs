@@ -237,6 +237,12 @@ pub fn email(value: &str) -> Result<String> {
     Ok(value)
 }
 pub fn signup_identity(username: &str, dob: &str) -> Result<NaiveDate> {
+    let dob = birth_date(dob)?;
+    validate_username(username)?;
+    Ok(dob)
+}
+/// A `YYYY-MM-DD` date of birth for someone 13 to 120.
+pub fn birth_date(dob: &str) -> Result<NaiveDate> {
     let dob = NaiveDate::parse_from_str(dob, "%Y-%m-%d")
         .map_err(|_| Error::bad("Enter a valid date of birth."))?;
     let today = Utc::now().date_naive();
@@ -249,7 +255,6 @@ pub fn signup_identity(username: &str, dob: &str) -> Result<NaiveDate> {
     if age > 120 {
         return Err(Error::bad("Enter a valid date of birth."));
     }
-    validate_username(username)?;
     Ok(dob)
 }
 pub fn validate_username(username: &str) -> Result<()> {

@@ -4,7 +4,7 @@ import { send, useLoad } from "../../../lib/client-api";
 import { LANGUAGES, fromBrowser } from "../../../lib/languages";
 import { ADS_OFF_WARNING } from "../../../components/Ads";
 
-type Preferences = { skip_mature_warning: boolean; adult: boolean; languages: string[]; only_my_languages: boolean; ads_off: boolean };
+type Preferences = { skip_mature_warning: boolean; adult: boolean; languages: string[]; only_my_languages: boolean; ads_off: boolean; date_of_birth_on_file: boolean };
 
 /** Settings -> Preferences (docs/CHANNEL_ADDITIONS.md "Mature label"). */
 export default function PreferencesPage() {
@@ -15,14 +15,18 @@ export default function PreferencesPage() {
     if (result.ok) setPrefs(result.data); else setMessage(result.error);
   }, []);
   useLoad(load);
-  async function save(change: Partial<Preferences>) {
+  async function save(change: Partial<Preferences> | { date_of_birth: string }) {
     const result = await send<Preferences>("PUT", "/api/me/preferences", change);
     if (result.ok) { setPrefs(result.data); setMessage("Saved."); } else setMessage(result.error);
   }
   return <><h1>Preferences</h1>
     {!prefs ? <p className="loading">{message || "Loading…"}</p> : <section className="panel">
       <label className="checkbox"><input type="checkbox" checked={prefs.skip_mature_warning} disabled={!prefs.adult} onChange={event => void save({ skip_mature_warning: event.target.checked })} /> Don&apos;t warn me about mature streams</label>
-      <p className="muted small">{prefs.adult ? "Streams labeled mature play without the warning screen first." : "Streams labeled mature aren't available on accounts under 18."}</p>
+      <p className="muted small">{prefs.adult ? "Streams labeled mature play without the warning screen first." : prefs.date_of_birth_on_file ? "Streams labeled mature aren't available on accounts under 18." : "Your account has no date of birth on file, so it's treated as under 18. Add it below."}</p>
+      {!prefs.date_of_birth_on_file && <form onSubmit={event => { event.preventDefault(); const dob = new FormData(event.currentTarget).get("date_of_birth"); if (dob && window.confirm("You can't change your date of birth after saving it. Save it?")) void save({ date_of_birth: String(dob) }); }}>
+        <label className="field"><span>Date of birth</span><input name="date_of_birth" type="date" autoComplete="bday" required /><small>You set this once. Never shown on your profile.</small></label>
+        <button type="submit" className="small">Save date of birth</button>
+      </form>}
     </section>}
     {prefs && <LanguagePrefs prefs={prefs} save={save} />}
     {prefs && <section className="panel">

@@ -1105,17 +1105,20 @@ pub struct Preferences {
     /// No ads anywhere, and no Ad Valor (docs/ADS.md "Turning ads off").
     #[serde(default)]
     ads_off: Option<bool>,
+    /// Only for accounts with none on file (some imported accounts); it can't be changed after.
+    #[serde(default)]
+    date_of_birth: Option<String>,
 }
 async fn preferences_json(db: &mut PgConnection, user: &str) -> Result<Value> {
     let adult = auth::is_adult(&mut *db, user).await?;
-    let (skip, languages, only, ads_off): (bool, Vec<String>, bool, bool) = sqlx::query_as(
-        "SELECT skip_mature_warning,languages,only_my_languages,ads_off FROM users WHERE id=$1",
+    let (skip, languages, only, ads_off, dob): (bool, Vec<String>, bool, bool, bool) = sqlx::query_as(
+        "SELECT skip_mature_warning,languages,only_my_languages,ads_off,date_of_birth IS NOT NULL FROM users WHERE id=$1",
     )
     .bind(user)
     .fetch_one(db)
     .await?;
     Ok(
-        json!({"skip_mature_warning": skip && adult, "adult": adult, "languages": languages, "only_my_languages": only, "ads_off": ads_off}),
+        json!({"skip_mature_warning": skip && adult, "adult": adult, "languages": languages, "only_my_languages": only, "ads_off": ads_off, "date_of_birth_on_file": dob}),
     )
 }
 /// GET and PUT /api/me/preferences: "Don't warn me about mature streams" (only adults can use it).
@@ -1131,6 +1134,20 @@ async fn save_preferences(
     Json(input): Json<Preferences>,
 ) -> Result<Json<Value>> {
     let (mut tx, user, _) = auth::session(&app, &jar, false).await?;
+    if let Some(dob) = &input.date_of_birth {
+        let dob = sec::birth_date(dob)?;
+        let set =
+            sqlx::query("UPDATE users SET date_of_birth=$2 WHERE id=$1 AND date_of_birth IS NULL")
+                .bind(&user.id)
+                .bind(dob)
+                .execute(&mut *tx)
+                .await?;
+        if set.rows_affected() == 0 {
+            return Err(Error::bad(
+                "Your date of birth is already on file. Contact support to correct it.",
+            ));
+        }
+    }
     let adult = auth::is_adult(&mut tx, &user.id).await?;
     if input.skip_mature_warning == Some(true) && !adult {
         return Err(Error::bad(
