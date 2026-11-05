@@ -39,6 +39,8 @@ export default function PreferencesPage() {
   </>;
 }
 
+const NAMES = new Map(LANGUAGES);
+
 /** Languages I watch in (defaults to the browser's) and the home filter. */
 function LanguagePrefs({ prefs, save }: { prefs: Preferences; save: (change: Partial<Preferences>) => Promise<void> }) {
   const chosen = prefs.languages.length ? prefs.languages : fromBrowser(navigator.languages);
@@ -46,8 +48,13 @@ function LanguagePrefs({ prefs, save }: { prefs: Preferences; save: (change: Par
   return <section className="panel">
     <h2>Languages I watch in</h2>
     <p className="muted small">Streams in other languages show their language on the card. {prefs.languages.length ? "" : "Until you choose, your browser's languages are used."}</p>
-    <div className="row wrap">{LANGUAGES.filter(([code]) => code !== "other").map(([code, name]) =>
-      <label key={code} className="checkbox"><input type="checkbox" checked={chosen.includes(code)} disabled={!chosen.includes(code) && chosen.length >= 10} onChange={event => toggle(code, event.target.checked)} /> {name}</label>)}</div>
+    <div className="row wrap">
+      {chosen.map(code => <button key={code} type="button" className="small quiet" aria-label={`Remove ${NAMES.get(code) ?? code}`} onClick={() => toggle(code, false)}>{NAMES.get(code) ?? code} <span aria-hidden="true">×</span></button>)}
+      {chosen.length < 10 && <select aria-label="Add a language" value="" onChange={event => { if (event.target.value) toggle(event.target.value, true); }}>
+        <option value="">Add a language…</option>
+        {LANGUAGES.filter(([code]) => code !== "other" && !chosen.includes(code)).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+      </select>}
+    </div>
     <label className="checkbox"><input type="checkbox" checked={prefs.only_my_languages} onChange={event => void save({ only_my_languages: event.target.checked, languages: chosen })} /> Only show streams in my languages on the homepage</label>
   </section>;
 }
