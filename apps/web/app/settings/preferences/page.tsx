@@ -50,10 +50,10 @@ function LanguagePrefs({ prefs, save }: { prefs: Preferences; save: (change: Par
     <p className="muted small">Streams in other languages show their language on the card. {prefs.languages.length ? "" : "Until you choose, your browser's languages are used."}</p>
     <div className="row wrap">
       {chosen.map(code => <button key={code} type="button" className="small quiet" aria-label={`Remove ${NAMES.get(code) ?? code}`} onClick={() => toggle(code, false)}>{NAMES.get(code) ?? code} <span aria-hidden="true">×</span></button>)}
-      {chosen.length < 10 && <label className="field narrow"><span className="sr-only">Add a language</span><select value="" onChange={event => { if (event.target.value) toggle(event.target.value, true); }}>
+      {chosen.length < 10 && <select aria-label="Add a language" value="" onChange={event => { if (event.target.value) toggle(event.target.value, true); }}>
         <option value="">Add a language…</option>
         {LANGUAGES.filter(([code]) => code !== "other" && !chosen.includes(code)).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
-      </select></label>}
+      </select>}
     </div>
     <label className="checkbox"><input type="checkbox" checked={prefs.only_my_languages} onChange={event => void save({ only_my_languages: event.target.checked, languages: chosen })} /> Only show streams in my languages on the homepage</label>
   </section>;
