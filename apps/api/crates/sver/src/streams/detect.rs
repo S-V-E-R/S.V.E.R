@@ -24,14 +24,18 @@ use std::{
 };
 
 pub const DIM: usize = 512;
-/// Neighbors consulted, and how many must agree on one game.
+/// Neighbors consulted, and how many must agree on one game: all of them. Shooters sit close
+/// together in CLIP (0.93 to 0.95 between Apex, VALORANT, Siege and Warzone), so a game nobody
+/// labeled yet must not borrow a lookalike's votes (docs/LIVE_STREAMS.md "Game detection").
 const K: usize = 5;
-const VOTES: usize = 3;
+const VOTES: usize = 5;
 /// Below this cosine similarity a neighbor is no evidence: a game nobody labeled yet stays unknown
 /// instead of becoming the nearest known game. Calibrated on held-out games (detect tests).
-const MIN_SIMILARITY: f32 = 0.85;
-/// Checks in a row that must see the same other game before Studio suggests it.
+const MIN_SIMILARITY: f32 = 0.88;
+/// Checks that must see the same other game before Studio suggests it, with at most this many
+/// unknown checks (menus, lobbies) among them: 3 of 4 checks in a row.
 pub const STREAK: i32 = 3;
+const GAPS: i32 = 1;
 const CHECK_EVERY: &str = "170 seconds";
 /// Stills this soon after the streamer chose a category are trusted as examples of it.
 const LABEL_MINUTES: i32 = 20;
@@ -256,20 +260,24 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-/// The next (guess, streak) after one check. A frame matching the category, or a game the
-/// streamer dismissed, clears it; an unknown frame (menus, a game nobody labeled) keeps it.
+/// The next (guess, streak, gaps) after one check. A frame matching the category, or a game the
+/// streamer dismissed, clears it; an unknown frame (menus, a game nobody labeled) keeps it once
+/// while the streak builds (a second one starts over) and always once it is suggested.
 pub fn next_streak(
     seen: Option<&str>,
     category: Option<&str>,
     dismissed: &[String],
     guess: Option<&str>,
     streak: i32,
-) -> (Option<String>, i32) {
+    gaps: i32,
+) -> (Option<String>, i32, i32) {
     match seen {
-        None => (guess.map(str::to_string), streak),
-        Some(g) if Some(g) == category || dismissed.iter().any(|d| d == g) => (None, 0),
-        Some(g) if Some(g) == guess => (Some(g.to_string()), streak + 1),
-        Some(g) => (Some(g.to_string()), 1),
+        None if streak > 0 && streak < STREAK && gaps >= GAPS => (None, 0, 0),
+        None if streak > 0 && streak < STREAK => (guess.map(str::to_string), streak, gaps + 1),
+        None => (guess.map(str::to_string), streak, gaps),
+        Some(g) if Some(g) == category || dismissed.iter().any(|d| d == g) => (None, 0, 0),
+        Some(g) if Some(g) == guess => (Some(g.to_string()), streak + 1, gaps),
+        Some(g) => (Some(g.to_string()), 1, 0),
     }
 }
 
@@ -326,6 +334,7 @@ struct Check {
     fresh_label: bool,
     detect_guess: Option<String>,
     detect_streak: i32,
+    detect_gaps: i32,
     detect_dismissed: Vec<String>,
 }
 /// Called with each live still (about once a minute). Learns the layout every time; checks the
@@ -334,7 +343,7 @@ pub async fn still(app: &App, broadcast: &str, webp: &[u8]) -> Result<()> {
     if !available() {
         return Ok(());
     }
-    let check: Option<Check> = sqlx::query_as("SELECT b.owner_id,s.category_id,s.detect_area,coalesce(b.detect_at<now()-$2::interval,true) AS due,coalesce(s.category_at>now()-make_interval(mins=>$3),false) AS fresh_label,b.detect_guess,b.detect_streak,b.detect_dismissed FROM broadcasts b JOIN stream_settings s ON s.owner_id=b.owner_id AND s.game_detection WHERE b.id=$1 AND b.state='LIVE'")
+    let check: Option<Check> = sqlx::query_as("SELECT b.owner_id,s.category_id,s.detect_area,coalesce(b.detect_at<now()-$2::interval,true) AS due,coalesce(s.category_at>now()-make_interval(mins=>$3),false) AS fresh_label,b.detect_guess,b.detect_streak,b.detect_gaps,b.detect_dismissed FROM broadcasts b JOIN stream_settings s ON s.owner_id=b.owner_id AND s.game_detection WHERE b.id=$1 AND b.state='LIVE'")
         .bind(broadcast).bind(CHECK_EVERY).bind(LABEL_MINUTES).fetch_optional(&app.db).await?;
     let Some(check) = check else {
         return Ok(());
@@ -381,19 +390,21 @@ pub async fn still(app: &App, broadcast: &str, webp: &[u8]) -> Result<()> {
     {
         add_example(&app.db, &check.owner_id, category, &embedding).await?;
     }
-    let (guess, streak) = next_streak(
+    let (guess, streak, gaps) = next_streak(
         seen.as_deref(),
         category,
         &check.detect_dismissed,
         check.detect_guess.as_deref(),
         check.detect_streak,
+        check.detect_gaps,
     );
     sqlx::query(
-        "UPDATE broadcasts SET detect_at=now(),detect_guess=$2,detect_streak=$3 WHERE id=$1",
+        "UPDATE broadcasts SET detect_at=now(),detect_guess=$2,detect_streak=$3,detect_gaps=$4 WHERE id=$1",
     )
     .bind(broadcast)
     .bind(guess)
     .bind(streak)
+    .bind(gaps)
     .execute(&app.db)
     .await?;
     Ok(())
@@ -549,9 +560,9 @@ mod tests {
                     .collect(),
             )
         };
-        let gallery: Vec<(String, Vec<f32>)> = (0..4)
+        let gallery: Vec<(String, Vec<f32>)> = (0..5)
             .map(|j| ("mw4".to_string(), near(0, j + 2)))
-            .chain((0..4).map(|j| ("lol".to_string(), near(1, j + 2))))
+            .chain((0..5).map(|j| ("lol".to_string(), near(1, j + 2))))
             .collect();
         assert_eq!(vote(&gallery, &unit(0)).as_deref(), Some("mw4"));
         assert_eq!(vote(&gallery, &unit(1)).as_deref(), Some("lol"));
@@ -561,40 +572,45 @@ mod tests {
             "an unknown game stays unknown"
         );
         assert_eq!(
-            vote(&gallery[..2], &unit(0)),
+            vote(&gallery[..4], &unit(0)),
             None,
-            "two examples can't outvote"
+            "every one of the 5 nearest must agree"
         );
+        let mut mixed = gallery.clone();
+        mixed[0].0 = "lol".to_string();
+        assert_eq!(vote(&mixed, &unit(0)), None, "4 of 5 isn't enough");
     }
 
     #[test]
-    fn streak_counts_one_other_game_in_a_row() {
+    fn streak_counts_one_other_game_in_3_of_4_checks() {
         let none: Vec<String> = vec![];
         let s = |g: &str| Some(g.to_string());
+        let step = |seen: Option<&str>, guess: Option<&str>, streak, gaps| {
+            next_streak(seen, Some("mw4"), &none, guess, streak, gaps)
+        };
+        assert_eq!(step(Some("fn"), None, 0, 0), (s("fn"), 1, 0));
+        assert_eq!(step(Some("fn"), Some("fn"), 2, 1), (s("fn"), 3, 1));
+        assert_eq!(step(Some("lol"), Some("fn"), 2, 1), (s("lol"), 1, 0));
         assert_eq!(
-            next_streak(Some("fn"), Some("mw4"), &none, None, 0),
-            (s("fn"), 1)
+            step(None, Some("fn"), 2, 0),
+            (s("fn"), 2, 1),
+            "one menu keeps it"
         );
         assert_eq!(
-            next_streak(Some("fn"), Some("mw4"), &none, Some("fn"), 2),
-            (s("fn"), 3)
+            step(None, Some("fn"), 2, 1),
+            (None, 0, 0),
+            "a second starts over"
         );
         assert_eq!(
-            next_streak(Some("lol"), Some("mw4"), &none, Some("fn"), 2),
-            (s("lol"), 1)
+            step(None, Some("fn"), 3, 1),
+            (s("fn"), 3, 1),
+            "a suggestion stays"
         );
+        assert_eq!(step(None, None, 0, 0), (None, 0, 0));
+        assert_eq!(step(Some("mw4"), Some("fn"), 2, 0), (None, 0, 0));
         assert_eq!(
-            next_streak(None, Some("mw4"), &none, Some("fn"), 2),
-            (s("fn"), 2),
-            "menus keep it"
-        );
-        assert_eq!(
-            next_streak(Some("mw4"), Some("mw4"), &none, Some("fn"), 2),
-            (None, 0)
-        );
-        assert_eq!(
-            next_streak(Some("fn"), Some("mw4"), &["fn".into()], Some("fn"), 2),
-            (None, 0)
+            next_streak(Some("fn"), Some("mw4"), &["fn".into()], Some("fn"), 2, 0),
+            (None, 0, 0)
         );
     }
 
@@ -619,7 +635,7 @@ mod tests {
     /// Accuracy on real recordings (docs/LIVE_STREAMS.md "Game detection"): frames named
     /// `<game>_<seconds>.png` in SVER_DETECT_FRAMES, GAME_DETECTION_MODEL set. Per game, the first
     /// half is the gallery and the second half the test; then each game is hidden from the gallery
-    /// to count how often a game nobody labeled would be mistaken for a labeled one.
+    /// to check that a game nobody labeled is never suggested as a labeled one.
     #[test]
     #[ignore = "needs GAME_DETECTION_MODEL and SVER_DETECT_FRAMES"]
     fn recordings() {
@@ -685,38 +701,70 @@ mod tests {
                 .collect()
         };
         let all = gallery_of(None);
-        let (mut right, mut total, mut mistaken) = (0, 0, 0);
+        // Suggestions as Studio would make them, with each test still as one check.
+        let suggested = |votes: &[Option<String>], category: &str| -> Vec<String> {
+            let (mut guess, mut streak, mut gaps, mut out) = (None, 0, 0, vec![]);
+            // Stills 90 seconds apart, checks about every 3 minutes: every other still.
+            for v in votes.iter().step_by(2) {
+                (guess, streak, gaps) = next_streak(
+                    v.as_deref(),
+                    Some(category),
+                    &[],
+                    guess.as_deref(),
+                    streak,
+                    gaps,
+                );
+                if streak == STREAK {
+                    out.push(guess.clone().unwrap());
+                }
+            }
+            out
+        };
+        let (mut right, mut total, mut wrong, mut false_suggestions) = (0, 0, 0, 0);
         for g in &games {
             let idx = of(g);
             let test = &idx[idx.len() / 2..];
             let votes: Vec<Option<String>> =
                 test.iter().map(|&i| vote(&all, &embedded[i])).collect();
             let r = votes.iter().filter(|v| v.as_deref() == Some(g)).count();
-            let unknown = votes.iter().filter(|v| v.is_none()).count();
-            let without = gallery_of(Some(g));
-            let m = test
+            let w = votes
                 .iter()
-                .filter(|&&i| vote(&without, &embedded[i]).is_some())
+                .filter(|v| v.as_deref().is_some_and(|v| v != g))
                 .count();
-            let best_other = test
+            // Switching to it: the stream's category is still some other game.
+            let found = suggested(&votes, "previous game")
                 .iter()
-                .map(|&i| {
-                    without
-                        .iter()
-                        .map(|(_, e)| dot(e, &embedded[i]))
-                        .fold(f32::MIN, f32::max)
-                })
-                .fold(f32::MIN, f32::max);
+                .filter(|s| *s == g)
+                .count();
+            // Switching to it before anyone labeled it: it must never be suggested as another game.
+            let without = gallery_of(Some(g));
+            let hidden: Vec<Option<String>> =
+                test.iter().map(|&i| vote(&without, &embedded[i])).collect();
+            let wrongly = suggested(&hidden, g);
             println!(
-                "{g:10} right {r}/{} unknown {unknown} | hidden: mistaken {m}/{}, closest other game {best_other:.3}",
+                "{g:10} right {r}/{} wrong {w}, suggested {found} times | hidden: read as another game {}/{}, suggested as {wrongly:?}",
                 test.len(),
+                hidden.iter().filter(|v| v.is_some()).count(),
                 test.len()
             );
-            (right, total, mistaken) = (right + r, total + test.len(), mistaken + m);
+            assert!(found > 0, "{g} is never suggested");
+            (right, total, wrong, false_suggestions) = (
+                right + r,
+                total + test.len(),
+                wrong + w,
+                false_suggestions + wrongly.len(),
+            );
         }
         println!(
-            "total right {right}/{total}; a hidden game mistaken for another {mistaken} times"
+            "total right {right}/{total}, wrong {wrong}; unlabeled games suggested as another {false_suggestions} times"
         );
-        assert!(right * 100 >= total * 90);
+        assert!(
+            wrong * 100 <= total,
+            "at most 1% of stills read as the wrong game"
+        );
+        assert_eq!(
+            false_suggestions, 0,
+            "a game nobody labeled is never suggested as another"
+        );
     }
 }
