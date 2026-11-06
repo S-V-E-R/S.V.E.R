@@ -8,7 +8,9 @@
 //!   It only writes keys recorded in `media_objects`, never lists or deletes bucket objects, and
 //!   prints aggregate counts only.
 //! - `sver-admin games seed <username> <category id> <dir>`: adds the stills in `<dir>` (one game,
-//!   one channel layout) as game detection examples. Needs GAME_DETECTION_MODEL.
+//!   one channel layout) as game detection examples. Needs GAME_DETECTION_MODEL. The id can be a
+//!   catalog game nobody has streamed yet (`wikidata-q61478103`); it becomes a category as picking
+//!   it in Studio would.
 use sqlx::Row;
 use sver::media::Storage;
 
@@ -279,6 +281,14 @@ async fn seed_game(username: &str, category: &str, dir: &str) -> Result<(), Stri
     .await
     .map_err(|_| "Database unavailable")?
     .ok_or("No active account has that username.")?;
+    // A catalog game nobody has streamed yet becomes its category exactly as picking it in Studio
+    // would, so a game can be seeded before its first stream.
+    let mut tx = db.begin().await.map_err(|_| "Database unavailable")?;
+    let category = sver::streams::catalog::select(&mut tx, category)
+        .await
+        .map_err(|_| "No category or catalog game has that id.")?;
+    tx.commit().await.map_err(|_| "Database unavailable")?;
+    let category = category.as_str();
     let known: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM stream_categories WHERE id=$1 AND active)")
             .bind(category)
@@ -329,7 +339,7 @@ async fn seed_game(username: &str, category: &str, dir: &str) -> Result<(), Stri
             .map_err(|_| "Could not save an example")?;
         added += 1;
     }
-    println!("detect_event=seed added={added} skipped={skipped} area={area:?}");
+    println!("detect_event=seed category={category} added={added} skipped={skipped} area={area:?}");
     Ok(())
 }
 
