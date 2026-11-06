@@ -321,7 +321,7 @@ async fn birthdays(app: &App) -> Res<()> {
             Some(y) => format!("They're turning **{}** today!", this_year - y),
             None => "Have an amazing day!".into(),
         };
-        send(app, &channel, json!({"content": format!("🎂 Happy birthday <@{user}>!"), "allowed_mentions": {"users": [user]},
+        send(app, &channel, json!({"content": format!("🎂 Happy birthday <@{user}>!"), "allowed_mentions": {"parse": []},
             "embeds": [{"title": "🎂🎉 Happy birthday! 🎉🎂", "description": format!("Happy birthday <@{user}>! 🥳\n\n{line}"), "color": 0xff_69b4, "fields": fields}]})).await;
     }
     let over: Vec<String> = sqlx::query_scalar("UPDATE discord_birthdays SET role_until=NULL WHERE role_until<=now() RETURNING discord_user")
@@ -408,7 +408,7 @@ pub async fn anniversaries(app: &App, now: DateTime<Utc>) -> Res<()> {
             };
             let given = levels::award(app, member, 100 * years, Source::Anniversary).await?;
             if let Some(channel) = &to {
-                send(app, channel, json!({"content": format!("🎊 <@{user}>"), "allowed_mentions": {"users": [user]},
+                send(app, channel, json!({"content": format!("🎊 <@{user}>"), "allowed_mentions": {"parse": []},
                     "embeds": [{"title": "🎉 Server anniversary!", "color": 0x58_65f2,
                         "description": format!("<@{user}> is celebrating their **{} server anniversary!**\n\nThank you for {years} year{} in the community! 🙌", ordinal(years), if years == 1 { "" } else { "s" }),
                         "fields": [{"name": "XP bonus", "value": format!("+{given} XP"), "inline": true}]}]})).await;

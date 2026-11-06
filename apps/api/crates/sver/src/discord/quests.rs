@@ -180,7 +180,7 @@ pub async fn announce(app: &App) -> Res<()> {
         else {
             continue;
         };
-        let message = json!({"content": format!("<@{user}>"), "allowed_mentions": {"users": [user]},
+        let message = json!({"content": format!("<@{user}>"), "allowed_mentions": {"parse": []},
             "embeds": [{"title": format!("{emoji} {title}"), "description": description, "color": rarity_color(rarity),
                 "footer": {"text": format!("{} achievement", rarity[..1].to_uppercase() + &rarity[1..])}}]});
         if send(app, &channel, message).await.is_none() {
@@ -222,7 +222,6 @@ fn met(needs: &Map<String, Value>, progress: &Map<String, Value>) -> bool {
 #[derive(sqlx::FromRow)]
 struct Quest {
     id: i64,
-    name: String,
     period: String,
     needs: Value,
     xp: i32,
@@ -235,7 +234,7 @@ struct Quest {
 /// `stream_watch`) toward every active quest that needs it, completing the ones now met.
 pub async fn bump(app: &App, user: &str, kind: &str, n: i64) -> Res<()> {
     let faction = levels::faction(app, user).await?;
-    let quests: Vec<Quest> = sqlx::query_as("SELECT id,name,period,needs,xp,points,role,max_completions FROM discord_quests
+    let quests: Vec<Quest> = sqlx::query_as("SELECT id,period,needs,xp,points,role,max_completions FROM discord_quests
         WHERE active AND (ends_at IS NULL OR ends_at>now()) AND needs ? $1 AND (faction IS NULL OR faction=$2)")
         .bind(kind).bind(&faction).fetch_all(&app.db).await?;
     for q in quests {
@@ -298,22 +297,12 @@ async fn complete(app: &App, user: &str, q: &Quest) -> Res<()> {
                 send(
                     app,
                     &channel,
-                    json!({"content": line, "allowed_mentions": {"users": [user]}}),
+                    json!({"content": line, "allowed_mentions": {"parse": []}}),
                 )
                 .await;
             }
         }
     }
-    let note = format!(
-        "Quest complete: **{}**{}.",
-        q.name,
-        if q.xp > 0 {
-            format!(" (+{} XP)", q.xp)
-        } else {
-            String::new()
-        }
-    );
-    super::dm(app, user, json!({"content": note})).await;
     Ok(())
 }
 

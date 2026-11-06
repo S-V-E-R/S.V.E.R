@@ -165,7 +165,7 @@ async fn member(
             send(
                 app,
                 &channel,
-                json!({"content": line, "allowed_mentions": {"users": [m.discord]}}),
+                json!({"content": line, "allowed_mentions": {"parse": []}}),
             )
             .await;
         }
