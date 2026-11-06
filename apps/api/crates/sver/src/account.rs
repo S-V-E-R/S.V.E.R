@@ -214,7 +214,7 @@ const SUBJECT_COLUMNS: [&str; 10] = [
 ];
 /// Left out: credentials and sessions, anti-abuse signals, staff internals, and tables that hold
 /// other people's personal details (copyright claimants, guardians, Take It Down requesters).
-const EXCLUDED_TABLES: [&str; 17] = [
+const EXCLUDED_TABLES: [&str; 18] = [
     "challenges",
     "recovery_codes",
     "mail_jobs",
@@ -222,6 +222,7 @@ const EXCLUDED_TABLES: [&str; 17] = [
     "rate_limits",
     "stream_credentials",
     "push_subscriptions",
+    "expo_devices",
     "staff_push_subscriptions",
     "integrity_cases",
     "magnet_flags",
