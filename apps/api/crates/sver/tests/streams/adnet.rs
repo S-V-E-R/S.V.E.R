@@ -680,12 +680,6 @@ pub async fn exercise(e: &Env) {
     ] {
         e.sql(statement).await;
     }
-    let (code, served) = serve(
-        Some(viewer.clone()),
-        json!({"placement": "site", "browser_id": browser}),
-    )
-    .await;
-    assert_eq!(code, StatusCode::OK, "{served}");
     // A viewer who turns ads off gets none, in any placement (docs/ADS.md "Turning ads off").
     let quiet = person(e, "an-quiet", "NetQuiet", true).await;
     let (code, prefs) = call(
@@ -708,6 +702,13 @@ pub async fn exercise(e: &Env) {
             .is_null(),
         "ads off means no ads"
     );
+    // Served right before the too_short report: that check needs the ticket under IMAGE_MS (1s) old.
+    let (code, served) = serve(
+        Some(viewer.clone()),
+        json!({"placement": "site", "browser_id": browser}),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{served}");
     let ticket = served["ad"]["ticket"].clone();
     assert_eq!(served["ad"]["kind"], "image");
     assert_eq!(served["ad"]["advertiser"], "Beta Games LLC");
