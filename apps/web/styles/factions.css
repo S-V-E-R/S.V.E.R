@@ -11,7 +11,7 @@
 .enlist-card input { float: right; width: 22px; height: 22px; accent-color: var(--accent); }
 .enlist-card h2 { margin-top: 1rem; }.enlist-card h3 { font-size: 1rem; }.enlist-card ul { padding-left: 1.25rem; }
 .enlist-welcome { max-width: 600px; margin: auto; text-align: center; }
-.war-page,.faction-hub { display: grid; gap: 1.5rem; max-width: 1400px; margin: 0 auto; padding: clamp(16px, 2vw, 28px); }
+.war-page,.faction-hub { display: grid; gap: 1.5rem; max-width: 1400px; margin: 0 auto; padding: clamp(16px, 2vw, 32px); }
 .war-page h1,.faction-hub h1 { margin: .3rem 0; }
 .war-standing { min-width: 0; }.war-bar { display: flex; gap: 3px; height: 8px; background: var(--surface); }.war-bar span { background: var(--accent); min-width: 2px; }
 .war-scoreboard { list-style: none; padding: .75rem 0; margin: 0; display: grid; grid-template-columns: repeat(3,1fr); gap: 1rem; }
@@ -54,12 +54,12 @@
 @keyframes territory-lift { from { transform: none; } to { transform: translateY(-4px) scale(1.07); } }
 .war-compass circle { fill: none; stroke: #D9CCA4; stroke-opacity: .5; }.war-compass path { fill: #D9CCA4; fill-opacity: .55; }.war-compass text { fill: #D9CCA4; fill-opacity: .7; font-size: 9px; font-family: var(--font-display); }
 .war-controls { position: absolute; left: 12px; top: 12px; display: flex; gap: 4px; }
-.war-controls button { min-width: 34px; height: 34px; padding: 0 10px; background: rgba(10,10,12,.82); border: 1px solid var(--line); }
+.war-controls button { min-width: 34px; height: 34px; padding: 0 12px; background: rgba(10,10,12,.82); border: 1px solid var(--line); }
 .war-plate { padding: 16px; background: var(--surface); border-left: 1px solid var(--line); border-top: 3px solid var(--accent); }
 .war-plate h3 { margin: .2rem 0 .3rem; font-size: 1.15rem; }.war-plate p { margin: .3rem 0; font-size: .88rem; }.war-plate .eyebrow { margin: 0; }
 .war-plate .genre-scores div[data-theme] dt { color: var(--accent-light); }
-.war-legend { position: absolute; left: 12px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 6px 10px; list-style: none; background: rgba(10,10,12,.78); border: 1px solid var(--line); font-size: .8rem; color: var(--ink-muted); }
-.war-legend li { display: flex; align-items: center; gap: 6px; }
+.war-legend { position: absolute; left: 12px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 8px 12px; list-style: none; background: rgba(10,10,12,.78); border: 1px solid var(--line); font-size: .8rem; color: var(--ink-muted); }
+.war-legend li { display: flex; align-items: center; gap: 8px; }
 .war-legend .swatch { width: 12px; height: 12px; background: color-mix(in srgb, var(--accent) 50%, #0B0C10); border: 1px solid var(--accent); clip-path: polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%); }
 .war-legend [data-theme=neutral] .swatch { background: #3A3E46; }
 .war-legend .swatch.hatched { background: repeating-linear-gradient(45deg, rgba(242,240,234,.55) 0 2px, #3A3E46 2px 5px); border-color: var(--ink); }
@@ -99,9 +99,9 @@
 .lore-founders { margin: 0; padding-left: 1.1rem; display: grid; gap: .5rem; color: var(--ink-muted); }
 .lore-founders strong { color: var(--ink); }
 /* War map: "How ground is taken" under the Accord; touch screens get "tap" copy (UI review, October 2026). */
-.plate-rules { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
-.plate-rules h2 { font-size: 1rem; margin: 0 0 6px; }
-.plate-rules ol { margin: 0 0 6px; padding-left: 1.2em; font-size: .85rem; }
+.plate-rules { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.plate-rules h2 { font-size: 1rem; margin: 0 0 8px; }
+.plate-rules ol { margin: 0 0 8px; padding-left: 1.2em; font-size: .85rem; }
 .plate-rules li { margin: 4px 0; }
 .on-touch { display: none; }
 @media (hover: none) { .on-hover { display: none; } .on-touch { display: inline; } }
