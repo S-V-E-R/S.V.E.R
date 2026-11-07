@@ -17,6 +17,7 @@
 .war-scoreboard { list-style: none; padding: .75rem 0; margin: 0; display: grid; grid-template-columns: repeat(3,1fr); gap: 1rem; }
 .war-scoreboard li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }.war-scoreboard a { display: inline-flex; align-items: center; gap: .3rem; }.war-scoreboard strong { font-size: 1.3rem; }.war-scoreboard .muted { font-size: .85rem; }
 .season-feature { flex-basis: 100%; margin: 0; }
+.war-activity { margin-top: .75rem; padding: .85rem 1rem; } .war-activity h2 { font-size: 1rem; margin: 0 0 .35rem; } .war-activity ul { margin: .4rem 0 0; padding-left: 1.1rem; }
 .war-rules { padding: 1.25rem; }.war-rules h2 { font-size: 1.25rem; }.war-rules li { margin-bottom: .4rem; }
 .war-map-view.hidden { display: none; }
 .war-theater { display: grid; grid-template-columns: minmax(0,1fr) 270px; border: 1px solid var(--line); background: #08111B; user-select: none; }

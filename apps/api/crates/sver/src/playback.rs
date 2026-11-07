@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
     extract::{ConnectInfo, Path, State},
     http::{HeaderMap, header},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -252,18 +252,22 @@ async fn owner_id(app: &App, name: &str) -> Res<String> {
 pub struct LiveQuery {
     transport: Option<String>,
 }
+/// The live payload is per viewer (playback URLs, bans, war eligibility). Browsers must not share it.
+fn private_json(body: Value) -> Response {
+    ([(header::CACHE_CONTROL, "private, no-store")], Json(body)).into_response()
+}
 pub async fn live(
     State(app): State<App>,
     jar: CookieJar,
     Path(name): Path<String>,
     axum::extract::Query(query): axum::extract::Query<LiveQuery>,
-) -> Res<Json<Value>> {
+) -> Res<Response> {
     let owner = owner_id(&app, &name).await?;
     let current: Option<Live> = sqlx::query_as("SELECT b.id,b.public_id,CASE WHEN b.state='STARTING' THEN 'RECONNECTING' ELSE b.state END AS state,b.delivery,coalesce((b.health->>'captions')::bool,false) AS captions,s.caption_size,s.caption_x,s.caption_y,b.started_at,coalesce(s.title,u.username||'''s stream') AS title,c.name AS category,(SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND l.level IN ('counted','trusted')) AS viewers FROM broadcasts b JOIN users u ON u.id=b.owner_id LEFT JOIN stream_settings s ON s.owner_id=b.owner_id LEFT JOIN stream_categories c ON c.id=s.category_id WHERE b.owner_id=$1 AND (b.state IN ('LIVE','RECONNECTING') OR (b.state='STARTING' AND b.confirmed_live_at IS NOT NULL))")
         .bind(&owner).fetch_optional(&app.db).await?;
     let Some(b) = current else {
         // An offline channel may host a live one; its page shows that stream.
-        return Ok(Json(match crate::raids::hosting(&app, &owner).await? {
+        return Ok(private_json(match crate::raids::hosting(&app, &owner).await? {
             Some(hosting) => json!({"live": false, "hosting": hosting}),
             None => json!({"live": false}),
         }));
@@ -291,7 +295,7 @@ pub async fn live(
     )
     .await?
     {
-        return Ok(Json(json!({
+        return Ok(private_json(json!({
             "live": true, "broadcast_id": b.id, "state": b.state, "title": b.title,
             "category": b.category, "started_at": b.started_at, "viewers": b.viewers,
             "is_owner": false, "mature": true, "mature_blocked": true, "playback": null,
@@ -301,7 +305,7 @@ pub async fn live(
     if let Some(v) = &viewer
         && crate::moderation::banned(&app, &owner, &v.id).await?
     {
-        return Ok(Json(json!({
+        return Ok(private_json(json!({
             "live": true, "broadcast_id": b.id, "state": b.state, "title": b.title,
             "category": b.category, "started_at": b.started_at, "viewers": b.viewers,
             "is_owner": false, "banned": true, "playback": null,
@@ -340,7 +344,7 @@ pub async fn live(
     } else {
         "hls"
     };
-    Ok(Json(json!({
+    Ok(private_json(json!({
         "live": true, "broadcast_id": b.id, "state": b.state, "title": b.title,
         "category": b.category, "started_at": b.started_at, "viewers": b.viewers,
         "is_owner": viewer.as_ref().is_some_and(|v| v.id == owner), "mature": mature,
@@ -351,6 +355,7 @@ pub async fn live(
         "caption_style": {"size": b.caption_size.as_deref().unwrap_or("m"), "x": b.caption_x.unwrap_or(0.5), "y": b.caption_y.unwrap_or(0.85)},
         "raid": crate::raids::for_viewers(&app, &b.id, viewer.as_ref().map(|v| v.id.as_str())).await?,
         "ad_break": crate::adserve::for_live(&app, &owner, viewer.as_ref().map(|v| v.id.as_str())).await?,
+        "war": crate::factions::activity(&app, viewer.as_ref(), &owner, &b.id).await?,
     })))
 }
 

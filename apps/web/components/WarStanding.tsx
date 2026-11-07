@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Crest } from "./FactionIdentity";
 import { factions, factionInfo, type Faction } from "../lib/factions";
-import { type War, contest, utcDay } from "../lib/war";
+import { type War, contest, utcDate, utcDay } from "../lib/war";
 
 const utcTime = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso)) + " UTC";
 
@@ -61,5 +61,26 @@ export function FrontLine({ war, faction, signedIn, replay }: { war: War | null;
     </div>}
     {faction ? <Link className="button" href="/war-map">Open the war map</Link>
       : <Link className="button" href={signedIn ? "/welcome" : "/signup"}>{signedIn ? "Pick a side" : "Enlist"}</Link>}
+  </section>;
+}
+
+/** What already happens after a loss. Dates come from the war payload; nothing here changes scoring. */
+export function RecoveryNote({ war }: { war: War | null }) {
+  if (!war) return <section className="panel" aria-labelledby="recovery-h"><h2 id="recovery-h">After a loss</h2><p>Standings could not be loaded, so this page will not guess the next checkpoint.</p></section>;
+  const open = war.week && !war.week.completed;
+  return <section className="panel" aria-labelledby="recovery-h"><h2 id="recovery-h">After a loss</h2>
+    <p>Losing a territory does not remove a faction, and it does not change who MAGNet features.</p>
+    {open ? <p>This week&apos;s influence counts only until the checkpoint on {utcDate(war.week!.ends_at)}. The next week starts fresh, and members choose a new target. A held genre stays with its holder on a tie or a narrow lead.</p>
+      : war.season?.finished ? <p>The season is on break until {utcDay(war.season.next_starts_at)}. Genres return to home turf and influence starts over. Switching factions is open during the break.</p>
+        : <p>No checkpoint is on the calendar yet.</p>}
+    {war.season && !war.season.finished && <p>This season ends {utcDay(war.season.ends_at)}. Every genre then returns to its home turf.</p>}
+  </section>;
+}
+
+/** Existing cross-faction freedom and the report, block, and moderation tools already on the site. */
+export function RivalryNote({ faction }: { faction?: Faction | null }) {
+  return <section className="panel" aria-labelledby="rivalry-h"><h2 id="rivalry-h">Across factions</h2>
+    <p>You can watch, follow, and chat with any faction. Influence you earn is for your own side.</p>
+    <p>On a channel, <strong>More</strong> includes Block and Report. In chat, Report is on the message. A faction board post can be reported by a member. <Link href="/help#moderation">Moderation tools</Link> · <Link href="/help/safety">Safety</Link> · <Link href="/settings/reports">Your reports</Link>{faction && <> · <Link href={`/factions/${faction}#objective`}>Your faction&apos;s objective</Link></>}</p>
   </section>;
 }
