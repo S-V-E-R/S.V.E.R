@@ -267,10 +267,12 @@ pub async fn live(
         .bind(&owner).fetch_optional(&app.db).await?;
     let Some(b) = current else {
         // An offline channel may host a live one; its page shows that stream.
-        return Ok(private_json(match crate::raids::hosting(&app, &owner).await? {
-            Some(hosting) => json!({"live": false, "hosting": hosting}),
-            None => json!({"live": false}),
-        }));
+        return Ok(private_json(
+            match crate::raids::hosting(&app, &owner).await? {
+                Some(hosting) => json!({"live": false, "hosting": hosting}),
+                None => json!({"live": false}),
+            },
+        ));
     };
     let viewer = profiles::viewer(&app, &jar).await?;
     let mature: bool = sqlx::query_scalar(

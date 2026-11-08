@@ -386,7 +386,9 @@ pub(crate) async fn activity(
 ) -> Res<Value> {
     let mut db = app.db.acquire().await?;
     let at = engine::now(&mut db).await?;
-    let open = engine::current(&mut db, at).await?.is_some();
+    let week = engine::current(&mut db, at).await?;
+    let open = week.is_some();
+    let checkpoint_at = week.as_ref().map(|w| w.ends_at.to_rfc3339());
     let season = engine::latest(&mut db).await?;
     let season = if open {
         "open"
@@ -413,8 +415,11 @@ pub(crate) async fn activity(
     };
     let media = crate::streams::influence_context(&mut db, broadcast).await?;
     let genre = media.as_ref().map(|(_, g)| g.clone());
+    // The broadcaster's own lease never supplies the viewer a stream needs. Scoring already
+    // refuses that lease at the heartbeat; this read stays strict even if one is present.
     let playback_counts = match viewer {
-        Some(v) if v.id == owner => crate::integrity::trusted(&mut db, broadcast, None).await?,
+        Some(v) if v.id == owner => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM playback_leases WHERE broadcast_id=$1 AND level='trusted' AND signed_in AND verified AND expires_at>clock_timestamp() AND viewer_key<>'u:'||$2)")
+            .bind(broadcast).bind(owner).fetch_one(&mut *db).await?,
         Some(v) => crate::integrity::trusted(&mut db, broadcast, Some(&v.id)).await?,
         None => false,
     };
@@ -452,6 +457,8 @@ pub(crate) async fn activity(
         enemy_turf: enemy,
         council_target: council,
         event,
+        checkpoint_at: checkpoint_at.as_deref(),
+        faction: faction.as_deref(),
     }))
 }
 
@@ -467,6 +474,8 @@ pub struct ActivityFacts<'a> {
     pub enemy_turf: bool,
     pub council_target: bool,
     pub event: bool,
+    pub checkpoint_at: Option<&'a str>,
+    pub faction: Option<&'a str>,
 }
 
 const RULES: [&str; 6] = [
@@ -503,13 +512,13 @@ pub fn explain(f: ActivityFacts<'_>) -> Value {
     } else if !f.media_ready {
         ("no_signal", "No confirmed live signal", "This broadcast needs a confirmed live signal in a category before streaming, watching, or chat can earn influence. Your own preview never counts as a viewer.".to_string(), false)
     } else if f.owner && !f.playback_counts {
-        ("no_audience", "Waiting for a viewer whose playback counts", "Streaming influence needs at least one other viewer whose playback counts. Your own preview never counts. Chat in your own channel does not count.".to_string(), false)
+        ("no_audience", "Waiting for another viewer's playback", "Streaming can qualify only while some other viewer’s playback counts. Your own preview does not. Chat in your own channel does not. This is eligibility, not a record of points awarded.".to_string(), false)
     } else if !f.owner && !f.playback_counts {
-        ("waiting", "Your playback is not counting yet", "Watching and chat earn influence only while your playback counts. This page does not show points or how much of a limit is left.".to_string(), false)
+        ("waiting", "Your playback is not counting yet", "Watching and chat can qualify only while your playback counts. This is eligibility, not a record of points awarded.".to_string(), false)
     } else if f.owner {
-        ("ready", "Streaming can earn influence", "A qualifying viewer is present and the live signal is confirmed, so streaming influence can count for your faction. Chat in your own channel still does not. Daily limits apply. This page does not show points earned or how much of a limit is left.".to_string(), true)
+        ("ready", "Streaming can qualify", "Another viewer's playback counts and the live signal is confirmed, so streaming can qualify for your faction. Your own preview does not. Chat in your own channel does not. This is eligibility, not a record of points awarded.".to_string(), true)
     } else {
-        ("ready", "This watch can earn influence", "Your playback counts, so watching and chat can earn influence for your faction. Daily limits apply. This page does not show points earned or how much of a limit is left.".to_string(), true)
+        ("ready", "This watch can qualify", "Your playback counts, so watching and chat can qualify for your faction. This is eligibility, not a record of points awarded.".to_string(), true)
     };
     if matches!(code, "ready" | "waiting" | "no_audience") {
         if f.enemy_turf {
@@ -522,7 +531,7 @@ pub fn explain(f: ActivityFacts<'_>) -> Value {
             detail.push_str(" A faction event applies here, so influence counts for more, and the usual limits still apply.");
         }
     }
-    json!({"code": code, "title": title, "detail": detail, "counts": counts, "rules": RULES})
+    json!({"code": code, "title": title, "detail": detail, "counts": counts, "rules": RULES, "checkpoint_at": f.checkpoint_at, "faction": f.faction})
 }
 
 #[cfg(test)]
@@ -542,6 +551,8 @@ mod activity_tests {
             enemy_turf: false,
             council_target: false,
             event: false,
+            checkpoint_at: None,
+            faction: None,
         }
     }
 
@@ -567,7 +578,9 @@ mod activity_tests {
         assert_eq!(explain(unverified)["code"], "unverified");
         let text = explain(facts()).to_string();
         assert!(text.contains("Payments do not award war influence."));
+        assert!(text.contains("not a record of points awarded"));
         assert!(!text.contains("remaining"));
+        assert!(ready.get("points").is_none());
         assert!(!text.to_lowercase().contains("threshold"));
         assert!(!text.to_lowercase().contains("risk"));
         let mut bonus = facts();

@@ -59,21 +59,23 @@ export function FactionCommunity({ faction, genres, votingOpen }: { faction: Fac
 /** This week's target, from the members-only council. A 403 stays on the page as unavailable, not a guessed genre. */
 export function FactionObjective({ faction, genres, votingOpen }: { faction: Faction; genres: Genre[]; votingOpen: boolean }) {
   const [council, setCouncil] = useState<Council | null>(null);
-  const [unavailable, setUnavailable] = useState(!votingOpen);
+  const [problem, setProblem] = useState<"private" | "error" | null>(null);
   const name = (id: string) => genres.find(g => g.id === id)?.name ?? id.replaceAll("_", " ");
   const load = useCallback(async () => {
     if (!votingOpen) return;
     const result = await send<Council>("GET", `/api/factions/${faction}/council`);
-    if (result.ok) { setCouncil(result.data); setUnavailable(false); } else setUnavailable(true);
+    if (result.ok) { setCouncil(result.data); setProblem(null); }
+    else setProblem(result.status === 401 || result.status === 403 ? "private" : "error");
   }, [faction, votingOpen]);
   useLoad(load);
   useEffect(() => { const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000); return () => clearInterval(timer); }, [load]);
   return <section className="panel" id="objective" aria-labelledby="objective-h"><h2 id="objective-h">This week&apos;s objective</h2>
     {!votingOpen ? <p>Voting opens when the season is running. The war map still shows who holds each genre.</p>
-      : unavailable ? <p>This week&apos;s target is visible to members only, and it could not be loaded.</p>
-        : council ? <p>Shared target: <strong>{council.target ? name(council.target) : "No target yet"}</strong>. {council.votes.length ? "The current vote totals are in the council below." : "No votes yet."} <a href="#council">Vote</a> · <a href="#board">Read the board</a></p>
-          : <p>Loading the members&apos; target…</p>}
-    <p className="muted">The vote is one choice per verified member. It is not ordered by influence earned.</p>
+      : problem === "private" ? <p>This week&apos;s target is only for members of this faction.</p>
+        : problem === "error" ? <p>The target could not be loaded. Public standings on the war map are unchanged.</p>
+          : council ? <p>Shared target: <strong>{council.target ? name(council.target) : "No target yet"}</strong>. On a live channel, the player says whether that watch can qualify toward this target. It does not list points awarded. {council.votes.length ? "Vote totals are in the council below." : "No votes yet."} <a href="#council">Vote</a> · <a href="#board">Read the board</a></p>
+            : <p>Loading the members&apos; target…</p>}
+    <p className="muted">The vote is one choice per verified member. It is not ordered by influence earned. Ground changes at the checkpoint, not when a message is sent.</p>
   </section>;
 }
 type Members = { items: { user: Chip; joined_at: string }[]; next_cursor: string | null };

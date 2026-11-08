@@ -16,7 +16,7 @@ import { takeSource } from "../lib/view-source";
 
 type Playback = { webrtc: string | null; hls: string | null; preferred: "webrtc" | "hls" };
 type Raid = { id: string; status: "countdown" | "cancelled" | "moved" | "failed"; execute_at: string; target: { username: string; display_name: string; mature?: boolean } };
-type WarActivity = { code: string; title: string; detail: string; counts: boolean; rules: string[] };
+type WarActivity = { code: string; title: string; detail: string; counts: boolean; rules: string[]; checkpoint_at: string | null; faction: string | null };
 type Live =
   | { live: false; hosting?: { username: string; display_name: string } }
   | { live: true; broadcast_id: string; state: "LIVE" | "RECONNECTING"; title: string; category: string | null; started_at: string; viewers: number; is_owner: boolean; banned?: boolean; mature?: boolean; mature_warn?: boolean; mature_blocked?: boolean; playback: Playback | null; raid?: Raid | null; captions?: boolean; caption_style?: CaptionStyle; ad_break?: { id: string; ends_at: string } | null; war?: WarActivity };
@@ -319,7 +319,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     <p><span className="chip mature-tag">Mature</span> <strong>{live.title}</strong> is labeled mature: it may include violent or horror games, strong language or mature themes.</p>
     <div className="row"><button type="button" onClick={() => acceptMature(username, !!signedIn)}>Watch</button><button type="button" className="quiet" onClick={() => history.length > 1 ? history.back() : router.push("/")}>Go back</button></div>
   </div></div>;
-  if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p>{meta}</div>;
+  if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p>{meta}{live.war && <WarActivityNote war={live.war} />}</div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
   return <div className={`live-player${focused ? " focused" : ""}${adOn ? " ad-on" : ""}`}>
     {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} onPause={() => setPaused(true)} onPlay={() => setPaused(false)} aria-label={`${live.title}, live`} />}
@@ -348,14 +348,25 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   </div>;
 }
 
-/** Server-backed eligibility for this broadcast. Not a live region: the player polls quietly. */
+/** Eligibility for this broadcast. The polite note speaks only when the status code changes, not on every poll. */
 function WarActivityNote({ war }: { war: WarActivity }) {
-  return <aside className="war-activity panel" aria-label="War influence">
-    <h2>{war.title}</h2>
+  const seen = useRef(war.code);
+  const [spoken, setSpoken] = useState("");
+  useEffect(() => {
+    if (seen.current === war.code) return;
+    seen.current = war.code;
+    setSpoken(war.title);
+  }, [war.code, war.title]);
+  const when = war.checkpoint_at ? new Date(war.checkpoint_at).toLocaleString("en-US", { timeZone: "UTC", dateStyle: "medium", timeStyle: "short" }) + " UTC" : null;
+  return <aside className="war-activity panel" aria-labelledby="war-activity-title">
+    <h2 id="war-activity-title">{war.title}</h2>
     <p>{war.detail}{war.code === "signed_out" && <> <Link href="/login">Log in</Link></>}{war.code === "no_faction" && <> <Link href="/welcome">Choose your side</Link></>}{war.code === "unverified" && <> <Link href="/account">Account security</Link></>}</p>
+    {when && <p>If it qualifies, it counts toward the checkpoint at {when}. The checkpoint is when ground can change.</p>}
+    <p className="war-activity-links">{war.faction && <Link href={`/factions/${war.faction}#objective`}>This week&apos;s objective</Link>}{war.faction && " · "}<Link href="/war-map">War map</Link></p>
     <details>
       <summary>What counts</summary>
       <ul>{war.rules.map(rule => <li key={rule}>{rule}</li>)}</ul>
     </details>
+    <p className="sr-only" aria-live="polite">{spoken}</p>
   </aside>;
 }

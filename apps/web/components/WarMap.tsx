@@ -31,12 +31,12 @@ export default function WarMap({ initial, faction }: { initial: War; faction?: F
     {war.genres.length === 0 ? <p className="notice">Territories will appear when the first season begins.</p> : <>
       <div className={`war-map-view ${view === "board" ? "hidden" : ""}`}><TerritoryMap genres={sorted} selected={selected} onSelect={setSelected} season={war.season?.number} rules={rules} /></div>
       {view === "board" && <div className="war-rules panel">{rules}</div>}
-      <div className={view === "map" ? "map-board" : ""}><GenreBoard genres={war.genres} /></div>
     </>}
-    {war.genres.length === 0 && <div className="war-rules panel">{rules}</div>}
     <WarStanding war={war} />
     <RecoveryNote war={war} />
     <RivalryNote faction={faction} />
+    {war.genres.length > 0 && <div className={view === "map" ? "map-board" : ""}><GenreBoard genres={war.genres} /></div>}
+    {war.genres.length === 0 && <div className="war-rules panel">{rules}</div>}
     {!!war.history.length && <details className="panel"><summary>Checkpoint history</summary>{war.history.map(h => <section key={h.ends_at}><h3>{utcDate(h.ends_at)}</h3><ul>{h.genres.map(g => <li key={g.id}>{g.name}: {g.holder ? factionInfo(g.holder).name : "Neutral"}</li>)}</ul></section>)}</details>}
   </div>;
 }
