@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 const how = [
   ["Fair discovery", "MAGNet gives every live stream a turn at the top of the homepage, whether it has 3 viewers or 3,000. Viewer count never decides who gets seen."],
-  ["Three factions", "Myria, Aetheron and Glint fight a seasonal war over every category. Streaming and watching for your side wins it ground and puts you in front of its viewers."],
+  ["Three factions", "Myria, Aetheron and Glint fight a seasonal war over categories. Verified members earn influence by streaming, watching, and chatting. Discovery still gives every stream a fair turn."],
   ["Creators first", "Streamers keep 65% to 80% of every subscription, rising with their creator tier, and S.V.E.R pays the card fees. Payday is every two weeks, with Early Pay in between."],
   ["Stream your way", "Use the software you already use, over RTMP, WHIP or SRT. Restream the same broadcast to up to three other destinations, with nothing re-encoded."],
   ["Chat you can trust", "Channel moderators, timeouts and bans, slow mode, link blocking, banned words, followers-only chat and account-age limits. Viewer counts only count real playback."],

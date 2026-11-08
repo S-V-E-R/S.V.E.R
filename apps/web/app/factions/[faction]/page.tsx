@@ -5,13 +5,13 @@ import { isFaction, factionInfo, WORLD } from "../../../lib/factions";
 import type { War } from "../../../lib/war";
 import type { Chip } from "../../../lib/types";
 import { Crest } from "../../../components/FactionIdentity";
-import { WarStanding } from "../../../components/WarStanding";
+import { RecoveryNote, RivalryNote, WarStanding } from "../../../components/WarStanding";
 import { GenreBoard } from "../../../components/WarMap";
 import { StreamShelf, type StreamCardData } from "../../../components/StreamShelf";
 import { UserChip } from "../../../components/UserChip";
 import { VideoGrid } from "../../../components/VideoGrid";
 import type { VideoCard } from "../../../lib/videos";
-import { FactionCommunity, MemberDirectory, RefreshFaction } from "../../../components/FactionCommunity";
+import { FactionCommunity, FactionObjective, MemberDirectory, RefreshFaction } from "../../../components/FactionCommunity";
 
 type Hub = War & { is_member: boolean; live: StreamCardData[]; weekly_leaders: { user: Chip; influence: number }[]; season_leaders: { user: Chip; influence: number }[] };
 export default async function Page({ params }: { params: Promise<{ faction: string }> }) {
@@ -24,6 +24,9 @@ export default async function Page({ params }: { params: Promise<{ faction: stri
     <RefreshFaction />
     <header className="hub-header frame"><Crest faction={faction} size={150} /><div><p className="eyebrow">{f.title}</p><h1>{f.name}</h1><p className="faction-creed">{f.creed}</p><p>{f.belief}</p><Link className="button quiet" href="/choose-faction">{data.is_member ? "Changing sides" : `Join ${f.name}`}</Link></div></header>
     <WarStanding war={data} />
+    {data.is_member ? <FactionObjective faction={faction} genres={data.genres} votingOpen={!!data.week && !data.week.completed} /> : <section className="panel" id="objective" aria-labelledby="objective-h"><h2 id="objective-h">This week&apos;s objective</h2><p>Members of {f.name} choose one genre together. The vote is not ranked by influence, and the tally stays inside the faction.</p></section>}
+    <RecoveryNote war={data} />
+    <RivalryNote faction={faction} />
     <section><h2>Live with {f.name}</h2><p className="muted">Every channel gets a turn. Picks rotate every 30 seconds; viewer count does not set the order. <Link href={`/magnet/${faction}`}>Watch the {f.name} MAGNet channel</Link>, which moves between {f.name} streams on its own.</p>{data.live.length ? <StreamShelf streams={data.live} /> : <div className="empty-state"><p>No {f.name} streams are live right now.</p><p><Link href="/browse">Browse everything that&apos;s live</Link></p></div>}</section>
     <section className="hub-lore panel" aria-labelledby="lore-h"><h2 id="lore-h">The story of {f.name}</h2>
       <p className="lore-line">{f.line}</p><p>{f.lore}</p>

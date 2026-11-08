@@ -2,19 +2,19 @@
 use super::*;
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
 };
 use http_body_util::BodyExt;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
 
-async fn call(
+async fn call_full(
     app: &App,
     method: &str,
     path: &str,
     token: Option<&str>,
     body: Value,
-) -> (StatusCode, Value) {
+) -> (StatusCode, HeaderMap, Value) {
     let mut request = Request::builder()
         .method(method)
         .uri(path)
@@ -28,8 +28,23 @@ async fn call(
         .await
         .unwrap();
     let status = response.status();
+    let headers = response.headers().clone();
     let body = response.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    (
+        status,
+        headers,
+        serde_json::from_slice(&body).unwrap_or(Value::Null),
+    )
+}
+async fn call(
+    app: &App,
+    method: &str,
+    path: &str,
+    token: Option<&str>,
+    body: Value,
+) -> (StatusCode, Value) {
+    let (status, _, body) = call_full(app, method, path, token, body).await;
+    (status, body)
 }
 async fn sql(db: &PgPool, query: impl sqlx::SqlSafeStr) {
     sqlx::query(query).execute(db).await.unwrap();
@@ -575,6 +590,47 @@ async fn exercise(app: App) {
     sql(&app.db,"INSERT INTO stream_settings(owner_id,title,category_id) VALUES('faction-user-0','Making art','art')").await;
     sql(&app.db,"INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,observed_at) VALUES('faction-live','faction-user-0','faction-live',1,'LIVE','s','v','c',now(),now(),now(),now())").await;
     sql(&app.db,"INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level,signed_in,verified) VALUES('faction-live','u:faction-user-2',now()+interval '10 minutes','trusted',true,true),('faction-live','u:faction-user-1',now()+interval '10 minutes','counted',true,true)").await;
+    // The broadcaster's own trusted lease is not an audience. A signed-out response stays personal.
+    sql(
+        &app.db,
+        "DELETE FROM playback_leases WHERE broadcast_id='faction-live'",
+    )
+    .await;
+    sql(&app.db, "INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level,signed_in,verified) VALUES('faction-live','u:faction-user-0',now()+interval '10 minutes','trusted',true,true)").await;
+    let (http_status, headers, own) = call_full(
+        &app,
+        "GET",
+        "/api/channels/Faction0/live",
+        Some(&tokens[0]),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(http_status, StatusCode::OK);
+    assert_eq!(own["war"]["code"], "no_audience");
+    assert_eq!(own["war"]["counts"], false);
+    assert!(own["war"].get("points").is_none());
+    assert!(
+        headers["cache-control"]
+            .to_str()
+            .unwrap()
+            .contains("no-store")
+    );
+    let (_, _, guest) = call_full(
+        &app,
+        "GET",
+        "/api/channels/Faction0/live",
+        None,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(guest["war"]["code"], "signed_out");
+    assert_eq!(guest["war"]["counts"], false);
+    sql(
+        &app.db,
+        "DELETE FROM playback_leases WHERE broadcast_id='faction-live'",
+    )
+    .await;
+    sql(&app.db,"INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level,signed_in,verified) VALUES('faction-live','u:faction-user-2',now()+interval '10 minutes','trusted',true,true),('faction-live','u:faction-user-1',now()+interval '10 minutes','counted',true,true)").await;
     let mut tx = app.db.begin().await.unwrap();
     sqlx::query("INSERT INTO faction_targets(week_id,faction,genre) VALUES($1,'glint','art')")
         .bind(week.id)
@@ -776,6 +832,54 @@ async fn exercise(app: App) {
         "UPDATE broadcasts SET observed_at=now() WHERE id='faction-live'",
     )
     .await;
+    let (_, _, owner_live) = call_full(
+        &app,
+        "GET",
+        "/api/channels/Faction0/live",
+        Some(&tokens[0]),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(owner_live["war"]["counts"], true);
+    assert!(
+        !owner_live["war"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("chose this category")
+    );
+    let (_, _, viewer_live) = call_full(
+        &app,
+        "GET",
+        "/api/channels/Faction0/live",
+        Some(&tokens[2]),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(viewer_live["war"]["code"], "ready");
+    assert!(
+        viewer_live["war"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("target")
+    );
+    assert!(
+        viewer_live["war"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("not a record of points awarded")
+    );
+    assert!(viewer_live["war"]["checkpoint_at"].is_string());
+    assert!(!viewer_live.to_string().to_lowercase().contains("threshold"));
+    let (_, _, counted) = call_full(
+        &app,
+        "GET",
+        "/api/channels/Faction0/live",
+        Some(&tokens[1]),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(counted["war"]["code"], "waiting");
+    assert_eq!(counted["war"]["counts"], false);
     sql(&app.db, "INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,ended_at) VALUES('raider-live','faction-user-2','raider-live',1,'ENDED','s','v','c',now(),now(),now(),now())").await;
     for (id, arrivals) in [("raid-empty", 0), ("raid-one", 3), ("raid-two", 2)] {
         sqlx::query("INSERT INTO raids(id,raider_id,broadcast_id,target_id,target_broadcast_id,execute_at,status,arrivals,counted_at) VALUES($1,'faction-user-2','raider-live','faction-user-0','faction-live',now(),'moved',$2,now())")
