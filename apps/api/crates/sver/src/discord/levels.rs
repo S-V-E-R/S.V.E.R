@@ -472,7 +472,7 @@ pub async fn promote(app: &App, user: &str) -> Res<()> {
         send(
             app,
             &channel,
-            json!({"content": line, "allowed_mentions": {"users": [user]}}),
+            json!({"content": line, "allowed_mentions": {"parse": []}}),
         )
         .await;
     }

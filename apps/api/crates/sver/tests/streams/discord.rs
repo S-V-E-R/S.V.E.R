@@ -483,7 +483,7 @@ async fn levels(e: &Env, calls: &Calls) {
         .unwrap();
     assert_eq!(present, ["802"]);
 
-    // A weekly quest: complete once per week, rewarded with XP and faction points, and a DM.
+    // A weekly quest: complete once per week, rewarded with XP and faction points, and no DM.
     e.sql("INSERT INTO discord_members(discord_user,faction) VALUES('803','glint')")
         .await;
     e.sql(r#"INSERT INTO discord_quests(name,period,needs,xp,points) VALUES('Chatter','weekly','{"chat_messages":2}',100,10)"#).await;
@@ -499,11 +499,8 @@ async fn levels(e: &Env, calls: &Calls) {
     let quest_points: i64 = sqlx::query_scalar("SELECT coalesce(sum(points),0) FROM discord_points WHERE discord_user='803' AND kind='quest'")
         .fetch_one(&e.app.db).await.unwrap();
     assert_eq!(quest_points, 10);
-    assert!(
-        taken()
-            .iter()
-            .any(|c| c.starts_with("SEND dm1") && c.contains("Chatter"))
-    );
+    let sent = taken();
+    assert!(!sent.iter().any(|c| c.starts_with("SEND dm")), "{sent:#?}");
 
     // Achievements unlock from the numbers and are posted to their channel.
     e.sql("UPDATE discord_xp SET total=10000 WHERE discord_user='800'")
@@ -1049,7 +1046,8 @@ async fn factions(e: &Env) {
     );
     assert!(
         c.iter().any(|l| l.starts_with("POST /channels/10/messages")
-            && l.contains("<@910> reached **Level 5** on S.V.E.R!")),
+            && l.contains("<@910> reached **Level 5** on S.V.E.R!")
+            && l.contains(r#""allowed_mentions":{"parse":[]}"#)),
         "{c:#?}"
     );
     // Leaving strips every role, so the grants end; rejoining brings the faction, rank and synced
