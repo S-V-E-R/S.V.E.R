@@ -63,8 +63,13 @@ pub(super) async fn edited(app: &App, h: &Home, d: &Value) -> Res<()> {
     let Some(author) = author else {
         return Ok(());
     };
-    // Bots, and updates that only add link previews, aren't edits.
-    if d["author"]["bot"] == true || !written(d) || before.as_ref().is_some_and(|b| b.0 == content)
+    // Bots, and updates that only add link previews, aren't edits. Neither is an update to a
+    // message we never kept that has no text (an image post's attachment or embed settling).
+    if d["author"]["bot"] == true
+        || !written(d)
+        || before
+            .as_ref()
+            .map_or(content.trim().is_empty(), |b| b.0 == content)
     {
         return Ok(());
     }
