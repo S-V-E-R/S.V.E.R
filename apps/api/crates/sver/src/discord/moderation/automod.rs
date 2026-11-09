@@ -67,7 +67,9 @@ pub(super) async fn edited(app: &App, h: &Home, d: &Value) -> Res<()> {
     // message we never kept that has no text (an image post's attachment or embed settling).
     if d["author"]["bot"] == true
         || !written(d)
-        || before.as_ref().map_or(content.trim().is_empty(), |b| b.0 == content)
+        || before
+            .as_ref()
+            .map_or(content.trim().is_empty(), |b| b.0 == content)
     {
         return Ok(());
     }
