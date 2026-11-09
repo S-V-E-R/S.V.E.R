@@ -218,6 +218,9 @@ pub async fn exercise(e: &Env) {
     .await;
     let c = taken(&calls);
     find(&c, &["Message edited", "fine words", "now examplebadword"]);
+    // An update to a message never kept, with no text, isn't logged as an edit.
+    event(e, "MESSAGE_UPDATE", message("7999", "704", "")).await;
+    none(&taken(&calls), "Message edited");
     find(&c, &["DELETE /channels/30/messages/8011"]);
     // The bot's own deletion isn't logged again when Discord reports it.
     event(
