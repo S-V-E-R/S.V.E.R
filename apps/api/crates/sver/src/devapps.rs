@@ -774,6 +774,13 @@ pub async fn identify(
     }
     Ok(Some((user, scopes)))
 }
+/// Whether a connection `identify` let in may stay open. Like the integration gateway it follows
+/// the grant, not the hour-long access token: it ends once the grant is removed or the app suspended.
+pub async fn connected(app: &App, client: &str, user: Option<&str>) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dev_apps a WHERE a.id=$1 AND a.suspended_at IS NULL
+        AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM oauth_grants g WHERE g.app_id=a.id AND g.user_id=$2 AND g.revoked_at IS NULL)))")
+        .bind(client).bind(user).fetch_one(&app.db).await?)
+}
 pub async fn caller(
     app: &App,
     headers: &HeaderMap,

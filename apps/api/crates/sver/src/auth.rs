@@ -860,6 +860,13 @@ pub async fn delete_account(
         .await?;
     invalidate(&mut tx, &user.id, None).await?;
     tx.commit().await?;
+    // Nothing more is charged to an account nobody can sign in to. If Stripe can't be reached now,
+    // the jobs loop stops the renewals on its next pass, and before anything is erased.
+    if crate::subs::stop_deleted(&app).await.is_err()
+        || crate::supporters::stop_deleted(&app).await.is_err()
+    {
+        eprintln!("subs_event=stop_deleted outcome=retry");
+    }
     Ok((
         clear_cookie(&app, jar, app.config.cookie_name()),
         Json(json!({"deletion_requested":true})),

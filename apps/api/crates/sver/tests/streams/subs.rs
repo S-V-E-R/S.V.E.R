@@ -321,6 +321,34 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK
     );
     assert_eq!(mine(e, &gifter).await["mine"]["auto_renew"], true);
+    // A deleted account's card subscription stops renewing; a Stripe failure leaves it to retry.
+    e.sql("UPDATE users SET deleted_at=now() WHERE id='sb-gifter'")
+        .await;
+    let renews = || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT NOT cancel_at_period_end FROM channel_subs WHERE stripe_subscription='sub_sb_1'",
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    e.fake.lock().unwrap().decline = Some("/v1/subscriptions/sub_sb_1".into());
+    assert!(sver::subs::stop_deleted(&e.app).await.is_err());
+    assert!(renews().await, "not marked stopped until Stripe agrees");
+    e.fake.lock().unwrap().decline = None;
+    sver::subs::stop_deleted(&e.app).await.unwrap();
+    let (path, form) = e.fake.lock().unwrap().stripe.last().unwrap().clone();
+    assert_eq!(
+        (path.as_str(), form.as_str()),
+        ("/v1/subscriptions/sub_sb_1", "cancel_at_period_end=true")
+    );
+    assert!(!renews().await);
+    e.sql("UPDATE users SET deleted_at=NULL WHERE id='sb-gifter'")
+        .await;
+    e.sql(
+        "UPDATE channel_subs SET cancel_at_period_end=false WHERE stripe_subscription='sub_sb_1'",
+    )
+    .await;
     assert_eq!(
         event(e, updated("customer.subscription.deleted")).await,
         StatusCode::OK

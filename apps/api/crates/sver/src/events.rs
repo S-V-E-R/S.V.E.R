@@ -302,14 +302,21 @@ async fn socket(
     let slot = Slot(key);
     Ok(upgrade
         .max_message_size(16 * 1024)
-        .on_upgrade(move |ws| session(app, user, slot, ws)))
+        .on_upgrade(move |ws| session(app, input.client_id, user, slot, ws)))
+}
+/// Whether a subscribed topic needs the person's token (a private channel topic).
+fn private(topic: &str) -> bool {
+    topic
+        .strip_prefix("channel:")
+        .and_then(|rest| rest.split_once(':'))
+        .is_some_and(|(_, kind)| PRIVATE.contains(&kind))
 }
 async fn reply(ws: &mut WebSocket, value: Value) -> bool {
     ws.send(Message::Text(value.to_string().into()))
         .await
         .is_ok()
 }
-async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket) {
+async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mut ws: WebSocket) {
     let mut events = app.chat.subscribe();
     let mut dms = app.dms.subscribe();
     let mut topics: HashSet<String> = HashSet::new();
@@ -317,13 +324,33 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
     let mut chats: HashMap<String, String> = HashMap::new();
     // The person's own topics: DM hub channel `dm:{id}` -> whispers topic; notifications are polled.
     let mut own = Own::default();
-    // ponytail: one indexed query per subscribed socket every 5 s; publish notifications on the hub
-    // if many sockets subscribe.
+    // ponytail: one indexed query per socket every 5 s (two with notifications), so a removed
+    // grant stops events within 5 s; publish revocations and notifications on the hub if many
+    // sockets connect.
     let mut poll = tokio::time::interval(std::time::Duration::from_secs(5));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
             _ = poll.tick() => {
+                // Access is checked again while the socket is open, not only at connect: a removed
+                // grant or a suspended app ends the connection, and a private
+                // topic the person lost (no longer the channel's moderator) is dropped.
+                if !matches!(crate::devapps::connected(&app, &client, user.as_ref().map(|u| u.0.as_str())).await, Ok(true)) {
+                    let _ = reply(&mut ws, json!({"type": "revoked"})).await;
+                    return;
+                }
+                let mut lost = Vec::new();
+                for topic in topics.iter().filter(|t| private(t)) {
+                    match allowed(&app, topic, user.as_ref()).await {
+                        Ok(true) => {}
+                        Ok(false) => lost.push(topic.clone()),
+                        Err(_) => return,
+                    }
+                }
+                if !lost.is_empty() {
+                    topics.retain(|t| !lost.contains(t));
+                    if !reply(&mut ws, json!({"type": "revoked", "topics": lost})).await { return; }
+                }
                 let Some((user, topic, since)) = own.notifications.clone() else { continue; };
                 let Ok(rows) = notifications_since(&app, &user, since).await else { return; };
                 for (data, at) in rows {

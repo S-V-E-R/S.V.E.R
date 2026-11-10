@@ -122,12 +122,20 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::dms::tick(app).await.is_err() {
         eprintln!("dm_event=expiry outcome=retry");
     }
-    crate::profile_jobs::tick(app).await?;
-    sqlx::query(
-        "DELETE FROM users WHERE deleted_at<=now()-interval '14 days' AND NOT legacy_deletion_hold",
-    )
-    .execute(&app.db)
-    .await?;
+    // Renewals a deleted account pays for stop before anything is erased; while Stripe can't be
+    // reached, erasure waits for the next pass rather than orphan a subscription that still bills.
+    if crate::subs::stop_deleted(app).await.is_ok()
+        && crate::supporters::stop_deleted(app).await.is_ok()
+    {
+        crate::profile_jobs::tick(app).await?;
+        sqlx::query(
+            "DELETE FROM users WHERE deleted_at<=now()-interval '14 days' AND NOT legacy_deletion_hold",
+        )
+        .execute(&app.db)
+        .await?;
+    } else {
+        eprintln!("subs_event=stop_deleted outcome=retry");
+    }
     let mut tx = app.db.begin().await?;
     let expired: Vec<String> =
         sqlx::query_scalar("DELETE FROM mail_jobs WHERE expires_at<=now() RETURNING id")

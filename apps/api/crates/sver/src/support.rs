@@ -760,9 +760,88 @@ async fn refunded(app: &App, tx: &mut PgConnection, object: &Value) -> Res<()> {
     Ok(())
 }
 
+/// Disputed Valor that was already spent: what it paid creators (tributes, Valor months and gifts)
+/// is taken back, newest spend first, for as much Valor as the dispute left the wallet short. The
+/// buyer's balance stays negative, so spending stays locked; a creator's earnings may go negative
+/// and are recovered from later earnings. Winning the dispute posts the same amounts back. The
+/// caller holds the wallet's lock.
+async fn claw_back_spent(
+    tx: &mut PgConnection,
+    dispute: &str,
+    intent: &str,
+    wallet: &str,
+    valor: i64,
+    won: bool,
+) -> Res<()> {
+    let reference = format!("dispute-clawback:{dispute}");
+    if won {
+        let taken: Vec<(String, i64)> = sqlx::query_as("SELECT e.account,e.amount::bigint FROM ledger_entries e JOIN ledger_transactions t ON t.id=e.transaction_id WHERE t.reference=$1")
+            .bind(&reference).fetch_all(&mut *tx).await?;
+        if taken.is_empty() {
+            return Ok(());
+        }
+        let entries: Vec<_> = taken.iter().map(|(a, n)| (a.as_str(), "usd", -n)).collect();
+        ledger::post(
+            tx,
+            "dispute_clawback_won",
+            &format!("dispute-clawback-won:{dispute}"),
+            json!({"payment_intent": intent, "dispute": dispute, "wallet": wallet}),
+            &entries,
+        )
+        .await?;
+        return Ok(());
+    }
+    let mut left = (-ledger::balance(tx, wallet, "valor").await?).min(valor);
+    if left <= 0 {
+        return Ok(());
+    }
+    // Each spend from this wallet that paid a creator: (transaction, reference, Valor, Valor
+    // already taken back by earlier disputes that weren't won).
+    let spends: Vec<(String, String, i64, i64)> = sqlx::query_as("SELECT t.id,t.reference,(-e.amount)::bigint,
+        coalesce((SELECT sum((s->>'valor')::bigint) FROM ledger_transactions c, jsonb_array_elements(c.detail->'spends') s
+            WHERE c.kind='dispute_clawback' AND c.detail->>'wallet'=$1 AND s->>'reference'=t.reference
+            AND NOT EXISTS(SELECT 1 FROM ledger_transactions w WHERE w.reference='dispute-clawback-won:'||(c.detail->>'dispute'))),0)::bigint
+        FROM ledger_transactions t JOIN ledger_entries e ON e.transaction_id=t.id AND e.account=$1 AND e.unit='valor' AND e.amount<0
+        WHERE EXISTS(SELECT 1 FROM ledger_entries x WHERE x.transaction_id=t.id AND x.account LIKE 'usd:earnings:%')
+        ORDER BY t.created_at DESC,t.id DESC")
+        .bind(wallet).fetch_all(&mut *tx).await?;
+    let mut owed = std::collections::BTreeMap::<String, i64>::new();
+    let mut from = Vec::new();
+    for (id, spend, spent, taken) in spends {
+        let take = (spent - taken).min(left);
+        if take <= 0 {
+            continue;
+        }
+        let earned: Vec<(String, i64)> = sqlx::query_as("SELECT account,amount::bigint FROM ledger_entries WHERE transaction_id=$1 AND unit='usd' AND account LIKE 'usd:earnings:%'")
+            .bind(&id).fetch_all(&mut *tx).await?;
+        for (account, amount) in earned {
+            *owed.entry(account).or_default() += amount * take / spent;
+        }
+        from.push(json!({"reference": spend, "valor": take}));
+        left -= take;
+        if left == 0 {
+            break;
+        }
+    }
+    if from.is_empty() {
+        return Ok(());
+    }
+    let mut entries = vec![("usd:platform", "usd", owed.values().sum::<i64>())];
+    entries.extend(owed.iter().map(|(a, n)| (a.as_str(), "usd", -n)));
+    ledger::post(
+        tx,
+        "dispute_clawback",
+        &reference,
+        json!({"payment_intent": intent, "dispute": dispute, "wallet": wallet, "spends": from}),
+        &entries,
+    )
+    .await?;
+    Ok(())
+}
+
 /// A chargeback reverses the disputed share of a payment (a Valor balance may go negative, which
 /// locks spending; a streamer's earnings may too, recovered from later earnings); winning it posts
-/// it back.
+/// it back. Disputed Valor that was already spent is taken back from the creators it paid.
 // ponytail: a dispute on an already-refunded charge reverses twice and Stripe's dispute fee isn't
 // posted; handle both when payouts reconcile against Stripe balance transactions.
 async fn disputed(app: &App, tx: &mut PgConnection, object: &Value, won: bool) -> Res<()> {
@@ -789,7 +868,15 @@ async fn disputed(app: &App, tx: &mut PgConnection, object: &Value, won: bool) -
     }
     let amount = object["amount"].as_i64().unwrap_or(cents).min(cents);
     let sign = if won { 1 } else { -1 };
-    post_pairs(
+    // A Valor pack: its wallet stays locked against spending while the dispute is posted.
+    let wallet = pairs
+        .iter()
+        .find(|p| p.2 == "valor")
+        .map(|p| (p.0.clone(), p.3 * amount / cents));
+    if let Some((wallet, _)) = &wallet {
+        ledger::lock(tx, wallet).await?;
+    }
+    let posted = post_pairs(
         tx,
         if won { "dispute_won" } else { "dispute" },
         &format!("{}:{id}", if won { "dispute-won" } else { "dispute" }),
@@ -798,6 +885,9 @@ async fn disputed(app: &App, tx: &mut PgConnection, object: &Value, won: bool) -
         |value| sign * (value * amount / cents),
     )
     .await?;
+    if let (true, Some((wallet, valor))) = (posted, wallet) {
+        claw_back_spent(tx, id, &intent, &wallet, valor, won).await?;
+    }
     crate::adnet::disputed(tx, &intent, won).await?;
     Ok(())
 }
