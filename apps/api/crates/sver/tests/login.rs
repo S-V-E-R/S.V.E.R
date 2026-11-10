@@ -307,8 +307,19 @@ async fn exercise_account_changes(app: &App, a: &mut Browser, router: &Router, p
         StatusCode::BAD_REQUEST,
         "links work once"
     );
-    // The export: the account and its rows, never secrets.
+    // The export: the account and its rows, never secrets. A strike comes with its reason and
+    // message, without staff's note or who issued it.
+    sqlx::query("INSERT INTO strikes(id,user_id,reason,severity,content_snapshot,penalty,penalty_starts_at,level,message_to_user,staff_note,issued_by,expires_at) VALUES('ex-strike',$1,'spam','STANDARD','{}','WARNING',now(),1,'Please stop','internal-only-note','staff-secret-id',now()+interval '90 days')")
+        .bind(&user_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let (status, file, headers) = a.call("GET", "/api/auth/export", Value::Null).await;
+    sqlx::query("DELETE FROM strikes WHERE id='ex-strike'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(file["data"]["strikes"][0]["message_to_user"], "Please stop");
     assert_eq!(status, StatusCode::OK);
     assert!(
         headers["content-disposition"]
@@ -325,7 +336,13 @@ async fn exercise_account_changes(app: &App, a: &mut Browser, router: &Router, p
         "sign-in history"
     );
     assert!(file["readme"].is_string());
-    for secret in ["password_hash", "token_hash", "mfa_secret"] {
+    for secret in [
+        "password_hash",
+        "token_hash",
+        "mfa_secret",
+        "internal-only-note",
+        "staff-secret-id",
+    ] {
         assert!(!text.contains(secret), "export leaks {secret}");
     }
     sqlx::query("UPDATE users SET email='first@example.invalid' WHERE id=$1")
@@ -936,6 +953,14 @@ async fn exercise(app: App, mock: Mock) {
         )
         .await;
     let reset = mail_token(&app, "first@example.invalid", "reset").await;
+    // Someone who signed up with an address they don't own and linked their own provider loses
+    // it when the owner resets the password: an unverified account keeps no sign-in providers.
+    sqlx::query("INSERT INTO identities(provider,subject,user_id,handle) SELECT 'google','squatter-subject',id,'squatter' FROM users WHERE email='first@example.invalid'")
+        .execute(&app.db).await.unwrap();
+    sqlx::query("UPDATE users SET email_verified=false WHERE email='first@example.invalid'")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let new_password = "Synthetic-only:replacement password 938!";
     let mut racing = Browser::new(router.clone(), 4);
     let (one, two) = tokio::join!(
@@ -954,6 +979,20 @@ async fn exercise(app: App, mock: Mock) {
         (one.0 == StatusCode::OK && two.0 == StatusCode::BAD_REQUEST)
             || (two.0 == StatusCode::OK && one.0 == StatusCode::BAD_REQUEST)
     );
+    let squatting: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM identities WHERE subject='squatter-subject')",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(
+        !squatting,
+        "the reset removed the unverified account's provider"
+    );
+    sqlx::query("UPDATE users SET email_verified=true WHERE email='first@example.invalid'")
+        .execute(&app.db)
+        .await
+        .unwrap();
     assert_eq!(
         a.call("GET", "/api/auth/me", Value::Null).await.0,
         StatusCode::UNAUTHORIZED
