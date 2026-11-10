@@ -190,6 +190,11 @@ pub async fn confirm_email(app: &App, token: &str) -> Result<()> {
         .bind(&email)
         .execute(&mut *tx)
         .await?;
+    // A reset link already mailed to the old address stops working with it.
+    sqlx::query("DELETE FROM challenges WHERE user_id=$1 AND kind='reset'")
+        .bind(&user.id)
+        .execute(&mut *tx)
+        .await?;
     let what = format!(
         "the email address on your account was changed to {}. Notices go there from now on.",
         masked(&email)

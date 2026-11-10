@@ -68,9 +68,10 @@ async fn available(db: &mut PgConnection, user: &str) -> Res<i64> {
 }
 /// (Early Pay limit in cents, whether today's Early Pay is used).
 async fn early_limit(db: &mut PgConnection, user: &str) -> Res<(i64, bool)> {
-    // Before the first payday, everything earned so far counts.
+    // Before the first payday, everything earned so far counts. Earned is net of the period's
+    // refunds and disputes, so the 25% kept until payday is 25% of what is really owed.
     let since = last_payday(Utc::now());
-    let earned: i64 = sqlx::query_scalar("SELECT coalesce(sum(e.amount),0)::bigint FROM ledger_entries e JOIN ledger_transactions t ON t.id=e.transaction_id WHERE e.account=$1 AND e.unit='usd' AND e.amount>0 AND ($2::timestamptz IS NULL OR t.created_at>=$2)")
+    let earned: i64 = sqlx::query_scalar("SELECT coalesce(sum(e.amount),0)::bigint FROM ledger_entries e JOIN ledger_transactions t ON t.id=e.transaction_id WHERE e.account=$1 AND e.unit='usd' AND t.kind<>'payout' AND ($2::timestamptz IS NULL OR t.created_at>=$2)")
         .bind(earnings(user)).bind(since).fetch_one(&mut *db).await?;
     let used: i64 = sqlx::query_scalar("SELECT coalesce(sum(amount_cents+fee_cents),0)::bigint FROM payout_runs WHERE user_id=$1 AND kind LIKE 'early%' AND status<>'failed' AND ($2::timestamptz IS NULL OR created_at>=$2)")
         .bind(user).bind(since).fetch_one(&mut *db).await?;

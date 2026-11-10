@@ -437,8 +437,14 @@ async fn issue(app: &App, grant: &str, scopes: &[String]) -> Res<Value> {
     )
 }
 /// POST /api/oauth/token (form-encoded, as OAuth clients send it).
-async fn token(State(app): State<App>, Form(input): Form<TokenRequest>) -> Response {
-    match exchange(&app, input).await {
+async fn token(
+    State(app): State<App>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    Form(input): Form<TokenRequest>,
+) -> Response {
+    let ip = sec::client_ip(&app, peer, &headers);
+    match exchange(&app, ip, input).await {
         Ok(Ok(body)) => (StatusCode::OK, Json(body)).into_response(),
         Ok(Err((code, why))) => (
             StatusCode::BAD_REQUEST,
@@ -458,8 +464,16 @@ type Refresh = (
     bool,
     Vec<String>,
 );
-async fn exchange(app: &App, input: TokenRequest) -> Res<Outcome> {
-    profiles::rate(app, format!("oauth-token:{}", input.client_id), 120, 60).await?;
+async fn exchange(app: &App, ip: std::net::IpAddr, input: TokenRequest) -> Res<Outcome> {
+    // Per app and address: the client ID is public, so a budget keyed on it alone would let
+    // anyone use up another app's. The digest keeps an oversized ID out of the key.
+    profiles::rate(
+        app,
+        format!("oauth-token:{}:{ip}", sec::digest(&input.client_id)),
+        120,
+        60,
+    )
+    .await?;
     let client: Option<(Option<String>, bool)> =
         sqlx::query_as("SELECT secret_hash,suspended_at IS NOT NULL FROM dev_apps WHERE id=$1")
             .bind(&input.client_id)
