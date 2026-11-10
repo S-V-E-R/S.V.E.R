@@ -61,13 +61,14 @@ export default function AlertsOverlay() {
     let retry: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
     let wait = 1000;
+    let showing: ReturnType<typeof setTimeout> | undefined;
     const next = () => {
       const alert = queue.current.shift();
       if (!alert) { busy.current = false; setShowing(null); return; }
       busy.current = true;
       setShowing(alert);
       play(alert);
-      setTimeout(next, alert.seconds * 1000);
+      showing = setTimeout(next, alert.seconds * 1000);
     };
     const connect = () => {
       ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/overlays/ws?token=${encodeURIComponent(token)}`);
@@ -86,7 +87,7 @@ export default function AlertsOverlay() {
       ws.onclose = () => { if (!stopped) { retry = setTimeout(connect, wait); wait = Math.min(wait * 2, 30000); } };
     };
     connect();
-    return () => { stopped = true; clearTimeout(retry); ws?.close(); };
+    return () => { stopped = true; clearTimeout(retry); clearTimeout(showing); busy.current = false; ws?.close(); };
   }, [token]);
 
   const goal = settings?.goal;
