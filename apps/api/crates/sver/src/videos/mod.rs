@@ -127,6 +127,15 @@ pub async fn held(db: &mut PgConnection, id: &str) -> Res<bool> {
             .await?,
     )
 }
+/// Whether a hold takes the video out of view. A viewer's report only keeps it (no delete, no
+/// expiry, no new cuts) until staff decide, so one account can't take a channel's videos offline;
+/// a removal request, a copyright notice and S.V.E.R's own frame-match report hide it.
+pub async fn hidden(db: &mut PgConnection, id: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM video_holds h WHERE h.video_id=$1 AND NOT (h.kind='REPORT' AND EXISTS(SELECT 1 FROM reports r WHERE r.id=h.reference AND r.reporter_id IS NOT NULL)))")
+        .bind(id)
+        .fetch_one(db)
+        .await?)
+}
 /// True when a live recording's newest saved segment ended over a minute ago: copying has
 /// stopped (storage outage, or a broadcast that predates the Plays exclusion), so a live cut
 /// would replay old video.
@@ -185,7 +194,7 @@ async fn access(
         return Err(Fail::missing());
     }
     let mut db = app.db.acquire().await?;
-    if held(&mut db, &video.id).await? {
+    if hidden(&mut db, &video.id).await? {
         return Err(Fail::missing());
     }
     let channel = profiles::channel_user_by_id(&mut db, owner)
