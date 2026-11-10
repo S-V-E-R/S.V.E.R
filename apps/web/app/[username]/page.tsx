@@ -70,12 +70,16 @@ function FinishYourPage({ data }: { data: Channel }) {
   </section>;
 }
 
-export default async function ChannelHome({ params, searchParams }: { params: ChannelParams; searchParams: Promise<{ home?: string }> }) {
+export default async function ChannelHome({ params, searchParams }: { params: ChannelParams; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const data = await loadChannel((await params).username);
   const { channel: c, viewer } = data;
   // Live channels open on the watch page; ?home (the Home tab, the watch page's channel links),
-  // the owner and a Persona-first layout keep Home.
-  if (c.live && !viewer.is_owner && c.layout !== "persona" && (await searchParams).home === undefined) redirect(`/${c.username}/live`);
+  // the owner and a Persona-first layout keep Home. The query (a raid id, a transport) goes along.
+  const query = await searchParams;
+  if (c.live && !viewer.is_owner && c.layout !== "persona" && query.home === undefined) {
+    const kept = new URLSearchParams(Object.entries(query).filter((entry): entry is [string, string] => typeof entry[1] === "string")).toString();
+    redirect(`/${c.username}/live${kept ? `?${kept}` : ""}`);
+  }
   const council = data.war_council.members;
   const posts = [...data.wall_preview.pinned, ...data.wall_preview.latest];
   const schedule = data.schedule_next.items;

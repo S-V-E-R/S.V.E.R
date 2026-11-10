@@ -20,32 +20,36 @@ export function HypeChat({ lane, account, upNext }: { lane: string; account: str
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const list = useRef<HTMLOListElement>(null);
+  // Follow new messages only while the reader is at the bottom of the list.
+  const follow = useRef(true);
   useEffect(() => {
     let closed = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let poll: ReturnType<typeof setInterval> | undefined;
     const load = async () => { const r = await send<Snapshot>("GET", `/api/magnet/${encodeURIComponent(lane)}/chat`); if (!closed && r.ok) setState(r.data); };
     let ws: WebSocket | null = null;
-    const open = (attempt: number) => {
+    // Drops since the last good snapshot; a socket that keeps failing falls back to polling.
+    let attempt = 0;
+    const open = () => {
       ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/magnet/${encodeURIComponent(lane)}/ws`);
       let opened = false;
       ws.onopen = () => { opened = true; };
       ws.onmessage = event => {
         const data = JSON.parse(event.data) as Event;
-        if (data.type === "snapshot") setState(data);
+        if (data.type === "snapshot") { attempt = 0; setState(data); }
         else if (data.type === "message") setState(s => s && !s.messages.some(m => m.id === data.message.id) ? { ...s, messages: [...s.messages, data.message].slice(-100) } : s);
         else if (data.type === "delete") setState(s => s && { ...s, messages: s.messages.filter(m => m.id !== data.id) });
       };
       ws.onclose = () => {
         if (closed) return;
         if (!opened || attempt >= 5) { void load(); poll = setInterval(() => { if (!document.hidden) void load(); }, 4000); }
-        else retry = setTimeout(() => open(attempt + 1), 1000 * (attempt + 1));
+        else { attempt += 1; retry = setTimeout(open, 1000 * attempt); }
       };
     };
-    open(0);
+    open();
     return () => { closed = true; clearTimeout(retry); clearInterval(poll); ws?.close(); };
   }, [lane]);
-  useEffect(() => { list.current?.lastElementChild?.scrollIntoView({ block: "nearest" }); }, [state?.messages]);
+  useEffect(() => { const el = list.current; if (el && follow.current) el.scrollTop = el.scrollHeight; }, [state?.messages]);
   async function submit(event: FormEvent) {
     event.preventDefault();
     const body = draft.trim();
@@ -61,7 +65,7 @@ export function HypeChat({ lane, account, upNext }: { lane: string; account: str
     {state?.merged_with ? <p className="chat-system" role="status">Chatting with <Link href={`/${state.merged_with.username}`}>{state.merged_with.display_name}</Link>&apos;s {state.co_stream ? "co-stream chat; its streamers' rules apply" : "chat; their rules apply"}.</p>
       : <p className="chat-system muted">MAGNet&apos;s own room.</p>}
     {upNext && <p className="chat-system" role="status">Chat joins {upNext.name} in {upNext.seconds}…</p>}
-    <ol className="chat-messages" ref={list} aria-live="polite">
+    <ol className="chat-messages" ref={list} aria-live="polite" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
       {(state?.messages.length ?? 0) === 0 && <li className="muted">No messages yet.</li>}
       {state?.messages.map(m => <li key={m.id}>
         {m.author.faction && <Crest faction={m.author.faction} size={14} />}{" "}

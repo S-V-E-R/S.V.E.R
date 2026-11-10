@@ -164,9 +164,17 @@ async fn cases(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     for row in rows {
         let mut value = serde_json::to_value(&row).map_err(|_| Fail::internal())?;
         if row.status != "OPEN" && row.status != "REJECTED" {
-            value["notice"] =
+            // What the uploader needs to understand and answer the claim. The claimant's postal
+            // address, phone and signature stay with staff.
+            let mut notice: Value =
                 serde_json::from_str(&security::unseal(&app, "copyright-notice", &row.notice)?)
                     .map_err(|_| Fail::internal())?;
+            if let Some(fields) = notice.as_object_mut() {
+                fields.retain(|key, _| {
+                    matches!(key.as_str(), "name" | "email" | "location" | "description")
+                });
+            }
+            value["notice"] = notice;
         }
         cases.push(value);
     }
