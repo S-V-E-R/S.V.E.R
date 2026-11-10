@@ -292,6 +292,7 @@ async fn attach(
         .await?;
     let mut roots = vec![];
     let mut found = vec![];
+    let mut repeats = 0;
     for location in locations {
         let (media, target) = locate(app, db, location).await?;
         roots.extend(media);
@@ -331,7 +332,18 @@ async fn attach(
             let snapshot = match previous {
                 Some(saved) => saved,
                 None => {
-                    let hidden = safety::take_down::hide(db, &target).await?;
+                    // A chat message or Beacon never changes, so once staff have dismissed a
+                    // request for it, a repeat goes to staff without hiding it again. Anything
+                    // whose content can change behind the same link is hidden every time.
+                    let cleared = matches!(target.kind.as_str(), "chat_message" | "beacon")
+                        && sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM take_down_targets t JOIN take_down_requests r ON r.id=t.request_id WHERE t.kind=$1 AND t.target_id=$2 AND r.status='not_removed')")
+                            .bind(&target.kind).bind(&target.id).fetch_one(&mut *db).await?;
+                    let hidden = if cleared {
+                        repeats += 1;
+                        Value::Null
+                    } else {
+                        safety::take_down::hide(db, &target).await?
+                    };
                     sec::seal(
                         app,
                         "take-down-target",
@@ -344,8 +356,14 @@ async fn attach(
                 .bind(id).bind(&target.kind).bind(&target.id).bind(&target.owner).bind(snapshot).execute(&mut *db).await?;
         }
     }
+    // The same for a stored image (its bytes never change): one a dismissed request named, and
+    // that nothing holds now, stays up. It is still listed on the request, so a removal decision
+    // holds and deletes it then.
+    let cleared: Vec<String> = sqlx::query_scalar("SELECT DISTINCT m.root FROM take_down_media m JOIN take_down_requests r ON r.id=m.request_id WHERE m.root=ANY($1) AND r.status='not_removed' AND NOT EXISTS(SELECT 1 FROM media_removal_holds h WHERE h.root=m.root)")
+        .bind(&roots).fetch_all(&mut *db).await?;
+    roots.retain(|root| !cleared.contains(root));
     roots = media::removal::hold(db, &roots).await?;
-    for root in &roots {
+    for root in roots.iter().chain(&cleared) {
         sqlx::query(
             "INSERT INTO take_down_media(request_id,root) VALUES($1,$2) ON CONFLICT DO NOTHING",
         )
@@ -353,6 +371,9 @@ async fn attach(
         .bind(root)
         .execute(&mut *db)
         .await?;
+    }
+    if repeats + cleared.len() > 0 {
+        event(app, db, id, None, "repeat_not_hidden", "").await?;
     }
     Ok(roots)
 }
