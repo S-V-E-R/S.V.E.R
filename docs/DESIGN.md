@@ -140,7 +140,7 @@ While pages are being restored, navigation includes only working destinations. T
 
 **Errors and empty states.** Short and plain ("This channel doesn't exist." / "Nothing live right now."), inside a framed panel, with one useful next step. When nothing is live, show recently live channels and the war map, never a blank grid.
 
-**Phones (below 960 px).** The sidebar becomes a drawer opened from a menu button in the top bar; grids drop to one or two columns; the watch page stacks player, streamer bar, then chat.
+**Phones (below 960 px).** The sidebar becomes a drawer opened from a menu button in the top bar; grids drop to one or two columns; the watch page stacks the player, a Play / Chat switch, the chosen pane, then the streamer bar. Play shows the stream's panels (Plays, CrowdSync, the board) and opens first when the channel has a board or Plays; Chat shows chat and carries a dot when messages arrive while it is tucked away; the choice holds for the tab. The top bar scrolls away on this page so the stream and its board share the screen, and the war note keeps only its heading, links and "What counts".
 
 ### Home, sidebar and watch, as built (October 6, 2026)
 
