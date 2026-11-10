@@ -44,6 +44,10 @@
    its board share the screen, and the war note keeps its heading, links and "What counts". */
 .watch-switch{display:none}
 @media(max-width:959px){body:has(.channel.watch) .topbar{position:static}.channel.watch{grid-template-areas:"turf" "player" "switch" "interact" "chat" "streamer" "next"}.watch .turf-strip{grid-area:turf}.watch-stage{display:contents}.watch-stage>:first-child{grid-area:player;min-width:0}.watch-switch{grid-area:switch;display:grid;grid-template-columns:1fr 1fr;gap:8px;padding-top:16px}.watch-switch button{position:relative;min-height:44px}.channel.watch[data-pane=chat] .watch-interact,.channel.watch[data-pane=play]>.chat{display:none}.watch>.chat{margin-top:16px}.watch .war-activity>p:not(.war-activity-links):not(.sr-only){display:none}.streamer-bar{border-bottom:0;border-top:1px solid var(--line);margin-top:20px}}
+/* Upright phones and tablets: the video stays pinned while the page scrolls under it. The player's
+   shell dissolves into the page grid so the frame can stick for the page's whole height. Sideways,
+   the video would fill the screen, so it scrolls. */
+@media(max-width:959px) and (orientation:portrait){.watch-player:has(>.live-shell),.watch-player>.live-shell{display:contents}.channel.watch{grid-template-areas:"turf" "player" "details" "switch" "interact" "chat" "streamer" "next"}.watch .live-shell>.live-player{grid-area:player;min-width:0;position:sticky;top:0;z-index:5}.watch .live-shell>.live-details{grid-area:details;min-width:0}}
 .watch-interact{grid-area:interact;min-width:0;display:flex;flex-direction:column;gap:16px}
 .watch-interact:has(> *){padding-top:20px}
 .streamer-tags{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0 0}
