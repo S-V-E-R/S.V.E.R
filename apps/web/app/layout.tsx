@@ -86,8 +86,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <Crest faction={null} initial={initial ?? "?"} size={56} />
         <span className="player-card-text"><span className="player-card-name">{account.username}</span><span className="player-card-faction">Choose your side</span>{founderLine}{xpBar}</span>
       </Link>)}
-    <SideNav faction={faction ? { name: faction.name, slug: faction.slug } : null} />
-    {account && <DailyOrders />}
+    <SideNav faction={faction ? { name: faction.name, slug: faction.slug } : null} signedIn={!!account} followingLive={account ? live.length : 0} />
     {(account || live.length > 0) && <section className="side-section" aria-labelledby="side-live" data-src={account ? "following" : "suggestion"}>
       <div className="side-label"><span id="side-live">{account ? "Following · live" : "Picked for you"}</span><span className="magnet"><MagnetMark />MAGNet</span></div>
       {live.length === 0
@@ -98,6 +97,8 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           <span className="side-channel-count"><span className="live-dot" aria-hidden="true" />{s.viewers > 0 ? <>{s.viewers.toLocaleString()}<span className="sr-only"> watching</span></> : "Live"}</span>
         </Link></li>)}</ul>}
     </section>}
+    {/* After the places to go: in the phone drawer the links come first. */}
+    {account && <DailyOrders />}
   </>;
 
   return <html lang="en" data-theme={themeFor(account)} className={`${cinzel.variable} ${barlow.variable} ${barlowCondensed.variable}`}>

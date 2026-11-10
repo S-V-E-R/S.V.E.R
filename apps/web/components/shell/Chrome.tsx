@@ -5,6 +5,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CloseIcon, MenuIcon, SearchIcon } from "./Icons";
 import { Logo, type LogoStyle } from "../LogoStyle";
+import { BottomNav } from "./SideNav";
 
 // Sign-in screens get no sidebar and a minimal top bar (docs/DESIGN.md "Pages": sign up, log in, …).
 const AUTH_ROUTES = new Set(["login", "signup", "oauth-signup", "forgot", "reset", "verify", "mfa", "welcome", "choose-side", "choose-faction"]);
@@ -16,6 +17,8 @@ type Props = {
   actions: React.ReactNode;
   sidebar: React.ReactNode;
   footer: React.ReactNode;
+  /** Signed-in viewers get Following in the phone bottom bar. */
+  signedIn: boolean;
   children: React.ReactNode;
 };
 
@@ -24,7 +27,7 @@ type Props = {
  * Client-side only for the pathname (auth screens) and the phone drawer; the parts inside are
  * rendered on the server and passed in.
  */
-export function Chrome({ logo, actions, sidebar, footer, children }: Props) {
+export function Chrome({ logo, actions, sidebar, footer, signedIn, children }: Props) {
   const pathname = usePathname() ?? "/";
   const first = pathname.split("/")[1] ?? "";
   // The drawer remembers the path it was opened on, so any navigation closes it without an effect.
@@ -83,6 +86,7 @@ export function Chrome({ logo, actions, sidebar, footer, children }: Props) {
       <aside ref={drawer} id="site-sidebar" className={open ? "sidebar open" : "sidebar"} aria-label="Sidebar">{open && <button type="button" className="drawer-close" onClick={close}><CloseIcon />Close menu</button>}{sidebar}</aside>
       <div className="content"><main id="main">{children}</main>{footer}</div>
     </div>
+    <BottomNav signedIn={signedIn} />
   </>;
 }
 
