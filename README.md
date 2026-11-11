@@ -9,7 +9,7 @@ Read `AGENTS.md` before working in this repo. What's built and what's left is in
 - **Core modules:** [Login](docs/LOGIN.md), [Profiles](docs/PROFILES.md), [Live streams](docs/LIVE_STREAMS.md), [Factions](docs/FACTIONS.md), [MAGNet](docs/MAGNET.md), [Support](docs/SUPPORT.md), [CrowdSync](docs/CROWDSYNC.md), [VODs and clips](docs/VODS_CLIPS.md), [Beacons](docs/BEACONS.md)
 - **Community:** [Guilds](docs/GUILDS.md), [Linked chat and restreaming](docs/LINKED_CHAT.md), [Community additions](docs/COMMUNITY.md), [Channel additions](docs/CHANNEL_ADDITIONS.md), [Notifications](docs/NOTIFICATIONS.md), [Discord bot](docs/DISCORD_BOT.md), [The Wall](docs/WALL.md)
 - **Progression:** [Progression](docs/PROGRESSION.md), [Achievements and cosmetics](docs/ACHIEVEMENTS.md), [Platform supporters and Founders](docs/SUPPORTERS.md)
-- **Creators and developers:** [Native alerts and overlays](docs/OVERLAYS.md), [OBS](docs/OBS.md), [Developer platform](docs/DEVELOPER_PLATFORM.md), [S.V.E.R Plays](docs/PLAYS.md), [Fastmarch](docs/FASTMARCH.md)
+- **Creators and developers:** [Native alerts and overlays](docs/OVERLAYS.md), [OBS](docs/OBS.md), [SVER Desktop](docs/DESKTOP.md), [Developer platform](docs/DEVELOPER_PLATFORM.md), [S.V.E.R Plays](docs/PLAYS.md), [Fastmarch](docs/FASTMARCH.md)
 - **Revenue:** [S.V.E.R Ads](docs/ADVERTISERS.md), [Ad revenue sharing and Ad Valor](docs/ADS.md), [Merch store](docs/MERCH.md)
 - **Staff and safety:** [Admin tools](docs/ADMIN.md), [Take It Down removals](docs/TAKE_IT_DOWN.md), [Load test](docs/LOAD_TEST.md)
 - **Look and voice:** [Design](docs/DESIGN.md), [Motion](docs/MOTION.md), [Copy](docs/COPY.md), [Lore](docs/LORE.md)
