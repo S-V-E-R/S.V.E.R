@@ -326,17 +326,18 @@ async fn subscribe(
 ) -> Res<Json<Value>> {
     let (user, channel, username) = payer(&app, &jar, &name).await?;
     let tier = tier(input.tier)?;
-    let renewing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_subs WHERE channel_id=$1 AND user_id=$2 AND stripe_subscription IS NOT NULL AND paid_through>now())")
-        .bind(&channel).bind(&user.id).fetch_one(&app.db).await?;
-    if renewing {
-        return Err(Fail::conflict(
-            "You already have an auto-renewing subscription here. Upgrade or cancel it instead.",
-        ));
-    }
     sec::reserve(&app, vec![format!("subscribe:{}", user.id)], 20, 3600).await?;
     let pool = pool(&app, &input.squad, &channel, &user.id).await?;
     let mut tx = app.db.begin().await?;
     ledger::lock(&mut tx, &format!("checkout:{}", user.id)).await?;
+    // Checked under the buyer's checkout lock, so two requests can't both pass.
+    let card: Option<(String, bool)> = sqlx::query_as("SELECT stripe_subscription,paid_through>now() FROM channel_subs WHERE channel_id=$1 AND user_id=$2 AND stripe_subscription IS NOT NULL")
+        .bind(&channel).bind(&user.id).fetch_optional(&mut *tx).await?;
+    if card.as_ref().is_some_and(|c| c.1) {
+        return Err(Fail::conflict(
+            "You already have an auto-renewing subscription here. Upgrade or cancel it instead.",
+        ));
+    }
     match input.pay.as_str() {
         "valor" => {
             let id = request_id(&input.id)?;
@@ -357,6 +358,50 @@ async fn subscribe(
         }
         "card" => {
             let cents = price(tier);
+            // One renewing subscription per channel. A lapsed one Stripe is still retrying ends
+            // now, so its late charge can't land beside the new subscription's.
+            if let Some((lapsed, _)) = &card {
+                stripe::cancel(&app.http, &app.config.stripe, lapsed).await?;
+                sqlx::query("UPDATE channel_subs SET stripe_subscription=NULL,cancel_at_period_end=false,updated_at=now() WHERE stripe_subscription=$1")
+                    .bind(lapsed).execute(&mut *tx).await?;
+            }
+            // One checkout at a time per channel: a new one first closes the last, so two tabs
+            // can't start two renewing subscriptions. A session Stripe can't close was paid or is
+            // finishing (as supporters.rs does).
+            let previous: Vec<(String, String)> = sqlx::query_as("SELECT c.id,c.status FROM checkout_sessions c WHERE c.user_id=$1 AND c.kind='sub' AND c.detail->>'channel'=$2 AND c.created_at>now()-interval '1 hour' AND (c.status='open' OR c.status='paid' AND NOT EXISTS(SELECT 1 FROM sub_invoices i WHERE i.user_id=c.user_id AND i.channel_id=$2 AND i.created_at>c.created_at))")
+                .bind(&user.id).bind(&channel).fetch_all(&mut *tx).await?;
+            for (id, status) in previous {
+                let closed = status == "open"
+                    && stripe::post(
+                        &app.http,
+                        &app.config.stripe,
+                        &format!("checkout/sessions/{id}/expire"),
+                        &[],
+                        None,
+                    )
+                    .await
+                    .is_ok();
+                let gone = closed
+                    || status == "open"
+                        && stripe::get(
+                            &app.http,
+                            &app.config.stripe,
+                            &format!("checkout/sessions/{id}"),
+                        )
+                        .await
+                        .is_ok_and(|s| s["status"] == "expired");
+                if !gone {
+                    return Err(Fail::conflict(
+                        "A subscription payment is already being processed. Give it a minute, then check the channel.",
+                    ));
+                }
+                sqlx::query(
+                    "UPDATE checkout_sessions SET status='expired' WHERE id=$1 AND status='open'",
+                )
+                .bind(&id)
+                .execute(&mut *tx)
+                .await?;
+            }
             support::card_gate(&mut tx, &user.id, cents, input.guardian_consent).await?;
             let origin = &app.config.origin;
             // Keep a gifted subscription (docs/CHANNEL_ADDITIONS.md): a gifted or Valor month that
