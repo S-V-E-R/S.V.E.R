@@ -5,6 +5,7 @@ import { factionOf } from "../../lib/factions";
 import type { Channel } from "../../lib/types";
 import { Avatar } from "../Avatar";
 import { Crest } from "../Crest";
+import { MusicIcon } from "../shell/Icons";
 
 /**
  * How your header looks to visitors, beside the Persona editor and the setup steps. It reloads
@@ -37,7 +38,7 @@ export function PersonaPreview({ username, version }: { username: string; versio
           {faction && <p className="faction-line"><Crest faction={faction.slug} initial="" size={18} />{faction.name}</p>}
           {(c.mood_emoji || c.currently || c.status_text) && <p className="status-line">{c.mood_emoji && <span>{c.mood_emoji}</span>}{c.currently && <span className="currently"><strong>{c.currently.label}</strong> {c.currently.text}</span>}{c.status_text && <span>{c.status_text}</span>}</p>}
           {c.bio && <p className="bio">{c.bio}</p>}
-          {c.song && <p className="preview-song">♪ <strong>{c.song.title || "Profile song"}</strong>{c.song.artist && <> · {c.song.artist}</>}{c.song_why && <em> — {c.song_why}</em>}</p>}
+          {c.song && <p className="preview-song"><MusicIcon /> <strong>{c.song.title || "Profile song"}</strong>{c.song.artist && <> · {c.song.artist}</>}{c.song_why && <em> — {c.song_why}</em>}</p>}
         </div>
       </div>
       {!!c.showcase?.length && <ul className="showcase-strip">{c.showcase.map(a => <li key={a.key} className="showcase-tile"><strong>{a.name}</strong></li>)}</ul>}
