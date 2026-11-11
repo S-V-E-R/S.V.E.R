@@ -149,6 +149,10 @@ pub async fn exercise(e: &Env, dir: &std::path::Path) {
     e.reset_limits().await;
     let receipt = e.anon.ok("POST", "/api/take-it-down", valid).await;
     let number = receipt["number"].as_str().unwrap();
+    assert!(
+        dir.join(key).exists(),
+        "A repeat request for an image staff already cleared doesn't hide it again"
+    );
     staff
         .ok(
             "POST",
@@ -484,6 +488,16 @@ async fn text_restoration(e: &Env, staff: &Client) {
             );
         }
         let third = e.anon.ok("POST", "/api/take-it-down", request).await;
+        // A chat message never changes, so a repeat of a dismissed request leaves it up; a wall
+        // post is hidden again.
+        assert_eq!(
+            sqlx::query_scalar::<_, bool>(visibility)
+                .bind(&id)
+                .fetch_one(&e.app.db)
+                .await
+                .unwrap(),
+            kind == "chat_message"
+        );
         let delete = if kind == "wall_post" {
             "UPDATE wall_posts SET deleted_at=clock_timestamp() WHERE id=$1"
         } else {
