@@ -9,6 +9,14 @@
 //   Board->Connect(Token);
 //   Board->SetDisabled(TEXT("jump"), true);                   // game -> board
 //
+// "Connect to S.V.E.R" instead of a pasted token: register the game once in Settings -> Developer
+// (no client secret), bind OnCode and call SignIn with the client ID. OnCode gives a code for the
+// streamer to enter at sver.tv/go; the sign-in is kept in a file and renewed on its own, so a new
+// code comes only when the sign-in is gone:
+//
+//   Board->OnCode.AddDynamic(this, &AMyGame::ShowCode);        // (Code, Url)
+//   Board->SignIn(ClientId);
+//
 // Events fire on the game thread. It reconnects on its own unless the token was revoked.
 #pragma once
 
@@ -25,6 +33,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FSverResult, const FString&, Pres
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FSverMove, const FString&, Control, const FString&, Username, float, X, float, Y);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSverJson, const FString&, Json);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSverError, const FString&, Message);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSverCode, const FString&, Code, const FString&, Url);
 
 UCLASS(BlueprintType)
 class SVERBOARD_API USverBoardClient : public UObject
@@ -45,12 +54,23 @@ public:
 	/** A new board version was published, the board was paused, or labels, availability or goals changed (raw JSON). */
 	UPROPERTY(BlueprintAssignable, Category = "S.V.E.R") FSverJson OnBoardChanged;
 	UPROPERTY(BlueprintAssignable, Category = "S.V.E.R") FSverError OnError;
+	/** Show the streamer this code and address: "Enter BCD-FGH at https://sver.tv/go" (after SignIn, when a sign-in is needed). */
+	UPROPERTY(BlueprintAssignable, Category = "S.V.E.R") FSverCode OnCode;
+
+	/** Where SignIn keeps the sign-in (a refresh token). Empty: a file under the project's Saved folder. */
+	UPROPERTY(BlueprintReadWrite, Category = "S.V.E.R") FString SignInFile;
 
 	/** The latest board snapshot as JSON ("board", "version", "state", "goals"). */
 	UPROPERTY(BlueprintReadOnly, Category = "S.V.E.R") FString LastBoardJson;
 
 	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
 	void Connect(const FString& Token, const FString& Gateway = TEXT("wss://sver.tv/api/integrations/ws"));
+	/** "Connect to S.V.E.R": connects with the app's public client ID (Settings -> Developer) instead of a token. The streamer enters the OnCode code at sver.tv/go once. */
+	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
+	void SignIn(const FString& ClientId, const FString& Gateway = TEXT("wss://sver.tv/api/integrations/ws"), const FString& Api = TEXT("https://sver.tv"));
+	/** Disconnects and forgets the sign-in, here and on S.V.E.R; the next SignIn shows a new code. */
+	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
+	void SignOut();
 	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
 	void Disconnect();
 	UFUNCTION(BlueprintPure, Category = "S.V.E.R")
@@ -88,6 +108,15 @@ public:
 
 private:
 	void Open();
+	void Retry();
+	void After(float Seconds, void (USverBoardClient::*Step)());
+	void Authorize();
+	void RequestCode();
+	void Poll();
+	void Signed(const TSharedPtr<FJsonObject>& Tokens);
+	void Refuse(const FString& Message);
+	void Post(const FString& Path, const FString& Form, TFunction<void(const TSharedPtr<FJsonObject>&)> Done);
+	FString StorePath() const;
 	void Handle(const FString& Message);
 	void Send(const TSharedRef<FJsonObject>& Message);
 	void SendControl(const FString& Control, const TSharedRef<FJsonObject>& Change);
@@ -95,6 +124,13 @@ private:
 	TSharedPtr<IWebSocket> Socket;
 	FString Token;
 	FString Gateway;
+	/** Set by SignIn; empty when connected with a token. */
+	FString ClientId;
+	FString Api;
+	FString Access;
+	FDateTime AccessUntil;
+	FString DeviceCode;
+	float PollSeconds = 5.f;
 	bool bStopped = true;
 	float RetrySeconds = 1.f;
 	int32 NextId = 1;

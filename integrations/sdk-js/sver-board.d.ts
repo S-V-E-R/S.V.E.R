@@ -1,5 +1,16 @@
 // Types for sver-board.mjs (the S.V.E.R board SDK).
 export const DEFAULT_GATEWAY: string;
+export const DEFAULT_API: string;
+
+/** The stored sign-in of a game that connects with its client ID. */
+export type Grant = { access_token: string; refresh_token: string; expires_at: number };
+/** Where the sign-in is kept: localStorage in browsers by default, `fileStore(path)` in Node, or your own. */
+export type GrantStore = { get(): Grant | null | Promise<Grant | null>; set(grant: Grant | null): void | Promise<void> };
+/** What to show the streamer: "Enter `code` at `url`" (`link` opens the page with the code filled in). */
+export type SignInCode = { code: string; url: string; link: string; expiresIn: number };
+/** Keeps the sign-in in a file (Node). */
+export function fileStore(path: string): GrantStore;
+type Common = { url?: string; reconnect?: boolean; WebSocket?: typeof WebSocket };
 
 export type Control = {
   id: string; kind: "button" | "label" | "text" | "goal" | "joystick" | "rally"; label: string;
@@ -24,7 +35,12 @@ export type Result = { type: "board_result"; id: string; control: string; outcom
 export type Change = { label?: string | null; disabled?: boolean; progress?: number };
 
 export class SverBoard {
-  constructor(options: { token: string; url?: string; reconnect?: boolean; WebSocket?: typeof WebSocket });
+  /**
+   * `token`: a game token pasted from Creator Studio. `clientId`: "Connect to S.V.E.R" — the app's
+   * public client ID from Settings → Developer; connect() signs in at sver.tv/go (scope
+   * `board:control`), calling `onCode` when the streamer has to enter a code. Never a client secret.
+   */
+  constructor(options: Common & ({ token: string } | { clientId: string; onCode?: (shown: SignInCode) => void; store?: GrantStore; api?: string }));
   current: Snapshot | null;
   on(type: "hello", fn: (hello: Hello) => void): () => void;
   on(type: "press", fn: (press: Press) => void): () => void;
@@ -36,6 +52,8 @@ export class SverBoard {
   on(type: "error", fn: (error: Error) => void): () => void;
   on(type: "close", fn: (close: { code: number; reason: string }) => void): () => void;
   connect(): Promise<Hello>;
+  /** Disconnects and forgets the sign-in, here and on S.V.E.R; the next connect() shows a new code. */
+  signOut(): Promise<void>;
   setState(controls: Record<string, Change>): Promise<void>;
   disable(control: string, disabled?: boolean): Promise<void>;
   label(control: string, label: string | null): Promise<void>;
