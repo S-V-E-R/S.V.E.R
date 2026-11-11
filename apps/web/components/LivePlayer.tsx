@@ -333,7 +333,9 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   </div></div>;
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p>{meta}{live.war && <WarActivityNote war={live.war} />}</div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
-  return <div className={`live-player${focused ? " focused" : ""}${adOn ? " ad-on" : ""}`}>
+  // The frame (the video and what is drawn over it) is separate from the details under it, so
+  // the phone watch page can pin the frame while the rest scrolls (styles/discovery.css).
+  return <div className="live-shell"><div className={`live-player${focused ? " focused" : ""}${adOn ? " ad-on" : ""}`}>
     {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} onPause={() => setPaused(true)} onPlay={() => setPaused(false)} aria-label={`${live.title}, live`} />}
     {!rewind && <PlayerEffects username={username} video={video} transport={transport} />}
     {!rewind && status && <p className="player-status" role="status">{status}</p>}
@@ -350,14 +352,15 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     {!rewind && captioned && <CaptionOverlay key={transport ?? ""} video={video} on={wantCaptions} channel={live.caption_style} isOwner={live.is_owner} />}
     {!rewind && captioned && <button type="button" className="player-cc small" aria-pressed={captionsOn} onClick={() => setCaptionsPreferred(!captionsOn)} title={captionsOn ? "Turn captions off" : "Turn captions on (the stream plays a few seconds further behind live)"}>CC</button>}
     {!rewind && phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
+    {raidBar}
+  </div><div className="live-details">
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} size={nested ? "compact" : "normal"} />}
-    {raidBar}
     <div className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching · <Uptime since={live.started_at} /></span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>}
       {!rewind && <PlayerSettings username={username} broadcast={live.broadcast_id} video={video} transport={transport} browserId={browserId} />}
       {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</div>
     {live.war && <WarActivityNote war={live.war} />}
-  </div>;
+  </div></div>;
 }
 
 /** Eligibility for this broadcast. The polite note speaks only when the status code changes, not on every poll. */
