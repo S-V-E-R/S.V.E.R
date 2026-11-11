@@ -227,6 +227,7 @@ const EXCLUDED_TABLES: [&str; 18] = [
     "rate_limits",
     "stream_credentials",
     "push_subscriptions",
+    "expo_devices",
     "staff_push_subscriptions",
     "integrity_cases",
     "interim_restrictions",
