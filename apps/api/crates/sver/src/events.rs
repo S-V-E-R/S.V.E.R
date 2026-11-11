@@ -278,23 +278,30 @@ pub struct Connect {
 /// headers on a WebSocket.
 async fn socket(
     State(app): State<App>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
     Query(input): Query<Connect>,
     upgrade: WebSocketUpgrade,
 ) -> Res<Response> {
     let user =
         crate::devapps::identify(&app, &input.client_id, input.access_token.as_deref()).await?;
-    let key = format!(
-        "{}:{}",
-        input.client_id,
-        user.as_ref().map_or("-", |u| u.0.as_str())
-    );
+    // Per app and person; without a token, per app and address (the client ID is public, so one
+    // visitor mustn't be able to hold every anonymous slot of an app).
+    let key = match &user {
+        Some((id, _)) => format!("{}:{id}", input.client_id),
+        None => format!(
+            "{}:-:{}",
+            input.client_id,
+            crate::security::client_ip(&app, peer, &headers)
+        ),
+    };
     {
         let mut open = CONNECTIONS.lock().unwrap_or_else(|e| e.into_inner());
         let n = open.entry(key.clone()).or_default();
         if *n >= MAX_CONNECTIONS {
             return Err(Fail::new(
                 axum::http::StatusCode::TOO_MANY_REQUESTS,
-                "Up to 10 connections per app and person.",
+                "Up to 10 connections per app and person (per address without a token).",
             ));
         }
         *n += 1;
@@ -302,14 +309,21 @@ async fn socket(
     let slot = Slot(key);
     Ok(upgrade
         .max_message_size(16 * 1024)
-        .on_upgrade(move |ws| session(app, user, slot, ws)))
+        .on_upgrade(move |ws| session(app, input.client_id, user, slot, ws)))
+}
+/// Whether a subscribed topic needs the person's token (a private channel topic).
+fn private(topic: &str) -> bool {
+    topic
+        .strip_prefix("channel:")
+        .and_then(|rest| rest.split_once(':'))
+        .is_some_and(|(_, kind)| PRIVATE.contains(&kind))
 }
 async fn reply(ws: &mut WebSocket, value: Value) -> bool {
     ws.send(Message::Text(value.to_string().into()))
         .await
         .is_ok()
 }
-async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket) {
+async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mut ws: WebSocket) {
     let mut events = app.chat.subscribe();
     let mut dms = app.dms.subscribe();
     let mut topics: HashSet<String> = HashSet::new();
@@ -317,13 +331,35 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
     let mut chats: HashMap<String, String> = HashMap::new();
     // The person's own topics: DM hub channel `dm:{id}` -> whispers topic; notifications are polled.
     let mut own = Own::default();
-    // ponytail: one indexed query per subscribed socket every 5 s; publish notifications on the hub
-    // if many sockets subscribe.
+    // ponytail: one indexed query per socket every 5 s (two with notifications), so a removed
+    // grant stops events within 5 s; publish revocations and notifications on the hub if many
+    // sockets connect.
     let mut poll = tokio::time::interval(std::time::Duration::from_secs(5));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // At most 10 method calls a second, as on the integration gateway.
+    let (mut window, mut calls) = (std::time::Instant::now(), 0u32);
     loop {
         tokio::select! {
             _ = poll.tick() => {
+                // Access is checked again while the socket is open, not only at connect: a removed
+                // grant or a suspended app ends the connection, and a private
+                // topic the person lost (no longer the channel's moderator) is dropped.
+                if !matches!(crate::devapps::connected(&app, &client, user.as_ref().map(|u| u.0.as_str())).await, Ok(true)) {
+                    let _ = reply(&mut ws, json!({"type": "revoked"})).await;
+                    return;
+                }
+                let mut lost = Vec::new();
+                for topic in topics.iter().filter(|t| private(t)) {
+                    match allowed(&app, topic, user.as_ref()).await {
+                        Ok(true) => {}
+                        Ok(false) => lost.push(topic.clone()),
+                        Err(_) => return,
+                    }
+                }
+                if !lost.is_empty() {
+                    topics.retain(|t| !lost.contains(t));
+                    if !reply(&mut ws, json!({"type": "revoked", "topics": lost})).await { return; }
+                }
                 let Some((user, topic, since)) = own.notifications.clone() else { continue; };
                 let Ok(rows) = notifications_since(&app, &user, since).await else { return; };
                 for (data, at) in rows {
@@ -379,6 +415,14 @@ async fn session(app: App, user: Option<Person>, _slot: Slot, mut ws: WebSocket)
             },
             incoming = ws.recv() => match incoming {
                 Some(Ok(Message::Text(text))) => {
+                    if window.elapsed() >= std::time::Duration::from_secs(1) {
+                        (window, calls) = (std::time::Instant::now(), 0);
+                    }
+                    calls += 1;
+                    if calls > 10 {
+                        if !reply(&mut ws, json!({"type": "reply", "error": "Too many messages. At most 10 a second."})).await { return; }
+                        continue;
+                    }
                     let Ok(call) = serde_json::from_str::<Value>(&text) else {
                         if !reply(&mut ws, json!({"type": "reply", "error": "Send JSON."})).await { return; }
                         continue;

@@ -701,6 +701,17 @@ pub async fn reset(
     let hash = sec::new_password(&app, input.password).await?;
     let (mut tx, user) = consume(&app, &input.token, "reset").await?;
     crate::streams::revoke(&mut tx, &user.id).await?;
+    // A reset link proves who owns the address. On an account that never verified it, whoever
+    // signed up may be someone else: the sign-in providers and app access they added go too.
+    if !user.email_verified {
+        sqlx::query("DELETE FROM identities WHERE user_id=$1")
+            .bind(&user.id)
+            .execute(&mut *tx)
+            .await?;
+        crate::devapps::revoke_all(&mut tx, &user.id)
+            .await
+            .map_err(|_| Error::internal())?;
+    }
     sqlx::query("UPDATE users SET password_hash=$2 WHERE id=$1")
         .bind(&user.id)
         .bind(hash)
@@ -860,6 +871,13 @@ pub async fn delete_account(
         .await?;
     invalidate(&mut tx, &user.id, None).await?;
     tx.commit().await?;
+    // Nothing more is charged to an account nobody can sign in to. If Stripe can't be reached now,
+    // the jobs loop stops the renewals on its next pass, and before anything is erased.
+    if crate::subs::stop_deleted(&app).await.is_err()
+        || crate::supporters::stop_deleted(&app).await.is_err()
+    {
+        eprintln!("subs_event=stop_deleted outcome=retry");
+    }
     Ok((
         clear_cookie(&app, jar, app.config.cookie_name()),
         Json(json!({"deletion_requested":true})),

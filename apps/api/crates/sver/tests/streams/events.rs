@@ -424,6 +424,18 @@ pub async fn exercise(e: &Env) {
     .await
     .unwrap();
     assert_eq!((app_hooks, all_hooks), (0, 1));
+    // The open socket is told and closed too (access is checked again every 5 seconds).
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        let mut told = false;
+        while let Some(Ok(message)) = futures_util::StreamExt::next(&mut owner).await {
+            if let tungstenite::Message::Text(text) = message {
+                told |= serde_json::from_str::<Value>(&text).unwrap()["type"] == "revoked";
+            }
+        }
+        told
+    })
+    .await;
+    assert_eq!(ended, Ok(true), "a revoked app's socket ends");
     // The 50th failure in a row turns the hook off and tells its owner.
     e.sql("UPDATE event_hooks SET failures=49").await;
     e.fake.lock().unwrap().hook_fail = true;

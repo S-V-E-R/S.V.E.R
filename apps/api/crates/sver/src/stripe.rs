@@ -101,6 +101,25 @@ pub async fn send(
     }
     classify(request.send().await).await
 }
+/// Stops a subscription renewing; it ends with its paid period. Ok once that's so, or when Stripe
+/// no longer has the subscription; anything else is an error to retry.
+pub async fn stop_renewal(http: &reqwest::Client, config: &Config, subscription: &str) -> Res<()> {
+    let form = [("cancel_at_period_end", "true".to_string())];
+    match send(
+        http,
+        config,
+        None,
+        &format!("subscriptions/{subscription}"),
+        &form,
+        None,
+    )
+    .await
+    {
+        Outcome::Done(_) => Ok(()),
+        Outcome::Declined { code, .. } if code == "resource_missing" => Ok(()),
+        Outcome::Declined { fail, .. } | Outcome::Unknown(fail) => Err(fail),
+    }
+}
 /// GETs a Stripe object.
 pub async fn get(http: &reqwest::Client, config: &Config, path: &str) -> Res<Value> {
     if !config.available() {

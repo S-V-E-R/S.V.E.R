@@ -10,6 +10,7 @@ import { BeaconComments } from "./BeaconComments";
 import { Crest } from "./Crest";
 import { ReportForm, TakeDownLink } from "./Report";
 import { ShareButton } from "./ShareButton";
+import { HeartIcon, MessageIcon } from "./shell/Icons";
 import { AdFrame, fetchAd, type ServedAd } from "./Ads";
 import { Turnstile } from "./Turnstile";
 import { DonateLink } from "./DonateLink";
@@ -248,9 +249,9 @@ function BeaconPlayer({ item, sound, onUnmute, ageAck, signedIn }: { item: Beaco
       </Link>}
       {!item.is_owner && !followed && c.username && <button type="button" className="beacon-action" onClick={() => void follow()} aria-label={`Follow ${c.display_name}`}><span aria-hidden="true">＋</span><span>Follow</span></button>}
       {c.live && c.username && <button type="button" className="beacon-action beacon-live" onClick={() => void goLive()}><span className="tag-live">Live</span><span>Live now</span></button>}
-      <button type="button" className="beacon-action" onClick={() => void like()} aria-pressed={liked} aria-label={liked ? "Unlike" : "Like"}><span aria-hidden="true">{liked ? "♥" : "♡"}</span><span>{compact(likes)}</span></button>
+      <button type="button" className="beacon-action" onClick={() => void like()} aria-pressed={liked} aria-label={liked ? "Unlike" : "Like"}><span><HeartIcon size={20} filled={liked} /></span><span>{compact(likes)}</span></button>
       <span className="beacon-action beacon-stat" aria-label={`${b.views} views`}><svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12"><path d="M3 2l7 4-7 4z" fill="currentColor" /></svg><span>{compact(b.views)}</span></span>
-      <button type="button" className="beacon-action" onClick={() => setPanel(panel === "comments" ? null : "comments")} aria-expanded={panel === "comments"} aria-label="Comments"><span aria-hidden="true">💬</span><span>Comments</span></button>
+      <button type="button" className="beacon-action" onClick={() => setPanel(panel === "comments" ? null : "comments")} aria-expanded={panel === "comments"} aria-label="Comments"><span><MessageIcon size={20} /></span><span>Comments</span></button>
       <ShareButton path={`/beacons/${b.id}`} title={b.title} className="beacon-action" label={<><span aria-hidden="true">↗</span><span>Share</span></>} />
       <button type="button" className="beacon-action" onClick={() => setPanel(panel === "more" ? null : "more")} aria-expanded={panel === "more"} aria-label="More actions"><span aria-hidden="true">⋯</span><span>More</span></button>
     </aside>

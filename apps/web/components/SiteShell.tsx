@@ -26,6 +26,12 @@ export default function SiteShell({ account, alerts, actions, sidebar, banner, c
   const pathname = usePathname();
   // Where views come from, for streamers' analytics (docs/ANALYTICS.md).
   useEffect(() => trackClicks(), []);
+  // The last page before the sign-in screens, so logging in returns there (a stream, a Beacon)
+  // rather than Home. Read by the login screen when the link carried no `next`.
+  useEffect(() => {
+    if (!pathname || /^\/(login|signup|oauth-signup|oauth|forgot|reset|verify|mfa|welcome|choose-side|choose-faction)(\/|$)/.test(pathname)) return;
+    try { sessionStorage.setItem("return-to", pathname + window.location.search); } catch { /* storage blocked: login goes Home */ }
+  }, [pathname]);
   if (pathname?.startsWith("/embed/")) return <main id="main">{children}</main>;
   // The OBS board overlay is a bare, transparent browser source.
   if (pathname?.startsWith("/overlay/")) return <>{children}</>;
@@ -33,7 +39,7 @@ export default function SiteShell({ account, alerts, actions, sidebar, banner, c
   if (pathname === "/dock" || (pathname && /^\/[^/]+\/chat$/.test(pathname))) return <main id="main">{children}</main>;
   const publicPage = siteLinks.some(([href]) => href === pathname);
   const footer = <SiteFooter />;
-  if (!publicPage) return <><a className="skip" href="#main">Skip to content</a><Chrome logo={account?.logo_style} actions={actions} sidebar={sidebar} footer={footer}>{banner}{children}</Chrome></>;
+  if (!publicPage) return <><a className="skip" href="#main">Skip to content</a><Chrome logo={account?.logo_style} signedIn={!!account} actions={actions} sidebar={sidebar} footer={footer}>{banner}{children}</Chrome></>;
 
   return <div className="site-shell public-shell">
     <a className="skip" href="#main">Skip to content</a>

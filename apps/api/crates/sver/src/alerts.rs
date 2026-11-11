@@ -1,5 +1,6 @@
 //! Go-live alerts (docs/LIVE_STREAMS.md "Go-live alerts"): in-site notifications, viewer browser
-//! push and opt-in email. The jobs pass fans out each broadcast once, when it first reaches LIVE.
+//! push, phone push through Expo, and opt-in email. The jobs pass fans out each broadcast once,
+//! when it first reaches LIVE. Phone push uses the same switches as browser push.
 use crate::{
     App,
     profiles::{self, Fail, Res, signed_in},
@@ -57,7 +58,9 @@ pub async fn community(
         .bind(&id).bind(recipient).bind(kind).bind(actor).bind(format!("{kind}:{key}")).bind(payload).bind(guild).bind(site).execute(&mut *db).await?.rows_affected();
     if inserted > 0 && push {
         sqlx::query("INSERT INTO push_jobs(id,subscription_id,notification_id) SELECT gen_random_uuid()::text,id,$2 FROM push_subscriptions WHERE user_id=$1 ON CONFLICT DO NOTHING")
-            .bind(recipient).bind(id).execute(db).await?;
+            .bind(recipient).bind(&id).execute(&mut *db).await?;
+        sqlx::query("INSERT INTO expo_push_jobs(id,device_id,notification_id) SELECT gen_random_uuid()::text,id,$2 FROM expo_devices WHERE user_id=$1 ON CONFLICT DO NOTHING")
+            .bind(recipient).bind(&id).execute(&mut *db).await?;
     }
     Ok(())
 }
@@ -184,6 +187,8 @@ pub async fn fan_out(app: &App) -> Res<()> {
             .bind(pick(0)).bind(&owner).bind(&broadcast).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO push_jobs(id,subscription_id,broadcast_id) SELECT gen_random_uuid()::text,s.id,$2 FROM push_subscriptions s WHERE s.user_id=ANY($1) ON CONFLICT DO NOTHING")
             .bind(pick(1)).bind(&broadcast).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO expo_push_jobs(id,device_id,broadcast_id) SELECT gen_random_uuid()::text,d.id,$2 FROM expo_devices d WHERE d.user_id=ANY($1) ON CONFLICT DO NOTHING")
+            .bind(pick(1)).bind(&broadcast).execute(&mut *tx).await?;
         for (id, _, _, _, email) in recipients.iter().filter(|r| r.3) {
             // The header is the RFC 8058 one-click POST; the visible link opens a confirm page.
             let token = encode(&sec::seal(app, "unsubscribe", id)?);
@@ -228,6 +233,8 @@ pub async fn deliver(app: &App) -> Res<()> {
     sqlx::query("DELETE FROM push_jobs j USING broadcasts b WHERE b.id=j.broadcast_id AND (b.state='ENDED' OR j.created_at<now()-interval '1 hour')")
         .execute(&app.db)
         .await?;
+    // Phone push does not use the browser VAPID key. An empty Expo token leaves jobs queued.
+    deliver_expo(app).await?;
     let Some(key) = staff_push::signing_key(app)? else {
         return Ok(());
     };
@@ -354,14 +361,14 @@ struct TypeSettings {
     push: bool,
 }
 async fn settings_json(app: &App, user: &str) -> Res<Json<Value>> {
-    let (site, push, email, devices): (bool, bool, bool, i64) = sqlx::query_as("SELECT coalesce(s.site,true),coalesce(s.push,true),coalesce(s.email,false),(SELECT count(*) FROM push_subscriptions WHERE user_id=$1) FROM (SELECT 1) one LEFT JOIN notification_settings s ON s.user_id=$1")
+    let (site, push, email, devices, phones): (bool, bool, bool, i64, i64) = sqlx::query_as("SELECT coalesce(s.site,true),coalesce(s.push,true),coalesce(s.email,false),(SELECT count(*) FROM push_subscriptions WHERE user_id=$1),(SELECT count(*) FROM expo_devices WHERE user_id=$1) FROM (SELECT 1) one LEFT JOIN notification_settings s ON s.user_id=$1")
         .bind(user)
         .fetch_one(&app.db)
         .await?;
     let community:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('kind',k,'site',coalesce(t.site,true),'push',coalesce(t.push,true)) FROM unnest($2::text[]) k LEFT JOIN notification_type_settings t ON t.user_id=$1 AND t.kind=k")
         .bind(user).bind(COMMUNITY_TYPES.to_vec()).fetch_all(&app.db).await?;
     Ok(Json(
-        json!({"site":site,"push":push,"email":email,"push_devices":devices,"push_key":app.config.staff_push.public_key,"community":community}),
+        json!({"site":site,"push":push,"email":email,"push_devices":devices,"expo_devices":phones,"push_key":app.config.staff_push.public_key,"community":community}),
     ))
 }
 /// GET /api/me/notifications/settings
@@ -500,6 +507,267 @@ async fn unsubscribe_email(State(app): State<App>, Query(input): Query<Token>) -
     Ok(Json(json!({"unsubscribed":true})))
 }
 
+/// `ExponentPushToken[...]` or `ExpoPushToken[...]`. Anything else is refused, so the API never
+/// stores an arbitrary URL or a native FCM/APNs token it would not know how to address.
+fn valid_expo_token(token: &str) -> bool {
+    let inner = token
+        .strip_prefix("ExponentPushToken[")
+        .or_else(|| token.strip_prefix("ExpoPushToken["))
+        .and_then(|rest| rest.strip_suffix(']'));
+    inner.is_some_and(|inner| {
+        (16..=200).contains(&inner.len())
+            && inner
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    })
+}
+
+#[derive(Deserialize)]
+struct ExpoToken {
+    token: String,
+}
+
+/// POST /api/me/push/expo: saves this phone's Expo push token (at most ten per account).
+async fn register_expo(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<ExpoToken>,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    if !valid_expo_token(&input.token) {
+        return Err(Fail::bad("That push token is not valid."));
+    }
+    let id = sec::digest(&input.token);
+    let sealed = sec::seal(&app, "expo-push", &input.token)?;
+    let mut tx = app.db.begin().await?;
+    // A phone that signs into a different account must not deliver the previous queue.
+    sqlx::query("DELETE FROM expo_push_jobs WHERE device_id=$1 AND EXISTS(SELECT 1 FROM expo_devices WHERE id=$1 AND user_id<>$2)")
+        .bind(&id).bind(&user.id).execute(&mut *tx).await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM expo_devices WHERE user_id=$1 AND id<>$2")
+            .bind(&user.id)
+            .bind(&id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if count >= 10 {
+        return Err(Fail::bad(
+            "Push alerts are on for ten phones already. Turn one off first.",
+        ));
+    }
+    sqlx::query("INSERT INTO expo_devices(id,user_id,token) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET user_id=EXCLUDED.user_id,token=EXCLUDED.token")
+        .bind(&id).bind(&user.id).bind(sealed).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Json(json!({"saved": true})))
+}
+
+/// DELETE /api/me/push/expo: forgets this phone. Another account's row is left alone.
+async fn forget_expo(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<ExpoToken>,
+) -> Res<Json<Value>> {
+    let user = signed_in(&app, &jar).await?;
+    if !valid_expo_token(&input.token) {
+        return Err(Fail::bad("That push token is not valid."));
+    }
+    sqlx::query("DELETE FROM expo_devices WHERE id=$1 AND user_id=$2")
+        .bind(sec::digest(&input.token))
+        .bind(&user.id)
+        .execute(&app.db)
+        .await?;
+    Ok(Json(json!({"saved": false})))
+}
+
+fn expo_message(token: &str, title: &str, body: &str, url: &str, channel: &str) -> Value {
+    json!({
+        "to": token,
+        "title": title,
+        "body": body,
+        "data": {"url": url},
+        "sound": "default",
+        "priority": if channel == "live" { "high" } else { "default" },
+        "channelId": channel,
+    })
+}
+
+fn classify_expo(status: reqwest::StatusCode, body: &Value) -> Sent {
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+        return Sent::Retry;
+    }
+    let ticket = if body["data"].is_array() {
+        &body["data"][0]
+    } else {
+        &body["data"]
+    };
+    if ticket["details"]["error"].as_str() == Some("DeviceNotRegistered") {
+        return Sent::Gone;
+    }
+    if status.is_success() && ticket["status"] == "ok" {
+        return Sent::Accepted;
+    }
+    Sent::Retry
+}
+
+async fn post_expo(app: &App, message: &Value) -> Sent {
+    let response = app
+        .http
+        .post(&app.config.expo_push_url)
+        .bearer_auth(&app.config.expo_access_token)
+        .json(message)
+        .send()
+        .await;
+    match response {
+        Ok(response) => {
+            let status = response.status();
+            let body = response.json::<Value>().await.unwrap_or(Value::Null);
+            classify_expo(status, &body)
+        }
+        Err(_) => Sent::Retry,
+    }
+}
+
+/// job, device, sealed token, attempts, channel username, display name, kind, payload, recipient, actor, guild.
+type ExpoRow = (
+    String,
+    String,
+    String,
+    i32,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<Value>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// Sends queued phone notifications. Kinds that are in-site only never get a job here.
+/// Go-live copy is fixed; other kinds reuse the title and body already stored for browser push.
+pub async fn deliver_expo(app: &App) -> Res<()> {
+    sqlx::query("DELETE FROM expo_push_jobs WHERE notification_id IS NOT NULL AND created_at<now()-interval '1 day'")
+        .execute(&app.db).await?;
+    sqlx::query("DELETE FROM expo_push_jobs j USING broadcasts b WHERE b.id=j.broadcast_id AND (b.state='ENDED' OR j.created_at<now()-interval '1 hour')")
+        .execute(&app.db).await?;
+    if app.config.expo_access_token.is_empty() {
+        return Ok(());
+    }
+    for _ in 0..50 {
+        let mut tx = app.db.begin().await?;
+        let row: Option<ExpoRow> = sqlx::query_as("SELECT j.id,d.id,d.token,j.attempts,c.username,c.display_name,n.kind,n.payload,n.user_id,n.channel_id,n.guild_id FROM expo_push_jobs j JOIN expo_devices d ON d.id=j.device_id JOIN users u ON u.id=d.user_id AND u.deleted_at IS NULL LEFT JOIN broadcasts b ON b.id=j.broadcast_id LEFT JOIN channel_users c ON c.id=b.owner_id LEFT JOIN notifications n ON n.id=j.notification_id WHERE j.available_at<=now() ORDER BY j.available_at FOR UPDATE OF j SKIP LOCKED LIMIT 1")
+            .fetch_optional(&mut *tx).await?;
+        let Some((
+            job,
+            device,
+            sealed,
+            attempts,
+            username,
+            display_name,
+            kind,
+            payload,
+            recipient,
+            actor,
+            guild,
+        )) = row
+        else {
+            break;
+        };
+        let token = match sec::unseal(app, "expo-push", &sealed) {
+            Ok(token) if valid_expo_token(&token) => token,
+            _ => {
+                sqlx::query("DELETE FROM expo_devices WHERE id=$1")
+                    .bind(&device)
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                continue;
+            }
+        };
+        let allowed = match &kind {
+            None => username.is_some(),
+            Some(kind) => {
+                let user = recipient.as_deref().unwrap_or("");
+                let actor = actor.as_deref().unwrap_or("");
+                let enabled: bool = sqlx::query_scalar("SELECT coalesce((SELECT push FROM notification_type_settings WHERE user_id=$1 AND kind=$2),true)").bind(user).bind(kind).fetch_one(&mut *tx).await?;
+                enabled
+                    && !user.is_empty()
+                    && !actor.is_empty()
+                    && !profiles::blocked_between(&mut tx, user, actor).await?
+                    && profiles::channel_user_by_id(&mut tx, user)
+                        .await?
+                        .is_some_and(|row| row.eligible)
+                    && profiles::channel_user_by_id(&mut tx, actor)
+                        .await?
+                        .is_some_and(|row| row.eligible)
+                    && match &guild {
+                        Some(id) => crate::guilds::notify_allowed(&mut tx, id, user).await?,
+                        None => true,
+                    }
+            }
+        };
+        let message = if !allowed {
+            None
+        } else if let (Some(username), Some(display_name)) = (&username, &display_name) {
+            Some(expo_message(
+                &token,
+                &format!("{display_name} is live"),
+                "Watch now on S.V.E.R.",
+                &format!("/{username}"),
+                "live",
+            ))
+        } else if let Some(payload) = &payload {
+            let title: String = payload["title"]
+                .as_str()
+                .unwrap_or("")
+                .chars()
+                .take(120)
+                .collect();
+            let body: String = payload["body"]
+                .as_str()
+                .unwrap_or("")
+                .chars()
+                .take(200)
+                .collect();
+            let url = payload["url"].as_str().unwrap_or("");
+            if title.is_empty()
+                || url.len() > 500
+                || !url.starts_with('/')
+                || url.starts_with("//")
+                || url.contains("://")
+            {
+                None
+            } else {
+                Some(expo_message(&token, &title, &body, url, "alerts"))
+            }
+        } else {
+            None
+        };
+        let sent = match &message {
+            Some(message) => post_expo(app, message).await,
+            None => Sent::Accepted,
+        };
+        match sent {
+            Sent::Accepted => {
+                sqlx::query("DELETE FROM expo_push_jobs WHERE id=$1")
+                    .bind(&job)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            Sent::Gone => {
+                sqlx::query("DELETE FROM expo_devices WHERE id=$1")
+                    .bind(&device)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            Sent::Retry => {
+                sqlx::query("UPDATE expo_push_jobs SET attempts=attempts+1,available_at=now()+make_interval(secs=>$2) WHERE id=$1")
+                    .bind(&job).bind(f64::from(30 * 2_i32.pow(attempts.min(4) as u32))).execute(&mut *tx).await?;
+            }
+        }
+        tx.commit().await?;
+    }
+    Ok(())
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/me/notifications", get(list))
@@ -509,6 +777,46 @@ pub fn routes() -> Router<App> {
             get(get_settings).put(put_settings),
         )
         .route("/api/me/push", post(subscribe).delete(unsubscribe_push))
+        .route("/api/me/push/expo", post(register_expo).delete(forget_expo))
         .route("/api/channels/{username}/follow", patch(follow_alerts))
         .route("/api/notifications/unsubscribe", post(unsubscribe_email))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expo_tokens_and_tickets() {
+        assert!(valid_expo_token("ExponentPushToken[alertfana000000000001]"));
+        assert!(valid_expo_token("ExpoPushToken[alertfana000000000001]"));
+        assert!(!valid_expo_token("https://exp.host/--/api/v2/push/send"));
+        assert!(!valid_expo_token("ExponentPushToken[short]"));
+        assert!(!valid_expo_token("ExponentPushToken[has space inside]"));
+        assert!(matches!(
+            classify_expo(
+                reqwest::StatusCode::OK,
+                &json!({"data":{"status":"ok","id":"synthetic"}})
+            ),
+            Sent::Accepted
+        ));
+        assert!(matches!(
+            classify_expo(
+                reqwest::StatusCode::OK,
+                &json!({"data":{"status":"error","details":{"error":"DeviceNotRegistered"}}})
+            ),
+            Sent::Gone
+        ));
+        assert!(matches!(
+            classify_expo(
+                reqwest::StatusCode::OK,
+                &json!({"data":{"status":"error","details":{"error":"InvalidCredentials"}}})
+            ),
+            Sent::Retry
+        ));
+        assert!(matches!(
+            classify_expo(reqwest::StatusCode::TOO_MANY_REQUESTS, &json!({})),
+            Sent::Retry
+        ));
+    }
 }

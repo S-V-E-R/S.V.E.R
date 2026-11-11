@@ -34,9 +34,12 @@ export function DailyOrders() {
     setBusy(false);
     if (r.ok) { setData(r.data); setError(""); } else setError(r.error);
   }
+  // Open on wide screens; folded in the phone drawer, where the places to go come first. Nothing
+  // is rendered until the client has loaded the orders, so reading the screen width here is safe.
+  const [open, setOpen] = useState(() => typeof window === "undefined" || !window.matchMedia("(max-width: 959px)").matches);
   if (!data || (!data.orders.length && !data.verify)) return null;
-  return <section className="side-section daily-orders frame" aria-labelledby="side-orders">
-    <div className="side-label"><span id="side-orders">Daily orders</span>{!!data.streak && <span title="Days in a row with an order done">{data.streak}-day streak</span>}</div>
+  return <details className="side-section daily-orders frame" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="side-label"><span id="side-orders">Daily orders · {data.orders.filter(o => o.done).length}/{data.orders.length}</span>{!!data.streak && <span title="Days in a row with an order done">{data.streak}-day streak</span>}</summary>
     {data.verify ? <p className="side-empty">Verify your email to get daily orders.</p>
       : <ul className="order-list">{data.orders.map(o => <li key={o.slot} className={o.done ? "done" : undefined} data-rarity={o.rarity.toLowerCase()}>
         <span className="order-label">{o.label}</span>
@@ -46,5 +49,5 @@ export function DailyOrders() {
       </li>)}</ul>}
     {error && <p role="alert" className="side-empty">{error}</p>}
     {!data.verify && <p className="side-empty">{data.week ?? 0} done this week · milestones at {(data.milestones ?? [7, 14, 21]).join(", ")}</p>}
-  </section>;
+  </details>;
 }

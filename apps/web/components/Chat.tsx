@@ -10,6 +10,7 @@ import { Crest } from "./FactionIdentity";
 import { GuildChatBadge } from "./Guilds";
 import { CREATOR_TIERS, type Chip } from "../lib/types";
 import { EmoteImage, type ChannelEmote } from "./Emote";
+import { BanIcon, ClockIcon, TrashIcon } from "./shell/Icons";
 import { SignatureEmote } from "./SignatureEmote";
 import { ChatDock } from "./ChatDock";
 import { GifImage, GifPicker, type Gif, type GifAccess } from "./GifPicker";
@@ -105,6 +106,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
   const canPin = !squad && (role === "owner" || role === "moderator");
   const socket = useRef<WebSocket | null>(null);
   const list = useRef<HTMLOListElement>(null);
+  const follow = useRef(true);
   const input = useRef<HTMLTextAreaElement>(null);
   const path = squad ? `/api/squads/${encodeURIComponent(squad)}/chat` : `/api/channels/${encodeURIComponent(username)}/chat`;
 
@@ -194,6 +196,8 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         else if (data.type === "pin") setPinned(data.pinned);
         else if (data.type === "message" || data.type === "ack") {
           merge([data.message]);
+          // The phone watch page marks its Chat switch while chat is tucked away (WatchLayout).
+          if (data.type === "message") window.dispatchEvent(new Event("sver:chat-message"));
           // The draft is cleared only once the server has the message (unless it was edited since).
           if (data.type === "ack" && sending.current?.id === data.id) { const body = sending.current.body; setDraft(d => d === body ? "" : d); setReply(null); sending.current = null; }
         }
@@ -217,7 +221,9 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     return () => { closed = true; clearInterval(poll); clearTimeout(retry); socket.current?.close(); };
   }, [path, username, squad, merge, remove]);
 
-  useEffect(() => { list.current?.lastElementChild?.scrollIntoView({ block: "nearest" }); }, [messages]);
+  // New messages are followed only while the reader is at the bottom (see the list's onScroll);
+  // scrolling the list itself never moves the page.
+  useEffect(() => { const el = list.current; if (el && follow.current) el.scrollTop = el.scrollHeight; }, [messages]);
 
   /** `quick`: the inline tools — no prompts and a 10-minute timeout; a ban still confirms. */
   async function moderate(action: "delete" | "timeout" | "ban", m: Message, quick = false) {
@@ -369,7 +375,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     {subsOnly ? <p className="chat-system" role="status">Subscriber-only chat.{canPin && <> <button type="button" className="small quiet" onClick={() => limitToSubs(false)}>Open to everyone</button></>}</p>
       : canPin && <p className="chat-system"><button type="button" className="small quiet" onClick={() => limitToSubs(true)}>Subscriber-only chat</button></p>}
     {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Shield mode for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
-    <ol className="chat-messages" ref={list} aria-live="polite">
+    <ol className="chat-messages" ref={list} aria-live="polite" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
       {messages.map(m => m.outside?.platform === "bot" ? <li key={m.id} className="chat-bot">
         <span className="muted">{time(m.created_at)}</span>{" "}
@@ -391,12 +397,12 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         {account && role !== "owner" && <> <ReportButton target={{ target_type: "outside_message", target_id: m.id }} /></>}
       </li> : <li key={m.id} className={[m.tribute && "chat-tribute", m.highlighted && "chat-highlight"].filter(Boolean).join(" ") || undefined}>
         {m.tribute && <span className="badge tribute-badge">{m.tribute.toLocaleString()} Valor</span>}
-        {m.skill && <span className="badge skill-badge">✨ {m.skill}</span>}
+        {m.skill && <span className="badge skill-badge">{m.skill}</span>}
         {canDelete(m) && <span className="chat-quick-mod">
-          <button type="button" className="chat-quick" onClick={() => moderate("delete", m, true)} aria-label={`Delete message from ${m.author.display_name}`} title="Delete">🗑</button>
+          <button type="button" className="chat-quick" onClick={() => moderate("delete", m, true)} aria-label={`Delete message from ${m.author.display_name}`} title="Delete"><TrashIcon /></button>
           {canSanction(m) && <>
-            <button type="button" className="chat-quick" onClick={() => moderate("timeout", m, true)} aria-label={`Time out ${m.author.display_name} for 10 minutes`} title="Timeout 10 min">⏱</button>
-            <button type="button" className="chat-quick" onClick={() => moderate("ban", m, true)} aria-label={`Ban ${m.author.display_name}`} title="Ban">⛔</button>
+            <button type="button" className="chat-quick" onClick={() => moderate("timeout", m, true)} aria-label={`Time out ${m.author.display_name} for 10 minutes`} title="Timeout 10 min"><ClockIcon /></button>
+            <button type="button" className="chat-quick" onClick={() => moderate("ban", m, true)} aria-label={`Ban ${m.author.display_name}`} title="Ban"><BanIcon /></button>
           </>}
         </span>}
         <span className="muted">{time(m.created_at)}</span>{" "}

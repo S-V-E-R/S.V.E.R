@@ -80,6 +80,7 @@ Acceptance still needs a complete live removal/restoration exercise with cache i
 
 An outside review of the removal code led to these changes:
 - **A file that won't decode never blocks removal.** Corrupt or unusual files are still indexed (by their byte hash) and still hidden; before, one such file stopped all indexing, and every removal waited on "still being fingerprinted".
+- **A repeat of a dismissed request doesn't hide again.** Once staff have dismissed a request, a new request naming the same stored image, chat message or Beacon (content that never changes) goes to staff without hiding it first; the request's history shows `repeat_not_hidden`, and a removal decision still removes it. Videos, wall posts, profiles and live streams are hidden at every submission, because what sits behind the link can change.
 - **A reported live stream brings its recording.** The broadcast's VOD is held at submission and removed with the stream, so it can't publish as a VOD, clips or Highlights.
 - **A bare channel link holds only the avatar and banner.** Other images on the channel need a link to that item (or staff locating it), so one link can't take down a whole channel. A channel's owner is struck only for images actually removed, not for being named in a link, and content already removed under an earlier request isn't sanctioned twice.
 - **Likely copies found by frame matching are removed the legal way** from the Reports queue too: files deleted, never restored by an appeal.

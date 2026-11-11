@@ -46,6 +46,12 @@ async fn valor(e: &Env, token: &str) -> i64 {
     assert_eq!(status, StatusCode::OK);
     wallet["valor"].as_i64().unwrap()
 }
+async fn earnings(e: &Env) -> i64 {
+    sqlx::query_scalar("SELECT COALESCE(sum(amount),0)::bigint FROM ledger_entries WHERE account='usd:earnings:stream-owner'")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+}
 async fn buy(e: &Env, token: &str, cents: i64, consent: bool) -> (StatusCode, Value) {
     call(
         e,
@@ -221,6 +227,7 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK
     );
     assert_eq!(valor(e, &buyer).await, 975);
+    let earned = earnings(e).await;
     let dispute = |evt: &str, kind: &str, status: &str| {
         json!({"id": evt, "type": kind, "data": {"object": {
             "id": "dp_sp_1", "payment_intent": "pi_sp_4", "amount": 999, "status": status}}})
@@ -235,6 +242,18 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK
     );
     assert_eq!(valor(e, &buyer).await, -100);
+    // The 100 Valor the wallet is short was spent on a tribute: its 80¢ comes back from the
+    // streamer (once, however often the event is replayed), and returns when the dispute is won.
+    assert_eq!(
+        event(
+            e,
+            dispute("evt_sp_d1", "charge.dispute.created", "needs_response"),
+            true
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(earnings(e).await, earned - 800);
     assert_eq!(
         event(
             e,
@@ -245,6 +264,7 @@ pub async fn exercise(e: &Env) {
         StatusCode::OK
     );
     assert_eq!(valor(e, &buyer).await, 975);
+    assert_eq!(earnings(e).await, earned);
 
     // Without any webhook, opening the wallet asks Stripe about open checkouts and credits paid
     // ones once; a later webhook for the same session changes nothing.

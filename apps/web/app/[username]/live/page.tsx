@@ -4,6 +4,7 @@ import { Board } from "../../../components/Board";
 import { Chat } from "../../../components/Chat";
 import { Crowd } from "../../../components/Crowd";
 import { LivePlayer } from "../../../components/LivePlayer";
+import { WatchLayout } from "../../../components/WatchLayout";
 import { PlaysControls } from "../../../components/PlaysControls";
 import { EditStreamInfo } from "../../../components/EditStreamInfo";
 import { channelMetadata, loadChannel, type ChannelParams } from "../../../lib/channel";
@@ -45,7 +46,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
   // The streamer's colors frame their stream (player and streamer bar); everything that belongs to
   // the viewer (Up next, rally, chat) stays in the viewer's own colors, so ALLY and "Rally for
   // Myria" always mean the viewer's side.
-  return <div className="channel watch"><SeenCards surface="suggestion" />
+  return <WatchLayout play={!!(c.plays || c.board)}><SeenCards surface="suggestion" />
     <div className="watch-main">
     {ground && <TurfStrip genre={{ id: ground.id, name: ground.name }} holder={ground.holder} viewer={account?.faction ?? null} />}
     <div className="watch-stage" data-theme={c.faction ?? "neutral"}>
@@ -73,5 +74,5 @@ export default async function Live({ params }: { params: ChannelParams }) {
     <section className="watch-next" aria-labelledby="up-next"><SectionHead id="up-next" title="Up next" note="Same genre first, then same faction" href="/browse" link="Browse" />{next.length ? <StreamGrid streams={next} viewerFaction={account?.faction ?? null} /> : <p className="shelf-empty panel">{suggestions.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>
     </div>
     {squad?.mode === "MERGED" && squadHost ? <Chat key={squad.id} username={squadHost} squad={squad.id} account={account?.username ?? null} /> : <Chat username={c.username} account={account?.username ?? null} top={<EffortLeaders username={c.username} />} />}
-  </div>;
+  </WatchLayout>;
 }

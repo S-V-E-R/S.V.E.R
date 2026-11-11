@@ -19,3 +19,11 @@ test-results/
 /docs/OPERATIONS.md
 /docs/PLATFORM_PLAN.md
 __pycache__/
+
+# Local tooling and scratch output.
+/.agents/
+/.claude/
+/.grok/
+/skills-lock.json
+/brag-output*/
+/head.mp4

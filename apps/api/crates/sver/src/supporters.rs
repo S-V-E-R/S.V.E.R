@@ -557,6 +557,19 @@ pub(crate) async fn payment(tx: &mut PgConnection, intent: &str) -> Res<Option<i
 /// A fully refunded or lost platform payment revokes the Founder spot it claimed, which frees the
 /// number for the next new Greycloak. When it paid for the current period, that period ends now
 /// and the subscription stops renewing; an older month's refund leaves a later paid month alone.
+/// Stops renewal of a deleted account's membership (as `subs::stop_deleted` does for channel
+/// subscriptions); the supporter look lasts to the end of the paid month.
+pub async fn stop_deleted(app: &App) -> Res<()> {
+    let due: Vec<String> = sqlx::query_scalar("SELECT p.stripe_subscription FROM platform_subscriptions p JOIN users u ON u.id=p.user_id WHERE u.deleted_at IS NOT NULL AND p.stripe_subscription IS NOT NULL AND NOT p.cancel_at_period_end")
+        .fetch_all(&app.db)
+        .await?;
+    for subscription in due {
+        stripe::stop_renewal(&app.http, &app.config.stripe, &subscription).await?;
+        sqlx::query("UPDATE platform_subscriptions SET cancel_at_period_end=true,pending_tier=NULL,updated_at=now() WHERE stripe_subscription=$1")
+            .bind(&subscription).execute(&app.db).await?;
+    }
+    Ok(())
+}
 pub(crate) async fn reversed(app: &App, tx: &mut PgConnection, intent: &str, why: &str) -> Res<()> {
     let Some((invoice, user, latest)): Option<(String, String, bool)> =
         sqlx::query_as("SELECT i.id,i.user_id,NOT EXISTS(SELECT 1 FROM platform_invoices l WHERE l.user_id=i.user_id AND l.amount_cents>0 AND l.created_at>i.created_at) FROM platform_invoices i WHERE i.payment_intent=$1")

@@ -190,6 +190,11 @@ pub async fn confirm_email(app: &App, token: &str) -> Result<()> {
         .bind(&email)
         .execute(&mut *tx)
         .await?;
+    // A reset link already mailed to the old address stops working with it.
+    sqlx::query("DELETE FROM challenges WHERE user_id=$1 AND kind='reset'")
+        .bind(&user.id)
+        .execute(&mut *tx)
+        .await?;
     let what = format!(
         "the email address on your account was changed to {}. Notices go there from now on.",
         masked(&email)
@@ -214,7 +219,7 @@ const SUBJECT_COLUMNS: [&str; 10] = [
 ];
 /// Left out: credentials and sessions, anti-abuse signals, staff internals, and tables that hold
 /// other people's personal details (copyright claimants, guardians, Take It Down requesters).
-const EXCLUDED_TABLES: [&str; 17] = [
+const EXCLUDED_TABLES: [&str; 19] = [
     "challenges",
     "recovery_codes",
     "mail_jobs",
@@ -222,8 +227,10 @@ const EXCLUDED_TABLES: [&str; 17] = [
     "rate_limits",
     "stream_credentials",
     "push_subscriptions",
+    "expo_devices",
     "staff_push_subscriptions",
     "integrity_cases",
+    "interim_restrictions",
     "magnet_flags",
     "moderation_actions",
     "take_down_events",
@@ -233,8 +240,9 @@ const EXCLUDED_TABLES: [&str; 17] = [
     "legacy_account_data",
     "staff_roles",
 ];
-/// Column names never exported (secrets, keys, network data).
-const SECRET_COLUMNS: &str = "(hash|secret|token|sealed|password|mfa|seed|fingerprint|payload|endpoint|network|subscriptions|_key$|^key$|^ip$|^ip_|_ip$)";
+/// Column names never exported (secrets, keys, network data, and staff's internal notes and who
+/// acted: a strike or ban is exported with its reason and message, not `staff_note` or `issued_by`).
+const SECRET_COLUMNS: &str = "(hash|secret|token|sealed|password|mfa|seed|fingerprint|payload|endpoint|network|subscriptions|staff_note|review_note|reviewer|_by$|_key$|^key$|^ip$|^ip_|_ip$)";
 
 /// GET /api/auth/export: a JSON file of the account and every row keyed to it, with a short readme
 /// (a sign-in confirmed in the last five minutes; three a day). Sign-in history comes from

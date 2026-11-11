@@ -437,8 +437,14 @@ async fn issue(app: &App, grant: &str, scopes: &[String]) -> Res<Value> {
     )
 }
 /// POST /api/oauth/token (form-encoded, as OAuth clients send it).
-async fn token(State(app): State<App>, Form(input): Form<TokenRequest>) -> Response {
-    match exchange(&app, input).await {
+async fn token(
+    State(app): State<App>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    Form(input): Form<TokenRequest>,
+) -> Response {
+    let ip = sec::client_ip(&app, peer, &headers);
+    match exchange(&app, ip, input).await {
         Ok(Ok(body)) => (StatusCode::OK, Json(body)).into_response(),
         Ok(Err((code, why))) => (
             StatusCode::BAD_REQUEST,
@@ -458,8 +464,16 @@ type Refresh = (
     bool,
     Vec<String>,
 );
-async fn exchange(app: &App, input: TokenRequest) -> Res<Outcome> {
-    profiles::rate(app, format!("oauth-token:{}", input.client_id), 120, 60).await?;
+async fn exchange(app: &App, ip: std::net::IpAddr, input: TokenRequest) -> Res<Outcome> {
+    // Per app and address: the client ID is public, so a budget keyed on it alone would let
+    // anyone use up another app's. The digest keeps an oversized ID out of the key.
+    profiles::rate(
+        app,
+        format!("oauth-token:{}:{ip}", sec::digest(&input.client_id)),
+        120,
+        60,
+    )
+    .await?;
     let client: Option<(Option<String>, bool)> =
         sqlx::query_as("SELECT secret_hash,suspended_at IS NOT NULL FROM dev_apps WHERE id=$1")
             .bind(&input.client_id)
@@ -773,6 +787,21 @@ pub async fn identify(
         return Err(unauthorized("That token belongs to another app."));
     }
     Ok(Some((user, scopes)))
+}
+/// Ends every app's access to a person's account; the tokens stop working at once.
+pub async fn revoke_all(db: &mut sqlx::PgConnection, user: &str) -> Res<()> {
+    sqlx::query("UPDATE oauth_grants SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL")
+        .bind(user)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+/// Whether a connection `identify` let in may stay open. Like the integration gateway it follows
+/// the grant, not the hour-long access token: it ends once the grant is removed or the app suspended.
+pub async fn connected(app: &App, client: &str, user: Option<&str>) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dev_apps a WHERE a.id=$1 AND a.suspended_at IS NULL
+        AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM oauth_grants g WHERE g.app_id=a.id AND g.user_id=$2 AND g.revoked_at IS NULL)))")
+        .bind(client).bind(user).fetch_one(&app.db).await?)
 }
 pub async fn caller(
     app: &App,

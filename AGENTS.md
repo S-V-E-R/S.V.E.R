@@ -78,6 +78,7 @@ One repo, one primary implementer (you). No lane rules, no agent ownership split
 
 ```
 /apps/web               Next.js frontend (pnpm through corepack: `corepack pnpm ...`)
+/apps/mobile            Expo app for iOS and Android (pnpm through corepack, its own lockfile)
 /apps/api/crates/sver   Rust backend; each module is its own file under src/ (a folder once it grows)
 /migrations             SQLx migrations, applied by the API on startup
 /infra                  Dockerfiles, Nginx, backup units

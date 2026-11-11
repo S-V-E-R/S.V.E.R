@@ -1,11 +1,11 @@
 /* Fastmarch (docs/FASTMARCH.md): flat lines on navy, no glow (docs/DESIGN.md). */
-.fastmarch { padding: 20px; margin-top: 24px; }
+.fastmarch { padding: 24px; margin-top: 24px; }
 .fastmarch-head h2 { margin: 0 0 4px; font-size: 22px; }
-.fastmarch-head p { margin: 0 0 10px; color: var(--ink-muted); }
-.fastmarch-riders { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 12px; padding: 0; list-style: none; font: 600 14px/1.4 var(--font-label), sans-serif; letter-spacing: .06em; }
-.fastmarch-swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; }
+.fastmarch-head p { margin: 0 0 12px; color: var(--ink-muted); }
+.fastmarch-riders { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 12px; padding: 0; list-style: none; font: 600 14px/1.4 var(--font-label), sans-serif; letter-spacing: .06em; }
+.fastmarch-swatch { display: inline-block; width: 10px; height: 10px; margin-right: 8px; }
 .fastmarch-stage { position: relative; }
 .fastmarch-canvas { display: block; width: 100%; height: auto; aspect-ratio: 60 / 36; border: 1px solid var(--line); background: #0B0E16; touch-action: none; }
 .fastmarch-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; padding: 16px; background: rgba(7, 8, 11, .55); }
-.fastmarch-sides { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
-.fastmarch-result { min-height: 1.5em; margin: 10px 0 0; }
+.fastmarch-sides { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.fastmarch-result { min-height: 1.5em; margin: 12px 0 0; }

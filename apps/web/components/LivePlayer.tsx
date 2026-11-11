@@ -92,7 +92,8 @@ export async function startHls(video: HTMLVideoElement, url: string, onFatal: ()
   if (!Hls.isSupported()) {
     if (!video.canPlayType("application/vnd.apple.mpegurl")) throw new Error("This browser can't play the stream.");
     video.src = url;
-    return () => { video.removeAttribute("src"); video.load(); };
+    video.addEventListener("error", onFatal);
+    return () => { video.removeEventListener("error", onFatal); video.removeAttribute("src"); video.load(); };
   }
   // Measured October 7, 2026: with the defaults the CDN path ran 3.5 s behind direct WebRTC
   // (about 5 s end to end, the limit). Hold about 2 s behind the live edge (1-second segments),
@@ -121,6 +122,7 @@ function playingWithin(video: HTMLVideoElement, ms: number) {
 export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, muted, onUnmute, followRaids = true, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; muted?: boolean; onUnmute?: () => void; followRaids?: boolean; children?: React.ReactNode }) {
   const router = useRouter();
   const [live, setLive] = useState<Live | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
   const [lastRaid, setLastRaid] = useState<Raid | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   // Autoplay with sound was refused, so the stream started muted; the Unmute button turns it on.
@@ -171,6 +173,8 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     // `?transport=hls` on the page asks for HLS (the CDN path), e.g. for latency checks.
     const hlsOnly = new URLSearchParams(window.location.search).get("transport") === "hls";
     const result = await send<Live>("GET", hlsOnly ? `${path}?transport=hls` : path);
+    // A failed load isn't "offline": before anything has loaded it shows an error with a retry.
+    setUnreachable(!result.ok);
     if (!result.ok) return;
     setLive(result.data);
     if (result.data.live) setLastRaid(result.data.raid ?? null);
@@ -235,7 +239,10 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     if (rewind || warning || !broadcast || !element || (!webrtc && !hlsKey)) return;
     let stop: (() => void) | null = null;
     let cancelled = false;
-    const fail = () => { if (!cancelled) setPhase("reconnecting"); };
+    // A transport error once playing reconnects; one during startup moves on to the next transport.
+    let playing = false;
+    let dropStartup = () => {};
+    const fail = () => { if (cancelled) return; if (playing) setPhase("reconnecting"); else dropStartup(); };
     (async () => {
       setPhase("loading");
       const current = hlsUrl.current;
@@ -243,19 +250,23 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       for (const url of order) {
         if (!url || cancelled) continue;
         try {
+          const dropped = new Promise<never>((_, reject) => { dropStartup = () => reject(new Error("transport")); });
+          dropped.catch(() => {});
           stop = url === webrtc ? await startWebRtc(element, url, fail) : await startHls(element, url, fail);
           if (cancelled) break;
           const started = playingWithin(element, 8000);
+          started.catch(() => {});
           // Browsers may refuse autoplay with sound: start muted with an Unmute button instead. If
           // even muted autoplay is refused, keep the stream loaded behind a Play button (no
           // startup timeout tears it down while the viewer decides).
-          const allowed = await element.play().then(() => true, async () => {
+          const allowed = await Promise.race([dropped, element.play().then(() => true, async () => {
             if (element.muted) return false;
             element.muted = true;
             return element.play().then(() => { if (!cancelled) setAutoMuted(true); return true; }, () => false);
-          });
-          if (!allowed) { started.catch(() => {}); if (!cancelled) { setPhase("blocked"); setTransport(url === webrtc ? "webrtc" : "hls"); } return; }
-          await started;
+          })]);
+          if (!allowed) { playing = true; if (!cancelled) { setPhase("blocked"); setTransport(url === webrtc ? "webrtc" : "hls"); } return; }
+          await Promise.race([dropped, started]);
+          playing = true;
           if (!cancelled) { setPhase("playing"); setTransport(url === webrtc ? "webrtc" : "hls"); }
           return;
         } catch {
@@ -304,6 +315,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     {isOwner ? <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s{counting.target.mature && <> (labeled mature: viewers under 18 stay behind)</>} <button type="button" className="small quiet" onClick={() => void send("DELETE", "/api/me/raids").then(r => { if (r.ok) setPushed(null); })}>Cancel raid</button></>
       : <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s <button type="button" className="small quiet" onClick={() => setStayed(counting.id)}>Stay here</button></>}
   </div>;
+  if (!live && unreachable) return <div className="live-player"><div className="panel" role="alert"><p>The stream couldn&apos;t be loaded.</p><button type="button" className="small" onClick={() => void load()}>Try again</button></div></div>;
   if (!live?.live) {
     // An offline channel hosting a live one shows that stream; its viewers count for the target.
     if (live?.hosting && !nested) return <div className="hosting">
@@ -321,12 +333,14 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
   </div></div>;
   if (live.banned || (!webrtc && !hls)) return <div className="live-player"><p className="panel" role="status">{live.banned ? "You're banned from this channel, so the stream isn't available while you're signed in." : "This stream can't be played here yet."}</p>{meta}{live.war && <WarActivityNote war={live.war} />}</div>;
   const status = live.state === "RECONNECTING" || phase === "reconnecting" ? "Reconnecting…" : phase === "loading" ? "Loading the stream…" : null;
-  return <div className={`live-player${focused ? " focused" : ""}${adOn ? " ad-on" : ""}`}>
+  // The frame (the video and what is drawn over it) is separate from the details under it, so
+  // the phone watch page can pin the frame while the rest scrolls (styles/discovery.css).
+  return <div className="live-shell"><div className={`live-player${focused ? " focused" : ""}${adOn ? " ad-on" : ""}`}>
     {rewind ? <RecordedPlayer id={rewind} autoPlay /> : <video ref={video} controls playsInline muted={muted} onVolumeChange={event => { if (!event.currentTarget.muted) { setAutoMuted(false); onUnmute?.(); } }} onPause={() => setPaused(true)} onPlay={() => setPaused(false)} aria-label={`${live.title}, live`} />}
     {!rewind && <PlayerEffects username={username} video={video} transport={transport} />}
     {!rewind && status && <p className="player-status" role="status">{status}</p>}
     {!rewind && live.ad_break && !live.is_owner && <AdBreak key={live.ad_break.id} username={username} endsAt={live.ad_break.ends_at} muted={!!muted || autoMuted} signedIn={!!signedIn} captioned={!!captioned} onActive={setAdOn} />}
-    {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing")); }}>Play</button>}
+    {!rewind && phase === "blocked" && <button type="button" className="player-action" onClick={() => { void video.current?.play().then(() => setPhase("playing"), () => {}); }}>Play</button>}
     {!rewind && paused && phase === "playing" && <button type="button" className="player-action" onClick={() => {
       const element = video.current;
       if (!element) return;
@@ -338,14 +352,15 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     {!rewind && captioned && <CaptionOverlay key={transport ?? ""} video={video} on={wantCaptions} channel={live.caption_style} isOwner={live.is_owner} />}
     {!rewind && captioned && <button type="button" className="player-cc small" aria-pressed={captionsOn} onClick={() => setCaptionsPreferred(!captionsOn)} title={captionsOn ? "Turn captions off" : "Turn captions on (the stream plays a few seconds further behind live)"}>CC</button>}
     {!rewind && phase === "failed" && <div className="player-action" role="alert"><p>The stream couldn&apos;t be played.</p><button type="button" onClick={() => setAttempt(n => n + 1)}>Retry</button></div>}
+    {raidBar}
+  </div><div className="live-details">
     <LiveVideoTools username={username} signedIn={signedIn || live.is_owner} rewind={!!rewind} onRewind={setRewind} />
     {sitekey && <Turnstile sitekey={sitekey} action="playback" onToken={onToken} size={nested ? "compact" : "normal"} />}
-    {raidBar}
     <div className="live-meta"><span className="live badge">Live</span>{live.mature && <> <span className="chip mature-tag">Mature</span></>} <strong>{live.title}</strong>{live.category && <span className="chip">{live.category}</span>} <span className="muted">{live.viewers.toLocaleString()} watching · <Uptime since={live.started_at} /></span> {!focused && !nested && <Link href={`/${username}/live`}>Watch with chat</Link>}
       {!rewind && <PlayerSettings username={username} broadcast={live.broadcast_id} video={video} transport={transport} browserId={browserId} />}
       {signedIn && !live.is_owner ? <ReportButton target={{ target_type: "live_stream", target_id: live.broadcast_id }} label="Report stream" /> : <TakeDownLink target={{ target_type: "live_stream", target_id: live.broadcast_id }} />}</div>
     {live.war && <WarActivityNote war={live.war} />}
-  </div>;
+  </div></div>;
 }
 
 /** Eligibility for this broadcast. The polite note speaks only when the status code changes, not on every poll. */

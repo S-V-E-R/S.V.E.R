@@ -500,7 +500,14 @@ async fn cancel(
     Path(name): Path<String>,
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
-    let (channel, _) = channel(&app, &name).await?;
+    // Any channel the viewer still pays, eligible or not: a suspended or deleted channel's page is
+    // gone, but its subscribers must still be able to stop the charge.
+    let channel: String =
+        sqlx::query_scalar("SELECT id FROM users WHERE lower(username)=lower($1)")
+            .bind(&name)
+            .fetch_optional(&app.db)
+            .await?
+            .ok_or_else(Fail::channel_missing)?;
     let (subscription, _) = renewing(&app, &channel, &user.id).await?;
     stripe::post(
         &app.http,
@@ -733,7 +740,7 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
     let month =
         i32::from(matches!(reason, "subscription_create" | "subscription_cycle") && cents > 0);
     let months: i32 = sqlx::query_scalar("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months,stripe_subscription) VALUES($1,$2,$3,to_timestamp($4),$5,$6)
-        ON CONFLICT(channel_id,user_id) DO UPDATE SET tier=EXCLUDED.tier,
+        ON CONFLICT(channel_id,user_id) DO UPDATE SET tier=CASE WHEN $8 THEN EXCLUDED.tier ELSE channel_subs.tier END,
             paid_through=greatest(channel_subs.paid_through,EXCLUDED.paid_through),
             months=channel_subs.months+EXCLUDED.months,
             stripe_subscription=CASE WHEN $7 THEN EXCLUDED.stripe_subscription ELSE channel_subs.stripe_subscription END,
@@ -741,6 +748,9 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
             updated_at=now() RETURNING months")
         .bind(channel).bind(user).bind(tier).bind(end as f64).bind(month)
         .bind(details["subscription"].as_str()).bind(reason == "subscription_create")
+        // A $0 trial invoice keeps the gifted month's tier; the tier chosen at checkout starts
+        // with its first paid invoice.
+        .bind(cents > 0)
         .fetch_one(&mut *tx).await?;
     if month > 0 {
         crate::bot::record(tx, channel, "sub", user, months.into()).await?;
@@ -763,6 +773,21 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
     Ok(())
 }
 
+/// Stops renewal of every card subscription a deleted account still pays for, and of those to a
+/// channel that is about to be erased, so nobody is charged with no account or channel to cancel
+/// from. Benefits run to the end of the paid month. Runs when an account is deleted and before
+/// each erasure pass; an error leaves the rest for the next pass.
+pub async fn stop_deleted(app: &App) -> Res<()> {
+    let due: Vec<String> = sqlx::query_scalar("SELECT s.stripe_subscription FROM channel_subs s JOIN users u ON u.id=s.user_id JOIN users c ON c.id=s.channel_id WHERE (u.deleted_at IS NOT NULL OR c.deleted_at<=now()-interval '14 days') AND s.stripe_subscription IS NOT NULL AND NOT s.cancel_at_period_end")
+        .fetch_all(&app.db)
+        .await?;
+    for subscription in due {
+        stripe::stop_renewal(&app.http, &app.config.stripe, &subscription).await?;
+        sqlx::query("UPDATE channel_subs SET cancel_at_period_end=true,updated_at=now() WHERE stripe_subscription=$1")
+            .bind(&subscription).execute(&app.db).await?;
+    }
+    Ok(())
+}
 /// Three days before a gifted or Valor month ends, an in-site reminder offers to keep it
 /// (docs/CHANNEL_ADDITIONS.md "Keep a gifted subscription"); once per month that ends.
 pub async fn remind(app: &App) -> Res<()> {
@@ -805,8 +830,8 @@ pub(crate) async fn subscription_changed(
     Ok(())
 }
 
-/// A fully refunded subscription payment that paid for the current period ends the benefits now
-/// and stops renewal; an older month's refund leaves a later paid month alone (as supporters do).
+/// A fully refunded subscription payment (or one lost to a dispute) that paid for the current
+/// period ends the benefits now and stops renewal; an older month's refund leaves a later paid month alone (as supporters do).
 pub(crate) async fn refunded_in_full(app: &App, tx: &mut PgConnection, intent: &str) -> Res<()> {
     let Some((channel, user, latest)): Option<(String, String, bool)> = sqlx::query_as("SELECT i.channel_id,i.user_id,NOT EXISTS(SELECT 1 FROM sub_invoices l WHERE l.channel_id=i.channel_id AND l.user_id=i.user_id AND l.amount_cents>0 AND l.created_at>i.created_at) FROM sub_invoices i WHERE i.payment_intent=$1")
         .bind(intent)

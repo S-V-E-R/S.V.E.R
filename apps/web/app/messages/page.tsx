@@ -135,10 +135,11 @@ export default function Messages() {
         }
       };
       // 4001: the session ended (signed out everywhere, password changed); don't keep retrying.
-      socket.onclose = event => { if (!closed && event.code !== 4001) setTimeout(connect, 5000); };
+      socket.onclose = event => { if (!closed && event.code !== 4001) retry = setTimeout(connect, 5000); };
     };
+    let retry: ReturnType<typeof setTimeout> | undefined;
     connect();
-    return () => { closed = true; clearInterval(poll); socket?.close(); };
+    return () => { closed = true; clearInterval(poll); clearTimeout(retry); socket?.close(); };
   }, [loadList, loadThread, touch]);
   // Follow the newest message; loading older ones above doesn't jump to the bottom.
   const newest = thread?.messages.at(-1)?.id;
