@@ -309,11 +309,23 @@ async fn delete_app(
     Path(id): Path<String>,
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
+    let mut tx = app.db.begin().await?;
+    let owned: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dev_apps WHERE id=$1 AND owner_id=$2)")
+            .bind(&id)
+            .bind(&user.id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if owned {
+        // Its catalog listing goes with it, and the listing's images are queued for deletion.
+        crate::catalog::forget(&mut tx, &id).await?;
+    }
     sqlx::query("DELETE FROM dev_apps WHERE id=$1 AND owner_id=$2")
         .bind(&id)
         .bind(&user.id)
-        .execute(&app.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     my_apps(&app, &user.id).await
 }
 

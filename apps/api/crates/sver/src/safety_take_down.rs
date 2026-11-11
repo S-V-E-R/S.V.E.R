@@ -165,6 +165,7 @@ pub async fn remove_media(db: &mut PgConnection, root: &str) -> Res<Vec<String>>
         .bind(root).fetch_all(&mut *db).await?;
     owners.extend(crate::emotes::remove_media(db, root).await?);
     owners.extend(crate::guilds::remove_media(db, root).await?);
+    owners.extend(crate::catalog::remove_media(db, root).await?);
     owners.sort();
     owners.dedup();
     sqlx::query("UPDATE profiles SET avatar_key=CASE WHEN split_part(avatar_key,'@',1)=$1 THEN NULL ELSE avatar_key END,banner_key=CASE WHEN split_part(banner_key,'@',1)=$1 THEN NULL ELSE banner_key END,song_thumb_key=CASE WHEN song_thumb_key=$1 THEN NULL ELSE song_thumb_key END WHERE split_part(avatar_key,'@',1)=$1 OR split_part(banner_key,'@',1)=$1 OR song_thumb_key=$1")
