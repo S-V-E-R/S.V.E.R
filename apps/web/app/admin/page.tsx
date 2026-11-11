@@ -5,7 +5,7 @@ import { send, useLoad } from "../../lib/client-api";
 
 type Home = {
   take_down: { open: number; overdue: number; next_deadline: string | null };
-  counts: { reports: number; appeals: number; copyright: number; integrity: number; media: number; live: number };
+  counts: { reports: number; appeals: number; copyright: number; integrity: number; media: number; catalog: number; live: number };
   jobs_stuck: number; paused: string[];
 };
 
@@ -28,6 +28,7 @@ export default function AdminHome() {
     ["/admin/copyright", "Copyright cases open", home.counts.copyright],
     ["/admin/integrity", "Viewer integrity cases", home.counts.integrity],
     ["/admin/media", "Emotes awaiting review", home.counts.media],
+    ["/admin/catalog", "Catalog listings awaiting review", home.counts.catalog],
     ["/admin/jobs", "Stuck or failed jobs", home.jobs_stuck],
     ["/admin/streams", "Live now", home.counts.live],
   ];

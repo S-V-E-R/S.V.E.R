@@ -14,7 +14,7 @@ type Mine = {
   input_cap: number | null; typical_balance: number | null;
   /** The connection whose game set the live board, if one did. */
   set_by: string | null;
-  library: { id: string; name: string; updated_at: string; from_game: boolean }[]; library_max: number;
+  library: { id: string; name: string; updated_at: string; from_game: boolean; from_catalog?: boolean }[]; library_max: number;
   /** After a load or import: controls whose effect was replaced with "none". */
   changed?: string[];
   checklist: { label: string; ok: boolean; required: boolean }[]; templates: { name: string; board: BoardDef }[];
@@ -161,8 +161,9 @@ export default function StudioBoard() {
       <Status state={state} />
     </Section>
     <Section title="Library and files" intro={`Keep up to ${mine.library_max} boards beside your draft, and share a board as a file. Nothing here is live: load a board into the draft, then publish it.`}>
+      <p><Link href="/crowdsync">Find games and ready-made boards in the catalog</Link></p>
       {mine.library.length > 0 && <ul className="list">{mine.library.map(b => <li key={b.id}>
-        <span><strong>{b.name}</strong> · {b.from_game ? "from a game · " : ""}saved {new Date(b.updated_at).toLocaleDateString()}</span>
+        <span><strong>{b.name}</strong> · {b.from_game ? "from a game · " : b.from_catalog ? "from the catalog · " : ""}saved {new Date(b.updated_at).toLocaleDateString()}</span>
         <span className="row wrap">
           <button type="button" className="small quiet" disabled={busy} onClick={() => { if (replaceDraft(b.name)) void library("POST", `/api/me/board/library/${b.id}/load`, undefined, `"${b.name}" is now your draft.`, false); }}>Load into draft</button>
           <button type="button" className="small quiet danger-text" disabled={busy} onClick={() => { if (window.confirm(`Delete "${b.name}" from your library?`)) void library("DELETE", `/api/me/board/library/${b.id}`, undefined, "Deleted.", true); }}>Delete</button>
