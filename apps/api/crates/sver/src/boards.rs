@@ -450,7 +450,8 @@ async fn studio(app: &App, user: &auth::User) -> Res<Value> {
     Ok(json!({
         "username": user.username,
         "draft": row.draft.0, "published": row.published.as_ref().map(|p| &p.0),
-        "version": row.version, "published_at": row.published_at,
+        // A restored board can be "nothing published", which has no live-since time.
+        "version": row.version, "published_at": row.published.as_ref().and(row.published_at),
         "disabled": row.disabled, "moderators_run": row.moderators_run,
         "overlay": {"set": row.overlay_set, "connected": row.overlay},
         "webhook_url": row.webhook_url, "input_cap": row.input_cap,
