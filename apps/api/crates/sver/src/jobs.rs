@@ -1,4 +1,4 @@
-use crate::{App, Error, Result, auth::User, security as sec};
+use crate::{App, Result, auth::User, security as sec};
 use serde_json::{Value, json};
 use sqlx::{FromRow, PgConnection};
 
@@ -62,7 +62,11 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::alerts::fan_out(app).await.is_err() {
         eprintln!("alerts_event=fan_out outcome=retry");
     }
-    deliver_mail(app).await?;
+    // Like every step above: a mail problem is retried next pass and never stops the maintenance
+    // that follows (hold releases, removals, erasure, cleanup).
+    if deliver_mail(app).await.is_err() {
+        eprintln!("mail_event=delivery outcome=retry");
+    }
     if crate::videos::copyright::tick(app).await.is_err() {
         eprintln!("copyright_event=maintenance outcome=retry");
     }
@@ -127,12 +131,9 @@ pub async fn tick(app: &App) -> Result<()> {
     if crate::subs::stop_deleted(app).await.is_ok()
         && crate::supporters::stop_deleted(app).await.is_ok()
     {
+        // Accounts are only ever removed through `erase` (50 a pass), which queues their media and
+        // recordings for deletion; a larger backlog waits for the next passes.
         crate::profile_jobs::tick(app).await?;
-        sqlx::query(
-            "DELETE FROM users WHERE deleted_at<=now()-interval '14 days' AND NOT legacy_deletion_hold",
-        )
-        .execute(&app.db)
-        .await?;
     } else {
         eprintln!("subs_event=stop_deleted outcome=retry");
     }
@@ -177,8 +178,22 @@ async fn deliver_mail(app: &App) -> Result<()> {
         let Some(mail) = mail else {
             return Ok(());
         };
-        let mut payload: Value = serde_json::from_str(&sec::unseal(app, "mail", &mail.payload)?)
-            .map_err(|_| Error::internal())?;
+        // A row that can't be opened (a key change, a corrupt payload) can never be sent: it fails
+        // now instead of being picked first on every pass until it expires.
+        let opened = sec::unseal(app, "mail", &mail.payload)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        let Some(mut payload) = opened else {
+            crate::take_down::notice_result(&mut tx, &mail.id, "failed", true).await?;
+            crate::videos::copyright::mail_result(&mut tx, &mail.id, "failed").await?;
+            sqlx::query("DELETE FROM mail_jobs WHERE id=$1")
+                .bind(&mail.id)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            eprintln!("mail_event=unreadable outcome=dropped");
+            continue;
+        };
         payload["from"] = json!(app.config.mail_from);
         let delivered = app
             .http
