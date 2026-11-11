@@ -229,6 +229,14 @@ namespace Sver.Board
         public Task SetInputCap(int? perSecond) =>
             Send(new JObject { ["type"] = "cap", ["id"] = nextId++, ["per_second"] = perSecond.HasValue ? new JValue(perSecond.Value) : JValue.CreateNull() });
 
+        /// <summary>
+        /// Makes this game's own board the live board while the game is connected, if the streamer switched on
+        /// "May set my board" for this connection (otherwise Error fires with the reason). board is {"screens":[{"name","controls":[…]}]}.
+        /// Call it again on every Hello; at most once every 10 seconds.
+        /// </summary>
+        public Task Define(string name, JObject board) =>
+            Send(new JObject { ["type"] = "define", ["id"] = nextId++, ["name"] = name, ["board"] = board });
+
         async Task Send(JObject message)
         {
             if (!Connected) throw new InvalidOperationException("Not connected to S.V.E.R.");

@@ -12,6 +12,11 @@ type Mine = {
   username: string; draft: BoardDef; published: BoardDef | null; version: number; published_at: string | null;
   disabled: boolean; moderators_run: boolean; overlay: { set: boolean; connected: boolean }; webhook_url: string | null;
   input_cap: number | null; typical_balance: number | null;
+  /** The connection whose game set the live board, if one did. */
+  set_by: string | null;
+  library: { id: string; name: string; updated_at: string; from_game: boolean }[]; library_max: number;
+  /** After a load or import: controls whose effect was replaced with "none". */
+  changed?: string[];
   checklist: { label: string; ok: boolean; required: boolean }[]; templates: { name: string; board: BoardDef }[];
   effects: string[]; custom_effects: { value: string; name: string }[]; kinds: Control["kind"][]; audiences: Control["audience"][]; webhook_secret?: string | null;
 };
@@ -64,6 +69,9 @@ export default function StudioBoard() {
   const [secret, setSecret] = useState<string | null>(null);
   const [overlayUrl, setOverlayUrl] = useState<string | null>(null);
   const [shown, add] = useShown();
+  const [saveAs, setSaveAs] = useState("");
+  const [libraryState, setLibraryState] = useState<SaveState>({});
+  const [connectionsKey, setConnectionsKey] = useState(0);
   const accept = useCallback((data: Mine, keepDraft = false) => {
     setMine(data);
     if (!keepDraft) { setBoard(data.draft); setDirty(false); }
@@ -96,11 +104,37 @@ export default function StudioBoard() {
     const r = await send<{ effect: BoardEvent }>("POST", "/api/me/board/test", { control: control.id });
     if (r.ok) add(r.data.effect); else setState({ error: r.error });
   }
+  /** Library and file actions report under the library, not under the builder. */
+  async function library(method: string, path: string, body: unknown, done: string, keepDraft: boolean) {
+    setBusy(true); setLibraryState({});
+    const r = await send<Mine>(method, path, body);
+    setBusy(false);
+    if (!r.ok) { setLibraryState({ error: r.error }); return; }
+    accept(r.data, keepDraft);
+    if (!keepDraft) setScreen(0);
+    setLibraryState({ saved: r.data.changed?.length ? `${done} These controls used Skills that aren't yours, so they now play no effect: ${r.data.changed.join(", ")}.` : done });
+  }
+  const replaceDraft = (name: string) => !dirty || window.confirm(`Load "${name}" into the draft? Your unsaved changes will be lost.`);
+  function exportFile() {
+    const name = saveAs.trim() || `${mine!.username} board`;
+    const url = URL.createObjectURL(new Blob([JSON.stringify({ sver_board: 1, name, board }, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${name.replace(/[^\w -]+/g, "").trim() || "board"}.sverboard.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+  async function importFile(file: File) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(await file.text()); } catch { setLibraryState({ error: "That isn't a S.V.E.R board file." }); return; }
+    if (replaceDraft(file.name)) await library("POST", "/api/me/board/import", parsed, "Imported into the draft. Check it, then publish.", false);
+  }
   const required = mine.checklist.filter(c => c.required && !c.ok);
   const live = `/api/channels/${encodeURIComponent(mine.username)}/board`;
 
   return <><h1>Board</h1>
     <p className="intro">Viewers use your board under the player. Presses spend your channel&apos;s Engagement Valor (or are free) and play effects on stream. <Link href={`/${mine.username}/live`}>See it on your channel</Link>.</p>
+    {mine.set_by && <p role="status" className="form-message">Your board is set by <strong>{mine.set_by}</strong>. Your own board comes back when it disconnects. <button type="button" className="small" disabled={busy} onClick={async () => { await act("POST", "/api/me/board/take-back", undefined, "Your board is back, and that connection may no longer set it.", dirty); setConnectionsKey(k => k + 1); }}>Take it back</button></p>}
     <Section title="Build" intro="Edits change only the draft. Viewers keep the published board until you publish again.">
       <div className="row wrap">
         <label className="field narrow"><span>Start from a template</span><select value="" onChange={e => { const t = mine.templates.find(x => x.name === e.target.value); if (t && window.confirm(`Replace the draft with "${t.name}"?`)) { edit(t.board); setScreen(0); } }}><option value="">Choose…</option>{mine.templates.map(t => <option key={t.name}>{t.name}</option>)}</select></label>
@@ -125,6 +159,24 @@ export default function StudioBoard() {
         {dirty && <span className="muted">Unsaved changes</span>}
       </div>
       <Status state={state} />
+    </Section>
+    <Section title="Library and files" intro={`Keep up to ${mine.library_max} boards beside your draft, and share a board as a file. Nothing here is live: load a board into the draft, then publish it.`}>
+      {mine.library.length > 0 && <ul className="list">{mine.library.map(b => <li key={b.id}>
+        <span><strong>{b.name}</strong> · {b.from_game ? "from a game · " : ""}saved {new Date(b.updated_at).toLocaleDateString()}</span>
+        <span className="row wrap">
+          <button type="button" className="small quiet" disabled={busy} onClick={() => { if (replaceDraft(b.name)) void library("POST", `/api/me/board/library/${b.id}/load`, undefined, `"${b.name}" is now your draft.`, false); }}>Load into draft</button>
+          <button type="button" className="small quiet danger-text" disabled={busy} onClick={() => { if (window.confirm(`Delete "${b.name}" from your library?`)) void library("DELETE", `/api/me/board/library/${b.id}`, undefined, "Deleted.", true); }}>Delete</button>
+        </span>
+      </li>)}</ul>}
+      <form className="row wrap" onSubmit={e => { e.preventDefault(); void library("POST", "/api/me/board/library", { name: saveAs, board }, "Saved to your library.", true); }}>
+        <label className="field narrow"><span>Name</span><input value={saveAs} maxLength={40} required onChange={e => setSaveAs(e.target.value)} /></label>
+        <button className="small" disabled={busy}>Save draft to library</button>
+      </form>
+      <div className="row wrap">
+        <button type="button" className="small quiet" onClick={exportFile}>Export</button>
+        <label className="field narrow"><span>Import a board file (.sverboard.json)</span><input type="file" accept=".json,application/json" onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (file) void importFile(file); }} /></label>
+      </div>
+      <Status state={libraryState} />
     </Section>
     <Section title="Test mode" intro="Test plays a control's effect here and in your OBS overlay. Nothing is charged or recorded, and viewers see nothing.">
       <div className="board-preview"><EffectStage events={shown} calm={false} /></div>
@@ -159,18 +211,18 @@ export default function StudioBoard() {
     </Section>
     <SkillSettings />
     <CustomSkills />
-    <Connections />
+    <Connections key={connectionsKey} onChange={load} />
   </>;
 }
 
-type Connection = { id: string; kind: "bridge" | "game"; name: string; created_at: string; last_used_at: string | null };
+type Connection = { id: string; kind: "bridge" | "game"; name: string; may_define: boolean; created_at: string; last_used_at: string | null };
 /**
  * Scoped tokens for the S.V.E.R bridge (OBS on your PC) and for games (docs/CROWDSYNC.md "Game
  * SDK"). They connect only to the integration gateway; the token is shown once.
  */
-function Connections() {
+function Connections({ onChange }: { onChange: () => void }) {
   const [data, setData] = useState<{ tokens: Connection[]; gateway: string } | null>(null);
-  const [draft, setDraft] = useState({ kind: "bridge" as Connection["kind"], name: "" });
+  const [draft, setDraft] = useState({ kind: "bridge" as Connection["kind"], name: "", may_define: false });
   const [fresh, setFresh] = useState<string | null>(null);
   const [state, setState] = useState<SaveState>({});
   const load = useCallback(async () => {
@@ -182,22 +234,28 @@ function Connections() {
   async function create(e: React.FormEvent) {
     e.preventDefault();
     const r = await send<{ tokens: Connection[]; gateway: string; token: string }>("POST", "/api/me/integrations", draft);
-    if (r.ok) { setData(r.data); setFresh(r.data.token); setDraft({ ...draft, name: "" }); setState({}); } else setState({ error: r.error });
+    if (r.ok) { setData(r.data); setFresh(r.data.token); setDraft({ ...draft, name: "", may_define: false }); setState({}); } else setState({ error: r.error });
+  }
+  async function allow(c: Connection, on: boolean) {
+    const r = await send<{ tokens: Connection[] }>("PUT", `/api/me/integrations/${c.id}`, { may_define: on });
+    if (r.ok) { setData({ ...data!, tokens: r.data.tokens }); setState({}); onChange(); } else setState({ error: r.error });
   }
   async function revoke(c: Connection) {
     if (!window.confirm(`Disconnect ${c.name}? Its token stops working.`)) return;
     const r = await send<{ tokens: Connection[] }>("DELETE", `/api/me/integrations/${c.id}`);
     if (r.ok) setData({ ...data!, tokens: r.data.tokens }); else setState({ error: r.error });
   }
-  return <Section title="Connections" intro="Connect the S.V.E.R bridge to switch OBS scenes and sources from board presses, or a game to receive presses, joystick moves and text, and update the board. Each connection has its own private token; disconnect it any time.">
+  return <Section title="Connections" intro="Connect the S.V.E.R bridge to switch OBS scenes and sources from board presses, or a game to receive presses, joystick moves and text, and update the board. A game with “May set my board” can replace your live board with its own while it is connected; yours comes back when it disconnects. Each connection has its own private token; disconnect it any time.">
     {data.tokens.length > 0 && <ul className="list">{data.tokens.map(c => <li key={c.id}>
       <span><strong>{c.name}</strong> · {c.kind === "bridge" ? "OBS bridge" : "Game"} · {c.last_used_at ? `last connected ${new Date(c.last_used_at).toLocaleString()}` : "never connected"}</span>
+      {c.kind === "game" && <label className="checkbox"><input type="checkbox" checked={c.may_define} onChange={e => void allow(c, e.target.checked)} /> May set my board</label>}
       <button type="button" className="link-button" onClick={() => revoke(c)}>Disconnect</button>
     </li>)}</ul>}
     {fresh && <p className="form-message">Copy this token now; it won&apos;t be shown again. <code>{fresh}</code> <CopyButton value={fresh} label="connection token" /><br />Gateway: <code>{data.gateway}</code></p>}
     <form className="reward-form" onSubmit={create}>
       <label className="field narrow"><span>Type</span><select value={draft.kind} onChange={e => setDraft({ ...draft, kind: e.target.value as Connection["kind"] })}><option value="bridge">OBS bridge</option><option value="game">Game</option></select></label>
       <label className="field"><span>Name</span><input value={draft.name} maxLength={40} required placeholder={draft.kind === "bridge" ? "Streaming PC" : "My game"} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label>
+      {draft.kind === "game" && <label className="checkbox"><input type="checkbox" checked={draft.may_define} onChange={e => setDraft({ ...draft, may_define: e.target.checked })} /> May set my board</label>}
       <button className="small">Create token</button>
     </form>
     <p className="muted small">The bridge app and the game SDKs (JavaScript, Unity, Unreal) are in the S.V.E.R repository under <code>integrations/</code>.</p>

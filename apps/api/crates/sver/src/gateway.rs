@@ -32,7 +32,8 @@ use std::{
 const MAX_TOKENS: i64 = 10;
 /// Messages a client may send per second.
 const MESSAGES_PER_SECOND: u32 = 10;
-const FRAME: usize = 16 * 1024;
+/// The largest message: a full board in a "define", the same limit as saving a draft.
+const FRAME: usize = 64 * 1024;
 /// The app scope with a Studio token's powers over the board.
 const BOARD_SCOPE: &str = "board:control";
 

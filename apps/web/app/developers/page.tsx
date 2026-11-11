@@ -18,7 +18,7 @@ const scopes = [
   ["channel:edit", "Change their stream's title and category"],
   ["channel:run", "Run raids, polls, predictions, highlight markers and the board's pause"],
   ["events:private", "Receive their channel's private events, such as subscriptions and tributes"],
-  ["board:control", "Control their CrowdSync board like a connected game"],
+  ["board:control", "Control their CrowdSync board like a connected game (setting the whole board also needs their “May set my board”)"],
   ["whispers:read", "Read their direct messages as they arrive"],
 ] as const;
 

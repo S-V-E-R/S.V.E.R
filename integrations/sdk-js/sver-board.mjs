@@ -8,6 +8,7 @@
 //   board.on("hello", () => board.ready());                     // after every (re)connect
 //   await board.connect();
 //   await board.setState({ jump: { disabled: true, label: "Jump (cooling)" }, coins: { progress: 3 } });
+//   await board.define("My game", { screens: [...] });          // the game's own board, if the streamer allows it
 //
 // Events: "hello" (connected; the published board), "press" (a viewer pressed a control),
 // "input" (joystick move), "effect" (a Skill, emote combo or Surge celebration), "board" (a new
@@ -148,6 +149,15 @@ export class SverBoard {
   setGroups(by, screens) { return this.request({ type: "groups", by, screens }); }
   /** The most presses and joystick moves a second sent to the game (1–100, or null for none). */
   setInputCap(perSecond) { return this.request({ type: "cap", per_second: perSecond }); }
+  /**
+   * Makes this game's own board the live board while the game is connected (game connections
+   * only). The streamer must have switched on "May set my board" for this connection; otherwise it
+   * rejects with the reason. The board is checked like one built in Creator Studio, can't use the
+   * channel's own Skills as effects, and its costs can't exceed what a typical viewer of the
+   * channel has. The streamer's board comes back when the game disconnects, so call this again
+   * after every "hello". At most once every 10 seconds. A "board" event follows with the new version.
+   */
+  define(name, board) { return this.request({ type: "define", name, board }); }
 
   close() {
     this.stopped = true;
