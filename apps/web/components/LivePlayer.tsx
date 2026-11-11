@@ -235,7 +235,10 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
     if (rewind || warning || !broadcast || !element || (!webrtc && !hlsKey)) return;
     let stop: (() => void) | null = null;
     let cancelled = false;
-    const fail = () => { if (!cancelled) setPhase("reconnecting"); };
+    // A transport error once playing reconnects; one during startup moves on to the next transport.
+    let playing = false;
+    let dropStartup = () => {};
+    const fail = () => { if (cancelled) return; if (playing) setPhase("reconnecting"); else dropStartup(); };
     (async () => {
       setPhase("loading");
       const current = hlsUrl.current;
@@ -243,19 +246,23 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       for (const url of order) {
         if (!url || cancelled) continue;
         try {
+          const dropped = new Promise<never>((_, reject) => { dropStartup = () => reject(new Error("transport")); });
+          dropped.catch(() => {});
           stop = url === webrtc ? await startWebRtc(element, url, fail) : await startHls(element, url, fail);
           if (cancelled) break;
           const started = playingWithin(element, 8000);
+          started.catch(() => {});
           // Browsers may refuse autoplay with sound: start muted with an Unmute button instead. If
           // even muted autoplay is refused, keep the stream loaded behind a Play button (no
           // startup timeout tears it down while the viewer decides).
-          const allowed = await element.play().then(() => true, async () => {
+          const allowed = await Promise.race([dropped, element.play().then(() => true, async () => {
             if (element.muted) return false;
             element.muted = true;
             return element.play().then(() => { if (!cancelled) setAutoMuted(true); return true; }, () => false);
-          });
-          if (!allowed) { started.catch(() => {}); if (!cancelled) { setPhase("blocked"); setTransport(url === webrtc ? "webrtc" : "hls"); } return; }
-          await started;
+          })]);
+          if (!allowed) { playing = true; if (!cancelled) { setPhase("blocked"); setTransport(url === webrtc ? "webrtc" : "hls"); } return; }
+          await Promise.race([dropped, started]);
+          playing = true;
           if (!cancelled) { setPhase("playing"); setTransport(url === webrtc ? "webrtc" : "hls"); }
           return;
         } catch {

@@ -20,31 +20,50 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
-    collections::HashSet,
-    net::SocketAddr,
+    collections::{HashMap, HashSet},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
+    time::{Duration, Instant},
 };
 use tokio::sync::broadcast;
 
 const HISTORY: i64 = 100;
 const FRAME: usize = 8 * 1024;
 const MAX_SOCKETS: usize = 10_000;
+/// Open chat sockets one address may hold, so no single network can fill `MAX_SOCKETS`. Generous
+/// because a campus or carrier shares one address among many viewers.
+const MAX_PER_ADDRESS: usize = 100;
+/// A socket that hasn't answered a ping (browsers do so on their own) for this long is closed.
+const SILENT: Duration = Duration::from_secs(75);
 
 /// Fanout for a single API instance. Running replicas needs a tested cross-instance design first.
 #[derive(Clone)]
 pub struct Hub {
     tx: broadcast::Sender<Arc<Event>>,
     sockets: Arc<AtomicUsize>,
+    addresses: Arc<Mutex<HashMap<IpAddr, usize>>>,
+    /// Emote catalogs by channel, shared by every socket for five seconds.
+    catalogs: Arc<Mutex<Catalogs>>,
 }
+type Catalogs = HashMap<String, (Instant, Vec<Value>)>;
 impl Default for Hub {
     fn default() -> Self {
         Self {
             tx: broadcast::channel(4096).0,
             sockets: Arc::default(),
+            addresses: Arc::default(),
+            catalogs: Arc::default(),
         }
+    }
+}
+/// The address limits count by: an IPv6 /64 is one subscriber, so it counts as one address.
+fn network(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & (!0u128 << 64))),
+        v4 => v4,
     }
 }
 pub struct Event {
@@ -66,11 +85,58 @@ impl Hub {
             payload,
         }));
     }
+    /// Takes a socket slot at connect (released when the socket closes), or refuses.
+    fn open(&self, ip: IpAddr) -> Res<SocketSlot> {
+        let mut open = self.addresses.lock().unwrap_or_else(|e| e.into_inner());
+        if self.sockets.load(Ordering::Relaxed) >= MAX_SOCKETS {
+            return Err(Fail::unavailable("Chat is busy. Please try again shortly."));
+        }
+        let n = open.entry(ip).or_default();
+        if *n >= MAX_PER_ADDRESS {
+            return Err(Fail::new(
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                "Too many chat connections from your network.",
+            ));
+        }
+        *n += 1;
+        self.sockets.fetch_add(1, Ordering::Relaxed);
+        Ok(SocketSlot(self.clone(), ip))
+    }
+    /// The channel's emote catalog, read at most once every five seconds however many sockets ask.
+    async fn emotes(&self, app: &App, channel: &str) -> Res<Vec<Value>> {
+        const AGE: Duration = Duration::from_secs(5);
+        let cached = {
+            let all = self.catalogs.lock().unwrap_or_else(|e| e.into_inner());
+            all.get(channel)
+                .filter(|(at, _)| at.elapsed() < AGE)
+                .map(|(_, rows)| rows.clone())
+        };
+        if let Some(rows) = cached {
+            return Ok(rows);
+        }
+        let rows = crate::emotes::catalog(app, channel).await?;
+        let mut all = self.catalogs.lock().unwrap_or_else(|e| e.into_inner());
+        all.retain(|_, (at, _)| at.elapsed() < AGE);
+        all.insert(channel.into(), (Instant::now(), rows.clone()));
+        Ok(rows)
+    }
 }
-struct SocketSlot(Arc<AtomicUsize>);
+/// A ping every 30 seconds, the first one 30 seconds after connect.
+fn pings() -> tokio::time::Interval {
+    let every = Duration::from_secs(30);
+    tokio::time::interval_at(tokio::time::Instant::now() + every, every)
+}
+struct SocketSlot(Hub, IpAddr);
 impl Drop for SocketSlot {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
+        let mut open = self.0.addresses.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = open.get_mut(&self.1) {
+            *n -= 1;
+            if *n == 0 {
+                open.remove(&self.1);
+            }
+        }
+        self.0.sockets.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -1001,7 +1067,7 @@ pub async fn socket(
     if headers.get("origin").and_then(|v| v.to_str().ok()) != Some(app.config.origin.as_str()) {
         return Err(Fail::denied("Invalid request origin."));
     }
-    let ip = sec::client_ip(&app, peer, &headers);
+    let ip = network(sec::client_ip(&app, peer, &headers));
     sec::reserve(&app, vec![format!("chat-connect:{ip}")], 30, 60).await?;
     let channel = if let Some(id) = &join.squad {
         let viewer = profiles::viewer(&app, &jar).await?;
@@ -1016,13 +1082,11 @@ pub async fn socket(
         mature_gate(&app, &channel, viewer.as_ref().map(|v| v.id.as_str())).await?;
         channel
     };
-    if app.chat.sockets.load(Ordering::Relaxed) >= MAX_SOCKETS {
-        return Err(Fail::unavailable("Chat is busy. Please try again shortly."));
-    }
+    let slot = app.chat.open(ip)?;
     Ok(upgrade
         .max_message_size(FRAME)
         .max_frame_size(FRAME)
-        .on_upgrade(move |ws| session(app, jar, channel, join.squad, ws)))
+        .on_upgrade(move |ws| session(app, jar, channel, join.squad, slot, ws)))
 }
 
 async fn session(
@@ -1030,11 +1094,10 @@ async fn session(
     jar: CookieJar,
     channel: String,
     squad: Option<String>,
+    _slot: SocketSlot,
     mut ws: WebSocket,
 ) {
     let room = squad.as_deref().unwrap_or(&channel);
-    app.chat.sockets.fetch_add(1, Ordering::Relaxed);
-    let _slot = SocketSlot(app.chat.sockets.clone());
     // Subscribe before reading history so nothing posted in between is missed.
     let mut events = app.chat.tx.subscribe();
     let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
@@ -1070,11 +1133,14 @@ async fn session(
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
     }
-    // Also catches quarantine, appeals and account removals performed by the worker.
-    // ponytail: one small catalog query per socket every five seconds; share invalidations
-    // across sockets if measured viewer load makes this polling significant.
+    // Also catches quarantine, appeals and account removals performed by the worker. The catalog
+    // is shared, so this is one query per channel every five seconds, not one per socket.
     let mut refresh = tokio::time::interval(std::time::Duration::from_secs(5));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut ping = pings();
+    let mut alive = Instant::now();
+    // At most 10 frames a second; the per-person send limits sit behind several queries.
+    let (mut window, mut frames) = (Instant::now(), 0u32);
     // A shared chat re-checks the viewer's access before passing events on, at most once a second:
     // a ban or block still closes the socket within a second, and a busy chat costs one check a
     // second per viewer rather than one per message.
@@ -1087,11 +1153,14 @@ async fn session(
                     if crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
                     checked = std::time::Instant::now();
                 }
-                let Ok(current) = crate::emotes::catalog(&app, &channel).await else { return; };
+                let Ok(current) = app.chat.emotes(&app, &channel).await else { return; };
                 if current != emotes {
                     emotes = current;
                     if ws.send(Message::Text(json!({"type":"emotes","emotes":emotes}).to_string().into())).await.is_err() { return; }
                 }
+            }
+            _ = ping.tick() => {
+                if alive.elapsed() > SILENT || ws.send(Message::Ping(Default::default())).await.is_err() { return; }
             }
             event = events.recv() => match event {
                 Ok(e) if e.channel == room
@@ -1133,7 +1202,13 @@ async fn session(
             },
             incoming = ws.recv() => match incoming {
                 Some(Ok(Message::Text(text))) => {
+                    alive = Instant::now();
+                    if window.elapsed() >= Duration::from_secs(1) {
+                        (window, frames) = (Instant::now(), 0);
+                    }
+                    frames += 1;
                     let reply = match serde_json::from_str::<Send>(&text) {
+                        Ok(_) if frames > 10 => json!({"type":"error","message":"You're sending too fast."}),
                         Ok(input) => {
                             let id = input.id.clone();
                             match send(&app, &jar, &channel, input, squad.as_deref()).await {
@@ -1148,7 +1223,7 @@ async fn session(
                     }
                 }
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
-                Some(Ok(_)) => {}
+                Some(Ok(_)) => alive = Instant::now(),
             },
         }
     }
@@ -1374,20 +1449,24 @@ async fn hype_socket(
     if headers.get("origin").and_then(|v| v.to_str().ok()) != Some(app.config.origin.as_str()) {
         return Err(Fail::denied("Invalid request origin."));
     }
-    let ip = sec::client_ip(&app, peer, &headers);
+    let ip = network(sec::client_ip(&app, peer, &headers));
     sec::reserve(&app, vec![format!("chat-connect:{ip}")], 30, 60).await?;
     hype_lane(&app, &lane).await?;
-    if app.chat.sockets.load(Ordering::Relaxed) >= MAX_SOCKETS {
-        return Err(Fail::unavailable("Chat is busy. Please try again shortly."));
-    }
+    let slot = app.chat.open(ip)?;
     Ok(upgrade
         .max_message_size(FRAME)
         .max_frame_size(FRAME)
-        .on_upgrade(move |ws| hype_session(app, jar, lane, ws)))
+        .on_upgrade(move |ws| hype_session(app, jar, lane, slot, ws)))
 }
-async fn hype_session(app: App, jar: CookieJar, lane: String, mut ws: WebSocket) {
-    app.chat.sockets.fetch_add(1, Ordering::Relaxed);
-    let _slot = SocketSlot(app.chat.sockets.clone());
+async fn hype_session(
+    app: App,
+    jar: CookieJar,
+    lane: String,
+    _slot: SocketSlot,
+    mut ws: WebSocket,
+) {
+    let mut ping = pings();
+    let mut alive = Instant::now();
     let mut events = app.chat.tx.subscribe();
     let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
     let viewer = viewer.as_ref().map(|v| v.id.clone());
@@ -1431,9 +1510,12 @@ async fn hype_session(app: App, jar: CookieJar, lane: String, mut ws: WebSocket)
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
             },
+            _ = ping.tick() => {
+                if alive.elapsed() > SILENT || ws.send(Message::Ping(Default::default())).await.is_err() { return; }
+            }
             incoming = ws.recv() => match incoming {
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
-                Some(Ok(_)) => {}
+                Some(Ok(_)) => alive = Instant::now(),
             },
         }
     }
@@ -1450,6 +1532,20 @@ pub fn routes() -> Router<App> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn one_network_cannot_take_every_chat_socket() {
+        let hub = super::Hub::default();
+        let a = super::network("2001:db8:1:2::1".parse().unwrap());
+        let b = super::network("2001:db8:1:2:ffff::9".parse().unwrap());
+        assert_eq!(a, b);
+        let held: Vec<_> = (0..super::MAX_PER_ADDRESS)
+            .map(|_| hub.open(a).ok().unwrap())
+            .collect();
+        assert!(hub.open(b).is_err());
+        assert!(hub.open("192.0.2.1".parse().unwrap()).is_ok());
+        drop(held);
+        assert!(hub.open(b).is_ok());
+    }
     #[test]
     fn mentions_are_whole_usernames_not_email_or_markup() {
         let mut names = super::mention_names(

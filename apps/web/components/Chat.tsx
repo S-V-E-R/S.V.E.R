@@ -105,6 +105,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
   const canPin = !squad && (role === "owner" || role === "moderator");
   const socket = useRef<WebSocket | null>(null);
   const list = useRef<HTMLOListElement>(null);
+  const follow = useRef(true);
   const input = useRef<HTMLTextAreaElement>(null);
   const path = squad ? `/api/squads/${encodeURIComponent(squad)}/chat` : `/api/channels/${encodeURIComponent(username)}/chat`;
 
@@ -217,7 +218,9 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     return () => { closed = true; clearInterval(poll); clearTimeout(retry); socket.current?.close(); };
   }, [path, username, squad, merge, remove]);
 
-  useEffect(() => { list.current?.lastElementChild?.scrollIntoView({ block: "nearest" }); }, [messages]);
+  // New messages are followed only while the reader is at the bottom (see the list's onScroll);
+  // scrolling the list itself never moves the page.
+  useEffect(() => { const el = list.current; if (el && follow.current) el.scrollTop = el.scrollHeight; }, [messages]);
 
   /** `quick`: the inline tools — no prompts and a 10-minute timeout; a ban still confirms. */
   async function moderate(action: "delete" | "timeout" | "ban", m: Message, quick = false) {
@@ -369,7 +372,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     {subsOnly ? <p className="chat-system" role="status">Subscriber-only chat.{canPin && <> <button type="button" className="small quiet" onClick={() => limitToSubs(false)}>Open to everyone</button></>}</p>
       : canPin && <p className="chat-system"><button type="button" className="small quiet" onClick={() => limitToSubs(true)}>Subscriber-only chat</button></p>}
     {canPin && spike && !followersOnly && <div className="chat-system" role="alert">A sudden wave of new viewers arrived. <button type="button" className="small" onClick={() => protect(true)}>Shield mode for 10 minutes</button> <button type="button" className="small quiet" onClick={() => setSpike(false)}>Dismiss</button></div>}
-    <ol className="chat-messages" ref={list} aria-live="polite">
+    <ol className="chat-messages" ref={list} aria-live="polite" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
       {messages.length === 0 && <li className="muted">No messages yet.</li>}
       {messages.map(m => m.outside?.platform === "bot" ? <li key={m.id} className="chat-bot">
         <span className="muted">{time(m.created_at)}</span>{" "}
