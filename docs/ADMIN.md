@@ -94,6 +94,7 @@ The page only reads. Every action happens on its own page.
   - custom emotes
   - guild emblems ([GUILDS.md](GUILDS.md))
   - CrowdSync effect uploads ([CROWDSYNC.md](CROWDSYNC.md))
+- **CrowdSync catalog** (`/admin/catalog`): new catalog listings and changes waiting for review, then everything public ([CROWDSYNC.md](CROWDSYNC.md), "Catalog"). Approve, reject with a reason the developer sees, or remove a listing; an approved listing stays public as it was while a change waits. Each action is in the audit log, and the number waiting is on the home page.
 - **Guilds** (`/admin/guilds`): requests to verify a guild as a real organization, plus rename, reset or disband for guilds that break the rules ([GUILDS.md](GUILDS.md)).
 - **Plays** (`/admin/plays`): start, stop and pause, the game library and rotation, and the health alerts ([PLAYS.md](PLAYS.md)). Legacy's Plays admin routes always failed their sign-in check, so this is rebuilt rather than ported.
 - **MAGNet** (`/admin/magnet`): Hype channels on and off, force a stream on and release it, emergency stop, staff spotlights, and the 7-day decision log ([MAGNET.md](MAGNET.md)).

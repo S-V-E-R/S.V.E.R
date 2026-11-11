@@ -178,6 +178,19 @@ From a review against MixPlay: the server side holds up, but a developer can't s
 - **Installing:** "Add to my boards" copies a listing's board into the streamer's library. For a game that sets its own board it explains how to connect the game.
 - Listings show how many channels have installed them (a count, never who).
 
+**As built (November 11, 2026; migration 0160, `catalog.rs`, `tests/streams/catalog.rs`):**
+
+- **Publishing:** Settings → Developer has a "Catalog listing" form under each app, one listing per app: name (3–40 characters), one-line summary (up to 120), description (up to 2,000, plain text), an `https://` link, up to 4 screenshots, and the board. The board is the owner's draft, one of their library boards, a `.sverboard.json` file, or "this game sets its own board". A board must pass the builder's rules and have at least one control; effects that use the owner's own Skills become "none", since no other channel has them. Text passes the platform word filter. The owner can delete the listing; deleting the app deletes it too.
+- **Icon:** the listing uses the app's icon as it was when the listing was sent in, so a new icon is reviewed with the next change. There is no separate listing icon.
+- **Screenshots** go through the image pipeline (fingerprinted, stored at 400 and 1600 pixels, 5 MB each). One that is uploaded but never sent in is deleted after a day. A Take It Down removal takes the image off every listing that uses it, and a held image is never shown.
+- **Review:** every new listing and every change waits at `/admin/catalog` (also counted on the staff home page). Staff approve, reject with a reason, or remove a listing with a reason; the owner sees the reason beside the form and can send the listing in again. Each action is in the audit log (`catalog_approve`, `catalog_reject`, `catalog_remove`). While a change waits or after it is rejected, the public sees the last approved version. Sending in exactly what is already approved needs no second review.
+- **Hidden:** a listing isn't public while its app is suspended or its developer's channel is deleted, restricted or internal.
+- **Browsing:** `/crowdsync` lists approved listings by first approval, newest first, 30 a page, searched by name. There is no other order. `/crowdsync/{name}` shows the screenshots, description, link, a preview of the board that can't be pressed, the developer's display name linking to their channel, and the count. The address comes from the listing's name and stays the same once the listing has been public. Under-18 developers (and accounts with no birth date) aren't named. Links: the site footer, `/developers` and Studio → Board.
+- **Installing:** "Add to my boards" needs a verified email and two-factor sign-in. It copies the board into the channel's library, checked like an imported file, marked "from the catalog". Adding it again replaces that entry instead of making a second one. A full library (20 boards) refuses with a message saying to delete one first. A game that sets its own board has steps for connecting it ("Connect to S.V.E.R", the code at `sver.tv/go`, "May set my board") in place of the button.
+- **Count:** distinct channels that added the board. For a game that sets its own board, it also counts channels with the game connected (`board:control`). Never who.
+- **Reports:** there is no "Report" button on a listing yet. Adding a report type touches the report queue, strikes, appeals and overturns, so it was left out; staff remove a listing from `/admin/catalog`, and Take It Down requests cover its images.
+- **Not verified:** the pages were type-checked and built but not opened in a browser, and there are no screenshots yet.
+
 ### 4. Builder and Studio layout
 
 - The builder becomes a visual grid: drag to place and resize on the 4-column grid, click a control to edit it in a side panel, duplicate, undo and redo, and a live preview of the viewer's panel at desktop and phone width.
