@@ -195,6 +195,8 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         else if (data.type === "pin") setPinned(data.pinned);
         else if (data.type === "message" || data.type === "ack") {
           merge([data.message]);
+          // The phone watch page marks its Chat switch while chat is tucked away (WatchLayout).
+          if (data.type === "message") window.dispatchEvent(new Event("sver:chat-message"));
           // The draft is cleared only once the server has the message (unless it was edited since).
           if (data.type === "ack" && sending.current?.id === data.id) { const body = sending.current.body; setDraft(d => d === body ? "" : d); setReply(null); sending.current = null; }
         }
