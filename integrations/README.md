@@ -16,7 +16,10 @@ Connect your stream's board ([docs/CROWDSYNC.md](../docs/CROWDSYNC.md)) to OBS a
 
 ## Get a token
 
-Creator Studio → Board → Connections → Create token. Choose **OBS bridge** or **Game**. For a game, tick **May set my board** to let it bring its own board (off unless you tick it; change it any time). The token is shown once; keep it out of source control. Disconnect it there any time: new connections stop at once and open ones close within 30 seconds.
+Two ways for a game to connect:
+
+- **Connect to S.V.E.R (sign-in).** The developer registers the game once in Settings → Developer and puts its client ID in the game. It is a public ID: there is no client secret, and none belongs in a game. The SDK shows the streamer a 6-character code to enter at `sver.tv/go`, where they approve the game and may tick **May set my board**. The SDK keeps that sign-in and renews it, so the code is asked for once; the streamer removes the game in Settings → Connected apps, and the SDK then shows a new code on the next connect.
+- **A token from Creator Studio.** Creator Studio → Board → Connections → Create token. Choose **OBS bridge** or **Game**. For a game, tick **May set my board** to let it bring its own board (off unless you tick it; change it any time). The token is shown once; keep it out of source control. Disconnect it there any time: new connections stop at once and open ones close within 30 seconds.
 
 ## The gateway protocol
 
@@ -77,12 +80,26 @@ await board.define("My game", { screens: [{ name: "Game", controls: [{ id: "jump
 
 `define(name, board)` makes the game's own board live while it is connected. It rejects with the reason unless the streamer switched on "May set my board" for the token, so a game should fall back to the streamer's board.
 
-The example game: serve the `integrations/` folder (for example `npx serve integrations`) and open `example-game/index.html#token=sver_g_…`. With "May set my board" on for the token it defines its own board; otherwise the streamer's board needs a button `jump`, a goal `coins`, a text input `shout` and a joystick `move`.
+To sign in instead of pasting a token, give the client ID:
+
+```js
+import { SverBoard, fileStore } from "./sver-board.mjs";
+const board = new SverBoard({
+  clientId: "YOUR_CLIENT_ID",
+  onCode: ({ code, url, link }) => showMessage(`Enter ${code} at ${url}`),   // link opens the page with the code filled in
+  // store: fileStore("sver-sign-in.json"),   // Node; browsers use localStorage by default
+});
+await board.connect();   // resolves once the streamer approved; later runs connect without a code
+```
+
+`connect()` calls `onCode` only when there is no working sign-in: the first time, after the streamer removed the game in Settings → Connected apps, or after 60 days without use. It rejects when the streamer chooses Cancel or S.V.E.R doesn't know the client ID. `signOut()` forgets the sign-in and ends it on S.V.E.R. `store` is any `{ get(), set(grant) }` (they may return promises); what it holds lets the game control that streamer's board, so keep it as private as a token.
+
+The example game: serve the `integrations/` folder (for example `npx serve integrations`) and open `example-game/index.html#client=YOUR_CLIENT_ID`, then press **Connect to S.V.E.R**; or paste a game token into the field (`index.html#token=sver_g_…` also works). With "May set my board" on it defines its own board; otherwise the streamer's board needs a button `jump`, a goal `coins`, a text input `shout` and a joystick `move`.
 
 ## Unity
 
-Add `sdk-unity` as a local package (Package Manager → Add package from disk → `package.json`). It depends on `com.unity.nuget.newtonsoft-json`. Add the **SverBoard** component, paste the token, and subscribe to `Pressed`, `Moved`, `BoardChanged`, `StateChanged` and `Error`; call `SetDisabled`, `SetLabel`, `SetProgress` or `SetState`, and `Define(name, board)` to bring the game's own board. Events arrive on the main thread. For WebGL builds, use the JavaScript SDK from the hosting page.
+Add `sdk-unity` as a local package (Package Manager → Add package from disk → `package.json`). It depends on `com.unity.nuget.newtonsoft-json`. Add the **SverBoard** component, paste the token (or leave it empty, set **Client Id** and show the code from `SignInCode(code, url)`; the sign-in is kept in PlayerPrefs, `SignOut()` forgets it; this sign-in path has not been compiled or run yet), and subscribe to `Pressed`, `Moved`, `BoardChanged`, `StateChanged` and `Error`; call `SetDisabled`, `SetLabel`, `SetProgress` or `SetState`, and `Define(name, board)` to bring the game's own board. Events arrive on the main thread. For WebGL builds, use the JavaScript SDK from the hosting page.
 
 ## Unreal Engine
 
-Copy `sdk-unreal/SverBoard` into your project's `Plugins/` folder and enable it. Create a `USverBoardClient` (Blueprint: Construct Object from Class), bind `OnPress`, `OnMove`, `OnBoardChanged` and `OnError`, then call `Connect` with the token. `SetDisabled`, `SetLabel`, `SetProgress` and `SetStateJson` update the board; `DefineJson(Name, BoardJson)` brings the game's own board.
+Copy `sdk-unreal/SverBoard` into your project's `Plugins/` folder and enable it. Create a `USverBoardClient` (Blueprint: Construct Object from Class), bind `OnPress`, `OnMove`, `OnBoardChanged` and `OnError`, then call `Connect` with the token, or `SignIn` with your client ID and show the code from `OnCode(Code, Url)` (the sign-in is kept in a file under Saved, or `SignInFile`; `SignOut` forgets it; this sign-in path has not been compiled or run yet). `SetDisabled`, `SetLabel`, `SetProgress` and `SetStateJson` update the board; `DefineJson(Name, BoardJson)` brings the game's own board.
