@@ -225,7 +225,7 @@ pub async fn exercise(e: &Env) {
             && form.contains("Nothing+is+charged+today"),
         "{form}"
     );
-    let mut trial = invoice("in_sb_keep", "sb-keeper", 1, 0, "subscription_create", 3);
+    let mut trial = invoice("in_sb_keep", "sb-keeper", 3, 0, "subscription_create", 3);
     trial["data"]["object"]["parent"]["subscription_details"]["subscription"] =
         json!("sub_sb_keep");
     assert_eq!(event(e, trial).await, StatusCode::OK);
@@ -234,6 +234,10 @@ pub async fn exercise(e: &Env) {
         (&kept["mine"]["months"], &kept["mine"]["card"]),
         (&json!(1), &json!(true)),
         "{kept}"
+    );
+    assert_eq!(
+        kept["mine"]["tier"], 1,
+        "a $0 trial for a higher tier doesn't raise the gifted month's tier"
     );
     let mails = || async {
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mail_jobs WHERE user_id='sb-gifter'")

@@ -774,6 +774,14 @@ pub async fn identify(
     }
     Ok(Some((user, scopes)))
 }
+/// Ends every app's access to a person's account; the tokens stop working at once.
+pub async fn revoke_all(db: &mut sqlx::PgConnection, user: &str) -> Res<()> {
+    sqlx::query("UPDATE oauth_grants SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL")
+        .bind(user)
+        .execute(db)
+        .await?;
+    Ok(())
+}
 /// Whether a connection `identify` let in may stay open. Like the integration gateway it follows
 /// the grant, not the hour-long access token: it ends once the grant is removed or the app suspended.
 pub async fn connected(app: &App, client: &str, user: Option<&str>) -> Res<bool> {

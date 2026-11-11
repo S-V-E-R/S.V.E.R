@@ -473,12 +473,14 @@ async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -
             crate::subs::subscription_changed(tx, kind, object).await?;
             crate::supporters::subscription_changed(tx, kind, object).await
         }
-        // A lost dispute takes back what the payment bought: a Wall tile, an ad campaign, a Founder spot.
+        // A lost dispute takes back what the payment bought: a subscription month, a Wall tile, an
+        // ad campaign, a Founder spot.
         "charge.dispute.closed" if object["status"] == "lost" => {
             match object["payment_intent"].as_str() {
                 Some(intent) => {
                     crate::seats::taken_back(tx, intent).await?;
                     crate::adnet::taken_back(tx, intent).await?;
+                    crate::subs::refunded_in_full(app, tx, intent).await?;
                     crate::supporters::reversed(app, tx, intent, "Payment lost to a dispute").await
                 }
                 None => Ok(()),
@@ -842,8 +844,8 @@ async fn claw_back_spent(
 /// A chargeback reverses the disputed share of a payment (a Valor balance may go negative, which
 /// locks spending; a streamer's earnings may too, recovered from later earnings); winning it posts
 /// it back. Disputed Valor that was already spent is taken back from the creators it paid.
-// ponytail: a dispute on an already-refunded charge reverses twice and Stripe's dispute fee isn't
-// posted; handle both when payouts reconcile against Stripe balance transactions.
+// ponytail: Stripe's dispute fee isn't posted; handle it when payouts reconcile against Stripe
+// balance transactions.
 async fn disputed(app: &App, tx: &mut PgConnection, object: &Value, won: bool) -> Res<()> {
     let Some(id) = object["id"].as_str() else {
         return Ok(());
@@ -854,19 +856,32 @@ async fn disputed(app: &App, tx: &mut PgConnection, object: &Value, won: bool) -
     if cents <= 0 {
         return Ok(());
     }
-    // Winning posts back only what the dispute took; if its reversal was never posted, neither is this.
-    if won {
-        let reversed: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM ledger_transactions WHERE reference=$1)",
+    // A dispute takes only what refunds haven't already reversed, so nothing is reversed twice.
+    // Winning posts back exactly what the dispute took; if its reversal was never posted, neither
+    // is this.
+    ledger::lock(tx, &format!("refund:{intent}")).await?;
+    let amount = if won {
+        let took: Option<i64> = sqlx::query_scalar(
+            "SELECT (detail->>'cents')::bigint FROM ledger_transactions WHERE reference=$1",
         )
         .bind(format!("dispute:{id}"))
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
-        if !reversed {
-            return Ok(());
+        match took {
+            Some(took) => took,
+            None => return Ok(()),
         }
+    } else {
+        let refunded: i64 = sqlx::query_scalar("SELECT COALESCE(max((detail->>'refunded_cents')::bigint),0) FROM ledger_transactions WHERE kind IN ('valor_refund','refund') AND detail->>'payment_intent'=$1")
+            .bind(&intent).fetch_one(&mut *tx).await?;
+        object["amount"]
+            .as_i64()
+            .unwrap_or(cents)
+            .min(cents - refunded)
+    };
+    if amount <= 0 {
+        return Ok(());
     }
-    let amount = object["amount"].as_i64().unwrap_or(cents).min(cents);
     let sign = if won { 1 } else { -1 };
     // A Valor pack: its wallet stays locked against spending while the dispute is posted.
     let wallet = pairs

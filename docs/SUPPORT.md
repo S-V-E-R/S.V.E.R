@@ -164,7 +164,7 @@ Decided by Joe on October 3, 2026.
 - Every streamer is Scout (65%) until weekly creator-tier checks ship; the split is applied to card subscriptions and card gifts.
 - Gift subs: one month to a named viewer, or 5, 10 or 20 to random signed-in chatters from the last day who allow gifts (a setting on `/wallet`, default on). Gifts never go to the gifter, the owner, someone banned or blocked, or someone with an auto-renewing subscription there. Card gifts reserve their recipients at checkout and grant them when Stripe confirms the payment.
 - Badges show months subscribed (1, 3, 6, 9, 12, then each year). Each tier has 5 subscriber-emote slots on top of the 10 open emotes; only subscribers of that tier or higher (and channel roles) can send them. Owners and moderators can switch on subscriber-only chat.
-- Refunds and disputes of subscription payments and card gifts reverse the streamer's share in proportion; a full refund of a subscription payment also ends its benefits.
+- Refunds and disputes of subscription payments and card gifts reverse the streamer's share in proportion; a full refund of a subscription payment also ends its benefits. A subscription payment lost to a dispute ends its benefits and renewal the same way, a dispute reverses only what refunds haven't already reversed, a $0 trial invoice (keeping a gifted month) never changes the tier, and a subscriber can cancel renewal on a channel that is suspended or pending deletion (November 10, 2026).
 
 **Part 3: Engagement Valor and channel rewards.**
 
