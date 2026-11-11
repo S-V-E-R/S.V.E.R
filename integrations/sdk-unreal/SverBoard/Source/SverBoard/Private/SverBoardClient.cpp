@@ -264,6 +264,22 @@ void USverBoardClient::SetInputCap(int32 PerSecond)
 	Send(Message);
 }
 
+void USverBoardClient::DefineJson(const FString& Name, const FString& BoardJson)
+{
+	TSharedPtr<FJsonObject> Board;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(BoardJson), Board) || !Board.IsValid())
+	{
+		OnError.Broadcast(TEXT("DefineJson needs a JSON object with the board's screens."));
+		return;
+	}
+	const TSharedRef<FJsonObject> Message = MakeShared<FJsonObject>();
+	Message->SetStringField(TEXT("type"), TEXT("define"));
+	Message->SetNumberField(TEXT("id"), NextId++);
+	Message->SetStringField(TEXT("name"), Name);
+	Message->SetObjectField(TEXT("board"), Board);
+	Send(Message);
+}
+
 void USverBoardClient::SetDisabled(const FString& Control, bool bDisabled)
 {
 	const TSharedRef<FJsonObject> Change = MakeShared<FJsonObject>();

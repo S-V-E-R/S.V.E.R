@@ -4,7 +4,7 @@ import { send, useLoad } from "../../../lib/client-api";
 import { Avatar } from "../../../components/Avatar";
 import type { Sizes } from "../../../lib/types";
 
-type Connection = { id: string; app: string; icon: Sizes; owner: string | null; scopes: string[]; created_at: string; last_used_at: string | null };
+type Connection = { id: string; app: string; icon: Sizes; owner: string | null; scopes: string[]; created_at: string; last_used_at: string | null; game: boolean; may_define: boolean };
 
 /** Settings → Connected apps (docs/DEVELOPER_PLATFORM.md §1). */
 export default function ConnectedApps() {
@@ -19,6 +19,11 @@ export default function ConnectedApps() {
     const r = await send<{ connections: Connection[] }>("DELETE", `/api/me/connections/${c.id}`);
     if (r.ok) { setRows(r.data.connections); setMessage(`${c.app} can no longer use your account.`); } else setMessage(r.error);
   }
+  /** "May set my board" (docs/CROWDSYNC.md "Game-defined boards"): off until the streamer allows it. */
+  async function allow(c: Connection, on: boolean) {
+    const r = await send<{ connections: Connection[] }>("PUT", `/api/me/connections/${c.id}`, { may_define: on });
+    if (r.ok) { setRows(r.data.connections); setMessage(on ? `${c.app} may set your board while it is connected.` : `${c.app} may no longer set your board.`); } else setMessage(r.error);
+  }
   return <section className="panel section"><h1>Connected apps</h1>
     <p className="intro">Apps you&apos;ve allowed to use your account. Removing one stops it right away. Apps can never spend Valor or move money.</p>
     {message && <p role="status" className="form-message">{message}</p>}
@@ -26,6 +31,7 @@ export default function ConnectedApps() {
       : <ul className="list">{rows.map(c => <li key={c.id} className="row between wrap">
         <Avatar sizes={c.icon} name={c.app} size={32} />
         <span><strong>{c.app}</strong> <span className="muted small">by {c.owner ? `@${c.owner}` : "S.V.E.R"} · {c.scopes.join(", ")} · connected {new Date(c.created_at).toLocaleDateString()}{c.last_used_at ? ` · last used ${new Date(c.last_used_at).toLocaleDateString()}` : ""}</span></span>
+        {c.game && <label className="checkbox"><input type="checkbox" checked={c.may_define} onChange={e => void allow(c, e.target.checked)} /> May set my board</label>}
         <button type="button" className="small quiet danger-text" onClick={() => revoke(c)}>Remove</button>
       </li>)}</ul>}
   </section>;

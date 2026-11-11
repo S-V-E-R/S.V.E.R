@@ -126,6 +126,68 @@ Part 2, the integration gateway, OBS bridge and Game SDKs (October 6, 2026; migr
 
 Hold-then-capture charging for controls a game or the bridge must confirm, viewer groups, an input cap and a game ready state are specified in [DEVELOPER_PLATFORM.md](DEVELOPER_PLATFORM.md), Section 3. The input cap, ready state and pricing guidance (migration 0050) hold-then-capture (migration 0051) and groups (migration 0052) were built October 8, 2026 (`tests/streams/gateway.rs`).
 
+## Creator and developer friendly (specified November 11, 2026)
+
+From a review against MixPlay: the server side holds up, but a developer can't ship a board with a game, connecting a game is copy-paste, and the builder and viewer panel are plain forms. Built in this order, one pull request each. Numbers marked **Proposed** are defaults Joe can change.
+
+### 1. Board library, import/export and game-defined boards
+
+- **Library:** a channel keeps up to 20 (**Proposed**) saved boards beside its draft. Studio → Board: "Save draft to library" (named), "Load into draft" (asks before replacing unsaved edits), delete. A library board is just a validated board definition; nothing in it is live.
+- **Import and export:** "Export" downloads the draft as a `.sverboard.json` file (`{"sver_board": 1, "name", "board"}`); "Import" reads one into the draft. An imported board goes through the same validation as any save. Effects that belong to another channel (`custom:<id>`) are replaced with "none" on import, and the builder says which controls changed.
+- **Game-defined boards:** a game sends `{"type": "define", "id", "name", "board"}` over the gateway and that board becomes the live board while the game is connected, as on MixPlay.
+  - **The streamer opts in per connection.** A game token (and an app's `board:control` grant) has "May set my board", off by default, chosen when the token is created and changeable later. Without it, `define` is refused with a clear error.
+  - The board is validated like a draft. It may not use the channel's custom Skills as effects (a game can't know them) and every cost is capped at the channel's typical viewer balance when one is known (**Proposed**), so a game can't overcharge a streamer's viewers.
+  - The first `define` of a connection saves the streamer's published board aside; when the game disconnects (or misses two checks), that board comes back as a new version. The streamer's draft is never touched.
+  - A game board is also saved to the library under the game's name, so the streamer can load, edit and publish it as their own.
+  - At most one `define` every 10 seconds per connection. Publishing rules are the normal ones: a new version, goals start over, held presses on removed controls are released.
+  - Studio shows "Your board is set by <connection name>" with a "Take it back" button, which restores the streamer's board and switches the permission off.
+- SDKs: `define(name, board)` in JavaScript, Unity and Unreal; Crowd Runner defines its own board when allowed.
+
+**As built (November 11, 2026; migration 0158, `boards.rs`, `gateway.rs`, `tests/streams/boards.rs`, `tests/streams/gateway.rs`):**
+
+- **Library:** Studio → Board → "Library and files" lists the saved boards with "Load into draft" (asks first when there are unsaved edits) and "Delete", and saves the board being edited under a name; saving under a name already used replaces that entry. 20 boards per channel.
+- **Files:** "Export" downloads the board being edited as `<name>.sverboard.json`. "Import" checks the file like any save and makes it the draft. Effects that aren't the channel's own Skills (another channel's, or a deleted one) become "none", and Studio lists the controls that changed; the same happens when a library board is loaded.
+- **"May set my board":** a tick box on each game connection in Studio → Board → Connections, also offered when the token is created. For an app with `board:control` it is a tick box in Settings → Connected apps; it is not on the approval screen yet (that comes with Section 2). Off by default. Switching it off while that game's board is live brings the streamer's board back.
+- **`define`:** refused without the permission, for bridges, for a restricted channel, for a board that fails the builder's rules or has nothing viewers can use, for any custom Skill effect, and for a cost above the channel's typical viewer balance (when at least 5 recent viewers make one known). A refused board doesn't use up the 10-second allowance, so a game can fix it and send it again. Messages on the gateway may now be 64 KB (the size limit of a saved draft), so a full board fits.
+- **Whose board is live:** the streamer's published board is saved aside by the first `define` and comes back as a new version when that game's connection closes, when it has missed two 30-second checks (found within 70 seconds, also after an API restart), or on "Take it back". If the streamer had nothing published, nothing is published again. If the streamer publishes their own draft while a game's board is live, that publish stays and nothing is restored later. A game setting the board and the board coming back are both in the channel moderation log.
+- **Library copy:** each connection keeps one library entry, named by the `name` in its `define` and marked "from a game"; a later `define` replaces it. When the library is full the game's board still goes live but isn't saved.
+- **Every new version** (the streamer's publish, a game's board, a restored board) now releases held "Game confirms" presses on controls that are no longer on the board straight away, instead of after their 60 seconds.
+- **SDKs:** `define(name, board)` in JavaScript (tested against the fake gateway), `Define` in Unity and `DefineJson` in Unreal. The Unity and Unreal additions were not compiled (no engines on this machine or in CI). The browser Crowd Runner defines its own board on every connect and falls back to the streamer's board when it isn't allowed; the Unity and Unreal example games were left as they are.
+
+### 2. "Connect to S.V.E.R" in the SDKs
+
+- The SDKs sign a game in with device sign-in at `sver.tv/go` and the `board:control` scope, so the streamer types a code instead of pasting a token. Tokens from Studio keep working.
+- A game registers once as a developer app; players never see a client secret (public client, PKCE or device flow only).
+- The approval screen has the "May set my board" choice from Section 1.
+- The SDK stores and refreshes the grant; `connect()` falls back to showing a new code when the grant is gone.
+
+### 3. Catalog
+
+- **Publishing:** the owner of a developer app submits a listing: name, one-line summary, description, link (store page or site), icon, up to 4 screenshots, and either a board file or "this game sets its own board". Listings are reviewed by staff before they appear and on every change, like emotes; staff can remove one, and Take It Down applies to its images.
+- **Browsing:** `/crowdsync` lists approved games and boards, searchable, with each developer's page. No ranking by spend and no paid placement.
+- **Installing:** "Add to my boards" copies a listing's board into the streamer's library. For a game that sets its own board it explains how to connect the game.
+- Listings show how many channels have installed them (a count, never who).
+
+### 4. Builder and Studio layout
+
+- The builder becomes a visual grid: drag to place and resize on the 4-column grid, click a control to edit it in a side panel, duplicate, undo and redo, and a live preview of the viewer's panel at desktop and phone width.
+- Buttons get a style: one of the palette colours and an optional icon from the icon set.
+- Studio → Board splits into tabs: Build, Test and publish, Skills, Overlay, and Advanced (webhook, input cap, connections).
+
+### 5. Developer docs, sandbox and press log
+
+- `/developers/crowdsync`: quickstart, the gateway protocol (moved out of the repository README), charging rules, Crowd Runner walkthrough, and the publishing rules for the catalog.
+- **Sandbox:** a game token works with the board's test mode: Studio's "Test" presses reach the connected game as real presses marked `test: true`, charge nothing, and need no live stream. The SDKs also ship a local fake gateway (the one CI uses) for offline work.
+- **Press log:** Studio → Board → Advanced shows the last 100 presses and gateway messages for the current stream (control, viewer, outcome), and each connection's state.
+- SDK packages: npm (`@sver/board`), a Unity package URL and an Unreal plugin zip on each release.
+
+### 6. Viewer panel, analytics and controls
+
+- **Panel:** on desktop the board can dock beside chat or sit under the player (the viewer's choice, remembered); buttons show a cooldown ring and a press ripple. On phones it is a tab beside Play and Chat.
+- **Analytics:** Studio → Analytics gets a Board section: presses and distinct viewers per control per stream, Engagement Valor spent, and refunds. Never per-viewer spend.
+- **Crowd input:** a joystick can be "crowd average": S.V.E.R sends the game one averaged move 10 times a second instead of every viewer's.
+- **New controls:** slider, and a choice button (pick one of up to 4). Click-on-video and custom HTML controls stay deferred ([DEVELOPER_PLATFORM.md](DEVELOPER_PLATFORM.md), Section 4).
+
 ## Not in this module
 
 - Quests, achievements, XP and levels (Progression, Phase 2).

@@ -80,6 +80,9 @@ public:
 	/** The most presses and joystick moves a second sent to the game (1–100, or 0 for no cap). */
 	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
 	void SetInputCap(int32 PerSecond);
+	/** Makes this game's own board live while it is connected, if the streamer switched on "May set my board" (otherwise OnError). BoardJson is {"screens":[{"name":"…","controls":[…]}]}. Call it again on every OnHello; at most once every 10 seconds. */
+	UFUNCTION(BlueprintCallable, Category = "S.V.E.R")
+	void DefineJson(const FString& Name, const FString& BoardJson);
 
 	virtual void BeginDestroy() override;
 

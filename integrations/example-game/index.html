@@ -20,7 +20,8 @@
   <canvas id="game" width="960" height="540" aria-label="Crowd Runner game"></canvas>
   <p id="status" role="status">Playing locally: Space jumps, arrow keys steer.</p>
   <p class="muted">Connect it to your board: open this page as <code>index.html#token=sver_g_…</code> (the token stays in your browser).
-    Your board needs a button <code>jump</code>, a goal <code>coins</code>, a text input <code>shout</code> and a joystick <code>move</code>.</p>
+    Switch on “May set my board” for that token in Creator Studio and the game brings its own board; otherwise
+    your board needs a button <code>jump</code>, a goal <code>coins</code>, a text input <code>shout</code> and a joystick <code>move</code>.</p>
 </main>
 <script type="module">
 import { SverBoard } from "../sdk-js/sver-board.mjs";
@@ -45,6 +46,24 @@ function jump(who) {
   if (who) shout = { text: `${who} says jump!`, until: frame + 90 };
 }
 
+// The game's own board, used when the streamer lets this connection set their board.
+const OWN_BOARD = { screens: [{ name: "Crowd Runner", controls: [
+  { id: "jump", kind: "button", label: "Jump", cooldown_seconds: 2, width: 2 },
+  { id: "move", kind: "joystick", label: "Speed", width: 2 },
+  { id: "coins", kind: "goal", label: "Coins", target: 20, width: 4 },
+  { id: "shout", kind: "text", label: "Shout", cooldown_seconds: 30, width: 4 },
+] }] };
+// Tries again once when it reconnected inside the 10-second limit.
+async function defineBoard(channel, again = true) {
+  try {
+    await board.define("Crowd Runner", OWN_BOARD);
+    status.textContent = `Connected to ${channel} with Crowd Runner's own board. Viewers are in control.`;
+  } catch (error) {
+    if (again && /10 seconds/.test(error.message)) { setTimeout(() => defineBoard(channel, false), 10500); return; }
+    status.textContent = `Connected to ${channel}'s board (${error.message}). Viewers are in control.`;
+  }
+}
+
 // Board → game.
 const params = new URLSearchParams(location.hash.slice(1));
 if (params.get("token")) {
@@ -56,8 +75,8 @@ if (params.get("token")) {
   board.on("input", move => { if (move.control === "move") runner.speed = Math.max(2, Math.min(9, runner.speed + move.x)); });
   board.on("close", () => { status.textContent = "Disconnected from S.V.E.R; reconnecting…"; });
   board.on("hello", hello => {
-    status.textContent = `Connected to ${hello.channel}'s board. Viewers are in control.`;
-    board.ready().catch(() => {});
+    airborne = false;
+    defineBoard(hello.channel).finally(() => board.ready().catch(() => {}));
   });
   board.connect().catch(error => { status.textContent = error.message; });
 }

@@ -931,9 +931,10 @@ async fn v1_channel(
 /// GET /api/me/connections
 async fn connections(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
-    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',g.id,'app',a.name,'icon',a.icon_key,'owner',u.username,'scopes',g.scopes,'created_at',g.created_at,'last_used_at',g.last_used_at)
+    let mut rows: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',g.id,'app',a.name,'icon',a.icon_key,'owner',u.username,'scopes',g.scopes,'created_at',g.created_at,'last_used_at',g.last_used_at,
+            'game',a.id<>$2 AND 'board:control'=ANY(g.scopes),'may_define',g.may_define)
         FROM oauth_grants g JOIN dev_apps a ON a.id=g.app_id LEFT JOIN users u ON u.id=a.owner_id WHERE g.user_id=$1 AND g.revoked_at IS NULL ORDER BY g.created_at DESC")
-        .bind(&user.id).fetch_all(&app.db).await?;
+        .bind(&user.id).bind(DESKTOP_APP).fetch_all(&app.db).await?;
     icons(&app, &mut rows);
     Ok(Json(json!({"connections": rows})))
 }
@@ -951,6 +952,31 @@ async fn disconnect(
     .bind(&user.id)
     .execute(&app.db)
     .await?;
+    connections(State(app), jar).await
+}
+#[derive(Deserialize)]
+pub struct Allow {
+    may_define: bool,
+}
+/// PUT /api/me/connections/{id}: "May set my board" for an app that connects to the board as a
+/// game (docs/CROWDSYNC.md "Game-defined boards"). Off by default.
+async fn allow(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Json(input): Json<Allow>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let client: Option<String> = sqlx::query_scalar("UPDATE oauth_grants SET may_define=$3 WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL AND 'board:control'=ANY(scopes) RETURNING app_id")
+        .bind(&id)
+        .bind(&user.id)
+        .bind(input.may_define)
+        .fetch_optional(&app.db)
+        .await?;
+    let client = client.ok_or_else(Fail::missing)?;
+    if !input.may_define {
+        crate::boards::lost_permission(&app, &user.id, &client).await?;
+    }
     connections(State(app), jar).await
 }
 /// GET /api/admin/apps: every app, for staff.
@@ -1026,7 +1052,7 @@ pub fn routes() -> Router<App> {
         .route("/api/v1/me", get(v1_me))
         .route("/api/v1/channels/{name}", get(v1_channel))
         .route("/api/me/connections", get(connections))
-        .route("/api/me/connections/{id}", delete(disconnect))
+        .route("/api/me/connections/{id}", delete(disconnect).put(allow))
         .route("/api/admin/apps", get(staff_apps))
         .route("/api/admin/apps/{id}/suspend", post(suspend))
 }

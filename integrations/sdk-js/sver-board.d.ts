@@ -5,8 +5,11 @@ export type Control = {
   id: string; kind: "button" | "label" | "text" | "goal" | "joystick" | "rally"; label: string;
   cost: number; cooldown_seconds: number; per_stream_limit: number | null;
   audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number;
+  confirm?: boolean;
 };
 export type Board = { screens: { name: string; controls: Control[] }[] };
+/** A board a game defines: only `id`, `kind` and `label` are required per control. */
+export type BoardDefinition = { screens: { name: string; controls: (Pick<Control, "id" | "kind" | "label"> & Partial<Control>)[] }[] };
 export type ControlState = { label?: string; disabled?: boolean };
 export type Snapshot = { board: Board | null; version: number; disabled: boolean; state: Record<string, ControlState>; goals: Record<string, number>; starting: boolean; input_cap: number | null };
 export type Hello = Snapshot & { type: "hello"; kind: "bridge" | "game"; channel: string; protocol: number };
@@ -46,5 +49,7 @@ export class SverBoard {
   capture(press: string): Promise<void>;
   release(press: string): Promise<void>;
   setInputCap(perSecond: number | null): Promise<void>;
+  /** Makes the game's own board live while it is connected. Rejects unless the streamer allowed "May set my board". */
+  define(name: string, board: BoardDefinition): Promise<void>;
   close(): void;
 }

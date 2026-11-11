@@ -5,7 +5,7 @@ import { SverBoard } from "./sver-board.mjs";
 import { serve } from "../test/ws-server.mjs";
 
 const board = { screens: [{ name: "Game", controls: [{ id: "jump", kind: "button", label: "Jump" }] }] };
-let client;
+let client, allowed = false;
 const seen = [];
 const gateway = await serve((socket, request) => {
   client = socket;
@@ -14,6 +14,14 @@ const gateway = await serve((socket, request) => {
     const message = JSON.parse(text);
     seen.push(message);
     if (["ready", "cap", "capture", "release", "groups"].includes(message.type)) socket.send(JSON.stringify({ type: "ack", id: message.id }));
+    if (message.type === "define") {
+      // Refused until the streamer allows it; then the new board follows the ack, like a publish.
+      if (!allowed) socket.send(JSON.stringify({ type: "error", id: message.id, message: "The streamer hasn't let this connection set their board." }));
+      else {
+        socket.send(JSON.stringify({ type: "ack", id: message.id, version: 5 }));
+        socket.send(JSON.stringify({ type: "board", board: message.board, version: 5, disabled: false, state: {}, goals: {} }));
+      }
+    }
     if (message.type === "state") {
       if (message.controls.jump?.label === "") socket.send(JSON.stringify({ type: "error", id: message.id, message: "Labels are 1–40 characters." }));
       else {
@@ -68,7 +76,17 @@ client.send(JSON.stringify({ type: "board_result", id: "p2", control: "boost", o
 await new Promise(resolve => setTimeout(resolve, 100));
 assert.equal(events.at(-1)[0], "result");
 
+// Defining the game's own board: refused without the streamer's permission, live with it.
+const own = { screens: [{ name: "Runner", controls: [{ id: "hop", kind: "button", label: "Hop" }] }] };
+await assert.rejects(sdk.define("Crowd Runner", own), /set their board/);
+allowed = true;
+await sdk.define("Crowd Runner", own);
+await new Promise(resolve => setTimeout(resolve, 100));
+assert.deepEqual(seen.at(-1), { type: "define", name: "Crowd Runner", board: own, id: seen.at(-1).id });
+assert.equal(events.at(-1)[0], "board");
+assert.deepEqual([sdk.current.version, sdk.current.board.screens[0].name], [5, "Runner"]);
+
 sdk.close();
 gateway.close();
-console.log("SDK checks passed: connect, event routing, state acks and errors, ready and cap.");
+console.log("SDK checks passed: connect, event routing, state acks and errors, ready and cap, groups, confirms, define.");
 process.exit(0);
