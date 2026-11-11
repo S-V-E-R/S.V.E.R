@@ -999,6 +999,13 @@ pub async fn exercise(e: &Env) {
             Some("cancelled".into())
         )
     );
+    // A refund made by hand while the rest is still owed counts against it: the job sends only
+    // what is left, never the same money twice.
+    let by_hand = half + 1;
+    let hand = json!({"id": "evt_ad_site_refund_hand", "type": "charge.refunded", "data": {"object": {
+        "payment_intent": "pi_ad_site", "amount": site_cents, "amount_refunded": by_hand}}});
+    assert_eq!(stripe_event(e, hand).await, StatusCode::OK);
+    let half = by_hand;
     sver::adnet::tick(&e.app).await.unwrap();
     assert_eq!(status(e, &site).await.0, "cancelled");
     let sent = e
