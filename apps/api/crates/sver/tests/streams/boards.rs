@@ -548,6 +548,114 @@ pub async fn exercise(e: &Env) {
         (&viewing["version"], &viewing["goals"]),
         (&json!(2), &json!({}))
     );
+
+    // ---- Library: saved boards beside the draft; nothing in it is live ----
+    let (_, me) = call(e, "GET", "/api/me/board", Some(&owner), Value::Null).await;
+    let saved = me["draft"].clone();
+    assert_eq!(me["library"], json!([]));
+    let keep = |name: String, board: Value| {
+        call(
+            e,
+            "POST",
+            "/api/me/board/library",
+            Some(&owner),
+            json!({"name": name, "board": board}),
+        )
+    };
+    let bad = json!({"screens": [{"name": "Main", "controls": [{"id": "s", "kind": "joystick", "label": "Move", "cost": 5}]}]});
+    assert_eq!(
+        keep("Bad".into(), bad.clone()).await.0,
+        StatusCode::BAD_REQUEST,
+        "checked like any save"
+    );
+    assert_eq!(
+        keep(" ".into(), saved.clone()).await.0,
+        StatusCode::BAD_REQUEST,
+        "needs a name"
+    );
+    let (status, me) = keep("Party".into(), saved.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    let (_, me) = keep("party".into(), saved.clone()).await;
+    assert_eq!(
+        me["library"].as_array().unwrap().len(),
+        1,
+        "the same name replaces the entry"
+    );
+    let party = me["library"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(me["library"][0]["from_game"], false);
+    for n in 2..=20 {
+        assert_eq!(
+            keep(format!("Board {n}"), saved.clone()).await.0,
+            StatusCode::OK
+        );
+    }
+    assert_eq!(
+        keep("One too many".into(), saved.clone()).await.0,
+        StatusCode::CONFLICT,
+        "up to 20"
+    );
+    // Loading replaces the draft and leaves the live board alone.
+    let other = json!({"screens": [{"name": "Other", "controls": [{"id": "x", "kind": "button", "label": "X"}]}]});
+    assert_eq!(draft(other).await.0, StatusCode::OK);
+    let load = format!("/api/me/board/library/{party}/load");
+    assert_eq!(
+        call(e, "POST", &load, Some(&viewer), Value::Null).await.0,
+        StatusCode::NOT_FOUND,
+        "someone else's board"
+    );
+    let (status, me) = call(e, "POST", &load, Some(&owner), Value::Null).await;
+    assert_eq!(
+        (status, &me["draft"], &me["changed"], &me["version"]),
+        (StatusCode::OK, &saved, &json!([]), &json!(2))
+    );
+    let remove = format!("/api/me/board/library/{party}");
+    let (status, me) = call(e, "DELETE", &remove, Some(&owner), Value::Null).await;
+    assert_eq!(
+        (status, me["library"].as_array().unwrap().len()),
+        (StatusCode::OK, 19)
+    );
+    assert_eq!(
+        call(e, "DELETE", &remove, Some(&owner), Value::Null)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+
+    // ---- Import: a board file becomes the draft; another channel's Skills become "none" ----
+    let import = |file: Value| call(e, "POST", "/api/me/board/import", Some(&owner), file);
+    let theirs = json!({"screens": [{"name": "Shared", "controls": [
+        {"id": "a", "kind": "button", "label": "Theirs", "effect": format!("custom:{}", id())},
+        {"id": "b", "kind": "button", "label": "Ours", "effect": "confetti"}
+    ]}]});
+    let (status, me) =
+        import(json!({"sver_board": 1, "name": "Shared", "board": theirs.clone()})).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["changed"], json!(["Theirs"]));
+    assert_eq!(
+        (
+            &me["draft"]["screens"][0]["controls"][0]["effect"],
+            &me["draft"]["screens"][0]["controls"][1]["effect"]
+        ),
+        (&json!("none"), &json!("confetti"))
+    );
+    for (file, why) in [
+        (
+            json!({"sver_board": 2, "name": "x", "board": theirs}),
+            "a newer format",
+        ),
+        (
+            json!({"sver_board": 1, "name": "x", "board": bad}),
+            "checked like any save",
+        ),
+        (
+            json!({"sver_board": 1, "name": "x", "board": {"hello": 1}}),
+            "not a board",
+        ),
+    ] {
+        assert_eq!(import(file).await.0, StatusCode::BAD_REQUEST, "{why}");
+    }
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert_eq!(viewing["version"], 2, "none of that touched the live board");
     drop(chat);
     // End the synthetic broadcast outside discovery's 14-day "recently live" window.
     e.sql("UPDATE broadcasts SET state='ENDED',started_at=now()-interval '30 days',ended_at=now()-interval '30 days',end_reason='test',reconnect_deadline=NULL WHERE id='bd-b'").await;

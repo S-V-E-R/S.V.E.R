@@ -71,6 +71,20 @@ async fn about(ws: &mut Socket, kind: &str, press: &str) -> Value {
         }
     }
 }
+/// What the viewer sees live: the first screen's name, the version and their balance.
+async fn live_board(e: &Env, viewer: &str) -> (Value, i64, i64) {
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(viewer), Value::Null).await;
+    (
+        viewing["board"]["screens"][0]["name"].clone(),
+        viewing["version"].as_i64().unwrap(),
+        viewing["balance"].as_i64().unwrap(),
+    )
+}
+/// Switches a connection's "May set my board".
+async fn allow_define(e: &Env, owner: &str, id: String, on: bool) -> (StatusCode, Value) {
+    let path = format!("/api/me/integrations/{id}");
+    call(e, "PUT", &path, Some(owner), json!({"may_define": on})).await
+}
 
 pub async fn exercise(e: &Env) {
     let owner = person(e, "gw-owner", "GwOwner", true).await;
@@ -480,6 +494,161 @@ pub async fn exercise(e: &Env) {
         limited |= reply["type"] == "error";
     }
     assert!(limited, "message rate limit");
+
+    // ---- Game-defined boards: off until the streamer allows that connection ----
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let own = json!({"screens": [{"name": "Runner", "controls": [
+        {"id": "hop", "kind": "button", "label": "Hop", "cost": 5, "confirm": true},
+        {"id": "coins", "kind": "goal", "label": "Coins", "target": 10}
+    ]}]});
+    let define = |board: &Value| json!({"type": "define", "id": "d", "name": "Crowd Runner", "board": board});
+    let screen = || live_board(e, &viewer);
+    let (_, version, balance) = screen().await;
+    let refused = say(&mut game, define(&own)).await;
+    assert_eq!(refused["type"], "error");
+    assert!(
+        refused["message"]
+            .as_str()
+            .unwrap()
+            .contains("May set my board"),
+        "{refused}"
+    );
+    assert_eq!(
+        say(&mut bridge, define(&own)).await["type"],
+        "error",
+        "bridges never set the board"
+    );
+    let game_id = listed["tokens"][0]["id"].as_str().unwrap().to_string();
+    let bridge_id = listed["tokens"][1]["id"].as_str().unwrap().to_string();
+    let allow = |id: String, on: bool| allow_define(e, &owner, id, on);
+    assert_eq!(listed["tokens"][0]["may_define"], false, "off by default");
+    assert_eq!(
+        allow(bridge_id, true).await.0,
+        StatusCode::NOT_FOUND,
+        "games only"
+    );
+    let (status, tokens) = allow(game_id.clone(), true).await;
+    assert_eq!(
+        (status, &tokens["tokens"][0]["may_define"]),
+        (StatusCode::OK, &json!(true))
+    );
+    // Checked like a draft, without the channel's own Skills, and priced for this channel's viewers.
+    let mut custom = own.clone();
+    custom["screens"][0]["controls"][1]["effect"] = json!(format!("custom:{}", id()));
+    let refused = say(&mut game, define(&custom)).await;
+    assert!(
+        refused["message"].as_str().unwrap().contains("Skills"),
+        "{refused}"
+    );
+    let mut invalid = own.clone();
+    invalid["screens"][0]["controls"][1]["target"] = Value::Null;
+    assert_eq!(say(&mut game, define(&invalid)).await["type"], "error");
+    for n in 1..=5 {
+        person(e, &format!("gw-t{n}"), &format!("GwT{n}"), true).await;
+    }
+    e.sql("INSERT INTO engagement(channel_id,user_id,balance,last_watch_at) SELECT 'gw-owner',id,3,now() FROM users WHERE id LIKE 'gw-t%'").await;
+    e.sql("UPDATE engagement SET last_watch_at=NULL, last_chat_at=NULL WHERE channel_id='gw-owner' AND user_id='gw-viewer'").await;
+    let refused = say(&mut game, define(&own)).await;
+    assert!(
+        refused["message"].as_str().unwrap().contains("at most 3"),
+        "a typical viewer here has 3: {refused}"
+    );
+    e.sql("UPDATE engagement SET balance=100 WHERE channel_id='gw-owner' AND user_id LIKE 'gw-t%'")
+        .await;
+    // Allowed: the game's board is live as a new version; the streamer's is saved aside.
+    assert_eq!(
+        say(&mut game, define(&own)).await,
+        json!({"type": "ack", "id": "d", "version": version + 1})
+    );
+    assert_eq!(screen().await, (json!("Runner"), version + 1, balance));
+    loop {
+        let sent = next(&mut bridge, "board").await;
+        if sent["version"] == version + 1 {
+            assert_eq!(sent["board"]["screens"][0]["name"], "Runner");
+            break;
+        }
+    }
+    let (_, studio) = call(e, "GET", "/api/me/board", Some(&owner), Value::Null).await;
+    assert_eq!(studio["set_by"], "Runner", "the connection's name");
+    assert_eq!(
+        studio["draft"]["screens"][0]["name"], "Red",
+        "the draft is never touched"
+    );
+    assert_eq!(
+        (
+            &studio["library"][0]["name"],
+            &studio["library"][0]["from_game"]
+        ),
+        (&json!("Crowd Runner"), &json!(true)),
+        "kept in the library too"
+    );
+    let limited = say(&mut game, define(&own)).await;
+    assert!(
+        limited["message"].as_str().unwrap().contains("10 seconds"),
+        "{limited}"
+    );
+    // "Take it back" restores the streamer's board as a new version, releases presses held on
+    // the game's controls and switches the permission off.
+    let (status, held, _) = e_press(e, &viewer, "hop").await;
+    assert_eq!(
+        (status, &held["held"], held["balance"].as_i64()),
+        (StatusCode::OK, &json!(true), Some(balance - 5)),
+        "{held}"
+    );
+    let (status, studio) = call(
+        e,
+        "POST",
+        "/api/me/board/take-back",
+        Some(&owner),
+        Value::Null,
+    )
+    .await;
+    assert_eq!((status, &studio["set_by"]), (StatusCode::OK, &Value::Null));
+    assert_eq!(screen().await, (json!("Red"), version + 2, balance));
+    let (_, tokens) = call(e, "GET", "/api/me/integrations", Some(&owner), Value::Null).await;
+    assert_eq!(tokens["tokens"][0]["may_define"], false);
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    assert_eq!(say(&mut game, define(&own)).await["type"], "error");
+    // Allowed again: the board comes back when the game stops checking in, or disconnects.
+    allow(game_id.clone(), true).await;
+    assert_eq!(say(&mut game, define(&own)).await["type"], "ack");
+    assert_eq!(screen().await.0, "Runner");
+    e.sql("UPDATE boards SET set_seen_at=now()-interval '2 minutes' WHERE channel_id='gw-owner'")
+        .await;
+    sver::boards::tick(&e.app).await.unwrap();
+    assert_eq!(screen().await, (json!("Red"), version + 4, balance));
+    e.sql("DELETE FROM rate_limits WHERE key LIKE 'board-define%'")
+        .await;
+    assert_eq!(say(&mut game, define(&own)).await["type"], "ack");
+    assert_eq!(screen().await.0, "Runner");
+    game.close(None).await.unwrap();
+    let mut back = screen().await;
+    for _ in 0..50 {
+        if back.0 == "Red" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        back = screen().await;
+    }
+    assert_eq!(
+        (back.0, back.1),
+        (json!("Red"), version + 6),
+        "disconnected"
+    );
+    let logged: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_moderation_log WHERE channel_id='gw-owner' AND action IN ('board_define','board_restore')")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(logged, 6, "three boards set and three restored");
+    // Switching the permission off while a game's board is live also brings the streamer's back.
+    e.sql("DELETE FROM rate_limits WHERE key LIKE 'board-define%'")
+        .await;
+    let (mut again, _) = connect(Some(game_token.clone()), None).await.unwrap();
+    next(&mut again, "hello").await;
+    assert_eq!(say(&mut again, define(&own)).await["type"], "ack");
+    allow(game_id, false).await;
+    assert_eq!(screen().await.0, "Red");
+    drop(again);
 
     // ---- Revoking stops new connections ----
     let id = listed["tokens"][0]["id"].as_str().unwrap().to_string();
