@@ -278,23 +278,30 @@ pub struct Connect {
 /// headers on a WebSocket.
 async fn socket(
     State(app): State<App>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
     Query(input): Query<Connect>,
     upgrade: WebSocketUpgrade,
 ) -> Res<Response> {
     let user =
         crate::devapps::identify(&app, &input.client_id, input.access_token.as_deref()).await?;
-    let key = format!(
-        "{}:{}",
-        input.client_id,
-        user.as_ref().map_or("-", |u| u.0.as_str())
-    );
+    // Per app and person; without a token, per app and address (the client ID is public, so one
+    // visitor mustn't be able to hold every anonymous slot of an app).
+    let key = match &user {
+        Some((id, _)) => format!("{}:{id}", input.client_id),
+        None => format!(
+            "{}:-:{}",
+            input.client_id,
+            crate::security::client_ip(&app, peer, &headers)
+        ),
+    };
     {
         let mut open = CONNECTIONS.lock().unwrap_or_else(|e| e.into_inner());
         let n = open.entry(key.clone()).or_default();
         if *n >= MAX_CONNECTIONS {
             return Err(Fail::new(
                 axum::http::StatusCode::TOO_MANY_REQUESTS,
-                "Up to 10 connections per app and person.",
+                "Up to 10 connections per app and person (per address without a token).",
             ));
         }
         *n += 1;
@@ -329,6 +336,8 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
     // sockets connect.
     let mut poll = tokio::time::interval(std::time::Duration::from_secs(5));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // At most 10 method calls a second, as on the integration gateway.
+    let (mut window, mut calls) = (std::time::Instant::now(), 0u32);
     loop {
         tokio::select! {
             _ = poll.tick() => {
@@ -406,6 +415,14 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
             },
             incoming = ws.recv() => match incoming {
                 Some(Ok(Message::Text(text))) => {
+                    if window.elapsed() >= std::time::Duration::from_secs(1) {
+                        (window, calls) = (std::time::Instant::now(), 0);
+                    }
+                    calls += 1;
+                    if calls > 10 {
+                        if !reply(&mut ws, json!({"type": "reply", "error": "Too many messages. At most 10 a second."})).await { return; }
+                        continue;
+                    }
                     let Ok(call) = serde_json::from_str::<Value>(&text) else {
                         if !reply(&mut ws, json!({"type": "reply", "error": "Send JSON."})).await { return; }
                         continue;
