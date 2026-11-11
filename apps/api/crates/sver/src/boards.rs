@@ -51,6 +51,13 @@ const MAX_CONTROLS: usize = 24;
 const MAX_TEXT: usize = 200;
 /// Webhook attempts before giving up (backoff doubles from 10 seconds).
 const MAX_ATTEMPTS: i32 = 8;
+/// Saved boards per channel (**Proposed**).
+const MAX_LIBRARY: i64 = 20;
+/// What every change of the live board shares: a new version, with game-set state and groups
+/// cleared. Goals restart in the same transaction and `went_live` runs after it commits.
+const NEW_VERSION: &str = "version=version+1, published_at=now(), live_state='{}', groups='{}'";
+/// The live board is the streamer's own (no game's board is set).
+const OWN: &str = "set_by=NULL, set_by_app=false, set_by_name=NULL, set_session=NULL, set_seen_at=NULL, set_aside=NULL";
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
@@ -363,11 +370,13 @@ struct Row {
     input_cap: Option<i16>,
     /// Viewer groups a game set (see `group_screen`).
     groups: Value,
+    /// The connection whose game set the live board, if one did.
+    set_by_name: Option<String>,
 }
 fn row_sql() -> String {
     format!("SELECT draft,published,version,published_at,disabled,moderators_run,
     coalesce(overlay_seen_at>now()-interval '30 seconds',false) AS overlay, overlay_token_hash IS NOT NULL AS overlay_set, webhook_url, live_state,
-    {STARTING} AS starting, input_cap, groups FROM boards")
+    {STARTING} AS starting, input_cap, groups, set_by_name FROM boards")
 }
 /// A game session checked in within the last minute and hasn't said "ready".
 const STARTING: &str =
@@ -431,6 +440,7 @@ async fn studio(app: &App, user: &auth::User) -> Res<Value> {
             starting: false,
             input_cap: None,
             groups: json!({}),
+            set_by_name: None,
         },
     };
     let templates: Vec<Value> = templates()
@@ -445,6 +455,8 @@ async fn studio(app: &App, user: &auth::User) -> Res<Value> {
         "overlay": {"set": row.overlay_set, "connected": row.overlay},
         "webhook_url": row.webhook_url, "input_cap": row.input_cap,
         "typical_balance": typical_balance(app, &user.id).await?,
+        "set_by": row.set_by_name,
+        "library": library(app, &user.id).await?, "library_max": MAX_LIBRARY,
         "checklist": checklist(&row),
         "templates": templates, "effects": EFFECTS, "custom_effects": crate::skills::board_options(app, &user.id).await?, "kinds": KINDS, "audiences": AUDIENCES,
     }))
@@ -464,12 +476,191 @@ async fn save(
     profiles::ensure_unrestricted(&mut *app.db.acquire().await?, &user.id).await?;
     validate(&input.board)?;
     own_effects(&app, &user.id, &input.board).await?;
+    set_draft(&app, &user.id, &input.board).await?;
+    studio(&app, &user).await.map(Json)
+}
+async fn set_draft(app: &App, channel: &str, board: &Board) -> Res<()> {
     sqlx::query("INSERT INTO boards(channel_id,draft) VALUES($1,$2) ON CONFLICT(channel_id) DO UPDATE SET draft=EXCLUDED.draft, updated_at=now()")
-        .bind(&user.id)
-        .bind(sqlx::types::Json(&input.board))
+        .bind(channel)
+        .bind(sqlx::types::Json(board))
         .execute(&app.db)
         .await?;
+    Ok(())
+}
+
+// ---- Library, import and export (docs/CROWDSYNC.md "Board library, import/export") ----
+
+async fn library(app: &App, channel: &str) -> Res<Value> {
+    Ok(sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'name',name,'updated_at',updated_at,'from_game',source IS NOT NULL) ORDER BY lower(name), id),'[]') FROM board_library WHERE channel_id=$1")
+        .bind(channel)
+        .fetch_one(&app.db)
+        .await?)
+}
+/// A board sent as JSON (a file, or a game's `define`).
+fn parse(board: Value) -> Res<Board> {
+    serde_json::from_value(board).map_err(|_| Fail::bad("That isn't a S.V.E.R board."))
+}
+fn board_name(name: &str) -> Res<&str> {
+    let name = name.trim();
+    if !(1..=40).contains(&name.chars().count()) {
+        return Err(Fail::field("name", "Names are 1–40 characters."));
+    }
+    text::filter(name, "name")?;
+    Ok(name)
+}
+/// Effects that aren't this channel's to use (another channel's custom Skill, or a deleted one)
+/// become "none". Returns the labels of the controls that changed.
+async fn own_or_none(app: &App, owner: &str, board: &mut Board) -> Res<Vec<String>> {
+    let mut changed = Vec::new();
+    for c in board.screens.iter_mut().flat_map(|s| s.controls.iter_mut()) {
+        if c.effect.starts_with("custom:")
+            && (!is_custom(&c.effect) || media(app, owner, &c.effect).await?.0 == "none")
+        {
+            c.effect = no_effect();
+            changed.push(c.label.trim().to_string());
+        }
+    }
+    Ok(changed)
+}
+/// Saves a board to the library: over the entry a game already has (`source`) or the streamer's
+/// entry of the same name, otherwise as a new one while there's room. False when it's full.
+async fn keep(
+    db: &mut sqlx::PgConnection,
+    channel: &str,
+    name: &str,
+    board: &Board,
+    source: Option<&str>,
+) -> Res<bool> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('board-library:'||$1, 7))")
+        .bind(channel)
+        .execute(&mut *db)
+        .await?;
+    let existing: Option<String> = sqlx::query_scalar("SELECT id FROM board_library WHERE channel_id=$1 AND CASE WHEN $3::text IS NULL THEN source IS NULL AND lower(name)=lower($2) ELSE source=$3 END")
+        .bind(channel)
+        .bind(name)
+        .bind(source)
+        .fetch_optional(&mut *db)
+        .await?;
+    if let Some(id) = existing {
+        sqlx::query("UPDATE board_library SET name=$2, board=$3, updated_at=now() WHERE id=$1")
+            .bind(id)
+            .bind(name)
+            .bind(sqlx::types::Json(board))
+            .execute(&mut *db)
+            .await?;
+        return Ok(true);
+    }
+    let saved: i64 = sqlx::query_scalar("SELECT count(*) FROM board_library WHERE channel_id=$1")
+        .bind(channel)
+        .fetch_one(&mut *db)
+        .await?;
+    if saved >= MAX_LIBRARY {
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO board_library(id,channel_id,name,board,source) VALUES($1,$2,$3,$4,$5)",
+    )
+    .bind(profiles::new_id())
+    .bind(channel)
+    .bind(name)
+    .bind(sqlx::types::Json(board))
+    .bind(source)
+    .execute(&mut *db)
+    .await?;
+    Ok(true)
+}
+#[derive(Deserialize)]
+pub struct Named {
+    name: String,
+    board: Value,
+}
+/// POST /api/me/board/library: saves the board being edited under a name (the same name again
+/// replaces that entry). Nothing in the library is live.
+async fn library_save(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<Named>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    profiles::ensure_unrestricted(&mut *app.db.acquire().await?, &user.id).await?;
+    let name = board_name(&input.name)?;
+    let board = parse(input.board)?;
+    validate(&board)?;
+    own_effects(&app, &user.id, &board).await?;
+    let mut tx = app.db.begin().await?;
+    if !keep(&mut tx, &user.id, name, &board, None).await? {
+        return Err(Fail::conflict(
+            "Your library holds up to 20 boards. Delete one first.",
+        ));
+    }
+    tx.commit().await?;
     studio(&app, &user).await.map(Json)
+}
+/// A board from the library or a file becomes the draft, checked like any save. The reply's
+/// "changed" lists controls whose effect was replaced with "none".
+async fn into_draft(app: &App, user: &auth::User, mut board: Board) -> Res<Json<Value>> {
+    let changed = own_or_none(app, &user.id, &mut board).await?;
+    validate(&board)?;
+    set_draft(app, &user.id, &board).await?;
+    let mut body = studio(app, user).await?;
+    body["changed"] = json!(changed);
+    Ok(Json(body))
+}
+/// POST /api/me/board/library/{id}/load: a saved board replaces the draft.
+async fn library_load(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    profiles::ensure_unrestricted(&mut *app.db.acquire().await?, &user.id).await?;
+    let board: Value =
+        sqlx::query_scalar("SELECT board FROM board_library WHERE id=$1 AND channel_id=$2")
+            .bind(&id)
+            .bind(&user.id)
+            .fetch_optional(&app.db)
+            .await?
+            .ok_or_else(Fail::missing)?;
+    into_draft(&app, &user, parse(board)?).await
+}
+/// DELETE /api/me/board/library/{id}
+async fn library_delete(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let deleted = sqlx::query("DELETE FROM board_library WHERE id=$1 AND channel_id=$2")
+        .bind(&id)
+        .bind(&user.id)
+        .execute(&app.db)
+        .await?
+        .rows_affected();
+    if deleted == 0 {
+        return Err(Fail::missing());
+    }
+    studio(&app, &user).await.map(Json)
+}
+#[derive(Deserialize)]
+pub struct BoardFile {
+    sver_board: Value,
+    board: Value,
+}
+/// POST /api/me/board/import: a `.sverboard.json` file (`{"sver_board": 1, "name", "board"}`)
+/// becomes the draft. Another channel's custom Skills are replaced with no effect.
+async fn import(
+    State(app): State<App>,
+    jar: CookieJar,
+    Json(input): Json<BoardFile>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    profiles::ensure_unrestricted(&mut *app.db.acquire().await?, &user.id).await?;
+    if input.sver_board != 1 {
+        return Err(Fail::bad(
+            "This board file is in a format S.V.E.R doesn't read yet.",
+        ));
+    }
+    into_draft(&app, &user, parse(input.board)?).await
 }
 
 /// POST /api/me/board/publish: the draft goes live as a new version; goals start over.
@@ -491,16 +682,232 @@ async fn publish(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         )));
     }
     let mut tx = app.db.begin().await?;
-    sqlx::query("UPDATE boards SET published=draft, version=version+1, published_at=now(), live_state='{}', groups='{}' WHERE channel_id=$1")
-        .bind(&user.id)
-        .execute(&mut *tx)
-        .await?;
+    // The streamer's own publish replaces a game's board for good; nothing is restored later.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE boards SET published=draft, {NEW_VERSION}, {OWN} WHERE channel_id=$1"
+    )))
+    .bind(&user.id)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("DELETE FROM board_goals WHERE channel_id=$1")
         .bind(&user.id)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    changed(&app, &user.id);
+    went_live(&app, &user.id).await;
+    studio(&app, &user).await.map(Json)
+}
+/// After a new version commits: open boards reload, and held presses on controls that are no
+/// longer on the board are released (refunded) now rather than after their 60 seconds.
+async fn went_live(app: &App, channel: &str) {
+    changed(app, channel);
+    let released = async {
+        let held: Vec<(String, String)> = sqlx::query_as("SELECT id, control_id FROM board_presses WHERE channel_id=$1 AND held_until IS NOT NULL AND outcome IS NULL")
+            .bind(channel)
+            .fetch_all(&app.db)
+            .await?;
+        if held.is_empty() {
+            return Ok(());
+        }
+        let board: Option<sqlx::types::Json<Board>> =
+            sqlx::query_scalar("SELECT published FROM boards WHERE channel_id=$1")
+                .bind(channel)
+                .fetch_optional(&app.db)
+                .await?
+                .flatten();
+        for (id, control) in held {
+            if board.as_ref().is_none_or(|b| b.0.control(&control).is_none()) {
+                settle(app, channel, &id, false).await?;
+            }
+        }
+        Ok::<_, Fail>(())
+    }
+    .await;
+    if released.is_err() {
+        // `tick` releases them when their hold runs out.
+        eprintln!("board_event=release_removed outcome=retry");
+    }
+}
+
+// ---- Game-defined boards (docs/CROWDSYNC.md "Game-defined boards") ----
+
+/// The gateway connection defining a board: its ID (a Studio token's, or an app's client ID), the
+/// name the streamer knows it by, and this socket's session.
+pub(crate) struct Setter<'a> {
+    pub id: &'a str,
+    pub app: bool,
+    pub name: &'a str,
+    pub session: &'a str,
+}
+/// A game's board becomes the live board while the game is connected. The caller has checked the
+/// streamer's "May set my board" for this connection. The board is checked like a draft, may not
+/// use the channel's custom Skills, and costs no more than a typical viewer here has. The first
+/// one saves the streamer's published board aside (`restore` brings it back); the draft is never
+/// touched. Returns the new version.
+pub(crate) async fn define(
+    app: &App,
+    channel: &str,
+    by: &Setter<'_>,
+    name: &str,
+    board: Value,
+) -> Res<i32> {
+    profiles::ensure_unrestricted(&mut *app.db.acquire().await?, channel).await?;
+    let name = board_name(name)?;
+    let board = parse(board)?;
+    validate(&board)?;
+    if !board.controls().any(pressable) {
+        return Err(Fail::bad(
+            "A board needs at least one control viewers can use.",
+        ));
+    }
+    let typical = typical_balance(app, channel).await?;
+    for c in board.controls() {
+        if c.effect.starts_with("custom:") {
+            return Err(bad(c, "a game can't use the channel's own Skills."));
+        }
+        if let Some(most) = typical.filter(|most| i64::from(c.cost) > *most) {
+            return Err(Fail::bad(format!(
+                "{}: cost is at most {most} Engagement Valor on this channel (what a typical viewer here has).",
+                c.label.trim()
+            )));
+        }
+    }
+    // Last of the checks, so a refused board can be fixed and sent again at once.
+    let key = format!("board-define:{channel}:{}", by.id);
+    if let Err(limited) = sec::reserve(app, vec![key], 1, 10).await {
+        return Err(match Fail::from(limited) {
+            fail if fail.status == StatusCode::TOO_MANY_REQUESTS => Fail {
+                message: "A game can set the board once every 10 seconds.".into(),
+                ..fail
+            },
+            fail => fail,
+        });
+    }
+    let mut tx = app.db.begin().await?;
+    sqlx::query(
+        "INSERT INTO boards(channel_id,draft) VALUES($1,$2) ON CONFLICT(channel_id) DO NOTHING",
+    )
+    .bind(channel)
+    .bind(sqlx::types::Json(Board::empty()))
+    .execute(&mut *tx)
+    .await?;
+    let before: Option<String> =
+        sqlx::query_scalar("SELECT set_session FROM boards WHERE channel_id=$1 FOR UPDATE")
+            .bind(channel)
+            .fetch_one(&mut *tx)
+            .await?;
+    // SET reads the old row: the streamer's board is saved aside only when no game's is live.
+    let version: i32 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "UPDATE boards SET set_aside=CASE WHEN set_session IS NULL THEN published ELSE set_aside END, published=$2, {NEW_VERSION},
+            set_by=$3, set_by_app=$4, set_by_name=$5, set_session=$6, set_seen_at=now() WHERE channel_id=$1 RETURNING version"
+    )))
+    .bind(channel)
+    .bind(sqlx::types::Json(&board))
+    .bind(by.id)
+    .bind(by.app)
+    .bind(by.name)
+    .bind(by.session)
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM board_goals WHERE channel_id=$1")
+        .bind(channel)
+        .execute(&mut *tx)
+        .await?;
+    // Also in the library, so the streamer can load, edit and publish it as their own. A full
+    // library doesn't stop the game.
+    keep(&mut tx, channel, name, &board, Some(by.id)).await?;
+    if before.as_deref() != Some(by.session) {
+        moderation::log(
+            &mut tx,
+            channel,
+            channel,
+            Role::Owner,
+            "board_define",
+            None,
+            None,
+            json!({"connection": by.name, "board": name}),
+            "A connected game set the board",
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    went_live(app, channel).await;
+    Ok(version)
+}
+/// The streamer's own board comes back as a new version (nothing published, if they had none):
+/// when the game's session ends (`session`), stops checking in, or the streamer takes it back.
+pub(crate) async fn restore(
+    app: &App,
+    channel: &str,
+    session: Option<&str>,
+    reason: &str,
+) -> Res<bool> {
+    let mut tx = app.db.begin().await?;
+    let restored = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE boards SET published=set_aside, {NEW_VERSION}, {OWN} WHERE channel_id=$1 AND set_session IS NOT NULL AND ($2::text IS NULL OR set_session=$2)"
+    )))
+    .bind(channel)
+    .bind(session)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if restored == 0 {
+        return Ok(false);
+    }
+    sqlx::query("DELETE FROM board_goals WHERE channel_id=$1")
+        .bind(channel)
+        .execute(&mut *tx)
+        .await?;
+    moderation::log(
+        &mut tx,
+        channel,
+        channel,
+        Role::Owner,
+        "board_restore",
+        None,
+        None,
+        json!({}),
+        reason,
+    )
+    .await?;
+    tx.commit().await?;
+    went_live(app, channel).await;
+    Ok(true)
+}
+/// A connection lost "May set my board": if its game's board is live, the streamer's comes back.
+pub(crate) async fn lost_permission(app: &App, channel: &str, by: &str) -> Res<()> {
+    let session: Option<String> =
+        sqlx::query_scalar("SELECT set_session FROM boards WHERE channel_id=$1 AND set_by=$2")
+            .bind(channel)
+            .bind(by)
+            .fetch_optional(&app.db)
+            .await?
+            .flatten();
+    if let Some(session) = session {
+        restore(
+            app,
+            channel,
+            Some(&session),
+            "The game may no longer set the board",
+        )
+        .await?;
+    }
+    Ok(())
+}
+/// POST /api/me/board/take-back: the streamer's board comes back now and the game's connection
+/// loses "May set my board".
+async fn take_back(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let by: Option<(Option<String>, bool)> =
+        sqlx::query_as("SELECT set_by, set_by_app FROM boards WHERE channel_id=$1")
+            .bind(&user.id)
+            .fetch_optional(&app.db)
+            .await?;
+    if let Some((Some(by), is_app)) = by {
+        // First, so the game can't set it again in between.
+        crate::gateway::forbid_define(&app, &user.id, &by, is_app).await?;
+    }
+    restore(&app, &user.id, None, "The streamer took the board back").await?;
     studio(&app, &user).await.map(Json)
 }
 /// Open boards and overlays reload.
@@ -1191,12 +1598,19 @@ pub(crate) async fn set_groups(
     changed(app, channel);
     Ok(())
 }
-/// Releases presses no game confirmed within 60 seconds.
+/// Releases presses no game confirmed within 60 seconds, and brings back the streamer's board
+/// when the game that set the live one is gone.
 pub async fn tick(app: &App) -> Res<()> {
     let expired: Vec<(String, String)> = sqlx::query_as("SELECT id, channel_id FROM board_presses WHERE held_until<now() AND outcome IS NULL LIMIT 200")
         .fetch_all(&app.db).await?;
     for (id, channel) in expired {
         settle(app, &channel, &id, false).await?;
+    }
+    // A game whose connection missed two 30-second checks is gone (a crash skips the goodbye).
+    let gone: Vec<String> = sqlx::query_scalar("SELECT channel_id FROM boards WHERE set_session IS NOT NULL AND set_seen_at<now()-interval '70 seconds'")
+        .fetch_all(&app.db).await?;
+    for channel in gone {
+        restore(app, &channel, None, "The game stopped responding").await?;
     }
     Ok(())
 }
@@ -1636,6 +2050,20 @@ pub fn routes() -> Router<App> {
             put(save).layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/api/me/board/publish", post(publish))
+        .route(
+            "/api/me/board/library",
+            post(library_save).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            "/api/me/board/library/{id}",
+            axum::routing::delete(library_delete),
+        )
+        .route("/api/me/board/library/{id}/load", post(library_load))
+        .route(
+            "/api/me/board/import",
+            post(import).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route("/api/me/board/take-back", post(take_back))
         .route("/api/me/board/test", post(test))
         .route("/api/me/board/settings", put(settings))
         .route(

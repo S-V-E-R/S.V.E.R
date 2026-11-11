@@ -39,7 +39,7 @@ const BOARD_SCOPE: &str = "board:control";
 // ---- Creator Studio: tokens ----
 
 async fn list_json(app: &App, channel: &str) -> Res<Value> {
-    Ok(sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'kind',kind,'name',name,'created_at',created_at,'last_used_at',last_used_at) ORDER BY created_at),'[]') FROM integration_tokens WHERE channel_id=$1 AND revoked_at IS NULL")
+    Ok(sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'kind',kind,'name',name,'may_define',may_define,'created_at',created_at,'last_used_at',last_used_at) ORDER BY created_at),'[]') FROM integration_tokens WHERE channel_id=$1 AND revoked_at IS NULL")
         .bind(channel)
         .fetch_one(&app.db)
         .await?)
@@ -61,6 +61,9 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
 pub struct Create {
     kind: String,
     name: String,
+    /// "May set my board" (games only): this connection's game may define the live board.
+    #[serde(default)]
+    may_define: bool,
 }
 /// POST /api/me/integrations: a new scoped token, shown once (only its digest is stored).
 async fn create(
@@ -94,13 +97,14 @@ async fn create(
     }
     let token = format!("sver_{}_{}", &input.kind[..1], sec::token());
     sqlx::query(
-        "INSERT INTO integration_tokens(id,channel_id,kind,name,token_hash) VALUES($1,$2,$3,$4,$5)",
+        "INSERT INTO integration_tokens(id,channel_id,kind,name,token_hash,may_define) VALUES($1,$2,$3,$4,$5,$6)",
     )
     .bind(profiles::new_id())
     .bind(&user.id)
     .bind(&input.kind)
     .bind(name)
     .bind(sec::digest(&token))
+    .bind(input.may_define && input.kind == "game")
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -125,6 +129,62 @@ async fn revoke(
         return Err(Fail::missing());
     }
     Ok(Json(json!({"tokens": list_json(&app, &user.id).await?})))
+}
+#[derive(Deserialize)]
+pub struct Allow {
+    may_define: bool,
+}
+/// PUT /api/me/integrations/{id}: switches a game connection's "May set my board". Switching it
+/// off while that game's board is live brings the streamer's board back.
+async fn allow(
+    State(app): State<App>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+    Json(input): Json<Allow>,
+) -> Res<Json<Value>> {
+    let user = profiles::signed_in(&app, &jar).await?;
+    let updated = sqlx::query("UPDATE integration_tokens SET may_define=$3 WHERE id=$1 AND channel_id=$2 AND kind='game' AND revoked_at IS NULL")
+        .bind(&id)
+        .bind(&user.id)
+        .bind(input.may_define)
+        .execute(&app.db)
+        .await?
+        .rows_affected();
+    if updated == 0 {
+        return Err(Fail::missing());
+    }
+    if !input.may_define {
+        boards::lost_permission(&app, &user.id, &id).await?;
+    }
+    Ok(Json(json!({"tokens": list_json(&app, &user.id).await?})))
+}
+/// "Take it back": the connection that set the board (a Studio token, or an app's grant) loses
+/// "May set my board".
+pub(crate) async fn forbid_define(app: &App, channel: &str, id: &str, is_app: bool) -> Res<()> {
+    let sql = if is_app {
+        "UPDATE oauth_grants SET may_define=false WHERE app_id=$1 AND user_id=$2 AND revoked_at IS NULL"
+    } else {
+        "UPDATE integration_tokens SET may_define=false WHERE id=$1 AND channel_id=$2"
+    };
+    sqlx::query(sql)
+        .bind(id)
+        .bind(channel)
+        .execute(&app.db)
+        .await?;
+    Ok(())
+}
+/// The name the streamer knows this connection by, if they let it set their board.
+async fn may_define(app: &App, c: &Connection) -> Res<Option<String>> {
+    let sql = if c.app {
+        "SELECT a.name FROM oauth_grants g JOIN dev_apps a ON a.id=g.app_id WHERE g.app_id=$1 AND g.user_id=$2 AND g.revoked_at IS NULL AND g.may_define"
+    } else {
+        "SELECT name FROM integration_tokens WHERE id=$1 AND channel_id=$2 AND revoked_at IS NULL AND may_define"
+    };
+    Ok(sqlx::query_scalar(sql)
+        .bind(&c.id)
+        .bind(&c.channel)
+        .fetch_optional(&app.db)
+        .await?)
 }
 
 // ---- The gateway ----
@@ -249,6 +309,14 @@ async fn session(app: App, c: Connection, ws: WebSocket) {
             "game_session=NULL, game_seen_at=NULL, game_ready=false, live_state='{}'",
         )
         .await;
+        // A board this session defined goes too: the streamer's own comes back.
+        if boards::restore(&app, &c.channel, Some(&c.session), "The game disconnected")
+            .await
+            .is_err()
+        {
+            // `boards::tick` restores it once the session has missed two checks.
+            eprintln!("board_event=restore outcome=retry");
+        }
     }
 }
 /// Updates this game session's board fields and reloads open boards.
@@ -301,7 +369,11 @@ async fn run(app: &App, c: &Connection, mut ws: WebSocket) {
                     return;
                 }
                 if c.kind == "game" {
-                    let _ = sqlx::query("UPDATE boards SET game_seen_at=now() WHERE channel_id=$1 AND game_session=$2")
+                    // Still here: "Starting…" and a board this session defined both expire
+                    // without these.
+                    let _ = sqlx::query("UPDATE boards SET game_seen_at=CASE WHEN game_session=$2 THEN now() ELSE game_seen_at END,
+                            set_seen_at=CASE WHEN set_session=$2 THEN now() ELSE set_seen_at END
+                        WHERE channel_id=$1 AND (game_session=$2 OR set_session=$2)")
                         .bind(&c.channel).bind(&c.session).execute(&app.db).await;
                 }
             }
@@ -357,7 +429,8 @@ fn forward(e: &Arc<Event>, channel: &str) -> bool {
 /// One message from a client: "ping", or (games only) "state" with control changes, "ready" when
 /// the game is listening, and "cap" with the most inputs per second it wants (`per_second`); games
 /// and bridges both send "capture" or "release" for a held press (`press`); games set viewer
-/// "groups" (`by`, `screens`).
+/// "groups" (`by`, `screens`) and, when the streamer allows it, "define" the live board (`name`,
+/// `board`).
 async fn handle(app: &App, c: &Connection, text: &str) -> Value {
     let Ok(message) = serde_json::from_str::<Value>(text) else {
         return json!({"type": "error", "message": "Send JSON."});
@@ -434,7 +507,30 @@ async fn handle(app: &App, c: &Connection, text: &str) -> Value {
                 Err(fail) => json!({"type": "error", "id": id, "message": fail.message}),
             }
         }
-        Some("state" | "ready" | "cap" | "groups") => {
+        Some("define") if c.kind == "game" => {
+            let result = async {
+                let by = may_define(app, c).await?.ok_or_else(|| {
+                    Fail::denied("The streamer hasn't let this connection set their board. They can switch on \"May set my board\" for it in Creator Studio.")
+                })?;
+                let name = message["name"]
+                    .as_str()
+                    .ok_or_else(|| Fail::bad("\"name\" is the board's name."))?;
+                let setter = boards::Setter {
+                    id: &c.id,
+                    app: c.app,
+                    name: &by,
+                    session: &c.session,
+                };
+                boards::define(app, &c.channel, &setter, name, message["board"].clone()).await
+            }
+            .await;
+            match result {
+                // The new board follows as a "board" message, like any publish.
+                Ok(version) => json!({"type": "ack", "id": id, "version": version}),
+                Err(fail) => json!({"type": "error", "id": id, "message": fail.message}),
+            }
+        }
+        Some("state" | "ready" | "cap" | "groups" | "define") => {
             json!({"type": "error", "id": id, "message": "Only game connections can change the board."})
         }
         _ => json!({"type": "error", "id": id, "message": "Unknown message type."}),
@@ -444,6 +540,6 @@ async fn handle(app: &App, c: &Connection, text: &str) -> Value {
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/me/integrations", get(mine).post(create))
-        .route("/api/me/integrations/{id}", delete(revoke))
+        .route("/api/me/integrations/{id}", delete(revoke).put(allow))
         .route("/api/integrations/ws", get(socket))
 }
