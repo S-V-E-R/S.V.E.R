@@ -20,8 +20,15 @@ async function request<T = Reply>(path: string, data?: unknown, method?: string)
   if (!response.ok) throw new Error(result.error || "The request could not be completed.");
   return result as T;
 }
-function Field({ label, name, type = "text", autoComplete, minLength, maxLength, hint, required = true, pattern }: { label: string; name: string; type?: string; autoComplete?: string; minLength?: number; maxLength?: number; hint?: string; required?: boolean; pattern?: string }) {
-  return <label className="field" htmlFor={name}><span>{label}</span><input id={name} name={name} type={type} autoComplete={autoComplete} required={required} minLength={minLength} maxLength={maxLength} pattern={pattern} aria-describedby={hint ? `${name}-hint` : undefined} />{hint && <small id={`${name}-hint`}>{hint}</small>}</label>;
+function Field({ label, name, type = "text", autoComplete, minLength, maxLength, hint, required = true, pattern, autoFocus, min, max }: { label: string; name: string; type?: string; autoComplete?: string; minLength?: number; maxLength?: number; hint?: string; required?: boolean; pattern?: string; autoFocus?: boolean; min?: string; max?: string }) {
+  // Names, emails and codes are never capitalized or spell-checked by a phone keyboard.
+  return <label className="field" htmlFor={name}><span>{label}</span><input id={name} name={name} type={type} autoComplete={autoComplete} required={required} minLength={minLength} maxLength={maxLength} pattern={pattern} autoFocus={autoFocus} min={min} max={max} autoCapitalize="none" autoCorrect="off" spellCheck={false} aria-describedby={hint ? `${name}-hint` : undefined} />{hint && <small id={`${name}-hint`}>{hint}</small>}</label>;
+}
+/** The latest birth date that is 13 today, as the date picker's limit (the API checks it too). */
+function thirteenYearsAgo() {
+  const day = new Date();
+  day.setFullYear(day.getFullYear() - 13);
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
 }
 function UsernameField({ initialUsername = "" }: { initialUsername?: string }) {
   const [username, setUsername] = useState(initialUsername);
@@ -75,6 +82,7 @@ export default function AuthScreen({ screen }: { screen: string }) {
   const [pendingSignup, setPendingSignup] = useState<{ provider: string; username: string }>();
   const form = useRef<HTMLFormElement>(null);
   const [back, setBack] = useState<string | null>(null);
+  const returnTo = useRef("/");
   // Docks share cookies: a sign-in in another OBS dock carries this one on to where it was going.
   useSignInElsewhere(screen === "login" && back !== null, back ?? undefined);
 
@@ -94,6 +102,8 @@ export default function AuthScreen({ screen }: { screen: string }) {
     // Where to go after signing in, such as an OBS dock (`/login?next=/dock`). Only a path on this site.
     const asked = new URLSearchParams(window.location.search).get("next") ?? "";
     if (/^\/(?![/\\])/.test(asked)) setBack(asked);
+    // Otherwise the page the visitor was on (kept by SiteShell), so a login from a stream returns to it.
+    try { const last = sessionStorage.getItem("return-to") ?? ""; if (/^\/(?![/\\])/.test(last)) returnTo.current = last; } catch { /* storage blocked */ }
     const providerError = new URLSearchParams(window.location.search).get("error");
     if (providerError) setError(providerError);
     if (window.location.hash || providerError) history.replaceState(null, "", window.location.pathname);
@@ -109,7 +119,7 @@ export default function AuthScreen({ screen }: { screen: string }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
-    const next = back ?? "/";
+    const next = back ?? returnTo.current;
     await run(async () => {
       let result: Reply;
       switch (screen) {
@@ -223,13 +233,14 @@ export default function AuthScreen({ screen }: { screen: string }) {
         {pendingSignup && <p className="small-text">Connected with {providerNames[pendingSignup.provider]}. Confirm your username and age to finish.</p>}
         {screen === "signup" && <Field label="Email" name="email" type="email" autoComplete="email" maxLength={320} />}
         {isSignup && <UsernameField initialUsername={pendingSignup?.username} />}
-        {screen === "login" && <Field label="Email or username" name="identifier" autoComplete="username" maxLength={320} />}
-        {screen === "forgot" && <Field label="Email address" name="email" type="email" autoComplete="email" maxLength={320} />}
+        {screen === "login" && <Field label="Email or username" name="identifier" autoComplete="username" maxLength={320} autoFocus />}
+        {screen === "forgot" && <Field label="Email address" name="email" type="email" autoComplete="email" maxLength={320} autoFocus />}
         {["login", "signup", "reset"].includes(screen) && <Field label={screen === "reset" ? "New password" : "Password"} name="password" type="password" autoComplete={screen === "login" ? "current-password" : "new-password"} minLength={screen === "login" ? undefined : 10} maxLength={screen === "login" ? 4096 : 128} hint={screen === "login" ? undefined : "At least 10 characters."} />}
         {screen === "login" && <p className="form-meta"><Link href="/forgot">Forgot password?</Link></p>}
-        {isSignup && <Field label="Date of birth" name="date_of_birth" type="date" autoComplete="bday" hint="You must be 13 or older. Never shown on your profile." />}
-        {screen === "mfa" && <Field label="Authenticator or recovery code" name="code" autoComplete="one-time-code" maxLength={64} />}
+        {isSignup && <Field label="Date of birth" name="date_of_birth" type="date" autoComplete="bday" min="1900-01-01" max={thirteenYearsAgo()} hint="You must be 13 or older. Never shown on your profile." />}
+        {screen === "mfa" && <Field label="Authenticator or recovery code" name="code" autoComplete="one-time-code" maxLength={64} autoFocus />}
         {botRequired && config && <Turnstile key={botKey} sitekey={config.turnstile_site_key} action={isSignup ? "signup" : "recovery"} onToken={setBotToken} />}
+        {botRequired && config && !botToken && !busy && <p className="small-text" role="status">Finish the security check above to continue.</p>}
         {(screen === "reset" || screen === "verify") && !linkToken && !message && <p className="notice">Open the link from your email to continue.</p>}
         <button className="primary" disabled={busy || (botRequired && !botToken) || ((screen === "reset" || screen === "verify") && !linkToken)}>{busy ? "Please wait…" : ({ login: "Log in", signup: "Continue", "oauth-signup": "Continue", forgot: "Send recovery link", reset: "Set new password", verify: "Verify email", mfa: "Confirm code" })[screen]}</button>
       </form>}
