@@ -3,9 +3,12 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
-/** Starts a server on a free port; `onConnection(socket, request)` gets {send, close, on("message")}. */
-export function serve(onConnection) {
-  const server = createServer((_, res) => res.writeHead(426).end());
+/**
+ * Starts a server on a free port; `onConnection(socket, request)` gets {send, close, on("message")}.
+ * `onRequest(request, response)` answers plain HTTP requests (the fake sign-in endpoints).
+ */
+export function serve(onConnection, onRequest = (_, res) => res.writeHead(426).end()) {
+  const server = createServer(onRequest);
   server.on("upgrade", (request, tcp) => {
     const accept = createHash("sha1").update(request.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
     const protocol = request.headers["sec-websocket-protocol"]?.split(",")[0].trim();
