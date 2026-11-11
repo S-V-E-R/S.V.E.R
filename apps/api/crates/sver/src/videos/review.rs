@@ -100,8 +100,12 @@ pub async fn hold(
     let ids = tree(db, id, descendants).await?;
     for id in ids {
         sqlx::query("INSERT INTO video_holds(video_id,kind,reference) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind(&id).bind(kind).bind(reference).execute(&mut *db).await?;
-        sqlx::query("UPDATE videos SET revision=revision+1 WHERE id=$1")
+        // A new revision ends playback links already handed out. A viewer's report doesn't hide
+        // the video (`videos::hidden`), so it leaves them alone.
+        sqlx::query("UPDATE videos SET revision=revision+1 WHERE id=$1 AND NOT ($2='REPORT' AND EXISTS(SELECT 1 FROM reports r WHERE r.id=$3 AND r.reporter_id IS NOT NULL))")
             .bind(id)
+            .bind(kind)
+            .bind(reference)
             .execute(&mut *db)
             .await?;
     }

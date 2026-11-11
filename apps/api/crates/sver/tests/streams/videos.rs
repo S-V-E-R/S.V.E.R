@@ -989,12 +989,13 @@ async fn permissions_and_holds(e: &Env, highlight: &str, clip: &str) {
         call(e, "GET", &embed, None, Value::Null).await.1["type"],
         "video"
     );
-    // A report revokes existing links and prevents owner deletion until review closes.
+    // A viewer's report keeps the clip playing (one account can't take it offline) but prevents
+    // owner deletion until review closes.
     let guest = call(e, "GET", &format!("/api/videos/{clip}"), None, Value::Null)
         .await
         .1;
     assert_eq!(call(e,"POST","/api/reports",Some(&viewer),json!({"target_type":"clip","target_id":clip,"reason":"harassment","note":"Synthetic review"})).await.0,StatusCode::OK);
-    assert_ne!(
+    assert_eq!(
         bytes(&e.app, guest["playback"].as_str().unwrap(), None)
             .await
             .0,
