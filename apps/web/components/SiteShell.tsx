@@ -39,7 +39,7 @@ export default function SiteShell({ account, alerts, actions, sidebar, banner, c
   if (pathname === "/dock" || (pathname && /^\/[^/]+\/chat$/.test(pathname))) return <main id="main">{children}</main>;
   const publicPage = siteLinks.some(([href]) => href === pathname);
   const footer = <SiteFooter />;
-  if (!publicPage) return <><a className="skip" href="#main">Skip to content</a><Chrome logo={account?.logo_style} actions={actions} sidebar={sidebar} footer={footer}>{banner}{children}</Chrome></>;
+  if (!publicPage) return <><a className="skip" href="#main">Skip to content</a><Chrome logo={account?.logo_style} signedIn={!!account} actions={actions} sidebar={sidebar} footer={footer}>{banner}{children}</Chrome></>;
 
   return <div className="site-shell public-shell">
     <a className="skip" href="#main">Skip to content</a>
