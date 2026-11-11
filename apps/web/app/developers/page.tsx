@@ -107,6 +107,8 @@ export default function DevelopersPage() {
           <p>Access tokens last 1 hour. Refresh tokens last 60 days and work once: <code>grant_type=refresh_token</code> returns a new pair. Reusing an old refresh token revokes the whole grant. <code>POST /api/oauth/revoke</code> ends a grant, and people can disconnect your app at any time in Settings → Connected apps.</p>
           <h3>Devices without a browser</h3>
           <p>For desktop, TV and console apps, use device sign-in (RFC 8628). <code>POST /api/oauth/device</code> with <code>client_id</code> and <code>scope</code> returns a 6-character code to show, like <code>BCD-FGH</code>. The person enters it at <Link href="/go">sver.tv/go</Link>. Poll the token endpoint with <code>grant_type=urn:ietf:params:oauth:grant-type:device_code</code> no faster than every 5 seconds. Codes expire after 10 minutes.</p>
+          <h3>CrowdSync games</h3>
+          <p>A game connects to a streamer&apos;s board the same way: device sign-in with the <code>board:control</code> scope, then the board gateway at <code>wss://sver.tv/api/integrations/ws</code> with the access token and your client ID. Register the game without a client secret; the client ID is public and is all a game needs. The board SDKs for JavaScript, Unity and Unreal do this for you: give them the client ID, show the code they hand you, and they keep and renew the sign-in. On the approval screen the streamer can tick &ldquo;May set my board&rdquo; to let the game bring its own board. A browser game can call the device, token and revoke endpoints from its own site.</p>
         </section>
 
         <section id="scopes">

@@ -3,9 +3,10 @@ import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 import { send, useLoad } from "../../lib/client-api";
 import { Avatar } from "../../components/Avatar";
+import { MayDefine } from "../../components/MayDefine";
 import type { Sizes } from "../../lib/types";
 
-type Pending = { app: { name: string; owner: string | null; icon: Sizes }; scopes: { scope: string; text: string }[]; network: string | null };
+type Pending = { app: { name: string; owner: string | null; icon: Sizes }; scopes: { scope: string; text: string }[]; network: string | null; game: boolean };
 
 /** sver.tv/go: approve a desktop, TV or console app with the code it shows (docs/DEVELOPER_PLATFORM.md §1). */
 export default function Go() {
@@ -14,8 +15,9 @@ export default function Go() {
   const [message, setMessage] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const [done, setDone] = useState<boolean | null>(null);
+  const [mayDefine, setMayDefine] = useState(false);
   const check = useCallback(async (value: string) => {
-    setMessage(""); setPending(null);
+    setMessage(""); setPending(null); setMayDefine(false);
     const r = await send<Pending>("GET", `/api/oauth/device/${encodeURIComponent(value)}`);
     if (r.ok) setPending(r.data);
     else if (r.status === 401) setSignedOut(true);
@@ -31,7 +33,7 @@ export default function Go() {
     if (code.trim()) await check(code.trim());
   }
   async function decide(approve: boolean) {
-    const r = await send("POST", `/api/oauth/device/${encodeURIComponent(code.trim())}`, { approve });
+    const r = await send("POST", `/api/oauth/device/${encodeURIComponent(code.trim())}`, { approve, may_define: mayDefine });
     if (r.ok) { setDone(approve); setPending(null); } else setMessage(r.error);
   }
   return <div className="auth-page"><section className="panel stack">
@@ -49,6 +51,7 @@ export default function Go() {
           <h2>{pending.app.name} wants to use your account</h2>
           <p className="muted">Made by {pending.app.owner ? `@${pending.app.owner}` : "S.V.E.R"}. The device asking is on {pending.network ?? "a network we couldn't identify"}. If that isn&apos;t your device, or someone sent you this code, choose Cancel.</p>
           <ul>{pending.scopes.map(s => <li key={s.scope}>{s.text}</li>)}{pending.scopes.length === 0 && <li>Confirm that you have a S.V.E.R account</li>}</ul>
+          {pending.game && <MayDefine checked={mayDefine} onChange={setMayDefine} />}
           <div className="row"><button type="button" onClick={() => decide(true)}>Allow</button><button type="button" className="quiet" onClick={() => decide(false)}>Cancel</button></div>
         </div>}
       </>}

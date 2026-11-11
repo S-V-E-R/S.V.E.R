@@ -12,6 +12,10 @@
   p { margin: 8px 0; }
   .muted { color: #9aa1ad; }
   code { background: #1b1f28; padding: 1px 4px; }
+  button, input { font: inherit; padding: 6px 10px; background: #1b1f28; color: inherit; border: 1px solid #2a2f3a; }
+  button { cursor: pointer; }
+  form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin: 8px 0; }
+  label { display: grid; gap: 2px; }
 </style>
 </head>
 <body>
@@ -19,9 +23,16 @@
   <h1>Crowd Runner</h1>
   <canvas id="game" width="960" height="540" aria-label="Crowd Runner game"></canvas>
   <p id="status" role="status">Playing locally: Space jumps, arrow keys steer.</p>
-  <p class="muted">Connect it to your board: open this page as <code>index.html#token=sver_g_…</code> (the token stays in your browser).
-    Switch on “May set my board” for that token in Creator Studio and the game brings its own board; otherwise
-    your board needs a button <code>jump</code>, a goal <code>coins</code>, a text input <code>shout</code> and a joystick <code>move</code>.</p>
+  <form id="connect">
+    <button type="button" id="signin">Connect to S.V.E.R</button>
+    <button type="button" id="signout" hidden>Disconnect</button>
+    <label><span class="muted">or paste a game token</span><input id="token" autocomplete="off" placeholder="sver_g_…"></label>
+    <button type="submit">Connect with token</button>
+  </form>
+  <p class="muted">“Connect to S.V.E.R” shows a code to enter at sver.tv/go; tick “May set my board” there and the game brings its own
+    board. It needs this game's client ID from Settings → Developer: open the page as <code>index.html#client=…</code>.
+    A token from Creator Studio works too (it stays in your browser; <code>index.html#token=sver_g_…</code> also works).
+    Without “May set my board” your board needs a button <code>jump</code>, a goal <code>coins</code>, a text input <code>shout</code> and a joystick <code>move</code>.</p>
 </main>
 <script type="module">
 import { SverBoard } from "../sdk-js/sver-board.mjs";
@@ -66,20 +77,50 @@ async function defineBoard(channel, again = true) {
 
 // Board → game.
 const params = new URLSearchParams(location.hash.slice(1));
-if (params.get("token")) {
-  board = new SverBoard({ token: params.get("token"), url: params.get("gateway") ?? undefined });
+const signin = document.getElementById("signin"), signout = document.getElementById("signout");
+// `how` is {token} from the field or the address, or {clientId} for "Connect to S.V.E.R".
+function connect(how) {
+  board?.close();
+  board = new SverBoard({
+    ...how, url: params.get("gateway") ?? undefined, api: params.get("api") ?? undefined,
+    // The code is the game's to show: here in the status line, with a link that fills it in.
+    onCode({ code, url, link }) {
+      status.replaceChildren(`Enter ${code} at `, Object.assign(document.createElement("a"), { href: link, target: "_blank", rel: "noopener", textContent: url.replace(/^https?:\/\//, "") }), " to connect this game.");
+    },
+  });
   board.on("press", press => {
     if (press.control === "jump") jump(press.user.username);
     if (press.control === "shout" && press.text) shout = { text: `${press.user.username}: ${press.text}`, until: frame + 240 };
   });
   board.on("input", move => { if (move.control === "move") runner.speed = Math.max(2, Math.min(9, runner.speed + move.x)); });
-  board.on("close", () => { status.textContent = "Disconnected from S.V.E.R; reconnecting…"; });
+  const mine = board;
+  board.on("close", () => { if (board === mine) status.textContent = "Disconnected from S.V.E.R; reconnecting…"; });
   board.on("hello", hello => {
     airborne = false;
     defineBoard(hello.channel).finally(() => board.ready().catch(() => {}));
   });
+  signout.hidden = !how.clientId;
   board.connect().catch(error => { status.textContent = error.message; });
 }
+if (params.get("token")) connect({ token: params.get("token") });
+// Already signed in on this browser: connect without asking again.
+else if (params.get("client") && localStorage.getItem(`sver-board:${params.get("client")}`)) connect({ clientId: params.get("client") });
+signin.onclick = () => {
+  if (params.get("client")) connect({ clientId: params.get("client") });
+  else status.textContent = "Add this game's client ID to the address first: index.html#client=… (Settings → Developer on S.V.E.R).";
+};
+signout.onclick = async () => {
+  const old = board;
+  board = null;
+  await old?.signOut();
+  signout.hidden = true;
+  status.textContent = "Disconnected from S.V.E.R. Playing locally.";
+};
+document.getElementById("connect").onsubmit = event => {
+  event.preventDefault();
+  const token = document.getElementById("token").value.trim();
+  if (token) connect({ token });
+};
 addEventListener("keydown", e => {
   if (e.code === "Space") { e.preventDefault(); jump(); }
   if (e.code === "ArrowRight") runner.speed = Math.min(9, runner.speed + 1);

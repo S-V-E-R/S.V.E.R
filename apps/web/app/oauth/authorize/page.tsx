@@ -3,9 +3,10 @@ import Link from "next/link";
 import { useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
 import { Avatar } from "../../../components/Avatar";
+import { MayDefine } from "../../../components/MayDefine";
 import type { Sizes } from "../../../lib/types";
 
-type Consent = { app: { name: string; owner: string | null; icon: Sizes }; scopes: { scope: string; text: string }[] };
+type Consent = { app: { name: string; owner: string | null; icon: Sizes }; scopes: { scope: string; text: string }[]; game: boolean };
 
 /** The consent screen for an app asking to use the person's account (docs/DEVELOPER_PLATFORM.md §1). */
 export default function Authorize() {
@@ -13,6 +14,7 @@ export default function Authorize() {
   const [error, setError] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [mayDefine, setMayDefine] = useState(false);
   const load = useCallback(async () => {
     const r = await send<Consent>("GET", `/api/oauth/authorize${window.location.search}`);
     if (r.ok) setConsent(r.data);
@@ -23,7 +25,7 @@ export default function Authorize() {
   async function decide(approve: boolean) {
     setBusy(true);
     const params = Object.fromEntries(new URLSearchParams(window.location.search));
-    const r = await send<{ redirect: string }>("POST", "/api/oauth/authorize", { ...params, approve });
+    const r = await send<{ redirect: string }>("POST", "/api/oauth/authorize", { ...params, approve, may_define: mayDefine });
     if (r.ok) window.location.assign(r.data.redirect); else { setError(r.error); setBusy(false); }
   }
   return <div className="auth-page"><section className="panel stack">
@@ -37,6 +39,7 @@ export default function Authorize() {
         <p>It will be able to:</p>
         <ul>{consent.scopes.map(s => <li key={s.scope}>{s.text}</li>)}{consent.scopes.length === 0 && <li>Confirm that you have a S.V.E.R account</li>}</ul>
         <p className="muted small">It can never spend your Valor, see your email or password, or move money. You can remove it any time in Settings → Connected apps.</p>
+        {consent.game && <MayDefine checked={mayDefine} onChange={setMayDefine} />}
         <div className="row"><button type="button" disabled={busy} onClick={() => decide(true)}>Allow</button><button type="button" className="quiet" disabled={busy} onClick={() => decide(false)}>Cancel</button></div>
       </>}
   </section></div>;

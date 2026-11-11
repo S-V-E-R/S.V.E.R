@@ -326,7 +326,145 @@ pub async fn exercise(e: &Env) {
     assert_eq!(apps, 0);
 
     device(e).await;
+    connect(e).await;
     desktop(e).await;
+}
+
+/// "Connect to S.V.E.R" (docs/CROWDSYNC.md, Section 2): a game with no client secret signs in at
+/// sver.tv/go with `board:control`, the approval screen's "May set my board" lands on the grant,
+/// and a browser game on another site can read the answers.
+async fn connect(e: &Env) {
+    let created = e
+        .call(
+            "POST",
+            "/api/me/apps",
+            json!({"name":"Crowd Game","redirect_uris":["https://example.test/game"]}),
+        )
+        .await;
+    let client = created["created"]["client_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(created["created"]["client_secret"].is_null(), "{created}");
+    let may_define = || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT may_define FROM oauth_grants WHERE app_id=$1 AND revoked_at IS NULL",
+        )
+        .bind(&client)
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    // Asks for a code, approves it with or without the tick box, and collects the tokens.
+    let sign_in = |scope: &'static str, tick: bool| {
+        let client = client.clone();
+        async move {
+            let (status, started) = raw(
+                e,
+                "POST",
+                "/api/oauth/device",
+                Some(&[("client_id", &client), ("scope", scope)]),
+                &[],
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{started}");
+            let code = started["user_code"].as_str().unwrap();
+            let shown = e
+                .call("GET", &format!("/api/oauth/device/{code}"), Value::Null)
+                .await;
+            assert_eq!(shown["game"], scope == "board:control", "{shown}");
+            e.call(
+                "POST",
+                &format!("/api/oauth/device/{code}"),
+                json!({"approve": true, "may_define": tick}),
+            )
+            .await;
+            let (status, tokens) = raw(
+                e,
+                "POST",
+                "/api/oauth/token",
+                Some(&[
+                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                    ("client_id", &client),
+                    ("device_code", started["device_code"].as_str().unwrap()),
+                ]),
+                &[],
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{tokens}");
+            tokens
+        }
+    };
+    let tokens = sign_in("board:control", true).await;
+    assert_eq!(tokens["scope"], "board:control");
+    assert!(may_define().await, "ticked on the approval screen");
+    // A public client refreshes with its client ID alone.
+    let (status, refreshed) = raw(
+        e,
+        "POST",
+        "/api/oauth/token",
+        Some(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", &client),
+            ("refresh_token", tokens["refresh_token"].as_str().unwrap()),
+        ]),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{refreshed}");
+    assert!(may_define().await, "a refresh keeps the choice");
+    // Signing in again without the tick switches it off; it is never on for an app that isn't a game.
+    sign_in("board:control", false).await;
+    assert!(!may_define().await, "off by default");
+    sign_in("user:read", true).await;
+    assert!(!may_define().await, "only with board:control");
+
+    // The consent screen (authorization code with PKCE) offers and stores the same choice.
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER.as_bytes()));
+    let consent = e.call("GET", &format!("/api/oauth/authorize?client_id={client}&redirect_uri=https%3A%2F%2Fexample.test%2Fgame&response_type=code&scope=board%3Acontrol&code_challenge={challenge}&code_challenge_method=S256"), Value::Null).await;
+    assert_eq!(consent["game"], true, "{consent}");
+    let decided = e.call("POST", "/api/oauth/authorize", json!({"client_id":client,"redirect_uri":"https://example.test/game","response_type":"code","scope":"board:control","code_challenge":challenge,"code_challenge_method":"S256","approve":true,"may_define":true})).await;
+    let redirect = url::Url::parse(decided["redirect"].as_str().unwrap()).unwrap();
+    let code = redirect.query_pairs().find(|(k, _)| k == "code").unwrap().1;
+    let (status, tokens) = raw(
+        e,
+        "POST",
+        "/api/oauth/token",
+        Some(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", &client),
+            ("code", &code),
+            ("redirect_uri", "https://example.test/game"),
+            ("code_verifier", VERIFIER),
+        ]),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    assert!(may_define().await, "ticked on the consent screen");
+
+    // A game in a browser calls from its own site: no cookie is involved, so any origin may read.
+    let response = sver::router(e.app.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/oauth/device")
+                .header("origin", "https://game.example.test")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .extension(ConnectInfo(
+                    "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+                ))
+                .body(Body::from(format!(
+                    "client_id={client}&scope=board%3Acontrol"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["access-control-allow-origin"], "*");
+    e.call("DELETE", &format!("/api/me/apps/{client}"), Value::Null)
+        .await;
 }
 
 /// Device sign-in (sver.tv/go): pending, slow down, approval, tokens once.

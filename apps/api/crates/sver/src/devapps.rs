@@ -335,6 +335,31 @@ pub struct Authorize {
     code_challenge_method: String,
     #[serde(default)]
     approve: bool,
+    /// "May set my board", ticked on the consent screen.
+    #[serde(default)]
+    may_define: bool,
+}
+/// Whether an approval makes the app a CrowdSync game connection, which is what the "May set my
+/// board" tick box is for (S.V.E.R Desktop connects as the bridge, which can't set a board).
+fn is_game(client: &str, scopes: &[String]) -> bool {
+    client != DESKTOP_APP && scopes.iter().any(|s| s == "board:control")
+}
+/// The person's grant for an app, made or updated by an approval. "May set my board" is the
+/// choice on that approval; leaving it off also brings the streamer's board back if this app's
+/// board is live.
+async fn grant(
+    app: &App,
+    client: &str,
+    user: &str,
+    scopes: &[String],
+    may_define: bool,
+) -> Res<String> {
+    let id: String = sqlx::query_scalar("INSERT INTO oauth_grants(id,app_id,user_id,scopes,may_define) VALUES($1,$2,$3,$4,$5) ON CONFLICT(app_id,user_id) WHERE revoked_at IS NULL DO UPDATE SET scopes=EXCLUDED.scopes,may_define=EXCLUDED.may_define RETURNING id")
+        .bind(profiles::new_id()).bind(client).bind(user).bind(scopes).bind(may_define).fetch_one(&app.db).await?;
+    if !may_define {
+        crate::boards::lost_permission(app, user, client).await?;
+    }
+    Ok(id)
 }
 type Request = (String, Option<String>, Vec<String>, String);
 /// Validates an authorization request: (app name, owner, scopes, redirect).
@@ -377,7 +402,7 @@ async fn consent(
         })
         .collect();
     Ok(Json(
-        json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described}),
+        json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described, "game": is_game(&q.client_id, &scopes)}),
     ))
 }
 /// POST /api/oauth/authorize: the person approves or refuses; returns where to send the browser.
@@ -391,8 +416,9 @@ async fn decide(
     let mut target = url::Url::parse(&redirect).map_err(|_| Fail::bad("Invalid redirect."))?;
     if q.approve {
         let code = sec::token();
-        sqlx::query("INSERT INTO oauth_codes(code_hash,app_id,user_id,scopes,redirect_uri,challenge,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '10 minutes')")
+        sqlx::query("INSERT INTO oauth_codes(code_hash,app_id,user_id,scopes,redirect_uri,challenge,may_define,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+interval '10 minutes')")
             .bind(sec::digest(&code)).bind(&q.client_id).bind(&user.id).bind(&scopes).bind(&redirect).bind(&q.code_challenge)
+            .bind(q.may_define && is_game(&q.client_id, &scopes))
             .execute(&app.db).await?;
         target.query_pairs_mut().append_pair("code", &code);
     } else {
@@ -455,8 +481,15 @@ async fn token(
     }
 }
 type Outcome = Result<Value, (&'static str, &'static str)>;
-/// A device poll: (fresh, polled too soon, decision, approver, scopes).
-type Polled = (bool, bool, Option<String>, Option<String>, Vec<String>);
+/// A device poll: (fresh, polled too soon, decision, approver, scopes, "May set my board").
+type Polled = (
+    bool,
+    bool,
+    Option<String>,
+    Option<String>,
+    Vec<String>,
+    bool,
+);
 type Refresh = (
     String,
     Option<chrono::DateTime<chrono::Utc>>,
@@ -493,9 +526,9 @@ async fn exchange(app: &App, ip: std::net::IpAddr, input: TokenRequest) -> Res<O
     match input.grant_type.as_str() {
         "authorization_code" => {
             let code = input.code.unwrap_or_default();
-            let found: Option<(String, Vec<String>, String, String, bool)> = sqlx::query_as("DELETE FROM oauth_codes WHERE code_hash=$1 AND app_id=$2 RETURNING user_id,scopes,redirect_uri,challenge,expires_at>now()")
+            let found: Option<(String, Vec<String>, String, String, bool, bool)> = sqlx::query_as("DELETE FROM oauth_codes WHERE code_hash=$1 AND app_id=$2 RETURNING user_id,scopes,redirect_uri,challenge,expires_at>now(),may_define")
                 .bind(sec::digest(&code)).bind(&input.client_id).fetch_optional(&app.db).await?;
-            let Some((user, scopes, redirect, challenge, fresh)) = found else {
+            let Some((user, scopes, redirect, challenge, fresh, may_define)) = found else {
                 return Ok(Err((
                     "invalid_grant",
                     "That code is invalid or was already used.",
@@ -515,8 +548,7 @@ async fn exchange(app: &App, ip: std::net::IpAddr, input: TokenRequest) -> Res<O
                     "The PKCE code verifier doesn't match.",
                 )));
             }
-            let grant: String = sqlx::query_scalar("INSERT INTO oauth_grants(id,app_id,user_id,scopes) VALUES($1,$2,$3,$4) ON CONFLICT(app_id,user_id) WHERE revoked_at IS NULL DO UPDATE SET scopes=EXCLUDED.scopes RETURNING id")
-                .bind(profiles::new_id()).bind(&input.client_id).bind(&user).bind(&scopes).fetch_one(&app.db).await?;
+            let grant = grant(app, &input.client_id, &user, &scopes, may_define).await?;
             Ok(Ok(issue(app, &grant, &scopes).await?))
         }
         "refresh_token" => {
@@ -562,9 +594,9 @@ async fn exchange(app: &App, ip: std::net::IpAddr, input: TokenRequest) -> Res<O
         "urn:ietf:params:oauth:grant-type:device_code" => {
             let device = sec::digest(input.device_code.as_deref().unwrap_or_default());
             let found: Option<Polled> = sqlx::query_as("UPDATE oauth_devices d SET last_poll_at=now() FROM (SELECT device_hash,last_poll_at AS previous FROM oauth_devices WHERE device_hash=$1 AND app_id=$2) p
-                WHERE d.device_hash=p.device_hash RETURNING d.expires_at>now(),coalesce(p.previous>now()-interval '5 seconds',false),d.decision,d.user_id,d.scopes")
+                WHERE d.device_hash=p.device_hash RETURNING d.expires_at>now(),coalesce(p.previous>now()-interval '5 seconds',false),d.decision,d.user_id,d.scopes,d.may_define")
                 .bind(&device).bind(&input.client_id).fetch_optional(&app.db).await?;
-            let Some((fresh, too_soon, decision, user, scopes)) = found else {
+            let Some((fresh, too_soon, decision, user, scopes, may_define)) = found else {
                 return Ok(Err(("invalid_grant", "Unknown device code.")));
             };
             if !fresh {
@@ -580,8 +612,7 @@ async fn exchange(app: &App, ip: std::net::IpAddr, input: TokenRequest) -> Res<O
                     if taken.rows_affected() == 0 {
                         return Ok(Err(("invalid_grant", "That code was already used.")));
                     }
-                    let grant: String = sqlx::query_scalar("INSERT INTO oauth_grants(id,app_id,user_id,scopes) VALUES($1,$2,$3,$4) ON CONFLICT(app_id,user_id) WHERE revoked_at IS NULL DO UPDATE SET scopes=EXCLUDED.scopes RETURNING id")
-                        .bind(profiles::new_id()).bind(&input.client_id).bind(&user).bind(&scopes).fetch_one(&app.db).await?;
+                    let grant = grant(app, &input.client_id, &user, &scopes, may_define).await?;
                     Ok(Ok(issue(app, &grant, &scopes).await?))
                 }
                 (Some(_), _) => {
@@ -698,9 +729,10 @@ type Pending = (
     Vec<String>,
     Option<String>,
     Option<String>,
+    String,
 );
 async fn pending(app: &App, code: &str) -> Res<Pending> {
-    let found: Option<Pending> = sqlx::query_as("SELECT a.name,u.username,d.scopes,d.network,a.icon_key FROM oauth_devices d JOIN dev_apps a ON a.id=d.app_id AND a.suspended_at IS NULL LEFT JOIN users u ON u.id=a.owner_id
+    let found: Option<Pending> = sqlx::query_as("SELECT a.name,u.username,d.scopes,d.network,a.icon_key,a.id FROM oauth_devices d JOIN dev_apps a ON a.id=d.app_id AND a.suspended_at IS NULL LEFT JOIN users u ON u.id=a.owner_id
         WHERE d.user_code=$1 AND d.expires_at>now() AND d.decision IS NULL")
         .bind(normalize(code)).fetch_optional(&app.db).await?;
     found.ok_or_else(|| {
@@ -715,18 +747,21 @@ async fn device_lookup(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::rate(&app, format!("oauth-go:{}", user.id), 20, 600).await?;
-    let (name, owner, scopes, network, icon) = pending(&app, &code).await?;
+    let (name, owner, scopes, network, icon, client) = pending(&app, &code).await?;
     let described: Vec<Value> = scopes
         .iter()
         .map(|s| json!({"scope": s, "text": SCOPES.iter().chain([&STREAM_KEY, &VIEWER_ACT, &CLIPS_UPLOAD, &ALERTS_EDIT]).find(|(k, _)| k == s).map_or("", |x| x.1)}))
         .collect();
     Ok(Json(
-        json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described, "network": network}),
+        json!({"app": {"name": name, "owner": owner, "icon": icon_json(&app, icon.as_deref())}, "scopes": described, "network": network, "game": is_game(&client, &scopes)}),
     ))
 }
 #[derive(Deserialize)]
 pub struct DeviceDecision {
     approve: bool,
+    /// "May set my board", ticked on the approval screen.
+    #[serde(default)]
+    may_define: bool,
 }
 /// POST /api/oauth/device/{code}: approve or refuse; the device then gets its tokens (or not).
 async fn device_decide(
@@ -737,15 +772,16 @@ async fn device_decide(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::rate(&app, format!("oauth-go:{}", user.id), 20, 600).await?;
-    let (.., scopes, _, _) = pending(&app, &code).await?;
+    let (_, _, scopes, _, _, client) = pending(&app, &code).await?;
     // Handing out the stream key needs what Studio needs: a verified email and two-factor sign-in.
     if input.approve && scopes.iter().any(|s| s == STREAM_KEY.0) {
         let (tx, user, session) = auth::session(&app, &jar, false).await?;
         tx.commit().await?;
         auth::authorize_streaming(&user, &session)?;
     }
-    sqlx::query("UPDATE oauth_devices SET user_id=$2,decision=$3 WHERE user_code=$1 AND decision IS NULL AND expires_at>now()")
+    sqlx::query("UPDATE oauth_devices SET user_id=$2,decision=$3,may_define=$4 WHERE user_code=$1 AND decision IS NULL AND expires_at>now()")
         .bind(normalize(&code)).bind(&user.id).bind(if input.approve { "approved" } else { "denied" })
+        .bind(input.approve && input.may_define && is_game(&client, &scopes))
         .execute(&app.db).await?;
     Ok(Json(json!({"approved": input.approve})))
 }

@@ -4,7 +4,14 @@
 #include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "GenericPlatform/GenericPlatformHttp.h"
+#include "HAL/FileManager.h"
+#include "HttpModule.h"
 #include "IWebSocket.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -28,9 +35,182 @@ namespace
 void USverBoardClient::Connect(const FString& InToken, const FString& InGateway)
 {
 	Token = InToken;
+	ClientId.Empty();
 	Gateway = InGateway;
 	bStopped = false;
 	RetrySeconds = 1.f;
+	Open();
+}
+
+void USverBoardClient::SignIn(const FString& InClientId, const FString& InGateway, const FString& InApi)
+{
+	ClientId = InClientId;
+	Gateway = InGateway;
+	Api = InApi;
+	Api.RemoveFromEnd(TEXT("/"));
+	bStopped = false;
+	RetrySeconds = 1.f;
+	Open();
+}
+
+void USverBoardClient::SignOut()
+{
+	Disconnect();
+	FString Refresh;
+	FFileHelper::LoadFileToString(Refresh, *StorePath());
+	IFileManager::Get().Delete(*StorePath());
+	Access.Empty();
+	if (!ClientId.IsEmpty() && !Refresh.IsEmpty())
+	{
+		Post(TEXT("revoke"), FString::Printf(TEXT("token=%s"), *FGenericPlatformHttp::UrlEncode(Refresh)), [](const TSharedPtr<FJsonObject>&) {});
+	}
+}
+
+FString USverBoardClient::StorePath() const
+{
+	return SignInFile.IsEmpty()
+		? FPaths::ProjectSavedDir() / TEXT("SverBoard") / (FPaths::MakeValidFileName(ClientId) + TEXT(".txt"))
+		: SignInFile;
+}
+
+void USverBoardClient::After(float Seconds, void (USverBoardClient::*Step)())
+{
+	TWeakObjectPtr<USverBoardClient> Self(this);
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Self, Step](float)
+	{
+		if (Self.IsValid() && !Self->bStopped)
+		{
+			(Self.Get()->*Step)();
+		}
+		return false;
+	}), Seconds);
+}
+
+// Tries again with doubling backoff, up to 30 seconds.
+void USverBoardClient::Retry()
+{
+	const float Delay = RetrySeconds;
+	RetrySeconds = FMath::Min(RetrySeconds * 2.f, 30.f);
+	After(Delay, &USverBoardClient::Open);
+}
+
+void USverBoardClient::Refuse(const FString& Message)
+{
+	bStopped = true;
+	OnError.Broadcast(Message);
+}
+
+// The OAuth endpoints take a form and no secret: the client ID is public. A 400 carries {"error"}.
+// Done runs on the game thread, and only while this object is alive and not stopped.
+void USverBoardClient::Post(const FString& Path, const FString& Form, TFunction<void(const TSharedPtr<FJsonObject>&)> Done)
+{
+	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(FString::Printf(TEXT("%s/api/oauth/%s"), *Api, *Path));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/x-www-form-urlencoded"));
+	Request->SetContentAsString(FString::Printf(TEXT("client_id=%s&%s"), *FGenericPlatformHttp::UrlEncode(ClientId), *Form));
+	TWeakObjectPtr<USverBoardClient> Self(this);
+	Request->OnProcessRequestComplete().BindLambda([Self, Done](FHttpRequestPtr, FHttpResponsePtr Response, bool bOk)
+	{
+		if (!Self.IsValid() || Self->bStopped)
+		{
+			return;
+		}
+		TSharedPtr<FJsonObject> Reply;
+		if (bOk && Response.IsValid() && (Response->GetResponseCode() == 200 || Response->GetResponseCode() == 400)
+			&& FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Response->GetContentAsString()), Reply) && Reply.IsValid())
+		{
+			Done(Reply);
+		}
+		else
+		{
+			// S.V.E.R couldn't be reached: keep trying, like a dropped socket.
+			Self->Retry();
+		}
+	});
+	Request->ProcessRequest();
+}
+
+// A working access token: a renewed one, or a new sign-in at sver.tv/go.
+void USverBoardClient::Authorize()
+{
+	FString Refresh;
+	FFileHelper::LoadFileToString(Refresh, *StorePath());
+	if (Refresh.IsEmpty())
+	{
+		RequestCode();
+		return;
+	}
+	Post(TEXT("token"), FString::Printf(TEXT("grant_type=refresh_token&refresh_token=%s"), *FGenericPlatformHttp::UrlEncode(Refresh)), [this](const TSharedPtr<FJsonObject>& Reply)
+	{
+		if (Reply->HasField(TEXT("error")))
+		{
+			// The sign-in is gone (removed in Settings -> Connected apps, unused for 60 days): a new code.
+			IFileManager::Get().Delete(*StorePath());
+			RequestCode();
+		}
+		else
+		{
+			Signed(Reply);
+		}
+	});
+}
+
+// Device sign-in (RFC 8628): shows a code, then asks no faster than S.V.E.R's interval until it is approved.
+void USverBoardClient::RequestCode()
+{
+	Post(TEXT("device"), TEXT("scope=board%3Acontrol"), [this](const TSharedPtr<FJsonObject>& Reply)
+	{
+		FString Error;
+		if (Reply->TryGetStringField(TEXT("error"), Error))
+		{
+			Refuse(FString::Printf(TEXT("S.V.E.R doesn't know this app (%s). Check the client ID."), *Error));
+			return;
+		}
+		double Interval = 5.0;
+		Reply->TryGetNumberField(TEXT("interval"), Interval);
+		PollSeconds = static_cast<float>(Interval);
+		DeviceCode = Reply->GetStringField(TEXT("device_code"));
+		OnCode.Broadcast(Reply->GetStringField(TEXT("user_code")), Reply->GetStringField(TEXT("verification_uri")));
+		// A little over the interval, so a request that travels faster than the last isn't "too soon".
+		After(PollSeconds + 0.25f, &USverBoardClient::Poll);
+	});
+}
+
+void USverBoardClient::Poll()
+{
+	Post(TEXT("token"), FString::Printf(TEXT("grant_type=urn%%3Aietf%%3Aparams%%3Aoauth%%3Agrant-type%%3Adevice_code&device_code=%s"), *FGenericPlatformHttp::UrlEncode(DeviceCode)), [this](const TSharedPtr<FJsonObject>& Reply)
+	{
+		FString Error;
+		if (!Reply->TryGetStringField(TEXT("error"), Error))
+		{
+			Signed(Reply);
+		}
+		else if (Error == TEXT("authorization_pending") || Error == TEXT("slow_down"))
+		{
+			if (Error == TEXT("slow_down"))
+			{
+				PollSeconds += 5.f;
+			}
+			After(PollSeconds + 0.25f, &USverBoardClient::Poll);
+		}
+		else if (Error == TEXT("expired_token"))
+		{
+			// Nobody entered it in time: show a new code.
+			RequestCode();
+		}
+		else
+		{
+			Refuse(Error == TEXT("access_denied") ? FString(TEXT("The sign-in was cancelled at sver.tv/go.")) : FString::Printf(TEXT("S.V.E.R refused the sign-in (%s)."), *Error));
+		}
+	});
+}
+
+void USverBoardClient::Signed(const TSharedPtr<FJsonObject>& Tokens)
+{
+	Access = Tokens->GetStringField(TEXT("access_token"));
+	AccessUntil = FDateTime::UtcNow() + FTimespan::FromSeconds(Tokens->GetNumberField(TEXT("expires_in")) - 60.0);
+	FFileHelper::SaveStringToFile(Tokens->GetStringField(TEXT("refresh_token")), *StorePath());
 	Open();
 }
 
@@ -40,9 +220,19 @@ void USverBoardClient::Open()
 	{
 		return;
 	}
+	const bool bSignsIn = !ClientId.IsEmpty();
+	if (bSignsIn && (Access.IsEmpty() || FDateTime::UtcNow() >= AccessUntil))
+	{
+		Authorize();
+		return;
+	}
 	FModuleManager::LoadModuleChecked<FWebSocketsModule>(TEXT("WebSockets"));
 	TMap<FString, FString> Headers;
-	Headers.Add(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *Token));
+	Headers.Add(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), bSignsIn ? *Access : *Token));
+	if (bSignsIn)
+	{
+		Headers.Add(TEXT("SVER-Client-Id"), ClientId);
+	}
 	Socket = FWebSocketsModule::Get().CreateWebSocket(Gateway, FString(), Headers);
 
 	TWeakObjectPtr<USverBoardClient> Self(this);
@@ -57,6 +247,8 @@ void USverBoardClient::Open()
 	{
 		if (Self.IsValid())
 		{
+			// Refused before hello, perhaps: a signed-in game renews its access on the next SignIn.
+			Self->Access.Empty();
 			Self->OnError.Broadcast(Error);
 		}
 	});
@@ -69,20 +261,18 @@ void USverBoardClient::Open()
 		if (Code == Revoked)
 		{
 			Self->bStopped = true;
-			Self->OnError.Broadcast(TEXT("The token was revoked in Creator Studio."));
+			if (Self->ClientId.IsEmpty())
+			{
+				Self->OnError.Broadcast(TEXT("The token was revoked in Creator Studio."));
+				return;
+			}
+			// A signed-in game forgets the sign-in; its next SignIn shows a new code.
+			IFileManager::Get().Delete(*Self->StorePath());
+			Self->Access.Empty();
+			Self->OnError.Broadcast(TEXT("This game was removed in Settings -> Connected apps on S.V.E.R."));
 			return;
 		}
-		// Reconnect with doubling backoff, up to 30 seconds.
-		const float Delay = Self->RetrySeconds;
-		Self->RetrySeconds = FMath::Min(Self->RetrySeconds * 2.f, 30.f);
-		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Self](float)
-		{
-			if (Self.IsValid())
-			{
-				Self->Open();
-			}
-			return false;
-		}), Delay);
+		Self->Retry();
 	});
 	Socket->Connect();
 }

@@ -430,7 +430,18 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
     // Stored media keys are content-addressed (a hash of the kind, crop and source bytes), so a
     // served object never changes: only successful /api/media responses may be cached.
     let media = req.uri().path().starts_with("/api/media/");
+    // A browser game signs in from its own site ("Connect to S.V.E.R", docs/CROWDSYNC.md): these
+    // take no cookie, only the public client ID and codes, so any origin may read the answer.
+    let oauth_client = matches!(
+        req.uri().path(),
+        "/api/oauth/token" | "/api/oauth/revoke" | "/api/oauth/device"
+    );
     let mut response = next.run(req).await;
+    if oauth_client {
+        response
+            .headers_mut()
+            .insert("access-control-allow-origin", "*".parse().unwrap());
+    }
     let cache = if media && response.status() == StatusCode::OK {
         "public, max-age=31536000, immutable"
     } else {
