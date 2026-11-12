@@ -58,7 +58,7 @@ const calls = [
 
 const sections = [
   ["start", "Get started"], ["sign-in", "Sign-in"], ["scopes", "Scopes"], ["api", "API"],
-  ["events", "Live events"], ["webhooks", "Webhooks"], ["rules", "Rules"],
+  ["events", "Live events"], ["webhooks", "Webhooks"], ["catalog", "CrowdSync catalog"], ["rules", "Rules"],
 ] as const;
 
 function Table({ head, rows }: { head: [string, string]; rows: readonly (readonly [string, string])[] }) {
@@ -144,6 +144,21 @@ export default function DevelopersPage() {
           <h2>Webhooks</h2>
           <p>Get the same events posted to your server. <code>POST /api/hooks</code> with <code>{`{"topics":[…],"url":"https://…"}`}</code> returns a signing secret once. <code>GET /api/hooks</code> lists your hooks and <code>{"DELETE /api/hooks/{id}"}</code> removes one. You can also manage them in Settings → Developer. Each hook takes up to 50 topics, and each person can have 20 hooks. Apps register hooks with the person&apos;s bearer token.</p>
           <p>Each delivery is the event JSON with an <code>SVER-Signature: t=TIMESTAMP,v1=HEX</code> header, where <code>v1</code> is the HMAC-SHA256 of <code>TIMESTAMP.BODY</code> with your secret. Check it, and reject old timestamps. Failed deliveries are retried 8 times with growing gaps. After 50 failures in a row the hook turns off and you get a notification. Private and local addresses are refused.</p>
+        </section>
+
+        <section id="catalog">
+          <h2>CrowdSync catalog</h2>
+          <p>The <Link href="/crowdsync">catalog</Link> is where streamers find CrowdSync games and ready-made boards. Each app can have one listing. Send it in from <Link href="/settings/developer">Settings → Developer</Link>, under the app.</p>
+          <ul>
+            <li><strong>What a listing has:</strong> a name (3 to 40 characters), a one-line summary (up to 120), a description (up to 2,000), an <code>https://</code> link to the game&apos;s store page or site, your app&apos;s icon and up to 4 screenshots.</li>
+            <li><strong>The board:</strong> either a board streamers can add to their library (your draft, a board from your library or a <code>.sverboard.json</code> file), or &ldquo;this game sets its own board&rdquo; for a game that defines it when connected. Effects that use your own Skills become &ldquo;none&rdquo;, because other channels don&apos;t have them.</li>
+            <li><strong>Review:</strong> staff review every new listing and every change before it appears. While a change waits, the listing stays up as it was. If staff reject or remove a listing, you see the reason and can send it in again.</li>
+            <li><strong>What&apos;s allowed:</strong> nothing banned by the <Link href="/guidelines">Community Guidelines</Link>; no gambling or betting; nothing that lets a viewer pay for an advantage over other viewers; no one else&apos;s name, art or trademarks without permission; a link that leads to the game or its maker; screenshots of the actual game or board.</li>
+            <li><strong>Order:</strong> listings are shown newest first and searched by name. There is no ranking by spending and no paid placement.</li>
+            <li><strong>Counts:</strong> a listing shows how many channels added its board (or, for a game with its own board, how many connected it). It never shows who.</li>
+            <li><strong>Your name:</strong> the listing shows your display name and links to your channel. Under-18 developers aren&apos;t named.</li>
+            <li>Images go through the same checks as every upload, and a <Link href="/take-it-down">Take It Down request</Link> removes them. Suspending an app hides its listing.</li>
+          </ul>
         </section>
 
         <section id="rules">

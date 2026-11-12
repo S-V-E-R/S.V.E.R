@@ -1276,6 +1276,7 @@ pub async fn cleanup(app: &App) -> Res<usize> {
         }
         if (key.starts_with("emotes/") && crate::emotes::referenced(&mut tx, &key).await?)
             || crate::guilds::referenced(&mut tx, &key).await?
+            || crate::catalog::referenced(&mut tx, &key).await?
             || in_use(&mut tx, &key).await?
         {
             continue;

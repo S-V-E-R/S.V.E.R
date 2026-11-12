@@ -23,6 +23,7 @@ pub mod bans;
 pub mod beacons;
 pub mod boards;
 pub mod bot;
+pub mod catalog;
 pub mod chat;
 pub mod commands;
 pub mod crowd;
@@ -556,6 +557,7 @@ pub fn router(app: App) -> Router {
         .merge(bot::routes())
         .merge(dms::routes())
         .merge(devapps::routes())
+        .merge(catalog::routes())
         .merge(events::routes())
         .merge(engagement::routes())
         .merge(tiers::routes())

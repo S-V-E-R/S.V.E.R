@@ -88,6 +88,7 @@ async fn home(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
             'copyright',(SELECT count(*) FROM copyright_cases WHERE status IN ('OPEN','COUNTER_PENDING')),
             'integrity',(SELECT count(*) FROM integrity_cases WHERE status='OPEN'),
             'media',(SELECT count(*) FROM channel_emotes WHERE reviewed_at IS NULL AND status='VISIBLE'),
+            'catalog',(SELECT count(*) FROM catalog_listings WHERE status='PENDING'),
             'live',(SELECT count(*) FROM broadcasts WHERE state IN ('LIVE','RECONNECTING')))")
         .fetch_one(&app.db).await?;
     let paused: Vec<String> =

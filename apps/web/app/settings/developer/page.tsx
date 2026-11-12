@@ -2,6 +2,7 @@
 import { FormEvent, useCallback, useState } from "react";
 import { send, useLoad } from "../../../lib/client-api";
 import { Avatar } from "../../../components/Avatar";
+import { ListingEditor } from "../../../components/Catalog";
 import type { Sizes } from "../../../lib/types";
 
 type DevApp = { client_id: string; name: string; icon: Sizes; redirect_uris: string[]; confidential: boolean; suspended: boolean; users: number };
@@ -46,6 +47,7 @@ export default function Developer() {
         <span className="small">Client ID <code>{a.client_id}</code> · {a.confidential ? "server app (has a secret)" : "public app (PKCE only)"}</span>
         <span className="muted small">Redirects: {a.redirect_uris.join(", ")}</span>
         <span className="row wrap">{a.confidential && <button type="button" className="small quiet" onClick={() => rotate(a.client_id)}>New secret</button>}<button type="button" className="small quiet danger-text" onClick={() => remove(a)}>Delete</button></span>
+        <ListingEditor app={a} />
       </li>)}</ul>}
       {data.apps.length < data.max && <form className="stack" onSubmit={create}>
         <h2>Register an app</h2>

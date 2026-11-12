@@ -13,6 +13,20 @@ type View = { board: BoardDef | null; version: number; disabled: boolean; starti
 const AUDIENCE = { everyone: "", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
 const STICK: ["up" | "left" | "right" | "down", number, number][] = [["up", 0, -1], ["left", -1, 0], ["right", 1, 0], ["down", 0, 1]];
 
+/** A board drawn as viewers see it, with nothing to press: the catalog's preview of a listing's board. */
+export function BoardPreview({ board }: { board: BoardDef }) {
+  return <>{board.screens.map((s, i) => <div key={s.name + i}>
+    {board.screens.length > 1 && <h3>{s.name}</h3>}
+    <div className="board-grid">{s.controls.map(c => {
+      const span = { gridColumn: `span ${c.width || 1}` };
+      const price = (c.cost ? `${c.cost.toLocaleString("en-US")} EV` : "Free") + (AUDIENCE[c.audience] ? ` · ${AUDIENCE[c.audience]}` : "");
+      if (c.kind === "label") return <p key={c.id} className="board-label" style={span}>{c.label}</p>;
+      if (c.kind === "goal") return <div key={c.id} className="board-goal" style={span}><span>{c.label} · 0 / {c.target?.toLocaleString("en-US")}</span><progress max={c.target ?? 1} value={0} aria-label={c.label} /><small className="muted">{price}</small></div>;
+      return <button key={c.id} type="button" style={span} disabled>{c.label}<small>{c.kind === "joystick" ? "Joystick" : c.kind === "text" ? `Text · ${price}` : price}</small></button>;
+    })}</div>
+  </div>)}</>;
+}
+
 /**
  * A channel's CrowdSync board under the player (docs/CROWDSYNC.md "Boards"). It loads only when
  * opened and shares the chat socket for updates (via Chat's "sver:board" events).

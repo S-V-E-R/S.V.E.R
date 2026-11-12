@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use tower::ServiceExt;
 
 /// A detailed square PNG of `side` pixels.
-fn picture(side: u32, seed: u32) -> Vec<u8> {
+pub(super) fn picture(side: u32, seed: u32) -> Vec<u8> {
     let image = image::RgbImage::from_fn(side, side, |x, y| {
         image::Rgb([
             (x * seed % 251) as u8,

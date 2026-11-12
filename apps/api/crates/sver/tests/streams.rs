@@ -34,6 +34,8 @@ mod bans;
 mod beacons;
 #[path = "streams/boards.rs"]
 mod boards;
+#[path = "streams/catalog.rs"]
+mod catalog;
 #[path = "streams/chat.rs"]
 mod chat;
 #[path = "streams/chat_social.rs"]
@@ -736,6 +738,7 @@ async fn exercise(e: &Env) {
     commands::exercise(e).await;
     dms::exercise(e).await;
     devapps::exercise(e).await;
+    catalog::exercise(e).await;
     events::exercise(e).await;
     overlays::exercise(e).await;
     moderation::exercise(e).await;

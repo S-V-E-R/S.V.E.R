@@ -492,7 +492,7 @@ async fn set_draft(app: &App, channel: &str, board: &Board) -> Res<()> {
 // ---- Library, import and export (docs/CROWDSYNC.md "Board library, import/export") ----
 
 async fn library(app: &App, channel: &str) -> Res<Value> {
-    Ok(sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'name',name,'updated_at',updated_at,'from_game',source IS NOT NULL) ORDER BY lower(name), id),'[]') FROM board_library WHERE channel_id=$1")
+    Ok(sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'name',name,'updated_at',updated_at,'from_game',source IS NOT NULL AND source NOT LIKE 'catalog:%','from_catalog',coalesce(source LIKE 'catalog:%',false)) ORDER BY lower(name), id),'[]') FROM board_library WHERE channel_id=$1")
         .bind(channel)
         .fetch_one(&app.db)
         .await?)
@@ -662,6 +662,61 @@ async fn import(
         ));
     }
     into_draft(&app, &user, parse(input.board)?).await
+}
+
+// ---- Catalog (docs/CROWDSYNC.md "Catalog"; catalog.rs) ----
+
+/// The channel's draft (or one of its library boards), to publish in the catalog.
+pub(crate) async fn saved(app: &App, channel: &str, library: Option<&str>) -> Res<Value> {
+    let Some(id) = library else {
+        let draft = row(app, channel).await?.map(|r| r.draft.0);
+        return Ok(json!(draft.unwrap_or_else(Board::empty)));
+    };
+    sqlx::query_scalar("SELECT board FROM board_library WHERE id=$1 AND channel_id=$2")
+        .bind(id)
+        .bind(channel)
+        .fetch_optional(&app.db)
+        .await?
+        .ok_or_else(Fail::missing)
+}
+/// A board checked for the catalog: the builder's rules, at least one control, and no custom
+/// Skills (they belong to one channel, so they become "none").
+pub(crate) fn shareable(board: Value) -> Res<Value> {
+    let mut board = parse(board)?;
+    for c in board.screens.iter_mut().flat_map(|s| s.controls.iter_mut()) {
+        if c.effect.starts_with("custom:") {
+            c.effect = no_effect();
+        }
+    }
+    validate(&board)?;
+    if board.screens.iter().all(|s| s.controls.is_empty()) {
+        return Err(Fail::field(
+            "board",
+            "Add at least one control to the board.",
+        ));
+    }
+    Ok(json!(board))
+}
+/// "Add to my boards": a catalog board goes into the channel's library, checked like an import.
+/// Each listing (`source`) keeps one entry per channel. Returns the controls whose effect changed.
+pub(crate) async fn add(
+    app: &App,
+    channel: &str,
+    name: &str,
+    source: &str,
+    board: Value,
+) -> Res<Vec<String>> {
+    let mut board = parse(board)?;
+    let changed = own_or_none(app, channel, &mut board).await?;
+    validate(&board)?;
+    let mut tx = app.db.begin().await?;
+    if !keep(&mut tx, channel, board_name(name)?, &board, Some(source)).await? {
+        return Err(Fail::conflict(
+            "Your library holds up to 20 boards. Delete one in Studio → Board first.",
+        ));
+    }
+    tx.commit().await?;
+    Ok(changed)
 }
 
 /// POST /api/me/board/publish: the draft goes live as a new version; goals start over.
