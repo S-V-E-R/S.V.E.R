@@ -27,8 +27,24 @@
 .board-run{display:flex;flex-wrap:wrap;align-items:end;gap:8px;border-top:1px solid var(--line);padding-top:12px}
 @media (max-width:600px){.board-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.board-grid>*{grid-column:auto!important}}
 
-.board-builder fieldset{display:flex;flex-wrap:wrap;align-items:end;gap:8px;border:1px solid var(--line);padding:12px;margin:0 0 8px}
-.board-builder legend{font-weight:600}
+/* Builder and Studio layout (docs/CROWDSYNC.md): the grid, the side panel, the viewer preview. */
+.studio-tabs{margin:0 0 16px}
+.builder-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start;margin:12px 0}
+.builder-preview{grid-column:1/-1}
+.builder-tile{position:relative;cursor:grab;outline-offset:2px;border:1px dashed transparent}
+.builder-tile>div{pointer-events:none}
+.builder-tile:hover{border-color:var(--line)}
+.builder-tile.picked{border:1px solid var(--accent)}
+.builder-resize{position:absolute;top:0;right:-5px;width:10px;height:100%;cursor:ew-resize;touch-action:none}
+.builder-tile.picked .builder-resize::after{content:"";position:absolute;inset:25% 3px;background:var(--accent)}
+.builder-panel fieldset{display:grid;gap:8px;border:1px solid var(--line);padding:12px;margin:0}
+.builder-panel legend{font-weight:600}
+.board-phone{max-width:390px}
+.board-phone .board-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.board-phone .board-grid>*{grid-column:auto!important}
+.board-grid button svg{vertical-align:-2px;margin-right:6px}
+@media (max-width:860px){.builder-layout{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:600px){.builder-resize{display:none}}
 .board-preview{position:relative;aspect-ratio:16/9;max-width:560px;background:#000;border:1px solid var(--line)}
 .overlay-page{position:fixed;inset:0;background:transparent}
 
