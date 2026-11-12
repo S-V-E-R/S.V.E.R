@@ -120,6 +120,24 @@ pub async fn stop_renewal(http: &reqwest::Client, config: &Config, subscription:
         Outcome::Declined { fail, .. } | Outcome::Unknown(fail) => Err(fail),
     }
 }
+/// Ends a subscription now (no further charge or retry). Ok once it's gone, or when Stripe no
+/// longer has it; anything else is an error to retry.
+pub async fn cancel(http: &reqwest::Client, config: &Config, subscription: &str) -> Res<()> {
+    if !config.available() {
+        return Err(Fail::unavailable("Payments aren't available yet."));
+    }
+    let request = http
+        .delete(format!(
+            "{}/v1/subscriptions/{subscription}",
+            config.api_url
+        ))
+        .bearer_auth(&config.secret_key);
+    match classify(request.send().await).await {
+        Outcome::Done(_) => Ok(()),
+        Outcome::Declined { code, .. } if code == "resource_missing" => Ok(()),
+        Outcome::Declined { fail, .. } | Outcome::Unknown(fail) => Err(fail),
+    }
+}
 /// GETs a Stripe object.
 pub async fn get(http: &reqwest::Client, config: &Config, path: &str) -> Res<Value> {
     if !config.available() {
