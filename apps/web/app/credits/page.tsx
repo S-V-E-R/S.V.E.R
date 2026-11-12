@@ -1,7 +1,7 @@
 import SitePage from "../../components/SitePage";
 import credits from "./credits.json";
 
-export const metadata = { title: "Credits | S.V.E.R", description: "The open-source software S.V.E.R uses, with its licenses." };
+export const metadata = { title: "Credits | S.V.E.R", description: "The open-source software S.V.E.R uses, with its licenses.", alternates: { canonical: "https://sver.tv/credits" } };
 
 type Package = { kind: "rust" | "npm" | "other"; name: string; version: string; license: string; url: string; text: string | null };
 const { packages, texts } = credits as { packages: Package[]; texts: Record<string, string> };

@@ -4,7 +4,7 @@ import { apiGet } from "../../../lib/server-api";
 import { currentAccount } from "../../session";
 import "../../../styles/profiles.css";
 import "../../../styles/teams.css";
-export const metadata = { title: "Co-stream | S.V.E.R" };
+export const metadata = { title: "Co-stream | S.V.E.R", robots: { index: false, follow: false } };
 export default async function CoStream({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const [result, account] = await Promise.all([apiGet<Squad>(`/api/squads/${encodeURIComponent(id)}`), currentAccount()]);
