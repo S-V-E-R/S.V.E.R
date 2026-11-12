@@ -67,7 +67,7 @@
   {
    "kind": "npm",
    "name": "@babel/generator",
-   "version": "7.29.8",
+   "version": "7.29.12",
    "license": "MIT",
    "url": "https://babel.dev/docs/en/next/babel-generator",
    "text": "8f08c824b2bb54ed"
@@ -107,7 +107,7 @@
   {
    "kind": "npm",
    "name": "@babel/helper-string-parser",
-   "version": "7.29.7",
+   "version": "7.29.11",
    "license": "MIT",
    "url": "https://babel.dev/docs/en/next/babel-helper-string-parser",
    "text": "8f08c824b2bb54ed"
@@ -139,7 +139,7 @@
   {
    "kind": "npm",
    "name": "@babel/parser",
-   "version": "7.29.9",
+   "version": "7.29.12",
    "license": "MIT",
    "url": "https://babel.dev/docs/en/next/babel-parser",
    "text": "5937a76954e9322b"
@@ -155,7 +155,7 @@
   {
    "kind": "npm",
    "name": "@babel/traverse",
-   "version": "7.29.10",
+   "version": "7.29.12",
    "license": "MIT",
    "url": "https://babel.dev/docs/en/next/babel-traverse",
    "text": "8f08c824b2bb54ed"
@@ -163,7 +163,7 @@
   {
    "kind": "npm",
    "name": "@babel/types",
-   "version": "7.29.8",
+   "version": "7.29.11",
    "license": "MIT",
    "url": "https://babel.dev/docs/en/next/babel-types",
    "text": "8f08c824b2bb54ed"
@@ -219,7 +219,7 @@
   {
    "kind": "npm",
    "name": "@next/env",
-   "version": "16.4.2",
+   "version": "16.4.5",
    "license": "MIT",
    "url": "https://github.com/vercel/next.js#readme",
    "text": null
@@ -243,7 +243,7 @@
   {
    "kind": "npm",
    "name": "baseline-browser-mapping",
-   "version": "2.11.30",
+   "version": "2.11.35",
    "license": "Apache-2.0",
    "url": "https://github.com/web-platform-dx/baseline-browser-mapping#readme",
    "text": "283ea6cc2997a1a7"
@@ -251,7 +251,7 @@
   {
    "kind": "npm",
    "name": "browserslist",
-   "version": "4.29.4",
+   "version": "4.29.5",
    "license": "MIT",
    "url": "https://github.com/browserslist/browserslist#readme",
    "text": "2bccca04141ded40"
@@ -259,7 +259,7 @@
   {
    "kind": "npm",
    "name": "caniuse-lite",
-   "version": "1.0.30001818",
+   "version": "1.0.30001820",
    "license": "CC-BY-4.0",
    "url": "https://github.com/browserslist/caniuse-lite#readme",
    "text": "7183ef9749eb9b75"
@@ -299,7 +299,7 @@
   {
    "kind": "npm",
    "name": "electron-to-chromium",
-   "version": "1.5.463",
+   "version": "1.5.476",
    "license": "ISC",
    "url": "https://github.com/Kilian/electron-to-chromium#readme",
    "text": "94e2d6f90264f1e3"
@@ -315,7 +315,7 @@
   {
    "kind": "npm",
    "name": "framer-motion",
-   "version": "14.5.0",
+   "version": "14.9.1",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "aac842346e3368e0"
@@ -331,7 +331,7 @@
   {
    "kind": "npm",
    "name": "hls.js",
-   "version": "1.7.3",
+   "version": "1.7.4",
    "license": "Apache-2.0",
    "url": "https://github.com/video-dev/hls.js",
    "text": "bddf7c26f1f7ea45"
@@ -371,7 +371,7 @@
   {
    "kind": "npm",
    "name": "motion-dom",
-   "version": "14.5.0",
+   "version": "14.9.1",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "bb59eb35f694a158"
@@ -379,7 +379,7 @@
   {
    "kind": "npm",
    "name": "motion-utils",
-   "version": "14.1.1",
+   "version": "14.7.0",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "bb59eb35f694a158"
@@ -387,7 +387,7 @@
   {
    "kind": "npm",
    "name": "motion",
-   "version": "14.5.0",
+   "version": "14.9.1",
    "license": "MIT",
    "url": "https://github.com/motiondivision/motion#readme",
    "text": "bb59eb35f694a158"
@@ -411,7 +411,7 @@
   {
    "kind": "npm",
    "name": "next",
-   "version": "16.4.2",
+   "version": "16.4.5",
    "license": "MIT",
    "url": "https://nextjs.org",
    "text": "25afff58f46401f4"
@@ -419,7 +419,7 @@
   {
    "kind": "npm",
    "name": "node-releases",
-   "version": "2.0.59",
+   "version": "2.0.63",
    "license": "MIT",
    "url": "https://github.com/chicoxyzzy/node-releases#readme",
    "text": "b02a61dfa2f1ba35"
@@ -467,7 +467,7 @@
   {
    "kind": "npm",
    "name": "semver",
-   "version": "6.3.1",
+   "version": "6.3.2",
    "license": "ISC",
    "url": "https://github.com/npm/node-semver#readme",
    "text": "0ae52fe329ccfd23"
@@ -507,7 +507,7 @@
   {
    "kind": "npm",
    "name": "tslib",
-   "version": "2.8.1",
+   "version": "2.9.1",
    "license": "0BSD",
    "url": "https://www.typescriptlang.org/",
    "text": "0e8d2550baea17eb"
@@ -875,7 +875,7 @@
   {
    "kind": "rust",
    "name": "candle-core",
-   "version": "0.11.0",
+   "version": "0.11.1",
    "license": "MIT OR Apache-2.0",
    "url": "https://github.com/huggingface/candle",
    "text": "283ea6cc2997a1a7"
@@ -883,7 +883,7 @@
   {
    "kind": "rust",
    "name": "candle-nn",
-   "version": "0.11.0",
+   "version": "0.11.1",
    "license": "MIT OR Apache-2.0",
    "url": "https://github.com/huggingface/candle",
    "text": null
@@ -891,7 +891,7 @@
   {
    "kind": "rust",
    "name": "candle-transformers",
-   "version": "0.11.0",
+   "version": "0.11.1",
    "license": "MIT OR Apache-2.0",
    "url": "https://github.com/huggingface/candle",
    "text": null
@@ -1154,6 +1154,14 @@
   },
   {
    "kind": "rust",
+   "name": "daachorse",
+   "version": "3.0.3",
+   "license": "MIT OR Apache-2.0",
+   "url": "https://github.com/daac-tools/daachorse",
+   "text": "30fefc3a7d6a0041"
+  },
+  {
+   "kind": "rust",
    "name": "darling_core",
    "version": "0.20.11",
    "license": "MIT",
@@ -1379,7 +1387,15 @@
   {
    "kind": "rust",
    "name": "fancy-regex",
-   "version": "0.18.0",
+   "version": "0.17.0",
+   "license": "MIT",
+   "url": "https://github.com/fancy-regex/fancy-regex",
+   "text": "ffaf97e3da9ec6a6"
+  },
+  {
+   "kind": "rust",
+   "name": "fancy-regex",
+   "version": "0.19.2",
    "license": "MIT",
    "url": "https://github.com/fancy-regex/fancy-regex",
    "text": "ffaf97e3da9ec6a6"
@@ -2303,22 +2319,6 @@
    "license": "MIT OR Apache-2.0",
    "url": "https://github.com/matklad/once_cell",
    "text": "30fefc3a7d6a0041"
-  },
-  {
-   "kind": "rust",
-   "name": "onig_sys",
-   "version": "69.9.3",
-   "license": "MIT",
-   "url": "https://github.com/rust-onig/rust-onig",
-   "text": "27800255b30ad6c9"
-  },
-  {
-   "kind": "rust",
-   "name": "onig",
-   "version": "6.5.3",
-   "license": "MIT",
-   "url": "https://github.com/iwillspeak/rust-onig",
-   "text": "82c65ee530210824"
   },
   {
    "kind": "rust",
@@ -3275,7 +3275,7 @@
   {
    "kind": "rust",
    "name": "tokenizers",
-   "version": "0.22.2",
+   "version": "0.23.2",
    "license": "Apache-2.0",
    "url": "https://github.com/huggingface/tokenizers",
    "text": "283ea6cc2997a1a7"
@@ -3323,7 +3323,7 @@
   {
    "kind": "rust",
    "name": "tokio",
-   "version": "1.53.3",
+   "version": "1.54.1",
    "license": "MIT",
    "url": "https://github.com/tokio-rs/tokio",
    "text": "3e1bef82aa0dfee4"
@@ -3427,7 +3427,7 @@
   {
    "kind": "rust",
    "name": "typed-path",
-   "version": "0.12.4",
+   "version": "0.13.0",
    "license": "MIT OR Apache-2.0",
    "url": "https://github.com/chipsenkbeil/typed-path",
    "text": "30fefc3a7d6a0041"
@@ -3547,7 +3547,7 @@
   {
    "kind": "rust",
    "name": "uuid",
-   "version": "1.28.0",
+   "version": "1.29.0",
    "license": "Apache-2.0 OR MIT",
    "url": "https://github.com/uuid-rs/uuid",
    "text": "11cd7e6caed4b237"
@@ -3691,7 +3691,7 @@
   {
    "kind": "rust",
    "name": "zip",
-   "version": "8.6.0",
+   "version": "9.4.1",
    "license": "MIT",
    "url": "https://github.com/zip-rs/zip2",
    "text": "6ac8711fb340c62c"
@@ -3909,8 +3909,6 @@
   "e6a7acaed4385702": "MIT License\n\nCopyright (c) 2020 Rousan Ali\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
   "e9f8a16f9ed6671f": "Copyright (c) 2014-2019 Geoffroy Couprie\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of this software and associated documentation files (the\n\"Software\"), to deal in the Software without restriction, including\nwithout limitation the rights to use, copy, modify, merge, publish,\ndistribute, sublicense, and/or sell copies of the Software, and to\npermit persons to whom the Software is furnished to do so, subject to\nthe following conditions:\n\nThe above copyright notice and this permission notice shall be\nincluded in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\nNONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE\nLIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION\nWITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
   "4d83b119f786daf6": "Copyright (c) Jacob Pratt\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
-  "27800255b30ad6c9": "# Rust-Onig is Open Source!\n\nAll source code in this repository is distributed under the terms of\nthe *MIT License* unless otherwise stated. The Oniguruma source code\nremains the property of the original authors and is re-distributed\nunder the original license, see [COPYING](oniguruma/COPYING) for more\ninformation.\n\n> The MIT License (MIT)\n> \n> Copyright (c) 2015 Will Speak <will@willspeak.me>, Ivan Ivashchenko\n> <defuz@me.com>, and contributors.\n> \n> Permission is hereby granted, free of charge, to any person obtaining a copy\n> of this software and associated documentation files (the \"Software\"), to deal\n> in the Software without restriction, including without limitation the rights\n> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n> copies of the Software, and to permit persons to whom the Software is\n> furnished to do so, subject to the following conditions:\n> \n> The above copyright notice and this permission notice shall be included in all\n> copies or substantial portions of the Software.\n> \n> THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n> SOFTWARE.",
-  "82c65ee530210824": "# Rust-Onig is Open Source!\n\nAll source code in this repository is distributed under the terms of\nthe *MIT License* unless otherwise stated. The Oniguruma source code\nremains the property of the original authors and is re-distributed\nunder the original license.\n\n> The MIT License (MIT)\n> \n> Copyright (c) 2015 Will Speak <will@willspeak.me>, Ivan Ivashchenko\n> <defuz@me.com>, and contributors.\n> \n> Permission is hereby granted, free of charge, to any person obtaining a copy\n> of this software and associated documentation files (the \"Software\"), to deal\n> in the Software without restriction, including without limitation the rights\n> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n> copies of the Software, and to permit persons to whom the Software is\n> furnished to do so, subject to the following conditions:\n> \n> The above copyright notice and this permission notice shall be included in all\n> copies or substantial portions of the Software.\n> \n> THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n> SOFTWARE.",
   "7873dbb4b8660923": "Copyright (c) 2018-2024 The RustCrypto Project Developers\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.",
   "8a87674755cec4fe": "Copyright (c) 2020-2023 RustCrypto Developers\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.",
   "ee25a6da6cea276f": "Copyright (c) 2020-2021 RustCrypto Developers\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.",
