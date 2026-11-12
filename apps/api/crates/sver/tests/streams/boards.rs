@@ -76,6 +76,13 @@ pub async fn exercise(e: &Env) {
         StatusCode::UNPROCESSABLE_ENTITY,
         "unknown fields"
     );
+    // Button styles come from fixed lists.
+    for (field, value) in [("color", "pink"), ("icon", "skull"), ("color", "")] {
+        let mut styled = json!({"screens": [{"name": "Main", "controls": [{"id": "x", "kind": "button", "label": "X"}]}]});
+        styled["screens"][0]["controls"][0][field] = json!(value);
+        let (status, body) = draft(styled).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field} {value}: {body}");
+    }
     assert_eq!(
         call(
             e,
@@ -90,7 +97,7 @@ pub async fn exercise(e: &Env) {
         "nothing to publish"
     );
     let board = json!({"screens": [{"name": "Main", "controls": [
-        {"id": "boom", "kind": "button", "label": "Boom", "cost": 50, "cooldown_seconds": 60, "effect": "confetti"},
+        {"id": "boom", "kind": "button", "label": "Boom", "cost": 50, "cooldown_seconds": 60, "effect": "confetti", "color": "ember", "icon": "heart"},
         {"id": "free", "kind": "button", "label": "Free", "per_stream_limit": 2, "effect": "hearts"},
         {"id": "goal", "kind": "goal", "label": "Goal", "cost": 10, "target": 25, "effect": "fireworks", "width": 4},
         {"id": "say", "kind": "text", "label": "Say", "effect": "spotlight"},
@@ -102,6 +109,18 @@ pub async fn exercise(e: &Env) {
     let (status, saved) = draft(board.clone()).await;
     assert_eq!(status, StatusCode::OK, "{saved}");
     assert_eq!(saved["version"], 0);
+    assert_eq!(me["colors"].as_array().unwrap().len(), 4);
+    assert!(me["icons"].as_array().unwrap().contains(&json!("heart")));
+    let boom = &saved["draft"]["screens"][0]["controls"][0];
+    assert_eq!(
+        (&boom["color"], &boom["icon"]),
+        (&json!("ember"), &json!("heart"))
+    );
+    let plain = &saved["draft"]["screens"][0]["controls"][1];
+    assert!(
+        plain.get("color").is_none() && plain.get("icon").is_none(),
+        "no style by default"
+    );
     let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
     assert_eq!(viewing["board"], Value::Null, "drafts are never live");
     let (status, published) = call(
@@ -114,6 +133,15 @@ pub async fn exercise(e: &Env) {
     .await;
     assert_eq!(status, StatusCode::OK, "{published}");
     assert_eq!(published["version"], 1);
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert_eq!(
+        viewing["board"]["screens"][0]["controls"][0]["color"], "ember",
+        "viewers get the style"
+    );
+    assert_eq!(
+        viewing["board"]["screens"][0]["controls"][0]["icon"],
+        "heart"
+    );
     assert_eq!(
         call(
             e,

@@ -45,6 +45,13 @@ pub const EFFECTS: &[&str] = &[
 ];
 const KINDS: &[&str] = &["button", "label", "text", "goal", "joystick", "rally"];
 const AUDIENCES: &[&str] = &["everyone", "followers", "subscribers", "moderators"];
+/// Button styles (docs/CROWDSYNC.md "Builder and Studio layout"): the site's four theme palettes
+/// and icons from the site's icon set. The web panel draws them (`components/Board.tsx`).
+pub const COLORS: &[&str] = &["steel", "ember", "violet", "gold"];
+pub const ICONS: &[&str] = &[
+    "heart", "music", "bell", "shield", "flag", "clock", "message", "check", "cross", "ban",
+    "lock", "search",
+];
 const MAX_SCREENS: usize = 4;
 const MAX_CONTROLS: usize = 24;
 /// Text inputs (**Proposed** in the spec).
@@ -99,6 +106,12 @@ pub struct Control {
     /// "Game confirms": a press holds the viewer's Valor until the game captures or releases it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub confirm: bool,
+    /// Buttons and text inputs: one of `COLORS`. Other kinds ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Buttons and text inputs: one of `ICONS`, drawn before the label. Other kinds ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 fn everyone() -> String {
     "everyone".into()
@@ -221,6 +234,12 @@ pub fn validate(board: &Board) -> Res<()> {
             if !(1..=4).contains(&c.width) {
                 return Err(bad(c, "width is 1 to 4 columns."));
             }
+            if c.color.as_deref().is_some_and(|v| !COLORS.contains(&v)) {
+                return Err(bad(c, "choose a colour from the list."));
+            }
+            if c.icon.as_deref().is_some_and(|v| !ICONS.contains(&v)) {
+                return Err(bad(c, "choose an icon from the list."));
+            }
             if c.confirm && c.effect != "none" {
                 return Err(bad(c, "the game plays the effect, so choose no effect."));
             }
@@ -274,6 +293,8 @@ pub fn templates() -> Vec<(&'static str, Board)> {
         target: None,
         width: if kind == "label" { 4 } else { 1 },
         confirm: false,
+        color: None,
+        icon: None,
     };
     let screen = |name: &str, controls: Vec<Control>| Board {
         screens: vec![Screen {
@@ -459,7 +480,7 @@ async fn studio(app: &App, user: &auth::User) -> Res<Value> {
         "set_by": row.set_by_name,
         "library": library(app, &user.id).await?, "library_max": MAX_LIBRARY,
         "checklist": checklist(&row),
-        "templates": templates, "effects": EFFECTS, "custom_effects": crate::skills::board_options(app, &user.id).await?, "kinds": KINDS, "audiences": AUDIENCES,
+        "templates": templates, "effects": EFFECTS, "custom_effects": crate::skills::board_options(app, &user.id).await?, "kinds": KINDS, "colors": COLORS, "icons": ICONS, "audiences": AUDIENCES,
     }))
 }
 
