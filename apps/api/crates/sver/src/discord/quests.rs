@@ -180,8 +180,8 @@ pub async fn announce(app: &App) -> Res<()> {
         else {
             continue;
         };
-        let message = json!({"content": format!("<@{user}>"), "allowed_mentions": {"parse": []},
-            "embeds": [{"title": format!("{emoji} {title}"), "description": description, "color": rarity_color(rarity),
+        let message = json!({"allowed_mentions": {"parse": []},
+            "embeds": [{"title": format!("{emoji} {title}"), "description": format!("<@{user}> unlocked this achievement!\n\n{description}"), "color": rarity_color(rarity),
                 "footer": {"text": format!("{} achievement", rarity[..1].to_uppercase() + &rarity[1..])}}]});
         if send(app, &channel, message).await.is_none() {
             // The channel is gone or closed to the bot; try again next minute.
