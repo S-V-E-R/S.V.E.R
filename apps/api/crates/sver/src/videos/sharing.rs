@@ -7,7 +7,8 @@ use axum::{
 
 async fn shared(app: &App, id: &str) -> Res<(Video, Value)> {
     let video = load(&mut *app.db.acquire().await?, id).await?;
-    if video.kind != "CLIP"
+    // Public clips, recordings and highlights. Private, subscriber, mature and unapproved stay hidden.
+    if !matches!(video.kind.as_str(), "CLIP" | "VOD" | "HIGHLIGHT")
         || video.visibility != "PUBLIC"
         || video.mature
         || video.status != "READY"
@@ -24,7 +25,14 @@ async fn shared(app: &App, id: &str) -> Res<(Video, Value)> {
     .ok_or_else(Fail::missing)?;
     let token = super::share_ticket(app, &video)?;
     let origin = &app.config.origin;
-    let data = json!({"id":id,"title":video.title,"author_name":owner.display_name,"author_url":format!("{origin}/{}",owner.username),"url":format!("{origin}/clips/{id}"),"embed":format!("{origin}/embed/{id}"),"mp4":format!("{origin}/api/videos/{id}/file?ticket={token}"),"thumbnail":video.thumbnail_key.as_ref().map(|_|format!("{origin}/api/videos/{id}/thumbnail?ticket={token}"))});
+    let page = if video.kind == "CLIP" {
+        "clips"
+    } else {
+        "videos"
+    };
+    let mp4 =
+        (video.kind == "CLIP").then(|| format!("{origin}/api/videos/{id}/file?ticket={token}"));
+    let data = json!({"id":id,"kind":video.kind,"title":video.title,"author_name":owner.display_name,"author_url":format!("{origin}/{}",owner.username),"url":format!("{origin}/{page}/{id}"),"embed":format!("{origin}/embed/{id}"),"mp4":mp4,"thumbnail":video.thumbnail_key.as_ref().map(|_|format!("{origin}/api/videos/{id}/thumbnail?ticket={token}"))});
     Ok((video, data))
 }
 async fn share(State(app): State<App>, Path(id): Path<String>) -> Res<Json<Value>> {
@@ -51,7 +59,10 @@ async fn oembed(State(app): State<App>, Query(input): Query<Embed>) -> Res<Json<
     if url.origin() != origin.origin() || !url.username().is_empty() || url.password().is_some() {
         return Err(Fail::bad("Use a S.V.E.R clip link."));
     }
-    let (_, data) = shared(&app, id).await?;
+    let (video, data) = shared(&app, id).await?;
+    if video.kind != "CLIP" {
+        return Err(Fail::missing());
+    }
     let width = input
         .maxwidth
         .unwrap_or(640)

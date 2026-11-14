@@ -18,16 +18,17 @@ export async function channelMetadata(username: string, section?: string): Promi
   if (status !== 200 || !data?.channel) return { title: "This channel doesn't exist. | S.V.E.R", robots: { index: false, follow: false } };
   const c = data.channel;
   const title = `${c.display_name} (@${c.username})${section ? ` · ${section}` : ""} | S.V.E.R`;
-  const description = c.bio?.trim() ? c.bio.slice(0, 200) : "Channel on S.V.E.R";
+  const description = c.bio?.trim() ? c.bio.slice(0, 200) : c.live ? `${c.display_name} is live on S.V.E.R` : "Channel on S.V.E.R";
+  const path = `https://sver.tv/${c.username}${section ? `/${section.toLowerCase().replaceAll(" ", "-")}` : ""}`;
   // The share card (app/[username]/opengraph-image.tsx), named here so every channel tab carries it.
   const images = [{ url: `https://sver.tv/${c.username}/opengraph-image`, width: 1200, height: 630, alt: `${c.display_name} on S.V.E.R` }];
   return {
     title,
     description,
-    alternates: { canonical: `https://sver.tv/${c.username}${section ? `/${section.toLowerCase().replace(" ", "-")}` : ""}` },
-    openGraph: { title, description, url: `https://sver.tv/${c.username}`, siteName: "S.V.E.R", type: "profile", images },
+    alternates: { canonical: path },
+    openGraph: { title, description, url: path, siteName: "S.V.E.R", type: "profile", images },
     twitter: { card: "summary_large_image", title, description, images },
-    robots: { index: false, follow: false },
+    robots: { index: true, follow: true },
   };
 }
 

@@ -4,7 +4,8 @@ import type { Guild } from "../../lib/guilds";
 import { GuildCard } from "../../components/Guilds";
 import "../../styles/profiles.css";
 import "../../styles/teams.css";
-export const metadata = { title: "Guilds | S.V.E.R" };
+import { publicMeta } from "../../lib/seo";
+export const metadata = publicMeta("Guilds | S.V.E.R", "Find a stream team across all three factions.", "/guilds");
 export default async function Guilds({ searchParams }: { searchParams: Promise<{ q?: string; offset?: string }> }) {
   const q = await searchParams;
   const query = new URLSearchParams({ q: q.q ?? "", offset: q.offset ?? "0" });

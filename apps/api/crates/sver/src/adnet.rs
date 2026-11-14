@@ -935,6 +935,16 @@ pub(crate) async fn refunded(tx: &mut PgConnection, intent: &str, refunded: i64)
     };
     let c = load(tx, &id, true).await?;
     if c.ending.is_some() && refunded <= i64::from(c.refund_cents) {
+        // While the campaign's refund is still owed, whatever Stripe has refunded (by hand after a
+        // declined try, or by a try whose answer was lost) counts against it, so the job sends
+        // only the rest and never the same money twice.
+        if c.status == "refund_due" {
+            sqlx::query("UPDATE ad_campaigns SET outside_cents=greatest(outside_cents,$2),updated_at=now() WHERE id=$1")
+                .bind(&id)
+                .bind(refunded as i32)
+                .execute(&mut *tx)
+                .await?;
+        }
         return Ok(());
     }
     if !matches!(c.status.as_str(), "paid" | "running" | "disputed") {
@@ -1193,7 +1203,8 @@ pub async fn tick(app: &App) -> Res<()> {
                 ("payment_intent", intent.clone()),
                 ("amount", cents.to_string()),
             ];
-            let key = format!("ad-refund-{id}");
+            // The amount is in the key: a smaller remainder is a new request, not a replay.
+            let key = format!("ad-refund-{id}-{cents}");
             match stripe::send(
                 &app.http,
                 &app.config.stripe,
