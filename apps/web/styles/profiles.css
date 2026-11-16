@@ -86,7 +86,7 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .gallery li{padding:12px}.gallery img{width:100%;height:auto;display:block;border:1px solid var(--line)}
 .fan-art-form{margin-bottom:16px}
 /* /following: one channel per row, so the name, date and Unfollow share a line. */
-.following-all .people{grid-template-columns:1fr;gap:12px}.following-all .followed-on{text-align:right}
+.following-all .people{grid-template-columns:1fr;gap:12px}.following-all .followed-on{text-align:right;white-space:nowrap}
 .people{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
 .settings-page{display:flex;gap:0;min-height:100%}
 .settings-page.single{display:block}
