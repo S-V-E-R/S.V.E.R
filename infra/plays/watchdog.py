@@ -65,7 +65,7 @@ RUNNER_STALE = 90
 STILL_CHECKS = 3
 # The picture can keep changing while the AI gets nowhere (it paced two tiles for 12 days in
 # November 2026). The runner's heartbeat carries the adapter's story marker; AI-mode time without
-# it changing is counted, and past STALL staff hear once, then once a day. No restart: the same
+# any of its numbers passing its best is counted, and past STALL staff hear once, then once a day. No restart: the same
 # save would walk into the same spot.
 STALL = int(os.environ.get("PLAYS_STALL_SECONDS", "7200"))
 STALL_AGAIN = 86400
@@ -75,10 +75,16 @@ def stalled(state, now, runner):
     """The story-stall part of the state: the marker, the AI-mode seconds since it changed, when
     this was last checked, and the problem to report (None most of the time)."""
     marker = (runner or {}).get("progress")
-    if marker is None:
+    if not isinstance(marker, list):
         return {"progress": None, "idle": 0, "checked": now, "stall": None}
+    # Progress is a number in the marker passing its best so far. The AI's own rewinds replay
+    # old ground (the same gym trainer, the same level-up), and that must not count.
+    best = state.get("progress")
     idle = state.get("idle", 0)
-    if marker != state.get("progress"):
+    if not isinstance(best, list) or len(best) != len(marker):
+        best, idle = marker, 0
+    marker = [max(pair) for pair in zip(best, marker)]
+    if marker != best:
         idle = 0
     elif runner.get("mode") == "rl":
         idle += min(now - state.get("checked", now), 120)  # A watchdog that was off counts once.

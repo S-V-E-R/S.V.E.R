@@ -51,4 +51,11 @@ for at in range(0, 2 * 86400, 60):
 assert reports == [3 * 3600, 3 * 3600 + 86400], f"reported at two AI hours, then daily: {reports}"
 assert watchdog.stalled(s, 3 * 86400, beat("rl", [90, 3, 141]))["idle"] == 0, "a level-up is progress"
 assert watchdog.stalled(s, 3 * 86400, {"mode": "rl"})["stall"] is None, "an older runner sends no marker"
+# The AI rewinds to a map's entrance and wins the same level again: old ground, not progress.
+s = watchdog.stalled({}, 0, beat("rl", [128, 3, 78]))
+s = watchdog.stalled(s, 60, beat("rl", [128, 3, 77]))
+s = watchdog.stalled(s, 120, beat("rl", [128, 3, 78]))
+assert (s["idle"], s["progress"]) == (120, [128, 3, 78]), "a rewind's replay is not progress"
+s = watchdog.stalled(s, 180, beat("rl", [90, 3, 79]))
+assert (s["idle"], s["progress"]) == (0, [128, 3, 79]), "after a whiteout the story is behind but a new level is progress"
 print("plays watchdog checks passed")
