@@ -591,3 +591,11 @@ a.takedown-link:hover { color: var(--ink); }
 .empty-state p:last-child { margin-bottom: 0; }
 .order-list .order-reroll { justify-self: start; padding: 2px 0; min-height: 24px; background: none; border: 0; box-shadow: none; font-family: var(--font-body); font-weight: 500; font-size: 12px; letter-spacing: 0; text-transform: none; color: var(--ink-muted); text-decoration: underline; cursor: pointer; }
 .order-list .order-reroll:hover { color: var(--ink); filter: none; background: none; }
+/* Footer columns: three labeled groups; two across on phones, where links keep 44 px targets. */
+.footer-columns { margin-left: auto; display: grid; grid-template-columns: repeat(3, auto); gap: 24px 48px; align-items: start; }
+.footer-columns div { display: flex; flex-direction: column; }
+.footer-columns .eyebrow { margin-bottom: 8px; }
+.footer-columns a { display: inline-flex; align-items: center; min-height: 32px; }
+@media (max-width: 700px) { .footer-columns { margin-left: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; width: 100%; } .footer-columns a { min-height: 44px; } }
+/* Scrollbars take the theme instead of the browser's default grey. */
+html { scrollbar-color: color-mix(in srgb, var(--accent) 35%, var(--bg)) var(--bg); }

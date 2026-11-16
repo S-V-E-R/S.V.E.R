@@ -62,13 +62,18 @@ export default function SiteShell({ account, alerts, actions, sidebar, banner, c
   </div>;
 }
 
+// Every footer destination, grouped; Take It Down stays clearly visible (docs/DESIGN.md "Footer").
+const footerColumns = [
+  ["S.V.E.R", [["/about", "About"], ["/factions", "Factions"], ["/roadmap", "Roadmap"], ["/guilds", "Guilds"], ["/wall", "The Wall"], ["/supporters", "Support S.V.E.R"]]],
+  ["Help & data", [["/help", "Help & FAQ"], ["/contact", "Contact"], ["/open-data", "Open data"], ["/developers", "Developers"], ["/crowdsync", "CrowdSync catalog"], ["/credits", "Credits"]]],
+  ["Rules", [["/terms", "Terms"], ["/privacy", "Privacy"], ["/guidelines", "Guidelines"], ["/dmca", "Copyright & DMCA"], ["/take-it-down", "Take It Down requests"]]],
+] as const;
 function SiteFooter() {
   const pathname = usePathname();
   return <footer className="site-footer">
       <div><Link href="/" className="brand logo small" aria-label="S.V.E.R home">S.V.E.R</Link><p>Your people are here. Your destiny is yours to forge. Choose your faction.</p></div>
-      <nav className="site-links" aria-label="Site information">{siteLinks.map(([href, label]) =>
-        <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{label}</Link>)}{[["/guilds", "Guilds"], ["/crowdsync", "CrowdSync catalog"], ["/wall", "The Wall"], ["/supporters", "Support S.V.E.R"]].map(([href, label]) =>
-        <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{label}</Link>)}</nav>
+      <nav className="footer-columns" aria-label="Site information">{footerColumns.map(([title, links]) => <div key={title}><span className="eyebrow">{title}</span>{links.map(([href, label]) =>
+        <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}>{label}</Link>)}</div>)}</nav>
       <p className="copyright">© {new Date().getFullYear()} SVER LLC <span className="verse">Matthew 5:16</span></p>
     </footer>;
 }
