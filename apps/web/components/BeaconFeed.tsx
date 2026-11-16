@@ -150,10 +150,10 @@ export function BeaconFeed({ initial, start = null, signedIn, gateId = null, fac
             <p><Link className="button" href="/browse">Browse live channels</Link></p>
           </>}
         </div>}
-      <div className="beacon-nav">
+      {items.length > 1 && <div className="beacon-nav">
         <button type="button" className="quiet" onClick={() => move(-1)} disabled={index === 0} aria-label="Previous Beacon">↑</button>
         <button type="button" className="quiet" onClick={() => move(1)} disabled={index >= items.length - 1} aria-label="Next Beacon">↓</button>
-      </div>
+      </div>}
     </div>
   </div>;
 }

@@ -230,5 +230,6 @@ a.chip:hover { border-color: var(--accent); text-decoration: none; }
 .territory-tile.has-art .territory-live { color: rgba(255, 255, 255, .78); }
 .territory-tile.has-art h3 { color: #fff; }
 .territory-tile .contested-tag { display: block; margin-top: 2px; font: 700 11px/1.2 var(--font-label); letter-spacing: .1em; text-transform: uppercase; color: var(--accent-light); }
-@media (max-width: 700px) { .genre-groups, .magnet-lanes { flex-direction: column; flex-wrap: nowrap; gap: 8px; } }
+@media (max-width: 700px) { .magnet-lanes { flex-direction: column; flex-wrap: nowrap; gap: 8px; } .genre-groups { flex-wrap: nowrap; gap: 8px 24px; overflow-x: auto; scrollbar-width: none; } .genre-groups .genre-group { flex: none; } .genre-groups .genre-tabs { overflow: visible; } .front-line { padding: 12px 16px; gap: 8px 16px; } .front-line-status p { display: none; } }
+.quiet-lane { opacity: .55; }
 
