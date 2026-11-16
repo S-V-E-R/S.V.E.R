@@ -42,6 +42,14 @@ async fn clock(db: &mut PgConnection) -> Res<(DateTime<Utc>, i64)> {
         .await?;
     Ok((now, now.timestamp().div_euclid(5)))
 }
+/// The 24/7 channel's owner, while Plays is enabled.
+pub async fn owner(db: &mut PgConnection) -> Res<Option<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT channel_id FROM plays_runtime WHERE enabled")
+            .fetch_optional(db)
+            .await?,
+    )
+}
 pub async fn is_channel(db: &mut PgConnection, channel: &str) -> Res<bool> {
     Ok(sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM plays_runtime WHERE enabled AND channel_id=$1)",

@@ -194,6 +194,7 @@ A review of the built module against this spec. Fixed:
 - **First feature** is shown until one of the streamer's features has ended. It counted feature rows before, so the label disappeared whenever two lanes (Global and their faction's) picked a new stream in the same tick.
 - **The decision log** records the crowd and game-detector signals too, so a "Just won the match" or "Chat is playing along" switch can be explained from the log.
 - Screen readers hear a countdown once, not once a second.
+- **Creators take priority over S.V.E.R Plays in discovery** (Joe's decision, November 16, 2026). Plays stays in Live Now, browse, search and Up next so viewers can find it and play along, but it is listed after every live creator, the rotation pointer moves through creators only (Plays takes no 3-minute turn at the top while one is live), and Up next offers it only after every creator. With no creator live it is first, as before. MAGNet lanes are unchanged: they feature Plays only when nothing else is eligible.
 
 ## Spotlights
 
