@@ -86,6 +86,13 @@ pub async fn exercise(e: &Env) {
     let (_, page) = get(e, "/api/magnet/global", None).await;
     assert_eq!(page["featured"]["stream"]["username"], "MgBig");
     assert_eq!(page["featured"]["stream"]["label"], "First feature");
+    // Still the first feature while a second lane shows the same new stream (Global and a faction
+    // lane often pick it in the same tick).
+    e.sql("INSERT INTO magnet_features(id,lane,broadcast_id,owner_id,kind,reason) VALUES('mg-twin','art','mg-b-big','mg-big','fair','')").await;
+    let (_, twin) = get(e, "/api/magnet/global", None).await;
+    assert_eq!(twin["featured"]["stream"]["label"], "First feature");
+    e.sql("DELETE FROM magnet_features WHERE id='mg-twin'")
+        .await;
     assert!(
         page["featured"]["reason"]
             .as_str()
@@ -137,15 +144,21 @@ pub async fn exercise(e: &Env) {
     let (_, page) = get(e, "/api/magnet/global", None).await;
     assert_eq!(page["next"]["stream"]["username"], "MgSmall");
     assert_eq!(page["next"]["reason"], "Chat is going off");
-    // The countdown ends: the switch happens and is recorded as a moment.
+    // The countdown ends: the switch happens and is recorded as a moment. The engine takes the lane
+    // as soon as its countdown is over, though it (like every lane here) ticked a moment ago.
+    e.sql("UPDATE magnet_lanes SET ticked_at=now()").await;
     e.sql("UPDATE magnet_lanes SET switch_at=now()-interval '1 second' WHERE id='global'")
         .await;
-    tick(e, "global").await;
+    sver::magnet::tick(&e.app).await.unwrap();
     let (showing, kind, pending) = current(e, "global").await;
     assert_eq!(
         (showing.as_deref(), kind.as_deref(), pending),
         (Some("mg-b-small"), Some("moment"), None)
     );
+    // The log carries every signal a score can come from, the crowd and the game detector included.
+    let logged: bool = sqlx::query_scalar("SELECT bool_and(jsonb_exists(candidates->0->'signals','game') AND jsonb_exists(candidates->0->'signals','crowd')) FROM magnet_decisions WHERE lane='global' AND kind='moment'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert!(logged);
     let decisions: i64 = sqlx::query_scalar("SELECT count(*) FROM magnet_decisions WHERE lane='global' AND kind='moment' AND jsonb_array_length(candidates)>=2")
         .fetch_one(&e.app.db).await.unwrap();
     assert_eq!(decisions, 1);
@@ -616,6 +629,18 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    // MAGNet chat is merged with that shared chat, and doesn't show it to them either.
+    let saw = |room: &Value| {
+        let said = room["messages"].as_array().unwrap();
+        said.iter().any(|m| m["body"] == "hello co-stream")
+    };
+    let (_, theirs) = get(e, "/api/magnet/global/chat", Some(&young)).await;
+    let (_, anyone) = get(e, "/api/magnet/global/chat", None).await;
+    assert_eq!(
+        (saw(&theirs), &theirs["can_send"], saw(&anyone)),
+        (false, &json!(false), true),
+        "{theirs}"
+    );
     e.sql("UPDATE stream_settings SET mature=false WHERE owner_id='mg-sq-guest'")
         .await;
     let (_, room) = get(e, "/api/magnet/global/chat", Some(&banned)).await;

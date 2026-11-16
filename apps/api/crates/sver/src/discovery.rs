@@ -281,7 +281,20 @@ async fn rotation_for(
 ) -> Res<Vec<Stream>> {
     let mut db = app.db.acquire().await?;
     let mut streams = live_streams(&mut db).await?;
-    let lead = leader(&mut db, &streams, slot(at)).await?;
+    // Creators take priority over the 24/7 channel: the shared pointer moves through creators
+    // only while one is live, so S.V.E.R Plays never takes a turn at the top from them.
+    let plays = crate::plays::owner(&mut db).await?;
+    let creators: Vec<Stream> = streams
+        .iter()
+        .filter(|s| Some(&s.owner_id) != plays.as_ref())
+        .cloned()
+        .collect();
+    let turns = if creators.is_empty() {
+        &streams
+    } else {
+        &creators
+    };
+    let lead = leader(&mut db, turns, slot(at)).await?;
     let blocked = hidden(&mut db, viewer).await?;
     streams.retain(|s| !blocked.contains(&s.owner_id));
     let home = home_genres(&mut db, faction).await?;
@@ -289,7 +302,14 @@ async fn rotation_for(
     // Under-18 viewers: labeled streams leave the list after ordering, like blocks.
     let mature = crate::streams::mature_hidden(&mut db, viewer).await?;
     ordered.retain(|s| !mature.contains(&s.owner_id));
+    plays_last(&mut ordered, plays.as_deref());
     Ok(ordered)
+}
+
+/// S.V.E.R Plays stays in every list, so viewers can find it and play along, but after every
+/// creator (Joe's decision, November 16, 2026). The creators keep their order.
+fn plays_last(streams: &mut [Stream], plays: Option<&str>) {
+    streams.sort_by_key(|s| Some(s.owner_id.as_str()) == plays);
 }
 
 /// Channels that were live in the last 14 days (newest first), for empty states.
@@ -634,10 +654,11 @@ async fn suggestions(
         language: None,
         restarted: false,
     };
-    let items: Vec<Value> = suggest(&rotation, &current, 8)
-        .iter()
-        .map(|s| card(&app, s, now))
-        .collect();
+    // Plays is offered only after every live creator, whatever its genre.
+    let plays = crate::plays::owner(&mut *app.db.acquire().await?).await?;
+    let mut next = suggest(&rotation, &current, rotation.len());
+    plays_last(&mut next, plays.as_deref());
+    let items: Vec<Value> = next.iter().take(8).map(|s| card(&app, s, now)).collect();
     Ok(Json(json!({"items":items})))
 }
 
@@ -884,6 +905,28 @@ mod tests {
         let before = orders(&streams);
         streams[1].viewers = 100_000;
         assert_eq!(before, orders(&streams), "viewer counts change nothing");
+    }
+
+    #[test]
+    fn plays_is_listed_after_every_creator() {
+        // The 24/7 channel started long ago, so start order alone would put it first.
+        let mut live = rotate(
+            vec![
+                s("plays", 9000, "art", "glint"),
+                s("a", 5, "art", "myria"),
+                s("b", 3, "music", "myria"),
+            ],
+            &[],
+            None,
+        );
+        plays_last(&mut live, Some("o-plays"));
+        assert_eq!(ids(&live), ["a", "b", "plays"], "creators keep their order");
+        // Alone, Plays is what's live; with Plays switched off nothing moves.
+        let mut alone = vec![s("plays", 9000, "art", "glint")];
+        plays_last(&mut alone, Some("o-plays"));
+        assert_eq!(ids(&alone), ["plays"]);
+        plays_last(&mut live, None);
+        assert_eq!(ids(&live), ["a", "b", "plays"]);
     }
 
     #[test]

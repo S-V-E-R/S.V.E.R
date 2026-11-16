@@ -64,7 +64,7 @@ export function HypeChat({ lane, account, upNext }: { lane: string; account: str
     <h2>MAGNet chat</h2>
     {state?.merged_with ? <p className="chat-system" role="status">Chatting with <Link href={`/${state.merged_with.username}`}>{state.merged_with.display_name}</Link>&apos;s {state.co_stream ? "co-stream chat; its streamers' rules apply" : "chat; their rules apply"}.</p>
       : <p className="chat-system muted">MAGNet&apos;s own room.</p>}
-    {upNext && <p className="chat-system" role="status">Chat joins {upNext.name} in {upNext.seconds}…</p>}
+    {upNext && <p className="chat-system" role="status">Chat joins {upNext.name}<span aria-hidden="true"> in {upNext.seconds}…</span></p>}
     <ol className="chat-messages" ref={list} aria-live="polite" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
       {(state?.messages.length ?? 0) === 0 && <li className="muted">No messages yet.</li>}
       {state?.messages.map(m => <li key={m.id}>

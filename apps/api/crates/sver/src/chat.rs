@@ -1356,9 +1356,27 @@ async fn hype_snapshot(
 ) -> Res<(Value, Option<String>)> {
     let merge = hype_merge(app, lane).await?;
     let hidden = hidden(app, viewer).await?;
+    // Chat in a channel labeled mature is closed to under-18 accounts (`mature_gate`), and merging
+    // must not open it: its messages stay out of their view of the room, from this merge and
+    // earlier ones. A merged co-stream with one labeled member is closed as a whole.
+    let mut closed: Vec<String> = match viewer {
+        Some(v) if !crate::auth::is_adult(&mut *app.db.acquire().await?, v).await? => {
+            sqlx::query_scalar("SELECT owner_id FROM stream_settings WHERE mature AND owner_id<>$1")
+                .bind(v)
+                .fetch_all(&app.db)
+                .await?
+        }
+        _ => Vec::new(),
+    };
+    let gated = merge
+        .as_ref()
+        .is_some_and(|m| m.owners.iter().any(|o| closed.contains(o)));
+    if let Some(m) = merge.as_ref().filter(|_| gated) {
+        closed.extend(m.owners.iter().cloned());
+    }
     // select() contains only fixed SQL and a literal chip alias; values are bound.
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1 AND m.squad_id IS NULL) OR (m.channel_id=$2 AND m.squad_id IS NOT DISTINCT FROM $5 AND m.created_at>=$3) OR EXISTS(SELECT 1 FROM magnet_features f WHERE f.lane=$1 AND f.merged AND f.owner_id=m.channel_id AND m.created_at>=f.started_at AND (f.ended_at IS NULL OR m.created_at<f.ended_at))) AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
+        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1 AND m.squad_id IS NULL) OR (m.channel_id=$2 AND m.squad_id IS NOT DISTINCT FROM $5 AND m.created_at>=$3) OR EXISTS(SELECT 1 FROM magnet_features f WHERE f.lane=$1 AND f.merged AND f.owner_id=m.channel_id AND m.created_at>=f.started_at AND (f.ended_at IS NULL OR m.created_at<f.ended_at))) AND NOT coalesce(m.channel_id=ANY($6),false) AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
         select()
     )))
     .bind(lane)
@@ -1366,6 +1384,7 @@ async fn hype_snapshot(
     .bind(merge.as_ref().map(|m| m.since))
     .bind(HISTORY)
     .bind(merge.as_ref().and_then(|m| m.squad.as_deref()))
+    .bind(&closed)
     .fetch_all(&app.db)
     .await?;
     let mut messages: Vec<Value> = rows
@@ -1382,16 +1401,17 @@ async fn hype_snapshot(
                 .await?
                 .map(|u| profiles::chip(app, &u));
             let holding = match viewer {
-                Some(v) => hype_holding(app, m, v).await?,
+                Some(v) => gated || hype_holding(app, m, v).await?,
                 None => false,
             };
             (chip, holding)
         }
         None => (None, false),
     };
+    // A gated viewer gets no merged room to listen to (`hype_session` then drops live messages).
     Ok((
         json!({"type":"snapshot","messages":messages,"merged_with":merged_with,"co_stream":merge.as_ref().is_some_and(|m| m.squad.is_some()),"holding":holding,"can_send":viewer.is_some() && !holding}),
-        merge.map(|m| m.room().to_string()),
+        merge.filter(|_| !gated).map(|m| m.room().to_string()),
     ))
 }
 /// GET /api/magnet/{lane}/chat
@@ -1474,6 +1494,9 @@ async fn hype_session(
     let Ok((first, mut merged)) = hype_snapshot(&app, &lane, viewer.as_deref()).await else {
         return;
     };
+    // Holding with no merged room is the mature gate: while it lasts every new message belongs to
+    // the closed conversation (MAGNet-side ones arrive on this room too), so none is forwarded.
+    let mut gated = first["holding"] == true && merged.is_none();
     if ws
         .send(Message::Text(first.to_string().into()))
         .await
@@ -1489,10 +1512,12 @@ async fn hype_session(
                     if e.payload["type"] == "magnet" {
                         let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref()).await else { return; };
                         merged = owner;
+                        gated = next["holding"] == true && merged.is_none();
                         if ws.send(Message::Text(next.to_string().into())).await.is_err() { return; }
                         continue;
                     }
                     if !matches!(e.payload["type"].as_str(), Some("message" | "delete")) { continue; }
+                    if gated && e.payload["type"] == "message" { continue; }
                     // A merged Hype message arrives on both; forward it once.
                     if e.channel != room && e.payload["message"]["origin"] == lane.as_str() { continue; }
                     let Ok(hidden) = crate::chat::hidden(&app, viewer.as_deref()).await else { return; };
