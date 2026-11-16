@@ -40,4 +40,15 @@ assert s["still"] == 0 and s["failures"] == 0, "a new picture resets it"
 saved = []
 watchdog.check({"failures": 1, "sequence": 5}, 5, 9000, saved.append)
 assert saved and saved[0]["restarted_at"] == 9000 and "restarted" in saved[0]["problem"], "the state is saved before restarting"
+# The story marker: two hours of AI mode without it changing is reported once, then once a day.
+beat = lambda mode, marker: {"mode": mode, "progress": marker}  # noqa: E731
+s, reports = {}, []
+for at in range(0, 2 * 86400, 60):
+    mode = "chat" if 3600 <= at < 7200 else "rl"  # An hour of viewers doesn't count as AI time.
+    s = watchdog.stalled(s, at, beat(mode, [90, 3, 140]))
+    if s["stall"] and (not reports or at - reports[-1] > 660):
+        reports.append(at)
+assert reports == [3 * 3600, 3 * 3600 + 86400], f"reported at two AI hours, then daily: {reports}"
+assert watchdog.stalled(s, 3 * 86400, beat("rl", [90, 3, 141]))["idle"] == 0, "a level-up is progress"
+assert watchdog.stalled(s, 3 * 86400, {"mode": "rl"})["stall"] is None, "an older runner sends no marker"
 print("plays watchdog checks passed")
