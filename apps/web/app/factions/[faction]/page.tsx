@@ -11,6 +11,7 @@ import { StreamShelf, type StreamCardData } from "../../../components/StreamShel
 import { UserChip } from "../../../components/UserChip";
 import { VideoGrid } from "../../../components/VideoGrid";
 import type { VideoCard } from "../../../lib/videos";
+import "../../../styles/home.css";
 import { FactionCommunity, FactionObjective, MemberDirectory, RefreshFaction } from "../../../components/FactionCommunity";
 
 type Hub = War & { is_member: boolean; live: StreamCardData[]; weekly_leaders: { user: Chip; influence: number }[]; season_leaders: { user: Chip; influence: number }[] };
@@ -22,23 +23,27 @@ export default async function Page({ params }: { params: Promise<{ faction: stri
   if (!data) return <section className="panel"><h1>{f.name}</h1><p>This hub could not be loaded. Please try again.</p></section>;
   return <div className="faction-hub" data-theme={faction}>
     <RefreshFaction />
-    <header className="hub-header frame"><Crest faction={faction} size={150} /><div><p className="eyebrow">{f.title}</p><h1>{f.name}</h1><p className="faction-creed">{f.creed}</p><p>{f.belief}</p><Link className="button quiet" href="/choose-faction">{data.is_member ? "Changing sides" : `Join ${f.name}`}</Link></div></header>
+    <header className="hub-header frame"><Crest faction={faction} size={150} /><div><p className="eyebrow">{f.title}</p><h1>{f.name}</h1><p className="faction-creed">{f.creed}</p><p>{f.belief}</p>{data.is_member ? <p className="row"><a className="button" href="#council">Members&rsquo; quarters</a> <Link className="small-text" href="/choose-faction">Changing sides</Link></p> : <Link className="button" href="/choose-faction">Join {f.name}</Link>}</div></header>
+    {/* The hub is long: these jump to its parts, in page order. */}
+    <nav className="chips scroll hub-jump" aria-label="On this page">
+      <a className="chip" href="#objective">This week</a><a className="chip" href="#live">Live</a>{data.is_member && <a className="chip" href="#council">Members</a>}<a className="chip" href="#lore">Story</a><a className="chip" href="#clips">Clips</a><a className="chip" href="#contributions">Contributions</a><a className="chip" href="#standings">Genre standings</a><a className="chip" href="#directory">Directory</a>
+    </nav>
     <WarStanding war={data} />
     {data.is_member ? <FactionObjective faction={faction} genres={data.genres} votingOpen={!!data.week && !data.week.completed} /> : <section className="panel" id="objective" aria-labelledby="objective-h"><h2 id="objective-h">This week&apos;s objective</h2><p>Members of {f.name} choose one genre together. The vote is not ranked by influence, and the tally stays inside the faction.</p></section>}
-    <RecoveryNote war={data} />
-    <RivalryNote faction={faction} />
-    <section><h2>Live with {f.name}</h2><p className="muted">Every channel gets a turn. Picks rotate every 30 seconds; viewer count does not set the order. <Link href={`/magnet/${faction}`}>Watch the {f.name} MAGNet channel</Link>, which moves between {f.name} streams on its own.</p>{data.live.length ? <StreamShelf streams={data.live} /> : <div className="empty-state"><p>No {f.name} streams are live right now.</p><p><Link href="/browse">Browse everything that&apos;s live</Link></p></div>}</section>
-    <section className="hub-lore panel" aria-labelledby="lore-h"><h2 id="lore-h">The story of {f.name}</h2>
+    <section id="live"><h2>Live with {f.name}</h2><p className="muted">Every channel gets a turn. Picks rotate every 30 seconds; viewer count does not set the order. <Link href={`/magnet/${faction}`}>Watch the {f.name} MAGNet channel</Link>, which moves between {f.name} streams on its own.</p>{data.live.length ? <StreamShelf streams={data.live} /> : <div className="empty-state"><p>No {f.name} streams are live right now.</p><p><Link href="/browse">Browse everything that&apos;s live</Link></p></div>}</section>
+    {data.is_member ? <FactionCommunity faction={faction} genres={data.genres} votingOpen={!!data.week && !data.week.completed} /> : <p className="panel">The War Council, community board and moderator elections are private to {f.name} members.</p>}
+    <section className="hub-lore panel" id="lore" aria-labelledby="lore-h"><h2 id="lore-h">The story of {f.name}</h2>
       <p className="lore-line">{f.line}</p><p>{f.lore}</p>
       <blockquote className="lore-telling"><p>&ldquo;{f.telling}&rdquo;</p><footer>{f.name}&rsquo;s telling of the Ashfall</footer></blockquote>
       <dl className="lore-facts"><div><dt>Relic</dt><dd><strong>{f.relic[0].toUpperCase() + f.relic.slice(1)}.</strong> {f.relicGives}</dd></div><div><dt>Its price</dt><dd>{f.relicCost}</dd></div><div><dt>Homeland</dt><dd><strong>{f.homeland[0].toUpperCase() + f.homeland.slice(1)}</strong>, {f.homelandNote}</dd></div><div><dt>Shadow</dt><dd>{f.shadow}</dd></div><div><dt>Battle cry</dt><dd>{f.battleCry}</dd></div></dl>
       <h3>Founders</h3><ul className="lore-founders">{f.founders.map(p => <li key={p.name}><strong>{p.name}</strong> {p.story}</li>)}</ul>
       <p className="muted">{WORLD.line} <Link href="/factions#the-ashfall">Read about the Ashfall</Link></p>
     </section>
-    <section><h2>{f.name} clips and Beacons</h2><p className="muted">Made by {f.name} channels; each keeps the faction it was made under.</p>{clips.data?.clips.length ? <VideoGrid items={clips.data.clips} /> : <p className="panel">No clips from {f.name} channels yet.</p>}<Link href={`/beacons?faction=${faction}`}>Watch {f.name} Beacons</Link></section>
-    <section><h2>Contributions</h2><div className="contribution-columns">{([["This week", data.weekly_leaders], ["This season", data.season_leaders]] as const).map(([label, leaders]) => <div className="panel" key={label}><h3>{label}</h3>{leaders.length ? <ol className="faction-leaders">{leaders.map(l => <li key={l.user.username}><UserChip user={l.user} /><strong>{l.influence.toLocaleString()}<small> influence</small></strong></li>)}</ol> : <p>No contributions yet.</p>}</div>)}</div><p className="muted">Influence belongs to the faction you represented when you earned it.</p></section>
-    <section><h2>Genre standings</h2><GenreBoard genres={data.genres} /><Link href="/war-map">View the full war map</Link></section>
-    {data.is_member ? <FactionCommunity faction={faction} genres={data.genres} votingOpen={!!data.week && !data.week.completed} /> : <p className="panel">The War Council, community board and moderator elections are private to {f.name} members.</p>}
-    <MemberDirectory faction={faction} />
+    <section id="clips"><h2>{f.name} clips and Beacons</h2><p className="muted">Made by {f.name} channels; each keeps the faction it was made under.</p>{clips.data?.clips.length ? <VideoGrid items={clips.data.clips} /> : <p className="panel">No clips from {f.name} channels yet.</p>}<Link href={`/beacons?faction=${faction}`}>Watch {f.name} Beacons</Link></section>
+    <section id="contributions"><h2>Contributions</h2><div className="contribution-columns">{([["This week", data.weekly_leaders], ["This season", data.season_leaders]] as const).map(([label, leaders]) => <div className="panel" key={label}><h3>{label}</h3>{leaders.length ? <ol className="faction-leaders">{leaders.map(l => <li key={l.user.username}><UserChip user={l.user} /><strong>{l.influence.toLocaleString()}<small> influence</small></strong></li>)}</ol> : <p>No contributions yet.</p>}</div>)}</div><p className="muted">Influence belongs to the faction you represented when you earned it.</p></section>
+    <details className="panel" id="standings"><summary>Genre standings · {data.genres.length} genres</summary><GenreBoard genres={data.genres} /><p><Link href="/war-map">View the full war map</Link></p></details>
+    <div id="directory"><MemberDirectory faction={faction} /></div>
+    <RecoveryNote war={data} />
+    <RivalryNote faction={faction} />
   </div>;
 }

@@ -73,8 +73,9 @@ export function FactionObjective({ faction, genres, votingOpen }: { faction: Fac
     {!votingOpen ? <p>Voting opens when the season is running. The war map still shows who holds each genre.</p>
       : problem === "private" ? <p>This week&apos;s target is only for members of this faction.</p>
         : problem === "error" ? <p>The target could not be loaded. Public standings on the war map are unchanged.</p>
-          : council ? <p>Shared target: <strong>{council.target ? name(council.target) : "No target yet"}</strong>. On a live channel, the player says whether that watch can qualify toward this target. It does not list points awarded. {council.votes.length ? "Vote totals are in the council below." : "No votes yet."} <a href="#council">Vote</a> · <a href="#board">Read the board</a></p>
+          : council ? <p>Shared target: <strong>{council.target ? name(council.target) : "No target yet"}</strong>. On a live channel, the player says whether that watch can qualify toward this target. It does not list points awarded. {council.votes.length ? "Vote totals are in the council below." : "No votes yet."}</p>
             : <p>Loading the members&apos; target…</p>}
+    {votingOpen && council && <p className="row"><a className="button small" href="#council">Vote</a> <a className="button small quiet" href="#board">Read the board</a></p>}
     <p className="muted">The vote is one choice per verified member. It is not ordered by influence earned. Ground changes at the checkpoint, not when a message is sent.</p>
   </section>;
 }

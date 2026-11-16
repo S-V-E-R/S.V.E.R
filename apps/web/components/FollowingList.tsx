@@ -6,7 +6,7 @@ import { followedOn } from "../lib/types";
 import type { PeoplePage } from "./People";
 import { UserChip } from "./UserChip";
 
-/** The viewer's own /following list: each row has Unfollow (and Follow again until the page is left). */
+/** The viewer's own /following list, live channels first: each row has Unfollow (and Follow again until the page is left). */
 export function FollowingList({ page }: { page: PeoplePage | null }) {
   const [unfollowed, setUnfollowed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
@@ -23,11 +23,12 @@ export function FollowingList({ page }: { page: PeoplePage | null }) {
     setUnfollowed(next);
   }
   return <>
-    {page.items.length === 0 ? <p className="muted">Channels you follow appear here.</p> : <ul className="people">{page.items.map(i => {
+    {page.items.length === 0 ? <p className="muted">Channels you follow appear here.</p> : <ul className="people">{[...page.items].sort((a, b) => +!!b.user.live - +!!a.user.live).map(i => {
       const name = i.user.username;
       const following = (i.user.direct_follow !== false) !== (name ? unfollowed.has(name) : false);
       return <li key={name ?? i.followed_at} className="person-row">
         <UserChip user={i.user} size={40} />
+        {i.user.live && name && <Link href={`/${name}/live`} className="live badge">Live</Link>}
         <small className="muted followed-on">{i.guilds?.length ? <>Via {i.guilds.map((g, n) => <span key={g.slug}>{n > 0 && ", "}<Link href={`/g/${g.slug}`}>{g.name}</Link></span>)}</> : following ? <>Followed <time dateTime={i.followed_at}>{followedOn(i.followed_at)}</time></> : "Unfollowed"}</small>
         {name && <button type="button" className={following ? "small quiet" : "small"} disabled={busy === name} onClick={() => toggle(name, following)} aria-label={`${following ? "Unfollow" : "Follow"} @${name}`}>{following ? "Unfollow" : "Follow"}</button>}
       </li>;
