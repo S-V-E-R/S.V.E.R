@@ -535,8 +535,12 @@ pub async fn tick(app: &App) -> Res<()> {
     sqlx::query("INSERT INTO magnet_lanes(id) SELECT 'global' UNION ALL SELECT unnest(ARRAY['myria','aetheron','glint']) UNION ALL SELECT id FROM faction_genres ON CONFLICT DO NOTHING")
         .execute(&app.db)
         .await?;
+    // A lane counting down is due when its countdown ends, not a whole tick later: otherwise the
+    // 5-second countdown sits at 0 for another 5 to 10 seconds.
+    // ponytail: this pass runs every 5 seconds, so a switch may land up to a second early (see
+    // `tick_lane`) or a pass late; a per-lane timer would make it exact.
     let lanes: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM magnet_lanes WHERE coalesce(ticked_at<now()-make_interval(secs=>$1),true)",
+        "SELECT id FROM magnet_lanes WHERE coalesce(ticked_at<now()-make_interval(secs=>$1),true) OR switch_at<=now()+interval '1 second'",
     )
     .bind(t.tick_seconds as f64)
     .fetch_all(&app.db)
@@ -636,7 +640,7 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
     let now = Utc::now();
     // A countdown in progress: switch when it ends, if the next stream is still eligible.
     if let (Some(next), Some(at)) = (&pending, switch_at) {
-        if at > now {
+        if at > now + Duration::seconds(1) {
             tx.commit().await?;
             if changed {
                 publish(app, lane);
@@ -675,7 +679,7 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
     let log = |kind: &str, chosen: Option<&str>, reason: &str| {
         json!({"kind":kind,"chosen":chosen,"reason":reason,"candidates":found.iter().map(|(s,c,g)| json!({
             "broadcast":c.broadcast,"members":c.members,"username":s.username,"score":c.score,"moment":c.moment,"last_featured":c.last_featured,
-            "signals":{"chatters":g.chatters,"chat_base":g.chat_base,"follows":g.follows,"follow_base":g.follow_base,"raided_by":g.raided_by,"flagged":g.flagged,"unsettled":g.unsettled}})).collect::<Vec<_>>()})
+            "signals":{"chatters":g.chatters,"chat_base":g.chat_base,"follows":g.follows,"follow_base":g.follow_base,"raided_by":g.raided_by,"flagged":g.flagged,"unsettled":g.unsettled,"crowd":g.crowd,"crowd_base":g.crowd_base,"game":g.game}})).collect::<Vec<_>>()})
     };
     match &decision {
         Decision::Hold => {
@@ -861,12 +865,13 @@ async fn lane(
     let mut featured = Value::Null;
     if let Some(s) = find(&current).filter(|s| !mature.contains(&s.owner_id)) {
         let mut card = discovery::card(&app, s, now);
-        let features: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM magnet_features WHERE owner_id=$1")
-                .bind(&s.owner_id)
-                .fetch_one(&mut *db)
-                .await?;
-        if features <= 1 {
+        // No feature of theirs has finished yet. Counting rows instead dropped the label whenever
+        // two lanes (Global and their faction's, say) picked a new stream in the same tick.
+        let first: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM magnet_features WHERE owner_id=$1 AND ended_at IS NOT NULL)")
+            .bind(&s.owner_id)
+            .fetch_one(&mut *db)
+            .await?;
+        if first {
             card["label"] = json!("First feature");
         }
         // Co-streams: a merged one is featured as a unit with tabs for its featured members; a

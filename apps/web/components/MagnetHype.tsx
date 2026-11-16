@@ -89,7 +89,7 @@ export function MagnetHype({ lane, account, viewerFaction }: { lane: string; acc
       {justWatched && <JustWatched key={justWatched.ended_at} previous={justWatched} signedIn={signedIn} onDismiss={() => setDismissed(justWatched.ended_at)} />}
       {state!.next && <div className="magnet-countdown panel" role="status">
         <span className="magnet-next-thumbnail"><LiveThumbnail src={state!.next.stream.thumbnail} label={state!.next.stream.category ?? state!.next.stream.display_name} /></span>
-        <p>Up next in <strong>{left}</strong>: <strong>{state!.next.stream.display_name}</strong> · {state!.next.reason}</p>
+        <p>Up next<span aria-hidden="true"> in <strong>{left}</strong></span>:<strong>{state!.next.stream.display_name}</strong> · {state!.next.reason}</p>
         <Link className="button small" href={`/${shown!.username}/live`}>Stay with {shown!.display_name}</Link>
       </div>}
       {!featured.holding && <p className="magnet-actions"><Link className="button quiet small" href={`/${shown!.username}`}>Open channel</Link> <span className="muted small">Moves on within {minutes ?? 8} minute{minutes === 1 ? "" : "s"}, sooner if another stream has a moment.</span></p>}

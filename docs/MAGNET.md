@@ -186,6 +186,15 @@ An outside review of the code found ways around the rules above; all are closed 
 - **Side features can't stall a lane.** A failing spotlight chapter rolls back only itself.
 - Staff can force only a stream the lane could show; staff spotlights rotate at the front of the list; `language=mine` with no languages doesn't empty the list; rotation and thumbnails no longer hold extra database connections.
 
+### Audit (November 16, 2026)
+
+A review of the built module against this spec. Fixed:
+- **A mature-labeled channel's chat stays closed to under-18 accounts in MAGNet chat.** The channel's own chat was already closed to them, and sending from MAGNet chat was refused, but the merged room still showed them that channel's messages. Now the room leaves those messages out for them (from this merge and earlier ones, and for a merged co-stream with one labeled member), sends them no new ones while the merge lasts, and shows "Chat resumes when MAGNet moves on".
+- **The countdown lasts 5 seconds.** A lane that announced a switch wasn't looked at again until its next 10-second tick, so the countdown sat at 0 for another 5 to 10 seconds. A lane is now due as soon as its countdown ends (the engine's pass runs every 5 seconds, so a switch can land a second early).
+- **First feature** is shown until one of the streamer's features has ended. It counted feature rows before, so the label disappeared whenever two lanes (Global and their faction's) picked a new stream in the same tick.
+- **The decision log** records the crowd and game-detector signals too, so a "Just won the match" or "Chat is playing along" switch can be explained from the log.
+- Screen readers hear a countdown once, not once a second.
+
 ## Spotlights
 
 - **Automatic:** a stream gets a spotlight slot on the homepage the first time it ever goes live, and when it returns after 30 or more days away.
