@@ -375,11 +375,11 @@ function WarActivityNote({ war }: { war: WarActivity }) {
   const when = war.checkpoint_at ? new Date(war.checkpoint_at).toLocaleString("en-US", { timeZone: "UTC", dateStyle: "medium", timeStyle: "short" }) + " UTC" : null;
   return <aside className="war-activity panel" aria-labelledby="war-activity-title">
     <h2 id="war-activity-title">{war.title}</h2>
-    <p>{war.detail}{war.code === "signed_out" && <> <Link href="/login">Log in</Link></>}{war.code === "no_faction" && <> <Link href="/welcome">Choose your side</Link></>}{war.code === "unverified" && <> <Link href="/account">Account security</Link></>}</p>
-    {when && <p>If it qualifies, it counts toward the checkpoint at {when}. The checkpoint is when ground can change.</p>}
-    <p className="war-activity-links">{war.faction && <Link href={`/factions/${war.faction}#objective`}>This week&apos;s objective</Link>}{war.faction && " · "}<Link href="/war-map">War map</Link></p>
+    <p className="war-activity-links">{war.code === "signed_out" && <><Link href="/login">Log in</Link>{" · "}</>}{war.code === "no_faction" && <><Link href="/welcome">Choose your side</Link>{" · "}</>}{war.code === "unverified" && <><Link href="/account">Account security</Link>{" · "}</>}{war.faction && <Link href={`/factions/${war.faction}#objective`}>This week&apos;s objective</Link>}{war.faction && " · "}<Link href="/war-map">War map</Link></p>
     <details>
       <summary>What counts</summary>
+      <p>{war.detail}</p>
+      {when && <p>If it qualifies, it counts toward the checkpoint at {when}. The checkpoint is when ground can change.</p>}
       <ul>{war.rules.map(rule => <li key={rule}>{rule}</li>)}</ul>
     </details>
     <p className="sr-only" aria-live="polite">{spoken}</p>

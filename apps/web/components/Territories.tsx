@@ -21,15 +21,16 @@ function turf(holder: string | null | undefined, viewer: string | null): string 
 
 /**
  * Category tiles at 3:4 with the holding faction's crest in the corner and the live count
- * (docs/DESIGN.md "Home" Territories and "Browse"). Genres come in war-map order; categories
- * stay alphabetical inside a genre, never ranked by how many people are live.
+ * (docs/DESIGN.md "Home" Territories and "Browse"). Categories with anything live come first;
+ * otherwise genres keep war-map order and categories stay alphabetical inside a genre. Live or
+ * not is the only signal: never ranked by how many are live or watching.
  */
 export function TerritoryGrid({ genres, war, viewerFaction, limit, href, shelf }: {
   genres: BrowseGenre[]; war: War | null; viewerFaction: string | null; limit?: number; shelf?: boolean;
   href: (genre: BrowseGenre, category: BrowseCategory) => string;
 }) {
   const held = holders(war);
-  const tiles = genres.flatMap(g => g.categories.map(c => ({ g, c, holder: held.get(g.id) ?? null })));
+  const tiles = genres.flatMap(g => g.categories.map(c => ({ g, c, holder: held.get(g.id) ?? null }))).sort((a, b) => +(b.c.live > 0) - +(a.c.live > 0));
   const shown = limit ? tiles.slice(0, limit) : tiles;
   if (!shown.length) return null;
   return <ul className={shelf ? "territory-grid shelf" : "territory-grid"}>{shown.map(({ g, c, holder }) => {
@@ -43,7 +44,7 @@ export function TerritoryGrid({ genres, war, viewerFaction, limit, href, shelf }
       <span className="territory-crest">{f && <Crest faction={f.slug} initial="" size={30} label={`Held by ${f.name}`} />}</span>
       <h3>{c.name}</h3>
       <span className="territory-turf">{turf(holder, viewerFaction)}{contested && <strong className="contested-tag">Contested</strong>}</span>
-      <span className="territory-live">{c.live} live · {g.name}</span>
+      <span className="territory-live">{c.live > 0 && `${c.live} live · `}{g.name}</span>
     </Link></li>;
   })}</ul>;
 }

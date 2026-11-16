@@ -67,7 +67,7 @@ export default async function Browse({ searchParams }: { searchParams: Promise<{
         const f = factionOf(holder);
         return <div key={holder ?? "unclaimed"} className="genre-group" data-theme={f?.slug}>
           <span className="eyebrow">{f ? <><Crest faction={f.slug} initial="" size={18} />{f.name} holds</> : "Unclaimed"}</span>
-          <div className="genre-tabs">{group.map(g => <Link key={g.id} href={link({ genre: g.id, category: null })} aria-current={genre?.id === g.id && !category ? "page" : undefined}>{g.name} <span className="muted">{g.live}</span></Link>)}</div>
+          <div className="genre-tabs">{group.map(g => <Link key={g.id} href={link({ genre: g.id, category: null })} aria-current={genre?.id === g.id && !category ? "page" : undefined}>{g.name}{g.live > 0 && <> <span className="muted">{g.live}</span></>}</Link>)}</div>
         </div>;
       })}
     </nav>
