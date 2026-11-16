@@ -47,6 +47,8 @@ export default async function Home() {
   const spotlit = (home?.spotlights ?? []).filter(s => s.stream);
   const reasons = Object.fromEntries(spotlit.map(s => [s.stream!.username, s.reason]));
   const rotation = [...spotlit.map(s => s.stream!), ...live.filter(s => !reasons[s.username])].slice(0, 8);
+  // One stream live and it is the rotation's: Live now would only show it a second time.
+  const repeated = live.length === 1 && rotation.some(s => s.username === live[0].username);
   const staffPicks = (home?.spotlights ?? []).filter(s => !s.stream && s.user);
 
   return <div className="home"><SeenCards surface="home" />
@@ -62,7 +64,7 @@ export default async function Home() {
       {staffPicks.length > 0 && <ul className="staff-picks">{staffPicks.map(s => <li key={s.user!.username}><span className="eyebrow">Staff pick</span> <Link href={`/${s.user!.username}`}>{s.user!.display_name}</Link> · {s.reason} <span className="muted">Offline now</span></li>)}</ul>}
     </section>}
 
-    <section aria-labelledby="live-h" className="home-section">
+    {!repeated && <section aria-labelledby="live-h" className="home-section">
       <SectionHead id="live-h" title="Live now" note="Ordered by MAGNet, not by viewer count" level={rotation.length ? 2 : 1} href="/browse" link="View all" />
       {live.length
         ? <StreamGrid streams={live} viewerFaction={viewerFaction} languages={languages} shelf />
@@ -71,7 +73,7 @@ export default async function Home() {
           {home && <RecentChannels recent={home.recent} />}
           <p><Link href="/war-map" className="button quiet">See the war map</Link> {account ? <Link href="/studio/stream" className="button">Go live</Link> : <Link href="/signup" className="button">Enlist</Link>}</p>
         </div>}
-    </section>
+    </section>}
 
     {mine && (home?.faction?.length ?? 0) > 0 && <section aria-labelledby="fac-h" className="home-section">
       <SectionHead id="fac-h" title={`From ${mine.name}`} note="Live from your side" href={`/browse?faction=${mine.slug}`} link="View all" />

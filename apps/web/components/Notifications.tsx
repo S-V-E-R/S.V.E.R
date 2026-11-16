@@ -2,10 +2,12 @@
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
+import { collapseLive } from "../lib/notifications";
 import type { Sizes } from "../lib/types";
 import { Avatar } from "./Avatar";
 import { Section } from "./Form";
 import { BellIcon, MutedIcon } from "./shell/Icons";
+import { Ago } from "./Text";
 
 type CommunityKind = "guild_application" | "guild_decision" | "guild_invite" | "squad_invite" | "dm" | "light";
 /** In-site only (no settings row): "Your subscription ends in 3 days" (docs/CHANNEL_ADDITIONS.md), "A webhook was turned off". */
@@ -14,7 +16,7 @@ const names: Record<CommunityKind, string> = { guild_application: "New guild app
 type Item = { id: string; created_at: string; read: boolean } & ({ kind: "live"; live: boolean; channel: { username: string; display_name: string; avatar: Sizes } } | { kind: NoticeKind; payload: { title: string; body: string; url: string } });
 type Settings = { site: boolean; push: boolean; email: boolean; push_devices: number; push_key: string; community: { kind: CommunityKind; site: boolean; push: boolean }[] };
 
-/** The notifications list (go-live alerts, last 30 days). Opening it marks everything read. */
+/** The notifications list (last 30 days), with one go-live row per channel. Opening it marks everything read. */
 export function NotificationList({ reports, strikes }: { reports: number; strikes: number }) {
   const [items, setItems] = useState<Item[] | null>(null);
   const [error, setError] = useState("");
@@ -31,10 +33,10 @@ export function NotificationList({ reports, strikes }: { reports: number; strike
     {error && <p role="alert" className="form-message error">{error}</p>}
     {!items ? <p className="loading">Loading…</p> : items.length === 0
       ? <p className="muted">No notifications yet.</p>
-      : <ul className="list notifications">{items.map(item => <li key={item.id} className={item.read ? "row" : "row unread"}>
+      : <ul className="list notifications">{collapseLive(items).map(item => <li key={item.id} className={item.read ? "row" : "row unread"}>
         {item.kind === "live" && <Avatar sizes={item.channel.avatar} name={item.channel.display_name} size={40} />}
-        <span>{item.kind === "live" ? <Link href={`/${item.channel.username}${item.live ? "/live" : ""}`}><strong>{item.channel.display_name}</strong> {item.live ? "is live" : "went live"}</Link> : <Link href={item.payload.url}><strong>{item.payload.title}</strong> · {item.payload.body}</Link>}
-          <br /><time className="muted" dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time></span>
+        <span>{item.kind === "live" ? <>{item.live && <><span className="live badge">Live</span> </>}<Link href={`/${item.channel.username}${item.live ? "/live" : ""}`}><strong>{item.channel.display_name}</strong> {item.live ? "is live" : "went live"}</Link></> : <Link href={item.payload.url}><strong>{item.payload.title}</strong> · {item.payload.body}</Link>}
+          <br /><Ago iso={item.created_at} className="muted" />{item.times > 1 && <span className="muted"> · {item.times} times in the last 30 days</span>}</span>
         {!item.read && <span className="sr-only">New</span>}
       </li>)}</ul>}
   </>;

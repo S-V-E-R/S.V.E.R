@@ -207,3 +207,11 @@ The squad page uses a two-column stream grid and a 340 px chat column on wide sc
 VODs, Highlights and clips reuse the site shell, 16:9 player, plain action buttons and chat-column layout. Chapters are keyboard-reachable timestamp buttons beneath the player. On phones, playback and actions precede chat replay; the clip editor uses labeled native range inputs. Recording management and copyright cases reuse Creator Studio and staff-console panels. These pages have no dedicated mockups.
 
 The channel Videos tab groups Highlights, Past broadcasts and Clips. The homepage Latest clips shelf uses real public clip thumbnails and duration labels in the approved position; empty libraries show a short explanation. Private signed thumbnails bypass the public image optimizer. Copyright notices extend the existing legal-page layout and form patterns.
+
+### Quiet hours, watch and notifications (November 15, 2026)
+
+- **Territories and Browse.** Categories with anything live come first; the rest keep war-map order, alphabetical inside a genre. A tile or genre tab shows its live count only when it is above zero. Live or not is the only signal: never how many are live or watching.
+- **Home.** Live now is left out when its one stream is the one already in the MAGNet rotation. With nothing live it still shows recently live channels and the war map.
+- **Watch page.** The war note is one compact row at every width: its heading, its links (with Log in, Choose your side or Account security when that is what's missing) and "What counts", which unfolds the detail. On wide screens it sits under the streamer bar, so the channel's name and Follow stay next to the video.
+- **Notifications.** One go-live row per channel: the newest, with how many there were in the last 30 days, a LIVE tag while the channel is live, and relative times.
+- **War map on phones.** Each scoreboard column stacks the faction, its territories and its weeks of ground held.
