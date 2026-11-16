@@ -280,7 +280,9 @@ async fn rotation_for(
     at: DateTime<Utc>,
 ) -> Res<Vec<Stream>> {
     let mut db = app.db.acquire().await?;
-    let mut streams = live_streams(&mut db).await?;
+    let plays = crate::plays::owner(&mut db).await?;
+    // The shared pointer moves through creators only while one is live, so Plays takes no turn.
+    let mut streams = creators_first(live_streams(&mut db).await?, plays.as_deref());
     let lead = leader(&mut db, &streams, slot(at)).await?;
     let blocked = hidden(&mut db, viewer).await?;
     streams.retain(|s| !blocked.contains(&s.owner_id));
@@ -290,6 +292,16 @@ async fn rotation_for(
     let mature = crate::streams::mature_hidden(&mut db, viewer).await?;
     ordered.retain(|s| !mature.contains(&s.owner_id));
     Ok(ordered)
+}
+
+/// S.V.E.R Plays fills empty moments (docs/PLAYS.md): it leaves the lists while any creator is
+/// live, and is all they show when none is.
+fn creators_first(mut streams: Vec<Stream>, plays: Option<&str>) -> Vec<Stream> {
+    let creator = |s: &Stream| Some(s.owner_id.as_str()) != plays;
+    if streams.iter().any(creator) {
+        streams.retain(creator);
+    }
+    streams
 }
 
 /// Channels that were live in the last 14 days (newest first), for empty states.
@@ -493,7 +505,8 @@ async fn live(
 /// GET /api/discovery/browse: genres with their categories and how many are live in each.
 async fn browse(State(app): State<App>) -> Res<Json<Value>> {
     let mut db = app.db.acquire().await?;
-    let live = live_streams(&mut db).await?;
+    let plays = crate::plays::owner(&mut db).await?;
+    let live = creators_first(live_streams(&mut db).await?, plays.as_deref());
     let genres: Vec<(String, String, Option<String>)> =
         sqlx::query_as("SELECT id,name,home FROM faction_genres ORDER BY position,name")
             .fetch_all(&mut *db)
@@ -884,6 +897,22 @@ mod tests {
         let before = orders(&streams);
         streams[1].viewers = 100_000;
         assert_eq!(before, orders(&streams), "viewer counts change nothing");
+    }
+
+    #[test]
+    fn plays_leaves_the_lists_while_a_creator_is_live() {
+        let plays = s("plays", 9000, "art", "glint");
+        let both = vec![plays.clone(), s("creator", 5, "art", "myria")];
+        assert_eq!(
+            ids(&creators_first(both.clone(), Some("o-plays"))),
+            ["creator"]
+        );
+        // Alone, Plays is what's live; with Plays switched off nobody is left out.
+        assert_eq!(
+            ids(&creators_first(vec![plays], Some("o-plays"))),
+            ["plays"]
+        );
+        assert_eq!(ids(&creators_first(both, None)).len(), 2);
     }
 
     #[test]
