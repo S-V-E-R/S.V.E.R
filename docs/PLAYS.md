@@ -70,8 +70,10 @@ Plays is the **first CrowdSync board**. It is built in step 1 using CrowdSync's 
 
 ## Filling empty moments (step 2)
 
-- When no creator is live, the homepage's live row and every MAGNet channel show Plays instead of an empty view, labeled "S.V.E.R Plays: no one's live right now, play along".
-- As soon as any creator is live and eligible, they take priority (Plays is featured only when nothing else is live, per [MAGNET.md](MAGNET.md)).
+- Plays stays discoverable at all times: it is always in the homepage's live row, browse and "Up next", so viewers can find it and play along even while creators are live.
+- Creators always come first there. Plays is listed after every live creator and never takes a turn at the top of the rotation; it leads only when no creator is live (decided November 16, 2026).
+- MAGNet channels are stricter: a lane features Plays only when nothing else is live and eligible, per [MAGNET.md](MAGNET.md).
+- Not built yet: the "S.V.E.R Plays: no one's live right now, play along" label for when Plays is filling an empty view.
 
 ## Next game (step 5)
 
