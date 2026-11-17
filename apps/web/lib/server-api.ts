@@ -14,7 +14,7 @@ export async function viewerLanguages(): Promise<string[]> {
 export async function apiGet<T = Record<string, unknown>>(path: string): Promise<{ status: number; data: T | null }> {
   const jar = await cookies();
   try {
-    const response = await fetch(`${apiOrigin()}${path}`, { headers: { cookie: jar.toString() }, cache: "no-store" });
+    const response = await fetch(`${apiOrigin()}${path}`, { headers: { cookie: jar.toString() }, cache: "no-store", signal: AbortSignal.timeout(3000) });
     const data = response.ok ? ((await response.json()) as T) : null;
     return { status: response.status, data };
   } catch {

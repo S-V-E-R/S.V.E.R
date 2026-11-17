@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ImageResponse } from "next/og";
 import sharp from "sharp";
-import { apiGet } from "../../lib/server-api";
+import { apiOrigin } from "../../lib/server-api";
 import { factionInfo } from "../../lib/factions";
 import type { Channel } from "../../lib/types";
 
@@ -12,6 +12,8 @@ import type { Channel } from "../../lib/types";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 export const alt = "A channel on S.V.E.R";
+// Anonymous and cached: the card shows only public channel fields, so every crawler can share one render.
+export const revalidate = 600;
 
 const THEMES = {
   neutral: { accent: "#C9CED6", light: "#ECEEF2", deep: "#12151C" },
@@ -35,7 +37,8 @@ async function png(url: string | undefined) {
 export default async function Image({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
   const [{ status, data }, cinzel, barlow, barlowBold] = await Promise.all([
-    apiGet<Channel>(`/api/channels/${encodeURIComponent(username)}`).catch(() => ({ status: 0, data: null })),
+    fetch(`${apiOrigin()}/api/channels/${encodeURIComponent(username)}`, { next: { revalidate: 600 }, signal: AbortSignal.timeout(3000) })
+      .then(async r => ({ status: r.status, data: r.ok ? (await r.json()) as Channel : null })).catch(() => ({ status: 0, data: null })),
     font("Cinzel-Bold.ttf"), font("Barlow-Regular.ttf"), font("Barlow-SemiBold.ttf"),
   ]);
   const c = status === 200 ? data?.channel : undefined;

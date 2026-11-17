@@ -82,7 +82,7 @@ export function FactionObjective({ faction, genres, votingOpen }: { faction: Fac
 type Members = { items: { user: Chip; joined_at: string }[]; next_cursor: string | null };
 export function RefreshFaction() {
   const router = useRouter();
-  useEffect(() => { const timer = setInterval(() => { if (!document.hidden) router.refresh(); }, 30_000); return () => clearInterval(timer); }, [router]);
+  useEffect(() => { const timer = setInterval(() => { if (!document.hidden) router.refresh(); }, 120_000); return () => clearInterval(timer); }, [router]);
   return null;
 }
 export function MemberDirectory({ faction }: { faction: Faction }) {

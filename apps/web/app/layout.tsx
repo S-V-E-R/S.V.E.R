@@ -14,7 +14,7 @@ import { themeFor } from "../lib/theme";
 import { factionOf } from "../lib/factions";
 import { Crest } from "../components/Crest";
 import { SupporterFrame, type SupporterMarks } from "../components/Supporter";
-import { currentAccount, hasAlerts } from "./session";
+import { currentAccount, hasAlerts, seesUrgentRemovals } from "./session";
 import { JsonLd } from "../components/JsonLd";
 import { ReferralCapture } from "../components/ReferralCapture";
 import { DEFAULT_IMAGE, SITE_DESCRIPTION, websiteJsonLd } from "../lib/seo";
@@ -50,6 +50,7 @@ async function sidebarLive(signedIn: boolean): Promise<LiveCard[]> {
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const account = await currentAccount();
   const [alerts, live, progress, dms, site, supporter] = await Promise.all([account ? hasAlerts() : false, sidebarLive(!!account), account ? apiGet<{ xp: number; level: number; level_xp: number; next_xp: number | null; title?: string; frame?: number }>("/api/me/progression").then(r => r.data) : null, account ? apiGet<{ unread: number }>("/api/dms/unread").then(r => r.data?.unread ?? 0) : 0, apiGet<{ banner: Banner | null }>("/api/site").then(r => r.data), account ? apiGet<SupporterMarks>("/api/me/supporter").then(r => r.data) : null]);
+  const staff = account ? await seesUrgentRemovals() : false;
   // Platform supporters' player card (docs/SUPPORTERS.md): silver frame and name while subscribed; a Founder number for good.
   const supporterCard = { "data-supporter": supporter?.tier ?? undefined };
   const supporterMarks = <>{supporter?.tier && <SupporterFrame tier={supporter.tier} />}</>;
@@ -62,7 +63,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   const actions = account
     ? <>
-      <StaffRemovalAlerts />
+      {staff && <StaffRemovalAlerts />}
       <Link href="/messages" className="icon-button" aria-label={dms ? `Messages, ${dms} unread` : "Messages"}><MessageIcon />{dms > 0 && <span className="alert-badge" aria-hidden="true" />}</Link>
       <Link href="/notifications" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
       <PlayerMenu username={account.username} chip={<>

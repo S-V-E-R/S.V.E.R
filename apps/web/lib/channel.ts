@@ -19,7 +19,8 @@ export async function channelMetadata(username: string, section?: string): Promi
   const c = data.channel;
   const title = `${c.display_name} (@${c.username})${section ? ` · ${section}` : ""} | S.V.E.R`;
   const description = c.bio?.trim() ? c.bio.slice(0, 200) : c.live ? `${c.display_name} is live on S.V.E.R` : "Channel on S.V.E.R";
-  const path = `https://sver.tv/${c.username}${section ? `/${section.toLowerCase().replaceAll(" ", "-")}` : ""}`;
+  // /{name} redirects to /{name}/live while live, so the live page's canonical is the channel root.
+  const path = `https://sver.tv/${c.username}${section && section !== "Live" ? `/${section.toLowerCase().replaceAll(" ", "-")}` : ""}`;
   // The share card (app/[username]/opengraph-image.tsx), named here so every channel tab carries it.
   const images = [{ url: `https://sver.tv/${c.username}/opengraph-image`, width: 1200, height: 630, alt: `${c.display_name} on S.V.E.R` }];
   return {
