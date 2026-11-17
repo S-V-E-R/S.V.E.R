@@ -555,6 +555,8 @@ async fn session(app: App, jar: CookieJar, me: String, mut ws: WebSocket) {
                     let _ = ws.send(signed_out).await;
                     return;
                 }
+                // Keeps the proxy from closing a quiet socket.
+                if ws.send(Message::Ping(Default::default())).await.is_err() { return; }
             }
             event = events.recv() => match event {
                 Ok(e) if e.channel == room => {

@@ -91,12 +91,20 @@ pub async fn compact_council(db: &mut PgConnection, owner: &str) -> Result<()> {
 }
 
 pub async fn tick(app: &App) -> Result<()> {
-    let due: Vec<String> = sqlx::query_scalar("SELECT id FROM users WHERE deleted_at<=now()-interval '14 days' AND NOT legacy_deletion_hold LIMIT 50").fetch_all(&app.db).await?;
+    let due: Vec<String> = sqlx::query_scalar("SELECT id FROM users WHERE deleted_at<=now()-interval '14 days' AND NOT legacy_deletion_hold ORDER BY deleted_at,id LIMIT 50").fetch_all(&app.db).await?;
     for id in due {
+        // One account that fails rolls back alone (the transaction drops) and is retried next pass.
         let mut tx = app.db.begin().await?;
-        erase(&mut tx, &id).await?;
-        tx.commit().await?;
-        eprintln!("profile_event=erasure outcome=ok");
+        let erased: Result<()> = async {
+            erase(&mut tx, &id).await?;
+            tx.commit().await?;
+            Ok(())
+        }
+        .await;
+        eprintln!(
+            "profile_event=erasure outcome={}",
+            if erased.is_ok() { "ok" } else { "retry" }
+        );
     }
     let open = "NOT EXISTS(SELECT 1 FROM reports r WHERE r.status='OPEN' AND r.target_id=x.id)";
     // open is a fixed SQL predicate; no user input enters this statement.

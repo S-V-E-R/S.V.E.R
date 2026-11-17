@@ -573,12 +573,20 @@ pub async fn stop_deleted(app: &App) -> Res<()> {
     let due: Vec<String> = sqlx::query_scalar("SELECT p.stripe_subscription FROM platform_subscriptions p JOIN users u ON u.id=p.user_id WHERE u.deleted_at IS NOT NULL AND p.stripe_subscription IS NOT NULL AND NOT p.cancel_at_period_end")
         .fetch_all(&app.db)
         .await?;
+    // One subscription Stripe refuses must not hold up the rest; any failure still fails the pass,
+    // so erasure waits.
+    let mut outcome = Ok(());
     for subscription in due {
-        stripe::stop_renewal(&app.http, &app.config.stripe, &subscription).await?;
-        sqlx::query("UPDATE platform_subscriptions SET cancel_at_period_end=true,pending_tier=NULL,updated_at=now() WHERE stripe_subscription=$1")
-            .bind(&subscription).execute(&app.db).await?;
+        let stopped: Res<()> = async {
+            stripe::stop_renewal(&app.http, &app.config.stripe, &subscription).await?;
+            sqlx::query("UPDATE platform_subscriptions SET cancel_at_period_end=true,pending_tier=NULL,updated_at=now() WHERE stripe_subscription=$1")
+                .bind(&subscription).execute(&app.db).await?;
+            Ok(())
+        }
+        .await;
+        outcome = outcome.and(stopped);
     }
-    Ok(())
+    outcome
 }
 pub(crate) async fn reversed(app: &App, tx: &mut PgConnection, intent: &str, why: &str) -> Res<()> {
     let Some((invoice, user, latest)): Option<(String, String, bool)> =

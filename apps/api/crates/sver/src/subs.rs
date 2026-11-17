@@ -826,12 +826,20 @@ pub async fn stop_deleted(app: &App) -> Res<()> {
     let due: Vec<String> = sqlx::query_scalar("SELECT s.stripe_subscription FROM channel_subs s JOIN users u ON u.id=s.user_id JOIN users c ON c.id=s.channel_id WHERE (u.deleted_at IS NOT NULL OR c.deleted_at<=now()-interval '14 days') AND s.stripe_subscription IS NOT NULL AND NOT s.cancel_at_period_end")
         .fetch_all(&app.db)
         .await?;
+    // One subscription Stripe refuses must not hold up the rest; any failure still fails the pass,
+    // so erasure waits.
+    let mut outcome = Ok(());
     for subscription in due {
-        stripe::stop_renewal(&app.http, &app.config.stripe, &subscription).await?;
-        sqlx::query("UPDATE channel_subs SET cancel_at_period_end=true,updated_at=now() WHERE stripe_subscription=$1")
-            .bind(&subscription).execute(&app.db).await?;
+        let stopped: Res<()> = async {
+            stripe::stop_renewal(&app.http, &app.config.stripe, &subscription).await?;
+            sqlx::query("UPDATE channel_subs SET cancel_at_period_end=true,updated_at=now() WHERE stripe_subscription=$1")
+                .bind(&subscription).execute(&app.db).await?;
+            Ok(())
+        }
+        .await;
+        outcome = outcome.and(stopped);
     }
-    Ok(())
+    outcome
 }
 /// Three days before a gifted or Valor month ends, an in-site reminder offers to keep it
 /// (docs/CHANNEL_ADDITIONS.md "Keep a gifted subscription"); once per month that ends.

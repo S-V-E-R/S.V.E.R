@@ -133,10 +133,19 @@ pub async fn tick(app: &App) -> Result<()> {
     {
         // Accounts are only ever removed through `erase` (50 a pass), which queues their media and
         // recordings for deletion; a larger backlog waits for the next passes.
-        crate::profile_jobs::tick(app).await?;
+        if crate::profile_jobs::tick(app).await.is_err() {
+            eprintln!("profile_event=maintenance outcome=retry");
+        }
     } else {
         eprintln!("subs_event=stop_deleted outcome=retry");
     }
+    if crate::chat::expire(app).await.is_err() {
+        eprintln!("chat_event=expiry outcome=retry");
+    }
+    if crate::linked_chat::expire(app).await.is_err() {
+        eprintln!("linked_chat_event=expiry outcome=retry");
+    }
+    // The steps below still end the pass on failure, so they run last.
     let mut tx = app.db.begin().await?;
     let expired: Vec<String> =
         sqlx::query_scalar("DELETE FROM mail_jobs WHERE expires_at<=now() RETURNING id")
@@ -160,10 +169,6 @@ pub async fn tick(app: &App) -> Result<()> {
         )))
         .execute(&app.db)
         .await?;
-    }
-    crate::chat::expire(app).await?;
-    if crate::linked_chat::expire(app).await.is_err() {
-        eprintln!("linked_chat_event=expiry outcome=retry");
     }
     Ok(())
 }
