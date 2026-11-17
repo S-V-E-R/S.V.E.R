@@ -100,7 +100,11 @@ export class SverBoard {
   connect() {
     this.stopped = false;
     if (!this.clientId) return this.open(this.token);
-    return this.accessToken().then(token => this.open(token), error => {
+    return this.accessToken().then(token => {
+      // close() during the sign-in: don't open a connection nobody is holding.
+      if (this.stopped) throw new Error("Closed.");
+      return this.open(token);
+    }, error => {
       // S.V.E.R couldn't be reached: keep trying, like a dropped socket. A refusal is final.
       if (!error.final) this.again();
       throw error;

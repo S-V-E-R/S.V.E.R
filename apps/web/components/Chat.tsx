@@ -189,7 +189,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       ws.onmessage = event => {
         if (closed) return;
         const data = JSON.parse(event.data) as Event;
-        if (data.type === "snapshot") { attempt = 0; merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); }
+        if (data.type === "snapshot") { attempt = 0; clearInterval(poll); poll = undefined; merge(data.messages, true); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); }
         else if (data.type === "protect") setFollowersOnly(data.until);
         else if (data.type === "subs_only") setSubsOnly(data.on);
         else if (data.type === "emotes") { setEmotes(data.emotes); setEmotesVersion(v => v + 1); }
@@ -213,7 +213,9 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         socket.current = null;
         if (closed) return;
         // Never connected: fall back to polling. Dropped (including a server resync): reconnect and reload.
-        if (!opened || attempt >= 5) fallback();
+        // Polling carries messages only (no board effects, polls or Surge), so the socket is
+        // tried again every half minute and takes over when it answers.
+        if (!opened || attempt >= 5) { fallback(); setMode("polling"); retry = setTimeout(open, 30000); }
         else { attempt += 1; setMode("connecting"); retry = setTimeout(open, 1000 * attempt); }
       };
     };

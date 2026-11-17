@@ -155,6 +155,14 @@ await game.connect();
 assert.deepEqual([fake.sockets[1].token, fake.forms.length, shown.length], ["sva_1", calls, 1]);
 game.close();
 
+// close() while the sign-in is still being looked up: no connection is opened afterwards.
+game = signedIn();
+const closing = game.connect();
+game.close();
+await assert.rejects(closing, /Closed/);
+await new Promise(resolve => setTimeout(resolve, 50));
+assert.equal(fake.sockets.length, 2, "nothing connected after close()");
+
 // An access token past its hour is renewed with the refresh token, still without a code.
 await store.set({ ...await store.get(), expires_at: Date.now() - 1 });
 game = signedIn();

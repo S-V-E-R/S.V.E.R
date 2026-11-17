@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { type ReactNode, useCallback, useState } from "react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 import { send, useLoad } from "../lib/client-api";
 import { EmoteImage, type ChannelEmote } from "./Emote";
 import { ReportForm, TakeDownLink } from "./Report";
@@ -137,6 +137,7 @@ function SkillsTab({ username, account }: { username: string; account: string | 
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const unsure = useRef<{ key: string; id: string } | null>(null);
   const load = useCallback(async () => {
     const r = await send<{ skills: Skill[]; valor: number | null; paused: boolean }>("GET", `${path}/skills`);
     if (r.ok) setData(r.data); else setNote(r.error);
@@ -145,9 +146,20 @@ function SkillsTab({ username, account }: { username: string; account: string | 
   async function play(skill: Skill) {
     if (!window.confirm(`Play ${skill.name} for ${skill.valor.toLocaleString()} Valor?`)) return;
     setBusy(true); setNote("");
-    const r = await send("POST", `${path}/chat`, { id: crypto.randomUUID(), body: text.trim() || skill.name, skill: skill.id });
+    // A try that got no answer may have been paid for: the next try of the same Skill and message
+    // sends the same ID, which the server takes once.
+    const body = text.trim() || skill.name, key = `${skill.id}\n${body}`;
+    const again = unsure.current?.key === key;
+    const id = again ? unsure.current!.id : crypto.randomUUID();
+    const r = await send("POST", `${path}/chat`, { id, body, skill: skill.id });
     setBusy(false);
-    if (!r.ok) { setNote(r.error); return; }
+    unsure.current = !r.ok && r.status === 0 ? { key, id } : null;
+    if (!r.ok) {
+      // The same ID again is refused when the first try did go through.
+      setNote(again && r.status === 409 ? `${skill.name} may have played already: check chat and your Valor before trying again.` : r.error);
+      if (again) void load();
+      return;
+    }
     setText(""); setNote(`${skill.name} played.`);
     setData(d => d && { ...d, valor: d.valor === null ? null : d.valor - skill.valor });
   }

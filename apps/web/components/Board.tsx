@@ -45,6 +45,8 @@ export function Board({ username }: { username: string }) {
   const lastMove = useRef(0);
   // "Game confirms" presses waiting on the game: press ID → control label.
   const held = useRef(new Map<string, string>());
+  // Presses the server never answered (the connection dropped): control ID and text → press ID.
+  const unsure = useRef(new Map<string, string>());
   const load = useCallback(async () => {
     const r = await send<View>("GET", path);
     if (r.ok) setView(r.data); else setNote(r.error);
@@ -87,19 +89,39 @@ export function Board({ username }: { username: string }) {
 
   async function press(control: Control, extra: Record<string, unknown> = {}) {
     if (!view) return;
-    setBusy(control.kind !== "joystick"); setNote("");
-    const id = crypto.randomUUID();
+    // Joystick moves are free and constant: they don't lock the other controls or clear their notes.
+    if (control.kind === "joystick") {
+      const r = await send("POST", `${path}/press`, { id: crypto.randomUUID(), version: view.version, control: control.id, ...extra });
+      if (!r.ok) { setNote(r.error); if (r.status === 409) void load(); }
+      return;
+    }
+    setBusy(true); setNote("");
+    // A press that got no answer may have been charged: pressing again sends the same ID, so it's charged once.
+    const key = `${control.id}
+${String(extra.text ?? "")}`;
+    const id = unsure.current.get(key) ?? crypto.randomUUID();
     if (control.confirm) held.current.set(id, control.label);
-    const r = await send<{ balance?: number; held?: boolean }>("POST", `${path}/press`, { id, version: view.version, control: control.id, ...extra });
+    const r = await send<{ balance?: number; held?: boolean; repeat?: boolean }>("POST", `${path}/press`, { id, version: view.version, control: control.id, ...extra });
     setBusy(false);
+    if (!r.ok && r.status === 0) unsure.current.set(key, id); else unsure.current.delete(key);
     if (!r.ok) {
-      held.current.delete(id);
+      if (r.status !== 0) held.current.delete(id);
       setNote(r.error);
       if (r.status === 409) void load();
       return;
     }
-    if (control.kind === "joystick") return;
-    if (r.data.held) setNote(`${control.label}: waiting for the game…`);
+    // Still waiting (a quick game may have answered already). If no answer arrives, the press is
+    // released after a minute: reload then, so the refund shows.
+    if (r.data.held && held.current.has(id)) {
+      setNote(`${control.label}: waiting for the game…`);
+      setTimeout(() => {
+        if (!held.current.delete(id)) return;
+        setNote(`${control.label}: the game didn't answer, so your Engagement Valor was refunded.`);
+        void load();
+      }, 65000);
+    }
+    // The first try had gone through after all: the reply has no balance, so reload it.
+    if (r.data.repeat) void load();
     setView(v => v && { ...v, balance: r.data.balance ?? v.balance, last_press: { ...v.last_press, [control.id]: new Date().toISOString() }, used: { ...v.used, [control.id]: (v.used[control.id] ?? 0) + 1 } });
     if (control.kind === "text") setTexts(t => ({ ...t, [control.id]: "" }));
   }
