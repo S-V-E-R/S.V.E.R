@@ -102,9 +102,12 @@ export default function AuthScreen({ screen }: { screen: string }) {
     if (isFaction(preferred)) sessionStorage.setItem("preferred-faction", preferred);
     // Where to go after signing in, such as an OBS dock (`/login?next=/dock`). Only a path on this site.
     const asked = new URLSearchParams(window.location.search).get("next") ?? "";
-    if (/^\/(?![/\\])/.test(asked)) setBack(asked);
+    // Resolved against this origin: browsers drop tabs and newlines, so "/\t/evil.com" would pass a regex but leave the site.
+    // A path that normalizes to "//host" ("/.//evil.com") is same-origin here but protocol-relative once assigned, so it's refused too.
+    const here = (v: string) => { try { const u = new URL(v, window.location.origin); return u.origin === window.location.origin && !u.pathname.startsWith("//") ? u.pathname + u.search + u.hash : null; } catch { return null; } };
+    if (asked) setBack(here(asked));
     // Otherwise the page the visitor was on (kept by SiteShell), so a login from a stream returns to it.
-    try { const last = sessionStorage.getItem("return-to") ?? ""; if (/^\/(?![/\\])/.test(last)) returnTo.current = last; } catch { /* storage blocked */ }
+    try { returnTo.current = here(sessionStorage.getItem("return-to") ?? "") ?? "/"; } catch { /* storage blocked */ }
     const providerError = new URLSearchParams(window.location.search).get("error");
     if (providerError) setError(providerError);
     if (window.location.hash || providerError) history.replaceState(null, "", window.location.pathname);

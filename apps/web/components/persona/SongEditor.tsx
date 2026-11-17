@@ -9,7 +9,7 @@ export function SongEditor({ embedded = false, onSaved }: { embedded?: boolean; 
   const [data, setData] = useState<{ song: Song & { url?: string }; notice: string | null; revision: number } | null>(null);
   const [state, setState] = useState<SaveState>({});
   const [details, setDetails] = useState<{ title: string; artist: string } | null>(null);
-  const load = useCallback(async () => { const r = await send<NonNullable<typeof data>>("GET", "/api/me/song"); if (r.ok) setData(r.data); }, []);
+  const load = useCallback(async () => { const r = await send<NonNullable<typeof data>>("GET", "/api/me/song"); if (r.ok) setData(r.data); else setState(r); }, []);
   useLoad(load);
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -27,7 +27,7 @@ export function SongEditor({ embedded = false, onSaved }: { embedded?: boolean; 
     if (result.ok) { setDetails({ title: result.data.title, artist: result.data.artist }); setState({ saved: "Details filled in. Edit them if you like, then save." }); } else setState(result);
   }
   async function remove() { const r = await send("DELETE", "/api/me/song"); setState(r.ok ? { saved: "Song removed." } : r); if (r.ok) { load(); onSaved?.(); } }
-  if (!data) return <p className="loading">Loading…</p>;
+  if (!data) return state.error ? <Status state={state} /> : <p className="loading">Loading…</p>;
   return <>{!embedded && <h1>Profile song</h1>}
     {data.notice && <p className="panel notice">Spotify links aren&apos;t supported. Add a YouTube or SoundCloud track.</p>}
     <Section title="Song" intro="Paste a YouTube video or SoundCloud track link. Visitors start it with a click, at your default volume; it never autoplays.">

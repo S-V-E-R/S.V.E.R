@@ -85,7 +85,7 @@ export async function ChannelFrame({ data, path, children }: { data: Channel; pa
     {c.live && (personaFirst
       ? <section className="live-now panel" aria-label="Live now"><span className="live badge">Live</span><span>{c.streaming_category ? <>Streaming <strong>{c.streaming_category}</strong></> : "Streaming now"}</span><Link className="button small" href={`/${c.username}/live`}>Watch</Link></section>
       : <>
-        <section className="channel-stream" aria-label="Stream"><LivePlayer username={c.username} /></section>
+        <section className="channel-stream" aria-label="Stream"><LivePlayer username={c.username} signedIn={!!data.viewer.signed_in} /></section>
         <Crowd username={c.username} signedIn={!!data.viewer.signed_in} />
         {c.board && <Board username={c.username} />}
       </>)}

@@ -116,10 +116,11 @@ function playingWithin(video: HTMLVideoElement, ms: number) {
 
 /**
  * Live player for a channel. Shows `children` (the offline banner) when the channel isn't live.
+ * `initialLive` (what the server saw) shows a loading note instead of that banner until the first load.
  * WebRTC first when offered; on failure or an 8-second startup timeout it falls back to HLS.
  * Uses native controls for keyboard, fullscreen, volume and captions.
  */
-export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, muted, onUnmute, followRaids = true, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; muted?: boolean; onUnmute?: () => void; followRaids?: boolean; children?: React.ReactNode }) {
+export function LivePlayer({ username, focused = false, signedIn = false, nested = false, magnetLane, muted, onUnmute, followRaids = true, initialLive = false, children }: { username: string; focused?: boolean; signedIn?: boolean; nested?: boolean; magnetLane?: string; muted?: boolean; onUnmute?: () => void; followRaids?: boolean; initialLive?: boolean; children?: React.ReactNode }) {
   const router = useRouter();
   const [live, setLive] = useState<Live | null>(null);
   const [unreachable, setUnreachable] = useState(false);
@@ -316,6 +317,7 @@ export function LivePlayer({ username, focused = false, signedIn = false, nested
       : <>Raiding <strong>{counting.target.display_name}</strong> in {Math.max(0, Math.ceil((Date.parse(counting.execute_at) - now) / 1000))}s <button type="button" className="small quiet" onClick={() => setStayed(counting.id)}>Stay here</button></>}
   </div>;
   if (!live && unreachable) return <div className="live-player"><div className="panel" role="alert"><p>The stream couldn&apos;t be loaded.</p><button type="button" className="small" onClick={() => void load()}>Try again</button></div></div>;
+  if (!live && initialLive) return <div className="live-player"><p className="panel" role="status">Loading the stream…</p></div>;
   if (!live?.live) {
     // An offline channel hosting a live one shows that stream; its viewers count for the target.
     if (live?.hosting && !nested) return <div className="hosting">

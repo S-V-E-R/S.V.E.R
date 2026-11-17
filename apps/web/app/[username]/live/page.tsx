@@ -55,7 +55,7 @@ export default async function Live({ params }: { params: ChannelParams }) {
     {ground && <TurfStrip genre={{ id: ground.id, name: ground.name }} holder={ground.holder} viewer={account?.faction ?? null} />}
     <div className="watch-stage" data-theme={c.faction ?? "neutral"}>
     {squad ? <CoStreamPlayers initial={squad} focus={c.username} account={account?.username ?? null} /> : <div className="watch-player">
-    <LivePlayer username={c.username} focused signedIn={!!account}>
+    <LivePlayer username={c.username} focused signedIn={!!account} initialLive={!!c.live}>
       <section className={c.trailer ? "watch-offline has-trailer" : "watch-offline"} aria-label="Stream">
         {c.trailer ? <TrailerCard trailer={c.trailer} heading="Watch the trailer" /> : <h2>{c.display_name} is offline</h2>}
         <p>{c.trailer && <span className="muted">{c.display_name} is offline right now. </span>}<Link className="button quiet" href={`/${c.username}?home`}>Go to the channel</Link></p>
