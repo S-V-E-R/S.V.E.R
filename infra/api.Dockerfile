@@ -13,4 +13,6 @@ COPY --from=build /app/apps/api/target/release/sver /usr/local/bin/sver
 COPY --from=build /app/apps/api/target/release/sver-import-check /usr/local/bin/sver-import-check
 COPY --from=build /app/apps/api/target/release/sver-admin /usr/local/bin/sver-admin
 USER 65532:65532
+# sver runs as PID 1 and handles only SIGINT (graceful shutdown); SIGTERM would be dropped.
+STOPSIGNAL SIGINT
 CMD ["sver"]
