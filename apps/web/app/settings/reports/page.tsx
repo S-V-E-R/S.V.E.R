@@ -33,7 +33,7 @@ export default function Reports() {
       {page?.email_available && <label className="checkbox"><input type="checkbox" checked={page.email_updates} onChange={e => toggle(e.target.checked)} /> Email me when action is taken on my reports</label>}
       {!page ? <p className="loading">Loading…</p> : rows.length === 0 ? <p className="muted">You haven&apos;t reported anything.</p> :
         <ul className="list">{rows.map(r => <li key={r.id} className="report-row">
-          <div className="row between"><strong>{kinds[r.target_type] || r.target_type} · {r.username ? `@${r.username}` : "Deleted user"}</strong><span className="badge">{r.unread && <span className="dot" aria-label="New" />} {statuses[r.status]}</span></div>
+          <div className="row between"><strong>{kinds[r.target_type] || r.target_type} · {r.username ? `@${r.username}` : "Deleted user"}</strong><span className="badge">{r.unread && <><span className="dot" aria-hidden="true" /><span className="sr-only">New:</span></>} {statuses[r.status]}</span></div>
           <p className="muted">{reason(r.reason)} · {new Date(r.created_at).toLocaleDateString(undefined, { dateStyle: "medium" })}</p>
           {r.note && <p>{r.note}</p>}
           {r.notice && <p className="notice">{r.notice}</p>}

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { send } from "../lib/client-api";
 import type { Viewer } from "../lib/types";
 import { AlertBell } from "./Notifications";
@@ -15,6 +15,7 @@ export function ChannelActions({ username, displayName, viewer, path, credit = n
   const [following, setFollowing] = useState(viewer.following);
   const [blocked, setBlocked] = useState(viewer.blocked);
   const [menu, setMenu] = useState(false);
+  const more = useRef<HTMLButtonElement>(null);
   const [reporting, setReporting] = useState(false);
   const [error, setError] = useState("");
   if (viewer.is_owner) return <div className="channel-actions"><Link className="button small" href="/settings/profile">Edit profile</Link><Link className="button small quiet" href="/studio/channel">Creator Studio</Link><ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} credit={credit} canonical networks /><a className="button small quiet" href={`/${username}/opengraph-image`} download={`${username}-sver.png`}>Download card</a></div>;
@@ -34,11 +35,11 @@ export function ChannelActions({ username, displayName, viewer, path, credit = n
     {!blocked && viewer.can_message && <Link className="button small quiet" href={`/messages?with=${encodeURIComponent(username)}`}>Message</Link>}
     {!blocked && !viewer.interaction_blocked && <Subscribe username={username} />}
     <ShareButton path={`/${username}`} title={`${displayName} (@${username}) on S.V.E.R`} credit={credit} canonical networks />
-    <div className="menu">
-      <button type="button" className="small quiet" aria-haspopup="true" aria-expanded={menu} onClick={() => setMenu(!menu)}>More <span aria-hidden="true">▾</span></button>
-      {menu && <div className="menu-list panel" role="menu">
-        <button type="button" role="menuitem" className="link-button" onClick={block}>{blocked ? "Unblock" : "Block"}</button>
-        <button type="button" role="menuitem" className="link-button" onClick={() => { setReporting(true); setMenu(false); }}>Report</button>
+    <div className="menu" onKeyDown={e => { if (e.key === "Escape" && menu) { setMenu(false); more.current?.focus(); } }}>
+      <button ref={more} type="button" className="small quiet" aria-expanded={menu} onClick={() => setMenu(!menu)}>More <span aria-hidden="true">▾</span></button>
+      {menu && <div className="menu-list panel">
+        <button type="button" className="link-button" onClick={block}>{blocked ? "Unblock" : "Block"}</button>
+        <button type="button" className="link-button" onClick={() => { setReporting(true); setMenu(false); }}>Report</button>
       </div>}
     </div>
     {reporting && <div className="panel inline-panel"><ReportForm target={{ target_type: "profile", target_id: username }} onDone={() => setReporting(false)} /></div>}

@@ -1,5 +1,5 @@
 "use client";
-import { type RefObject, useEffect, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { send } from "../lib/client-api";
 
 /** "Live 1 h 12 min", refreshed every 30 seconds. */
@@ -28,6 +28,7 @@ function measure(video: HTMLVideoElement | null, transport: Transport) {
  */
 export function PlayerSettings({ username, broadcast, video, transport, browserId }: { username: string; broadcast: string; video: RefObject<HTMLVideoElement | null>; transport: Transport; browserId: () => string }) {
   const [open, setOpen] = useState(false);
+  const toggle = useRef<HTMLButtonElement>(null);
   const [stats, setStats] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [message, setMessage] = useState("");
@@ -48,11 +49,11 @@ export function PlayerSettings({ username, broadcast, video, transport, browserI
     setMessage(result.ok ? "Thanks. Staff can see this report with what your player measured." : result.error);
   }
   return <>
-    <span className="menu player-menu">
-      <button type="button" className="small quiet" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)}>Settings <span aria-hidden="true">▾</span></button>
-      {open && <span className="menu-list panel" role="menu">
-        <button type="button" role="menuitemcheckbox" aria-checked={stats} className="link-button" onClick={() => { setStats(!stats); setOpen(false); }}>Stats for nerds</button>
-        <button type="button" role="menuitem" className="link-button" onClick={() => { setReporting(true); setMessage(""); setOpen(false); }}>Report playback problem</button>
+    <span className="menu player-menu" onKeyDown={e => { if (e.key === "Escape" && open) { setOpen(false); toggle.current?.focus(); } }}>
+      <button ref={toggle} type="button" className="small quiet" aria-expanded={open} onClick={() => setOpen(!open)}>Settings <span aria-hidden="true">▾</span></button>
+      {open && <span className="menu-list panel">
+        <button type="button" aria-pressed={stats} className="link-button" onClick={() => { setStats(!stats); setOpen(false); }}>Stats for nerds</button>
+        <button type="button" className="link-button" onClick={() => { setReporting(true); setMessage(""); setOpen(false); }}>Report playback problem</button>
       </span>}
     </span>
     {now && <dl className="player-stats" aria-label="Playback stats">
