@@ -1524,7 +1524,8 @@ async fn exercise(app: App, mock: Mock) {
         .ok("POST", "/api/auth/mfa/login", json!({"code":legacy_code}))
         .await;
 
-    // Email and username share the five-failure limit even from different IPs.
+    // Email and username share one account key, but the five-failure limit is per account and
+    // IP: guesses from other networks never lock the owner out of their correct password.
     let mut alternating = Browser::new(router.clone(), 44);
     let mut other_ip = Browser::new(router.clone(), 45);
     for attempt in 0..5 {
@@ -1545,22 +1546,30 @@ async fn exercise(app: App, mock: Mock) {
             StatusCode::BAD_REQUEST
         );
     }
-    for identifier in ["legacy@example.invalid", "Legacy_User"] {
-        let mut fresh_ip = Browser::new(router.clone(), 46);
-        assert_eq!(
-            fresh_ip
-                .call(
-                    "POST",
-                    "/api/auth/login",
-                    json!({"identifier":identifier,"password":"oldpass"})
-                )
-                .await
-                .0,
-            StatusCode::TOO_MANY_REQUESTS
-        );
-    }
-    sqlx::query("UPDATE rate_limits SET expires_at=now()-interval '1 second' WHERE key='login:user:legacy-id'").execute(&app.db).await.unwrap();
+    let mut fresh_ip = Browser::new(router.clone(), 46);
+    fresh_ip.login("Legacy_User", "oldpass").await;
     other_ip.login("LEGACY_USER", "oldpass").await;
+    // The account-wide ceiling (50 an hour across all networks) still holds.
+    sqlx::query("UPDATE rate_limits SET count=50 WHERE key='login:user:legacy-id'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let mut ceiling_ip = Browser::new(router.clone(), 47);
+    assert_eq!(
+        ceiling_ip
+            .call(
+                "POST",
+                "/api/auth/login",
+                json!({"identifier":"legacy@example.invalid","password":"oldpass"})
+            )
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    sqlx::query("DELETE FROM rate_limits WHERE key='login:user:legacy-id'")
+        .execute(&app.db)
+        .await
+        .unwrap();
 
     // Five failed attempts, fixed cooldown that blocked retries cannot extend.
     let mut attacker = Browser::new(router.clone(), 41);

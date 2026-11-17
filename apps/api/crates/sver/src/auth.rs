@@ -386,13 +386,21 @@ pub async fn login(
         .bind(&identifier)
         .fetch_optional(&app.db)
         .await?;
-    // Both identifiers must share one account limit, including across different IPs.
+    // Both identifiers share one account key. The strict budget is per account and IP, so guesses
+    // from elsewhere cannot lock the owner out; a looser account-wide ceiling still caps a botnet.
     let account_key = user.as_ref().map_or_else(
         || format!("login:identifier:{}", sec::digest(&identifier)),
         |user| format!("login:user:{}", user.id),
     );
     let ip = sec::client_ip(&app, peer, &headers);
-    let permits = sec::reserve(&app, vec![account_key, format!("login:ip:{ip}")], 5, 900).await?;
+    let mut permits = sec::reserve(
+        &app,
+        vec![format!("{account_key}:ip:{ip}"), format!("login:ip:{ip}")],
+        5,
+        900,
+    )
+    .await?;
+    permits.extend(sec::reserve(&app, vec![account_key], 50, 3600).await?);
     let hash = user
         .as_ref()
         .and_then(|u| u.password_hash.clone())
@@ -588,6 +596,9 @@ pub async fn revoke_all(
 ) -> Result<(CookieJar, Json<Value>)> {
     let (mut tx, user, _) = session(&app, &jar, false).await?;
     invalidate(&mut tx, &user.id, None).await?;
+    crate::devapps::revoke_all(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
     tx.commit().await?;
     Ok((
         clear_cookie(&app, jar, app.config.cookie_name()),
@@ -743,16 +754,17 @@ pub async fn reset(
     let hash = sec::new_password(&app, input.password).await?;
     let (mut tx, user) = consume(&app, &input.token, "reset").await?;
     crate::streams::revoke(&mut tx, &user.id).await?;
+    // A reset ends third-party app access along with every session.
+    crate::devapps::revoke_all(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
     // A reset link proves who owns the address. On an account that never verified it, whoever
-    // signed up may be someone else: the sign-in providers and app access they added go too.
+    // signed up may be someone else: the sign-in providers they added go too.
     if !user.email_verified {
         sqlx::query("DELETE FROM identities WHERE user_id=$1")
             .bind(&user.id)
             .execute(&mut *tx)
             .await?;
-        crate::devapps::revoke_all(&mut tx, &user.id)
-            .await
-            .map_err(|_| Error::internal())?;
     }
     sqlx::query("UPDATE users SET password_hash=$2 WHERE id=$1")
         .bind(&user.id)

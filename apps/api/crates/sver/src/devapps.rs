@@ -1048,7 +1048,7 @@ async fn suspend(
     Path(id): Path<String>,
     Json(input): Json<Suspend>,
 ) -> Res<Json<Value>> {
-    let staff = crate::safety::staff(&app, &jar).await?;
+    let staff = crate::safety::staff_write(&app, &jar).await?;
     let mut tx = app.db.begin().await?;
     sqlx::query("UPDATE dev_apps SET suspended_at=CASE WHEN $2 THEN coalesce(suspended_at,now()) END WHERE id=$1")
         .bind(&id).bind(input.suspended).execute(&mut *tx).await?;
