@@ -14,6 +14,8 @@ export const contentType = "image/png";
 export const alt = "A channel on S.V.E.R";
 // Anonymous and cached: the card shows only public channel fields, so every crawler can share one render.
 export const revalidate = 600;
+// No channels are built ahead; each card renders on first request, then is cached like the rest.
+export function generateStaticParams() { return []; }
 
 const THEMES = {
   neutral: { accent: "#C9CED6", light: "#ECEEF2", deep: "#12151C" },
@@ -27,7 +29,7 @@ const clip = (text: string, max: number) => text.length > max ? `${text.slice(0,
 async function png(url: string | undefined) {
   if (!url) return null;
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(url, { next: { revalidate: 600 }, signal: AbortSignal.timeout(5000) });
     if (!response.ok) return null;
     const image = await sharp(Buffer.from(await response.arrayBuffer())).png().toBuffer();
     return `data:image/png;base64,${image.toString("base64")}`;
