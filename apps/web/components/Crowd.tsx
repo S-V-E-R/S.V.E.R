@@ -65,7 +65,8 @@ function PollCard({ poll, path, state, now, onChange }: { poll: PollState; path:
     if (!r.ok) setNote(r.error);
     onChange();
   }
-  const status = poll.status === "resolved" ? `Result: ${poll.options[poll.winner ?? 0]}` : poll.status === "cancelled" ? "Cancelled; stakes were refunded." : poll.status === "locked" ? "Locked. Waiting for the result." : open ? `${left}s left` : "Voting has closed.";
+  // The countdown changes every second, so it is kept out of the live region (aria-live="off").
+  const status = poll.status === "resolved" ? `Result: ${poll.options[poll.winner ?? 0]}` : poll.status === "cancelled" ? "Cancelled; stakes were refunded." : poll.status === "locked" ? "Locked. Waiting for the result." : open ? <span aria-live="off">{left}s left</span> : "Voting has closed.";
   return <section className="crowd-card panel" aria-label={prediction ? "Prediction" : "Poll"}>
     <span className="eyebrow">{prediction ? "Prediction · Engagement Valor" : "Poll"}</span>
     <h3>{poll.question}</h3>
@@ -118,6 +119,7 @@ export function Crowd({ username, signedIn }: { username: string; signedIn?: boo
   const path = `/api/channels/${encodeURIComponent(username)}`;
   const [state, setState] = useState<State | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [counterNote, setCounterNote] = useState("");
   const load = useCallback(async () => {
     const r = await send<State>("GET", `${path}/crowd`);
     if (r.ok) setState(r.data);
@@ -142,10 +144,15 @@ export function Crowd({ username, signedIn }: { username: string; signedIn?: boo
     return () => { window.removeEventListener("sver:board", on); clearInterval(tick); };
   }, [username, load]);
   if (!state) return null;
-  const counter = async (id: string, body: unknown) => { await send("POST", `${path}/counters/${encodeURIComponent(id)}`, body); };
+  // The new value normally arrives on the socket; reloading shows it (or the error) either way.
+  const counter = async (id: string, body: unknown) => {
+    const r = await send("POST", `${path}/counters/${encodeURIComponent(id)}`, body);
+    setCounterNote(r.ok ? "" : r.error);
+    if (r.ok) void load();
+  };
   const surgeLeft = state.surge ? Math.max(0, Math.ceil((Date.parse(state.surge.ends_at) - now) / 1000)) : 0;
   return <div className="crowd">
-    {state.surge && <p className="surge-banner" role="status"><strong>Surge level {state.surge.level}</strong> · {state.surge.participants} taking part · next level at {state.surge.threshold * (state.surge.level + 1)} · {Math.floor(surgeLeft / 60)}:{String(surgeLeft % 60).padStart(2, "0")} left</p>}
+    {state.surge && <p className="surge-banner" role="status"><strong>Surge level {state.surge.level}</strong> · {state.surge.participants} taking part{state.surge.level < 5 && <> · next level at {state.surge.threshold * (state.surge.level + 1)}</>} · <span aria-live="off">{Math.floor(surgeLeft / 60)}:{String(surgeLeft % 60).padStart(2, "0")} left</span></p>}
     {state.rally && <section className="crowd-card panel" aria-label="Faction rally">
       <span className="eyebrow">Faction rally</span>
       <p className="muted small rally-note">Viewers rally for their side on this stream. A rally counts like a chat message toward your faction&apos;s influence here.</p>
@@ -162,7 +169,8 @@ export function Crowd({ username, signedIn }: { username: string; signedIn?: boo
           : <><button type="button" className="small quiet" aria-label={`${c.label} plus one`} onClick={() => counter(c.id, { amount: 1 })}>+1</button><button type="button" className="small quiet" aria-label={`${c.label} minus one`} onClick={() => counter(c.id, { amount: -1 })}>−1</button>{c.kind === "shiny" && <button type="button" className="small quiet" onClick={() => counter(c.id, { amount: 1, extra: true })}>New phase</button>}</>}
       </span>}
     </li>)}</ul>}
-    {state.poll && <PollCard poll={state.poll} path={path} state={state} now={now} onChange={load} />}
+    {counterNote && <p role="alert" className="form-message error">{counterNote}</p>}
+    {state.poll &&<PollCard poll={state.poll} path={path} state={state} now={now} onChange={load} />}
     {state.prediction && <PollCard poll={state.prediction} path={path} state={state} now={now} onChange={load} />}
     {state.can_run && <StartForm path={path} onChange={load} />}
   </div>;

@@ -303,13 +303,7 @@ async fn session(app: App, c: Connection, ws: WebSocket) {
     }
     run(&app, &c, ws).await;
     if c.kind == "game" {
-        game(
-            &app,
-            &c,
-            // Labels and disabled controls the game set go with it.
-            "game_session=NULL, game_seen_at=NULL, game_ready=false, live_state='{}'",
-        )
-        .await;
+        game(&app, &c, boards::GAME_GONE).await;
         // A board this session defined goes too: the streamer's own comes back.
         if boards::restore(&app, &c.channel, Some(&c.session), "The game disconnected")
             .await
@@ -351,6 +345,8 @@ async fn run(app: &App, c: &Connection, mut ws: WebSocket) {
     check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     check.tick().await;
     let (mut window, mut sent) = (Instant::now(), 0u32);
+    // Checks in a row with nothing heard from the client.
+    let mut silent = 0u8;
     loop {
         tokio::select! {
             _ = check.tick() => {
@@ -369,6 +365,13 @@ async fn run(app: &App, c: &Connection, mut ws: WebSocket) {
                     let _ = ws.send(Message::Close(Some(CloseFrame { code: 4001, reason: "revoked".into() }))).await;
                     return;
                 }
+                // A client that vanished without closing (a crash, sleep, a lost network) answers
+                // no ping: after two unanswered ones the session ends, so its "Starting…" and
+                // its board don't outlive it. The ping also keeps a quiet connection open.
+                if silent >= 2 || ws.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    return;
+                }
+                silent += 1;
                 if c.kind == "game" {
                     // Still here: "Starting…" and a board this session defined both expire
                     // without these.
@@ -397,19 +400,22 @@ async fn run(app: &App, c: &Connection, mut ws: WebSocket) {
             },
             incoming = ws.recv() => match incoming {
                 Some(Ok(Message::Text(text))) => {
+                    silent = 0;
                     if window.elapsed() >= Duration::from_secs(1) {
                         (window, sent) = (Instant::now(), 0);
                     }
                     sent += 1;
                     let reply = if sent > MESSAGES_PER_SECOND {
-                        json!({"type": "error", "message": "Too many messages. At most 10 a second."})
+                        // With the message's id, so the SDK's request fails instead of waiting.
+                        let id = serde_json::from_str::<Value>(&text).ok().and_then(|m| m.get("id").cloned());
+                        json!({"type": "error", "id": id, "message": "Too many messages. At most 10 a second."})
                     } else {
                         handle(app, c, &text).await
                     };
                     if !send(&mut ws, reply).await { return; }
                 }
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
-                Some(Ok(_)) => {}
+                Some(Ok(_)) => silent = 0,
             },
         }
     }

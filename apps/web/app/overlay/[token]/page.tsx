@@ -30,7 +30,12 @@ export default function Overlay() {
         else if (data.type === "counters") setCounters(data.counters);
         else if (data.type === "rally") setRally(data.rally);
         else if (data.type === "surge") setSurge(data.surge.ended_at ? null : data.surge);
-        else if (data.type === "poll") { const poll = data.poll; setPolls(p => ({ ...p, [poll.kind]: poll })); }
+        else if (data.type === "poll") {
+          const poll = data.poll;
+          setPolls(p => ({ ...p, [poll.kind]: poll }));
+          // A finished poll's result leaves the video after two minutes, as it leaves the page.
+          if (poll.status !== "open" && poll.status !== "locked") setTimeout(() => setPolls(p => p[poll.kind]?.id === poll.id ? { ...p, [poll.kind]: undefined } : p), 120000);
+        }
       };
       ws.onclose = () => { if (!stopped) { setLost(true); retry = setTimeout(connect, 5000); } };
     };

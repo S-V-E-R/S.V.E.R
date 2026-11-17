@@ -5,7 +5,9 @@ import { actionKey, connectObs, obsAuth, startBridge } from "./sver-bridge.mjs";
 import { serve } from "../test/ws-server.mjs";
 
 const requests = [];
+let obsSocket;
 const obsServer = await serve(socket => {
+  obsSocket = socket;
   socket.send(JSON.stringify({ op: 0, d: { obsWebSocketVersion: "5.5.0", rpcVersion: 1, authentication: { challenge: "c-123", salt: "s-456" } } }));
   socket.on("message", text => {
     const { op, d } = JSON.parse(text);
@@ -73,6 +75,17 @@ assert.deepEqual(requests[0][1], { sceneName: "BRB" });
 assert.deepEqual(requests[4][1], { sceneName: "Main", sceneItemId: 7, sceneItemEnabled: true }, "toggled on");
 assert.deepEqual(requests[6][1], { sourceName: "Camera", filterName: "Shake", filterEnabled: true });
 
+// OBS restarts: the next action connects to it again instead of waiting forever on a dead socket.
+obsSocket.close();
+await new Promise(resolve => setTimeout(resolve, 100));
+requests.length = 0;
+settled.length = 0;
+press({ control: "shake", confirm: true, id: "p-after" });
+await new Promise(resolve => setTimeout(resolve, 300));
+await Promise.race([bridge.idle(), new Promise((_, fail) => setTimeout(() => fail(new Error("The queue is stuck after OBS closed.")), 2000))]);
+assert.deepEqual(requests.map(r => r[0]), ["SetSourceFilterEnabled"], "ran after OBS came back");
+assert.deepEqual(settled, [{ type: "capture", press: "p-after" }]);
+
 bridge.stop();
-console.log("Bridge checks passed: OBS password handshake, scene/source/filter steps, waits, cooldowns, Skills, errors.");
+console.log("Bridge checks passed: OBS password handshake, scene/source/filter steps, waits, cooldowns, Skills, errors, OBS restart.");
 process.exit(0);

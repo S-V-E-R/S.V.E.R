@@ -38,11 +38,14 @@ export function connectObs({ url = "ws://127.0.0.1:4455", password = "" }) {
       request(requestType, requestData = {}) {
         const requestId = randomUUID();
         return new Promise((ok, fail) => {
+          // Sending on a closed socket does nothing, so the request would wait forever.
+          if (obs.closed) return fail(new Error("OBS disconnected."));
           waiting.set(requestId, { ok, fail });
           socket.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
         });
       },
       close: () => socket.close(),
+      get closed() { return socket.readyState !== WebSocket.OPEN; },
     };
     socket.onmessage = event => {
       const { op, d } = JSON.parse(event.data);
@@ -61,6 +64,7 @@ export function connectObs({ url = "ws://127.0.0.1:4455", password = "" }) {
     };
     socket.onclose = event => {
       for (const { fail } of waiting.values()) fail(new Error("OBS disconnected."));
+      waiting.clear();
       reject(new Error(event.code === 4009 ? "OBS rejected the password." : "Could not connect to OBS."));
     };
   });
@@ -96,8 +100,17 @@ export function actionKey(event) {
 /** Runs the bridge until stopped; returns {stop, idle}. Actions run one at a time, in order. */
 export async function startBridge(config, { obs: givenObs } = {}) {
   if (!config.token?.startsWith("sver_b_")) throw new Error("Use a bridge token from Creator Studio → Board → Connections.");
-  const obs = givenObs ?? await connectObs(config.obs ?? {});
+  let obs = givenObs ?? await connectObs(config.obs ?? {});
   log("Connected to OBS.");
+  // OBS was closed or restarted: connect again before the next action (which fails, and releases
+  // a "Game confirms" press, while OBS is still away).
+  const run = async steps => {
+    if (obs.closed && !givenObs) {
+      obs = await connectObs(config.obs ?? {});
+      log("Reconnected to OBS.");
+    }
+    await runSteps(obs, steps);
+  };
   const cooldowns = new Map();
   let queue = Promise.resolve();
   let stopped = false;
@@ -110,11 +123,13 @@ export async function startBridge(config, { obs: givenObs } = {}) {
     const steps = Array.isArray(action) ? action : action.steps ?? [];
     const cooldown = Array.isArray(action) ? 0 : action.cooldown ?? 0;
     // "Game confirms" presses: charged only when the steps ran, refunded otherwise.
-    const settle = type => { if (event.confirm && event.id) socket?.send(JSON.stringify({ type, press: event.id })); };
+    // While the gateway is reconnecting nothing can be sent (send would throw): S.V.E.R releases
+    // the press itself after a minute.
+    const settle = type => { if (event.confirm && event.id && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type, press: event.id })); };
     const now = Date.now();
     if ((cooldowns.get(key) ?? 0) > now) return settle("release");
     cooldowns.set(key, now + cooldown);
-    queue = queue.then(() => runSteps(obs, steps))
+    queue = queue.then(() => run(steps))
       .then(() => { settle("capture"); log(`Ran "${key}" for ${event.user?.username ?? "the crowd"}.`); })
       .catch(error => { settle("release"); log(`"${key}" failed: ${error.message}`); });
   };

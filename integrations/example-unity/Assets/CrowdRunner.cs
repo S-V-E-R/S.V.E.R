@@ -40,7 +40,7 @@ public sealed class CrowdRunner : MonoBehaviour
         {
             Log($"Connected to {hello["channel"]}'s board (version {hello["version"]}).");
             _ = board.Ready();
-            _ = board.SetProgress("coins", collected);
+            _ = board.SetProgress("coins", Mathf.Min(collected, 10));
         };
         board.Pressed += press =>
         {

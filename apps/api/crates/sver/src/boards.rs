@@ -58,6 +58,10 @@ const MAX_LIBRARY: i64 = 20;
 const NEW_VERSION: &str = "version=version+1, published_at=now(), live_state='{}', groups='{}'";
 /// The live board is the streamer's own (no game's board is set).
 const OWN: &str = "set_by=NULL, set_by_app=false, set_by_name=NULL, set_session=NULL, set_seen_at=NULL, set_aside=NULL";
+/// The game left: "Starting…" ends, and the labels, unavailable controls and viewer groups it set
+/// go with it (nobody is left to change them back).
+pub(crate) const GAME_GONE: &str =
+    "game_session=NULL, game_seen_at=NULL, game_ready=false, live_state='{}', groups='{}'";
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(deny_unknown_fields)]
@@ -1288,7 +1292,8 @@ async fn view(
         if v.id != channel {
             balance = Some(sqlx::query_scalar::<_, i64>("SELECT coalesce((SELECT balance FROM engagement WHERE channel_id=$1 AND user_id=$2),0)")
                 .bind(&channel).bind(&v.id).fetch_one(&app.db).await?);
-            last = sqlx::query_scalar("SELECT coalesce(jsonb_object_agg(control_id,at),'{}') FROM (SELECT control_id,max(created_at) AS at FROM board_presses WHERE channel_id=$1 AND user_id=$2 GROUP BY 1) p")
+            // A released (refunded) press starts no cooldown, as in `press`.
+            last = sqlx::query_scalar("SELECT coalesce(jsonb_object_agg(control_id,at),'{}') FROM (SELECT control_id,max(created_at) AS at FROM board_presses WHERE channel_id=$1 AND user_id=$2 AND outcome IS DISTINCT FROM 'released' GROUP BY 1) p")
                 .bind(&channel).bind(&v.id).fetch_one(&app.db).await?;
         }
         screen = group_screen(&app, &row.groups, &v.id).await?;
@@ -1548,6 +1553,14 @@ pub(crate) async fn settle(app: &App, channel: &str, press: &str, capture: bool)
             .await?;
     }
     tx.commit().await?;
+    // The viewer's panel shows the result; games and bridges see auto-releases too. First, so a
+    // failed event below can't leave the viewer waiting on a press that is already settled.
+    app.chat.publish(
+        channel,
+        Some(&user),
+        0,
+        json!({"type": "board_result", "id": press, "control": control, "outcome": outcome}),
+    );
     crate::events::emit_after(
         app,
         channel,
@@ -1555,13 +1568,6 @@ pub(crate) async fn settle(app: &App, channel: &str, press: &str, capture: bool)
         json!({"type": "result", "id": press, "control": control, "outcome": outcome}),
     )
     .await?;
-    // The viewer's panel shows the result; games and bridges see auto-releases too.
-    app.chat.publish(
-        channel,
-        Some(&user),
-        0,
-        json!({"type": "board_result", "id": press, "control": control, "outcome": outcome}),
-    );
     Ok(())
 }
 /// The screen a viewer's group sees, if a game grouped them.
@@ -1659,16 +1665,30 @@ pub(crate) async fn set_groups(
 pub async fn tick(app: &App) -> Res<()> {
     let expired: Vec<(String, String)> = sqlx::query_as("SELECT id, channel_id FROM board_presses WHERE held_until<now() AND outcome IS NULL LIMIT 200")
         .fetch_all(&app.db).await?;
+    let mut released = Ok(());
     for (id, channel) in expired {
-        settle(app, &channel, &id, false).await?;
+        // One press that can't be released doesn't hold up the others, or the boards below.
+        if let Err(fail) = settle(app, &channel, &id, false).await {
+            released = Err(fail);
+        }
     }
-    // A game whose connection missed two 30-second checks is gone (a crash skips the goodbye).
+    // A game whose connection missed two 30-second checks is gone (a crash or an API restart
+    // skips the goodbye): what it set is cleared, as when it disconnects.
+    // GAME_GONE is fixed SQL.
+    let left: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "UPDATE boards SET {GAME_GONE} WHERE game_session IS NOT NULL AND game_seen_at<now()-interval '70 seconds' RETURNING channel_id"
+    )))
+    .fetch_all(&app.db)
+    .await?;
+    for channel in left {
+        changed(app, &channel);
+    }
     let gone: Vec<String> = sqlx::query_scalar("SELECT channel_id FROM boards WHERE set_session IS NOT NULL AND set_seen_at<now()-interval '70 seconds'")
         .fetch_all(&app.db).await?;
     for channel in gone {
         restore(app, &channel, None, "The game stopped responding").await?;
     }
-    Ok(())
+    released
 }
 /// The published board as integrations see it: definition, version, pause, game-set state and
 /// goal progress (null board when nothing is published).

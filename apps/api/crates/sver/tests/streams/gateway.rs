@@ -314,12 +314,19 @@ pub async fn exercise(e: &Env) {
     );
     let reply = say(&mut game, json!({"type": "release", "press": first})).await;
     assert_eq!(reply["type"], "error", "already captured");
+    let (_, before) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
     let (_, held, second) = e_press(e, &viewer, "boost").await;
     assert_eq!(held["balance"], 90);
     assert_eq!(
         say(&mut bridge, json!({"type": "release", "press": second})).await["type"],
         "ack",
         "bridges confirm too"
+    );
+    let (_, after) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert!(before["last_press"]["boost"].is_string(), "{before}");
+    assert_eq!(
+        after["last_press"]["boost"], before["last_press"]["boost"],
+        "a released press starts no cooldown in the viewer's panel"
     );
     assert_eq!(
         about(&mut game, "board_result", &second).await["outcome"],
@@ -481,17 +488,44 @@ pub async fn exercise(e: &Env) {
     assert_eq!(e_press(e, &viewer, "jump").await.0, StatusCode::OK);
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
+    // ---- A game that vanishes without closing (a crash, an API restart) takes its state along ----
+    let stuck = json!({"type": "state", "controls": {"jump": {"disabled": true}}});
+    assert_eq!(say(&mut game, stuck).await["type"], "ack");
+    assert_eq!(
+        say(
+            &mut game,
+            groups(json!("users"), json!({"GwViewer": "Blue"}))
+        )
+        .await["type"],
+        "ack"
+    );
+    assert_eq!(e_press(e, &viewer, "jump").await.0, StatusCode::FORBIDDEN);
+    e.sql("UPDATE boards SET game_seen_at=now()-interval '2 minutes' WHERE channel_id='gw-owner'")
+        .await;
+    sver::boards::tick(&e.app).await.unwrap();
+    let (_, viewing) = call(e, "GET", CHANNEL, Some(&viewer), Value::Null).await;
+    assert_eq!(
+        (&viewing["state"], &viewing["screen"]),
+        (&json!({}), &Value::Null),
+        "nothing the game set outlives it: {viewing}"
+    );
+    assert_eq!(e_press(e, &viewer, "jump").await.0, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
     // ---- At most 10 messages a second ----
-    for _ in 0..12 {
-        game.send(Message::Text(json!({"type": "ping"}).to_string().into()))
-            .await
-            .unwrap();
+    for n in 0..12 {
+        game.send(Message::Text(
+            json!({"type": "ping", "id": n}).to_string().into(),
+        ))
+        .await
+        .unwrap();
     }
     let (mut limited, mut replies) = (false, 0);
     while replies < 12 {
         let reply = next_json(&mut game).await;
         replies += usize::from(matches!(reply["type"].as_str(), Some("pong" | "error")));
-        limited |= reply["type"] == "error";
+        // The refusal names the message, so an SDK's request fails instead of waiting.
+        limited |= reply["type"] == "error" && reply["id"].is_number();
     }
     assert!(limited, "message rate limit");
 
