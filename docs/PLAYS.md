@@ -21,7 +21,7 @@ Expanded October 3, 2026 by Joe. S.V.E.R Plays is S.V.E.R's own always-on channe
 | Step | When | What |
 | --- | --- | --- |
 | 1. Move | Right after Live streams closes | Plays runs on the new API: integrity-based control gate, counted-session votes, Democracy and Anarchy, stream-time vote windows, the controller board (the first CrowdSync board), reliability fixes |
-| 2. Fill empty moments | With MAGNet (Module 5) | Plays appears on the homepage and MAGNet channels when nothing else is live |
+| 2. Fill empty moments | With MAGNet (Module 5) | Plays is always listed on the homepage, after every live creator, and fills MAGNet channels when nothing else is live |
 | 3. Faction credit | With Factions (Module 4) | Milestones credited to the faction whose votes drove them |
 | 4. Rewards and milestones | With Support (Module 6) | Capped Engagement Valor for voting; milestones and badges from real game events |
 | 5. Next game vote | After step 4 | The community picks the next game from the library |
