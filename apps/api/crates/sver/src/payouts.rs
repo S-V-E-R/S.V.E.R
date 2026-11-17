@@ -15,6 +15,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono_tz::America::New_York;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
@@ -24,18 +25,28 @@ pub const EARLY_PERCENT: i64 = 75;
 pub const INSTANT_FEE_PERCENT: i64 = 1;
 const PERIOD_DAYS: i64 = 14;
 
-/// The first payday: Friday, October 9, 2026, noon Eastern; then every 14 days.
-fn anchor() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 10, 9, 16, 0, 0).unwrap()
+/// Payday `n`: the first is Friday, October 9, 2026, then every 14 days, always at noon Eastern
+/// (16:00 UTC in daylight time, 17:00 in standard time).
+fn payday_at(n: i64) -> DateTime<Utc> {
+    let day =
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 9).unwrap() + Duration::days(PERIOD_DAYS * n);
+    New_York
+        .from_local_datetime(&day.and_hms_opt(12, 0, 0).unwrap())
+        .unwrap()
+        .with_timezone(&Utc)
+}
+/// The number of the most recent payday at or before `now` (-1 before the first).
+fn period(now: DateTime<Utc>) -> i64 {
+    let n = (now - payday_at(0)).num_days().div_euclid(PERIOD_DAYS);
+    (if now < payday_at(n) { n - 1 } else { n }).max(-1)
 }
 /// The most recent payday at or before `now` (None before the first).
 pub fn last_payday(now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    let anchor = anchor();
-    (now >= anchor)
-        .then(|| anchor + Duration::days(PERIOD_DAYS * ((now - anchor).num_days() / PERIOD_DAYS)))
+    let n = period(now);
+    (n >= 0).then(|| payday_at(n))
 }
 pub fn next_payday(now: DateTime<Utc>) -> DateTime<Utc> {
-    last_payday(now).map_or_else(anchor, |p| p + Duration::days(PERIOD_DAYS))
+    payday_at(period(now) + 1)
 }
 
 fn earnings(user: &str) -> String {
@@ -424,15 +435,24 @@ mod tests {
 
     #[test]
     fn paydays_every_two_weeks() {
-        let first = anchor();
+        let first = payday_at(0);
         assert_eq!(last_payday(first - Duration::seconds(1)), None);
         assert_eq!(next_payday(first - Duration::days(3)), first);
+        assert_eq!(next_payday(first - Duration::days(30)), first);
         assert_eq!(last_payday(first + Duration::days(13)), Some(first));
         let second = first + Duration::days(14);
         assert_eq!(last_payday(second), Some(second));
-        assert_eq!(
-            next_payday(second + Duration::hours(1)),
-            first + Duration::days(28)
-        );
+        assert_eq!(next_payday(second + Duration::hours(1)), payday_at(2));
+    }
+
+    #[test]
+    fn paydays_stay_at_noon_eastern() {
+        let at = |m, d, h| Utc.with_ymd_and_hms(2026, m, d, h, 0, 0).unwrap();
+        assert_eq!(payday_at(0), at(10, 9, 16));
+        assert_eq!(payday_at(3), at(11, 20, 17));
+        // 16:30 UTC on November 20 is still before that day's payday.
+        let early = at(11, 20, 16) + Duration::minutes(30);
+        assert_eq!(last_payday(early), Some(at(11, 6, 17)));
+        assert_eq!(next_payday(early), at(11, 20, 17));
     }
 }
