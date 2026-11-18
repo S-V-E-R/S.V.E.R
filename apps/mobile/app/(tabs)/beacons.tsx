@@ -2,14 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { send } from "../src/api";
-import { useAuth } from "../src/auth";
-import { cookieHeader } from "../src/cookies";
-import { SafetySheet, type SafetyTarget } from "../src/safety";
-import { browserId, loadJar } from "../src/session";
-import { Tag, ink, inkMuted } from "../src/ui";
-import { absolute } from "../src/urls";
+import { send } from "../../src/api";
+import { useAuth } from "../../src/auth";
+import { cookieHeader } from "../../src/cookies";
+import { SafetySheet, type SafetyTarget } from "../../src/safety";
+import { browserId, loadJar } from "../../src/session";
+import { Tag, ink, inkMuted } from "../../src/ui";
+import { absolute } from "../../src/urls";
 
 type Item = {
   beacon: { id: string; title: string; category: string | null; likes: number };
@@ -31,7 +30,6 @@ const SEED = Math.random().toString(36).slice(2, 12);
  * share, report and mute stay on the website for now.
  */
 export default function BeaconsScreen() {
-  const insets = useSafeAreaInsets();
   const { account, colors } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
   const [next, setNext] = useState(0);
@@ -100,9 +98,6 @@ export default function BeaconsScreen() {
           }
         />
       ) : null}
-      <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={[styles.back, { top: insets.top + 8 }]}>
-        <Text style={{ color: colors.accentLight, fontFamily: "Cinzel_700Bold" }}>Back</Text>
-      </Pressable>
       {/* A blocked creator's Beacons leave the feed now; the server leaves them out of later pages. */}
       <SafetySheet target={reporting} onClose={() => setReporting(null)}
         onBlocked={name => setItems(current => current.filter(i => i.channel.username !== name))} />
@@ -113,7 +108,6 @@ export default function BeaconsScreen() {
 function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, accent, onReport }: {
   item: Item; height: number; active: boolean; cookie: string; sound: boolean; onSound: () => void; signedIn: boolean; accent: string; onReport: () => void;
 }) {
-  const insets = useSafeAreaInsets();
   const { beacon: b, channel: c } = item;
   const [liked, setLiked] = useState(item.liked);
   const [likes, setLikes] = useState(b.likes);
@@ -151,7 +145,7 @@ function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, ac
       ) : (
         <View style={styles.empty}><Text style={styles.body}>{item.playback ? "" : "This Beacon isn't available."}</Text></View>
       )}
-      <View style={[styles.caption, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
+      <View style={[styles.caption, { paddingBottom: 16 }]} pointerEvents="box-none">
         <View style={{ flex: 1, gap: 4 }} pointerEvents="none">
           <Text style={styles.captionTitle} numberOfLines={3}>{b.title}</Text>
           <Text style={styles.body}>{c.username ? `@${c.username}` : c.display_name}{b.category ? ` · ${b.category}` : ""}</Text>

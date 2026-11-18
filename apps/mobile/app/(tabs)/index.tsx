@@ -2,15 +2,15 @@ import { useCallback, useState } from "react";
 import { Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { send } from "../src/api";
-import { useAuth } from "../src/auth";
-import { factionColor, factionLabel } from "../src/brand";
-import { isFaction } from "../../web/lib/factions";
-import { useLoad } from "../src/load";
-import { rotationOrder } from "../src/streams";
-import { isStreamCard, type MagnetLane, type RecentChannel, type SearchResult, type StreamCard } from "../src/types";
-import { Button, Field, Frame, MagnetMark, Notice, Screen, Tag, ink, inkDim, inkMuted } from "../src/ui";
-import { absolute, crestUrl } from "../src/urls";
+import { send } from "../../src/api";
+import { useAuth } from "../../src/auth";
+import { factionColor, factionLabel } from "../../src/brand";
+import { isFaction } from "../../../web/lib/factions";
+import { useLoad } from "../../src/load";
+import { rotationOrder } from "../../src/streams";
+import { isStreamCard, type MagnetLane, type RecentChannel, type SearchResult, type StreamCard } from "../../src/types";
+import { Field, Frame, MagnetMark, Notice, Screen, Tag, ink, inkDim, inkMuted } from "../../src/ui";
+import { absolute, crestUrl } from "../../src/urls";
 
 export default function MagnetScreen() {
   const insets = useSafeAreaInsets();
@@ -70,38 +70,17 @@ export default function MagnetScreen() {
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24, paddingHorizontal: 16, gap: 16 }}
+        contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: 24, paddingHorizontal: 16, gap: 16 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { void refresh(); }} tintColor={colors.accent} />}
       >
-        <View style={styles.top}>
-          <View>
-            <Text style={[styles.logo, { color: colors.accentLight }]}>S.V.E.R</Text>
-            <View style={styles.markRow}><MagnetMark /><Text style={styles.kicker}>MAGNet</Text></View>
-          </View>
-          <View style={styles.accountCol}>
-            <Pressable accessibilityRole="button" onPress={() => router.push("/sign-in")} style={styles.account}>
-              <Text style={[styles.accountText, { color: colors.accentLight }]}>{account ? account.username : "Log in"}</Text>
-            </Pressable>
-            {account ? (
-              <>
-                <Pressable accessibilityRole="button" onPress={() => router.push("/following")} style={styles.account}>
-                  <Text style={[styles.accountText, { color: colors.accentLight }]}>Following</Text>
-                </Pressable>
-                <Pressable accessibilityRole="button" onPress={() => router.push("/alerts")} style={styles.account}>
-                  <Text style={[styles.accountText, { color: colors.accentLight }]}>Alerts</Text>
-                </Pressable>
-              </>
-            ) : null}
-          </View>
+        <View>
+          <Text style={[styles.logo, { color: colors.accentLight }]}>S.V.E.R</Text>
+          <View style={styles.markRow}><MagnetMark /><Text style={styles.kicker}>MAGNet</Text></View>
         </View>
         <Text style={styles.lead}>Every live stream gets a turn here, whether it has 3 viewers or 3,000.</Text>
-        <Button label="Beacons" kind="quiet" onPress={() => router.push("/beacons")} />
         {account?.deletion_due ? <Notice>This account is pending deletion.</Notice> : null}
         {error ? <Notice>{error}</Notice> : null}
-        <View style={styles.search}>
-          <Field label="Search channels" value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} onSubmitEditing={() => { void search(); }} />
-          <Button label="Search" kind="quiet" onPress={() => { void search(); }} />
-        </View>
+        <Field label="Search channels" value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} returnKeyType="search" onSubmitEditing={() => { void search(); }} />
         {searchError ? <Notice>{searchError}</Notice> : null}
         {found ? (
           <Frame>
@@ -191,15 +170,10 @@ function isRecent(value: unknown): value is RecentChannel {
 }
 
 const styles = StyleSheet.create({
-  top: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: 12 },
   logo: { fontFamily: "Cinzel_800ExtraBold", fontSize: 28 },
   markRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
   kicker: { fontFamily: "BarlowCondensed_700Bold", color: inkDim, letterSpacing: 1.6, textTransform: "uppercase", fontSize: 13 },
-  accountCol: { alignItems: "flex-end" },
-  account: { minHeight: 44, justifyContent: "center", paddingHorizontal: 4 },
-  accountText: { fontFamily: "Cinzel_700Bold", fontSize: 15 },
   lead: { color: inkMuted, fontFamily: "Barlow_400Regular", fontSize: 15, lineHeight: 22 },
-  search: { gap: 12 },
   section: { fontFamily: "Cinzel_800ExtraBold", color: ink, fontSize: 22, marginBottom: 8 },
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   searchRow: { minHeight: 44, justifyContent: "center" },

@@ -11,6 +11,11 @@ import { webOrigin } from "../src/urls";
 const openSite = (path: string) => { void Linking.openURL(`${webOrigin}${path}`); };
 
 export default function SignInScreen() {
+  return <Account />;
+}
+
+/** Log in, or the signed-in account. Pushed over a screen it returns there; as the Account tab it stays put. */
+export function Account({ tab = false }: { tab?: boolean }) {
   const insets = useSafeAreaInsets();
   const { account, colors, signIn, confirmMfa, signOut } = useAuth();
   const [identifier, setIdentifier] = useState("");
@@ -33,7 +38,7 @@ export default function SignInScreen() {
       setNeedsCode(true);
       return;
     }
-    if (result.data.signed_in) router.back();
+    if (result.data.signed_in && !tab) router.back();
   }
 
   async function out() {
@@ -44,10 +49,10 @@ export default function SignInScreen() {
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24, paddingHorizontal: 16, gap: 16 }}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}>
+      <ScrollView contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: tab ? 24 : insets.bottom + 24, paddingHorizontal: 16, gap: 16 }}>
+        {tab ? null : <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}>
           <Text style={{ color: colors.accentLight, fontFamily: "Cinzel_700Bold" }}>Back</Text>
-        </Pressable>
+        </Pressable>}
         <Frame>
           {account ? (
             <View style={styles.stack}>

@@ -2,12 +2,12 @@ import { useCallback, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { send } from "../src/api";
-import { useAuth } from "../src/auth";
-import { factionColor } from "../src/brand";
-import { useLoad } from "../src/load";
-import { liveFirst } from "../src/streams";
-import { Button, Frame, Notice, Screen, Tag, ink, inkMuted } from "../src/ui";
+import { send } from "../../src/api";
+import { useAuth } from "../../src/auth";
+import { factionColor } from "../../src/brand";
+import { useLoad } from "../../src/load";
+import { liveFirst } from "../../src/streams";
+import { Button, Frame, Notice, Screen, Tag, ink, inkMuted } from "../../src/ui";
 
 type Row = {
   user: { username: string | null; display_name: string; live?: boolean; faction?: string | null };
@@ -40,12 +40,9 @@ export default function FollowingScreen() {
   return (
     <Screen>
       <ScrollView
-        contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 24, paddingHorizontal: 16, gap: 16 }}
+        contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: 24, paddingHorizontal: 16, gap: 16 }}
         refreshControl={<RefreshControl refreshing={refreshing} tintColor={colors.accent} onRefresh={() => { setRefreshing(true); void load().finally(() => setRefreshing(false)); }} />}
       >
-        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}>
-          <Text style={{ color: colors.accentLight, fontFamily: "Cinzel_700Bold" }}>Back</Text>
-        </Pressable>
         <Text style={[styles.title, { color: colors.accentLight }]}>Following</Text>
         {!account ? <Notice>Log in to see the channels you follow.</Notice> : null}
         {error ? <Notice>{error}</Notice> : null}
