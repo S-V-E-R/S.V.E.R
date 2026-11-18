@@ -634,6 +634,7 @@ pub async fn block(
         apply_block(&mut tx, &user.id, &target.id).await?;
     }
     tx.commit().await?;
+    app.chat.blocks_changed();
     Ok(Json(json!({"blocked": true})))
 }
 /// DELETE /api/blocks/{username}: restores nothing that was removed.
@@ -646,6 +647,7 @@ pub async fn unblock(
     let mut db = app.db.acquire().await?;
     let removed = sqlx::query("DELETE FROM user_blocks WHERE blocker_id=$1 AND blocked_id=(SELECT id FROM users WHERE lower(username)=lower($2))").bind(&user.id).bind(&name).execute(&mut *db).await?;
     if removed.rows_affected() > 0 {
+        app.chat.blocks_changed();
         rate(&app, format!("block:{}", user.id), 30, 3600).await?;
     }
     Ok(Json(json!({"blocked": false})))

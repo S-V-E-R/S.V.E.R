@@ -193,7 +193,10 @@ pub async fn remove_post(
     .fetch_optional(&mut *tx)
     .await?;
     let author = author.ok_or_else(Fail::missing)?;
-    member(&mut tx, &user.id, &faction, true).await?;
+    // Authors can always take down their own post, even after leaving the faction.
+    if author != user.id {
+        member(&mut tx, &user.id, &faction, true).await?;
+    }
     if author != user.id && !is_moderator(&mut tx, &user.id, &faction).await? {
         return Err(Fail::denied(
             "Only the author or an elected faction moderator can remove this post.",

@@ -47,6 +47,11 @@ pub struct Hub {
     addresses: Arc<Mutex<HashMap<IpAddr, usize>>>,
     /// Emote catalogs by channel, shared by every socket for five seconds.
     catalogs: Arc<Mutex<Catalogs>>,
+    /// Bumped after any block or unblock commits, so sockets re-read their block list only then.
+    blocks: Arc<AtomicUsize>,
+    /// Messages deleted in the last minute, so a message event published just after its own
+    /// delete (a removal racing the send's fanout) is never delivered.
+    deleted: Arc<Mutex<HashMap<String, Instant>>>,
 }
 type Catalogs = HashMap<String, (Instant, Vec<Value>)>;
 impl Default for Hub {
@@ -56,11 +61,13 @@ impl Default for Hub {
             sockets: Arc::default(),
             addresses: Arc::default(),
             catalogs: Arc::default(),
+            blocks: Arc::default(),
+            deleted: Arc::default(),
         }
     }
 }
 /// The address limits count by: an IPv6 /64 is one subscriber, so it counts as one address.
-fn network(ip: IpAddr) -> IpAddr {
+pub(crate) fn network(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & (!0u128 << 64))),
         v4 => v4,
@@ -78,6 +85,13 @@ impl Hub {
         self.tx.subscribe()
     }
     pub fn publish(&self, channel: &str, author: Option<&str>, seq: i64, payload: Value) {
+        if payload["type"] == "delete"
+            && let Some(id) = payload["id"].as_str()
+        {
+            let mut deleted = self.deleted.lock().unwrap_or_else(|e| e.into_inner());
+            deleted.retain(|_, at| at.elapsed() < Duration::from_secs(60));
+            deleted.insert(id.into(), Instant::now());
+        }
         let _ = self.tx.send(Arc::new(Event {
             channel: channel.into(),
             author: author.map(Into::into),
@@ -85,8 +99,26 @@ impl Hub {
             payload,
         }));
     }
+    /// Call after a block or unblock commits.
+    pub(crate) fn blocks_changed(&self) {
+        self.blocks.fetch_add(1, Ordering::Release);
+    }
+    fn deleted(&self, id: &str) -> bool {
+        self.deleted
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
+    }
+    /// A restored message may be delivered again.
+    fn restored(&self, id: &str) {
+        self.deleted
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
+    }
     /// Takes a socket slot at connect (released when the socket closes), or refuses.
-    fn open(&self, ip: IpAddr) -> Res<SocketSlot> {
+    pub(crate) fn open(&self, ip: IpAddr) -> Res<SocketSlot> {
         let mut open = self.addresses.lock().unwrap_or_else(|e| e.into_inner());
         if self.sockets.load(Ordering::Relaxed) >= MAX_SOCKETS {
             return Err(Fail::unavailable("Chat is busy. Please try again shortly."));
@@ -126,7 +158,33 @@ fn pings() -> tokio::time::Interval {
     let every = Duration::from_secs(30);
     tokio::time::interval_at(tokio::time::Instant::now() + every, every)
 }
-struct SocketSlot(Hub, IpAddr);
+pub(crate) struct SocketSlot(Hub, IpAddr);
+/// One socket's view of who it hides: the block list, re-read only after a block changes.
+pub(crate) struct Hidden {
+    seen: usize,
+    pub(crate) ids: HashSet<String>,
+}
+impl Hidden {
+    pub(crate) async fn load(app: &App, viewer: Option<&str>) -> Res<Self> {
+        // Read the generation first: a block committed during the query bumps it again.
+        let seen = app.chat.blocks.load(Ordering::Acquire);
+        Ok(Self {
+            seen,
+            ids: hidden(app, viewer).await?,
+        })
+    }
+    /// The current set, re-read only if a block changed anywhere since the last read.
+    pub(crate) async fn current(
+        &mut self,
+        app: &App,
+        viewer: Option<&str>,
+    ) -> Res<&HashSet<String>> {
+        if app.chat.blocks.load(Ordering::Acquire) != self.seen {
+            *self = Self::load(app, viewer).await?;
+        }
+        Ok(&self.ids)
+    }
+}
 impl Drop for SocketSlot {
     fn drop(&mut self) {
         let mut open = self.0.addresses.lock().unwrap_or_else(|e| e.into_inner());
@@ -326,6 +384,7 @@ pub async fn notify_changed(app: &App, id: &str) -> Res<()> {
         .fetch_optional(&app.db)
         .await?;
         if let Some(message) = message {
+            app.chat.restored(id);
             let author = message.author_id.clone();
             let event = json!({"type":"message","message":message.hydrated(app).await?});
             if let Some(channel) = channel {
@@ -913,14 +972,22 @@ async fn mature_gate(app: &App, channel: &str, viewer: Option<&str>) -> Res<()> 
     Ok(())
 }
 
+/// A shared chat's members (host first) for reading: one member labeled mature closes it to
+/// under-18 accounts, as sending already does.
+async fn squad_members(app: &App, id: &str, viewer: Option<&str>) -> Res<Vec<String>> {
+    let members = crate::squads::chat_context(app, id, viewer).await?;
+    for member in &members {
+        mature_gate(app, member, viewer).await?;
+    }
+    Ok(members)
+}
 pub async fn squad_read(
     State(app): State<App>,
     jar: CookieJar,
     Path(id): Path<String>,
 ) -> Res<Json<Value>> {
     let viewer = profiles::viewer(&app, &jar).await?;
-    let members =
-        crate::squads::chat_context(&app, &id, viewer.as_ref().map(|u| u.id.as_str())).await?;
+    let members = squad_members(&app, &id, viewer.as_ref().map(|u| u.id.as_str())).await?;
     let channel = members.first().ok_or_else(Fail::missing)?;
     let hidden = hidden(&app, viewer.as_ref().map(|u| u.id.as_str())).await?;
     Ok(Json(
@@ -1071,7 +1138,7 @@ pub async fn socket(
     sec::reserve(&app, vec![format!("chat-connect:{ip}")], 30, 60).await?;
     let channel = if let Some(id) = &join.squad {
         let viewer = profiles::viewer(&app, &jar).await?;
-        crate::squads::chat_context(&app, id, viewer.as_ref().map(|u| u.id.as_str()))
+        squad_members(&app, id, viewer.as_ref().map(|u| u.id.as_str()))
             .await?
             .into_iter()
             .next()
@@ -1101,14 +1168,15 @@ async fn session(
     // Subscribe before reading history so nothing posted in between is missed.
     let mut events = app.chat.tx.subscribe();
     let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
-    let Ok(hidden) = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await else {
+    let viewer_id = viewer.as_ref().map(|v| v.id.clone());
+    let Ok(mut blocks) = Hidden::load(&app, viewer_id.as_deref()).await else {
         return;
     };
-    let Ok(snapshot) = history(&app, &channel, &hidden, squad.as_deref()).await else {
+    let Ok(snapshot) = history(&app, &channel, &blocks.ids, squad.as_deref()).await else {
         return;
     };
     let cursor = snapshot.last().and_then(|m| m["seq"].as_i64()).unwrap_or(0);
-    let Ok(mut pin) = pinned(&app, &channel, &hidden).await else {
+    let Ok(mut pin) = pinned(&app, &channel, &blocks.ids).await else {
         return;
     };
     let Ok(mut emotes) = crate::emotes::catalog(&app, &channel).await else {
@@ -1171,7 +1239,7 @@ async fn session(
                         if crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
                         checked = std::time::Instant::now();
                     }
-                    let Ok(hidden) = crate::chat::hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await else { return; };
+                    let Ok(hidden) = blocks.current(&app, viewer_id.as_deref()).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut payload = e.payload.clone();
                     if payload["type"] == "emotes" {
@@ -1179,13 +1247,12 @@ async fn session(
                         emotes = current;
                         payload["emotes"] = json!(emotes);
                     } else if payload["type"] == "pin" {
-                        let Ok(pin) = pinned(&app, &channel, &hidden).await else { return; };
+                        let Ok(pin) = pinned(&app, &channel, hidden).await else { return; };
                         payload["pinned"] = pin;
                     } else if payload["type"] == "message" && payload["message"]["outside"].is_null() {
                         // Outside messages and the bot's lines aren't in chat_messages and have no
                         // S.V.E.R author; they go out as published (a later hide is its own event).
-                        let Ok(message) = fresh(&app, &payload, &hidden).await else { return; };
-                        let Some(message) = message else { continue; };
+                        let Some(message) = fresh(&app.chat, &payload, hidden) else { continue; };
                         payload["message"] = message;
                     }
                     if ws.send(Message::Text(payload.to_string().into())).await.is_err() {
@@ -1229,25 +1296,23 @@ async fn session(
     }
 }
 
-/// A queued chat message re-read as the recipient sees it: deletion or a new block must not leak
-/// a stale quote. None when it's gone.
-pub(crate) async fn fresh(
-    app: &App,
-    payload: &Value,
-    hidden: &HashSet<String>,
-) -> Res<Option<Value>> {
-    // ponytail: one indexed read per recipient/event; batch fanout if measured chat load requires it.
-    let row = sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(format!(
-        "{} WHERE m.id=$1 AND {VISIBLE}",
-        select()
-    )))
-    .bind(payload["message"]["id"].as_str().unwrap_or(""))
-    .fetch_optional(&app.db)
-    .await?;
-    Ok(match row {
-        Some(row) => Some(visible_message(row.hydrated(app).await?, hidden)),
-        None => None,
-    })
+/// A published chat message as this recipient sees it, without a database read: the payload was
+/// read after its insert committed, and events reach every socket in publish order, so a later
+/// delete follows it. None when its delete was published first; a quote of a deleted message or
+/// of someone the recipient blocks is blanked.
+pub(crate) fn fresh(hub: &Hub, payload: &Value, hidden: &HashSet<String>) -> Option<Value> {
+    let mut message = payload["message"].clone();
+    if hub.deleted(message["id"].as_str().unwrap_or("")) {
+        return None;
+    }
+    if message["reply"]["id"]
+        .as_str()
+        .is_some_and(|id| hub.deleted(id))
+    {
+        message["reply"]["body"] = Value::Null;
+        message["reply"]["username"] = Value::Null;
+    }
+    Some(visible_message(message, hidden))
 }
 /// A message sent by an app as the person (events socket, `chat:write`): chat only. Money is never
 /// reachable through an app, so tributes, Skills and highlights are refused, and a banned account
@@ -1491,6 +1556,9 @@ async fn hype_session(
     let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
     let viewer = viewer.as_ref().map(|v| v.id.clone());
     let room = format!("magnet:{lane}");
+    let Ok(mut blocks) = Hidden::load(&app, viewer.as_deref()).await else {
+        return;
+    };
     let Ok((first, mut merged)) = hype_snapshot(&app, &lane, viewer.as_deref()).await else {
         return;
     };
@@ -1520,11 +1588,12 @@ async fn hype_session(
                     if gated && e.payload["type"] == "message" { continue; }
                     // A merged Hype message arrives on both; forward it once.
                     if e.channel != room && e.payload["message"]["origin"] == lane.as_str() { continue; }
-                    let Ok(hidden) = crate::chat::hidden(&app, viewer.as_deref()).await else { return; };
+                    let Ok(hidden) = blocks.current(&app, viewer.as_deref()).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut payload = e.payload.clone();
                     if payload["type"] == "message" {
-                        payload["message"] = visible_message(payload["message"].take(), &hidden);
+                        let Some(message) = fresh(&app.chat, &payload, hidden) else { continue; };
+                        payload["message"] = message;
                     }
                     if ws.send(Message::Text(payload.to_string().into())).await.is_err() { return; }
                 }
@@ -1570,6 +1639,27 @@ mod tests {
         assert!(hub.open("192.0.2.1".parse().unwrap()).is_ok());
         drop(held);
         assert!(hub.open(b).is_ok());
+    }
+    #[test]
+    fn a_message_published_after_its_delete_is_never_delivered() {
+        use serde_json::json;
+        let hub = super::Hub::default();
+        let hidden = std::collections::HashSet::from(["blocked".to_string()]);
+        let message = |id: &str| json!({"type":"message","message":{"id":id,"reply":{"id":"orig","author_id":"someone","username":"a","body":"hi"}}});
+        // Nothing deleted: delivered, with the quote's internal author ID stripped.
+        let shown = super::fresh(&hub, &message("m1"), &hidden).unwrap();
+        assert_eq!(shown["reply"]["body"], "hi");
+        assert!(shown["reply"].get("author_id").is_none());
+        // Its delete raced ahead of it: dropped.
+        hub.publish("c", None, 0, json!({"type":"delete","id":"m1"}));
+        assert!(super::fresh(&hub, &message("m1"), &hidden).is_none());
+        // The quoted message was deleted: the quote is blanked.
+        hub.publish("c", None, 0, json!({"type":"delete","id":"orig"}));
+        let shown = super::fresh(&hub, &message("m2"), &hidden).unwrap();
+        assert!(shown["reply"]["body"].is_null() && shown["reply"]["username"].is_null());
+        // A restored message is delivered again.
+        hub.restored("m1");
+        assert!(super::fresh(&hub, &message("m1"), &hidden).is_some());
     }
     #[test]
     fn mentions_are_whole_usernames_not_email_or_markup() {

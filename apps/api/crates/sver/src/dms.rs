@@ -15,7 +15,7 @@ use crate::{
 use axum::{
     Json, Router,
     extract::{
-        Path, Query, State,
+        ConnectInfo, Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::HeaderMap,
@@ -507,9 +507,11 @@ async fn set_settings(
     settings(State(app), jar).await
 }
 
-/// GET /api/dms/socket: new messages for the signed-in person, as they arrive.
+/// GET /api/dms/socket: new messages for the signed-in person, as they arrive. Held to the same
+/// per-network socket cap as chat, so one account can't open sockets without bound.
 async fn socket(
     State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
     upgrade: WebSocketUpgrade,
@@ -518,9 +520,12 @@ async fn socket(
         return Err(Fail::denied("Invalid request origin."));
     }
     let me = profiles::signed_in(&app, &jar).await?;
+    let ip = crate::chat::network(sec::client_ip(&app, peer, &headers));
+    sec::reserve(&app, vec![format!("dm-connect:{ip}")], 30, 60).await?;
+    let slot = app.dms.open(ip)?;
     Ok(upgrade
         .max_message_size(4096)
-        .on_upgrade(move |ws| session(app, jar, me.id, ws)))
+        .on_upgrade(move |ws| session(app, jar, me.id, slot, ws)))
 }
 /// Whether the socket's session still stands, by the rules `auth::session` applies (not revoked or
 /// expired, same auth version, 2FA done, account not being deleted), without renewing it.
@@ -538,7 +543,13 @@ async fn still_signed_in(app: &App, jar: &CookieJar, me: &str) -> bool {
 }
 /// Message text goes out on this socket, so it ends with the session (signing out everywhere, a
 /// password change, account deletion): checked before every delivery and each minute while idle.
-async fn session(app: App, jar: CookieJar, me: String, mut ws: WebSocket) {
+async fn session(
+    app: App,
+    jar: CookieJar,
+    me: String,
+    _slot: crate::chat::SocketSlot,
+    mut ws: WebSocket,
+) {
     let mut events = app.dms.subscribe();
     let room = format!("dm:{me}");
     let signed_out = Message::Close(Some(axum::extract::ws::CloseFrame {

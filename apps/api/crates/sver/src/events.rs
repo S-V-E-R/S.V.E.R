@@ -361,6 +361,10 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
     let mut chats: HashMap<String, String> = HashMap::new();
     // The person's own topics: DM hub channel `dm:{id}` -> whispers topic; notifications are polled.
     let mut own = Own::default();
+    let Ok(mut blocks) = crate::chat::Hidden::load(&app, user.as_ref().map(|u| u.0.as_str())).await
+    else {
+        return;
+    };
     // ponytail: one indexed query per socket every 5 s (two with notifications), so a removed
     // grant stops events within 5 s; publish revocations and notifications on the hub if many
     // sockets connect.
@@ -404,7 +408,7 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
                     }
                 }
                 Ok(e) if chats.contains_key(&e.channel) => {
-                    let Ok(hidden) = crate::chat::hidden(&app, user.as_ref().map(|u| u.0.as_str())).await else { return; };
+                    let Ok(hidden) = blocks.current(&app, user.as_ref().map(|u| u.0.as_str())).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut data = e.payload.clone();
                     match data["type"].as_str() {
@@ -412,8 +416,7 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
                         // no S.V.E.R author to block; hiding it later sends a delete.
                         Some("message") if !data["message"]["outside"].is_null() => {}
                         Some("message") => {
-                            let Ok(message) = crate::chat::fresh(&app, &data, &hidden).await else { return; };
-                            let Some(message) = message else { continue; };
+                            let Some(message) = crate::chat::fresh(&app.chat, &data, hidden) else { continue; };
                             data["message"] = message;
                         }
                         Some("delete") => {}

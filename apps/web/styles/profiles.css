@@ -120,6 +120,7 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .chat h2{margin:0;font-size:16px}
 .chat-messages{list-style:none;margin:0;padding:0;max-height:60vh;min-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
 .chat-body{white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-newest{display:block;margin:4px auto 0}
 .chat-quote{margin:4px 0;padding:4px 8px;border-left:2px solid var(--line);color:var(--ink-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.9em}
 .chat-pin{border:1px solid var(--line);background:var(--tint);padding:12px;overflow-wrap:anywhere}
 .chat-pin-content{margin:8px 0}
