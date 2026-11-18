@@ -23,9 +23,20 @@ Decided by Joe on October 21, 2026:
 3. **Watch**: player, title, category, viewers, mature warning, hosting, and chat (read for everyone, send when signed in). Below the player: the SVER Plays controller on Plays channels, and CrowdSync (`docs/CROWDSYNC.md`): the channel's board, polls, predictions, counters, Faction Rally and Surge, with board effects over the video timed to this phone's distance from live. Board presses and predictions spend earned Engagement Valor only. **Skills are not offered in the app**: they spend Purchased Valor, which the stores treat as an in-app purchase. Chat shows a Skill when someone plays one from the website. Owner and moderator tools (starting polls, resolving, counters, panic) stay on the website.
 4. **Alerts**: the go-live push switch and this phone's registration.
 
+## Screens now (November 2026 redesign)
+
+The tab bar holds Home, Browse, Beacons, Following (signed in) and Log in or Account. `apps/mobile/README.md` lists the endpoints each one reads.
+
+- **Home**: the featured stream with its reason and what is up next, MAGNet's spotlights, live channels you follow, and Live now in API order. It reads `/api/discovery/home`, which applies the viewer's language setting.
+- **Browse**: genres of category tiles, live ones first, plus search for channels and categories. A category opens its live streams.
+- **Beacons**: the short-video feed, with like, follow and report.
+- **Following**: followed channels, live first, with Unfollow.
+- **Watch**: player, streamer bar, a Play / Chat switch and the chosen pane, the order in `docs/DESIGN.md` "Phones". The app is upright everywhere else; Watch may turn sideways, where chat becomes a panel beside the video.
+- **Account**: crest and side, Alerts, settings and account deletion on sver.tv, and Log out.
+
 ## After v1
 
-- Following list, Beacons feed, channel pages and follow from the app.
+- Channel pages.
 - Provider sign-in (Google, Twitch, Discord, Kick): an app-intent OAuth start whose callback returns `sver://auth?code=…` with a one-time code, exchanged by `POST /api/auth/app-exchange` for a session. Until then a provider account adds a password through Forgot password on the website. Apple requires Sign in with Apple once Google sign-in is offered in the app.
 - Emotes, raids and the up-next countdown.
 

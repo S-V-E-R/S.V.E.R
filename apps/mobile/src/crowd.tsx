@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, DeviceEventEmitter, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { AccessibilityInfo, DeviceEventEmitter, Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { send } from "./api";
 import { useAuth } from "./auth";
 import { blocker, counterText, type BoardView, type Control, type Counter } from "./board-rules";
+import { ArrowIcon, CheckIcon } from "./icons";
 import { newId } from "./session";
-import { Frame, Notice, ink, inkDim, inkMuted } from "./ui";
+import { fill, font, hexAlpha, ink, onAccent, palette, scrim, space } from "./theme";
+import { Button, Field, Notice, Panel, type } from "./ui";
 
 /**
  * CrowdSync in the app (docs/CROWDSYNC.md): the channel's board, polls, predictions, counters,
@@ -44,8 +46,7 @@ export function setPlayerDelay(ms: number) { delayMs = ms; }
 // ---- Board ----
 
 const AUDIENCE = { everyone: "", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
-const STICK: [string, string, number, number][] = [["up", "↑", 0, -1], ["left", "←", -1, 0], ["right", "→", 1, 0], ["down", "↓", 0, 1]];
-
+const STICK: ["up" | "left" | "right" | "down", number, number][] = [["up", 0, -1], ["left", -1, 0], ["right", 1, 0], ["down", 0, 1]];
 
 export function Board({ username }: { username: string }) {
   const { colors } = useAuth();
@@ -117,27 +118,26 @@ export function Board({ username }: { username: string }) {
   const grouped = view.screen ?? null;
   const current = board.screens[Math.min(grouped ?? screen, board.screens.length - 1)];
   const canPress = view.signed_in && view.live && !view.disabled && !view.starting && view.balance !== null;
-  const price = (c: Control) => (c.cost ? `${c.cost.toLocaleString()} EV` : "Free") + (AUDIENCE[c.audience] ? ` · ${AUDIENCE[c.audience]}` : "");
+  const price = (c: Control) => (c.cost ? `${c.cost.toLocaleString()} Engagement Valor` : "Free") + (AUDIENCE[c.audience] ? ` · ${AUDIENCE[c.audience]}` : "");
   const status = view.disabled ? "The board is paused." : view.starting ? "Starting… the game isn't listening yet." : !view.live ? "The board works while the stream is live."
     : !view.signed_in ? "Log in and watch to use the board." : view.balance === null ? "This is your board. Test it in Creator Studio on the website."
     : "Presses spend this channel's Engagement Valor, earned by watching and chatting.";
-  const line = `${colors.accent}52`;
 
   return (
-    <Frame>
+    <Panel style={styles.panel}>
       <View style={styles.rowBetween}>
-        <Text style={styles.heading}>Board</Text>
-        {view.balance != null ? <Text style={styles.small}>{view.balance.toLocaleString()} Engagement Valor</Text> : null}
+        <Text style={type.display} accessibilityRole="header">Board</Text>
+        {view.balance != null ? <Text style={type.small}>{view.balance.toLocaleString()} Engagement Valor</Text> : null}
       </View>
-      <Text style={styles.small}>{status}</Text>
-      {!view.signed_in ? <Pressable accessibilityRole="button" onPress={() => router.push("/sign-in")} style={styles.link}><Text style={{ color: colors.accentLight, fontFamily: "Cinzel_700Bold" }}>Log in</Text></Pressable> : null}
-      {grouped !== null && current ? <Text style={styles.small}>Your group: {current.name}</Text> : null}
+      <Text style={type.small}>{status}</Text>
+      {!view.signed_in ? <Button label="Log in" tone="quiet" compact onPress={() => router.push("/sign-in")} /> : null}
+      {grouped !== null && current ? <Text style={type.small}>Your group: {current.name}</Text> : null}
       {grouped === null && board.screens.length > 1 ? (
         <View style={styles.tabs} accessibilityRole="tablist">
           {board.screens.map((s, i) => (
             <Pressable key={s.name + i} accessibilityRole="tab" accessibilityState={{ selected: i === screen }} onPress={() => setScreen(i)}
               style={[styles.tab, { borderColor: colors.accent, backgroundColor: i === screen ? colors.accent : "transparent" }]}>
-              <Text style={[styles.tabText, { color: i === screen ? "#0A0A0C" : colors.accentLight }]}>{s.name}</Text>
+              <Text style={[styles.tabText, { color: i === screen ? onAccent : colors.accentLight }]}>{s.name}</Text>
             </Pressable>
           ))}
         </View>
@@ -148,16 +148,16 @@ export function Board({ username }: { username: string }) {
           const off = !canPress || busy || !!why;
           // Phones get two columns, like the website below 600 px: wide controls take the whole row.
           const span = { width: c.width >= 2 || c.kind !== "button" ? "100%" : "48.5%" } as const;
-          if (c.kind === "label") return <Text key={c.id} style={[styles.label, span]}>{c.label}</Text>;
+          if (c.kind === "label") return <Text key={c.id} style={[type.strong, styles.label, span]}>{c.label}</Text>;
           if (c.kind === "joystick") return (
-            <View key={c.id} style={[span, { alignItems: "center", gap: 4 }]} accessibilityLabel={c.label}>
-              <Text style={styles.small}>{c.label}</Text>
+            <View key={c.id} style={[span, styles.stickPad]} accessibilityLabel={c.label}>
+              <Text style={type.small}>{c.label}</Text>
               {[[STICK[0]], [STICK[1], STICK[2]], [STICK[3]]].map((row, r) => (
-                <View key={r} style={{ flexDirection: "row", gap: 48 }}>
-                  {row.map(([name, arrow, x, y]) => (
-                    <Pressable key={name} accessibilityRole="button" accessibilityLabel={`${c.label} ${name}`} disabled={!canPress} onPress={e => move(c, x, y, e.nativeEvent.timestamp)}
+                <View key={r} style={styles.stickRow}>
+                  {row.map(([dir, x, y]) => (
+                    <Pressable key={dir} accessibilityRole="button" accessibilityLabel={`${c.label} ${dir}`} disabled={!canPress} onPress={e => move(c, x, y, e.nativeEvent.timestamp)}
                       style={[styles.stick, { borderColor: colors.accent, opacity: canPress ? 1 : 0.5 }]}>
-                      <Text style={[styles.stickText, { color: colors.accentLight }]}>{arrow}</Text>
+                      <ArrowIcon dir={dir} color={colors.accentLight} />
                     </Pressable>
                   ))}
                 </View>
@@ -165,18 +165,16 @@ export function Board({ username }: { username: string }) {
             </View>
           );
           if (c.kind === "text") return (
-            <View key={c.id} style={[span, { gap: 6 }]}>
-              <Text style={styles.small}>{c.label} · {price(c)}</Text>
-              <TextInput accessibilityLabel={c.label} value={texts[c.id] ?? ""} maxLength={200} editable={canPress} onChangeText={t => setTexts(all => ({ ...all, [c.id]: t }))}
-                style={[styles.input, { borderColor: line }]} />
+            <View key={c.id} style={[span, styles.gapS]}>
+              <Field label={`${c.label} · ${price(c)}`} value={texts[c.id] ?? ""} maxLength={200} editable={canPress} onChangeText={t => setTexts(all => ({ ...all, [c.id]: t }))} />
               <ControlButton label={why ?? "Send"} detail={null} disabled={off || !(texts[c.id] ?? "").trim()} onPress={() => { void press(c, { text: texts[c.id] ?? "" }); }} accent={colors} />
             </View>
           );
           if (c.kind === "goal") {
             const progress = view.goals[c.id] ?? 0;
             return (
-              <View key={c.id} style={[span, { gap: 6 }]}>
-                <Text style={styles.small}>{c.label} · {progress.toLocaleString()} / {c.target?.toLocaleString()}</Text>
+              <View key={c.id} style={[span, styles.gapS]}>
+                <Text style={type.small}>{c.label} · {progress.toLocaleString()} / {c.target?.toLocaleString()}</Text>
                 <Bar share={c.target ? progress / c.target : 0} color={colors.accent} label={c.label} />
                 <ControlButton label={why ?? "Add"} detail={why ? null : price(c)} disabled={off} onPress={() => { void press(c); }} accent={colors} />
               </View>
@@ -185,8 +183,8 @@ export function Board({ username }: { username: string }) {
           return <View key={c.id} style={span}><ControlButton label={c.label} detail={why ?? price(c)} disabled={off} onPress={() => { void press(c); }} accent={colors} /></View>;
         })}
       </View>
-      {note ? <Text style={styles.small} accessibilityRole="alert">{note}</Text> : null}
-    </Frame>
+      {note ? <Text style={type.small} accessibilityRole="alert">{note}</Text> : null}
+    </Panel>
   );
 }
 
@@ -201,7 +199,8 @@ function ControlButton({ label, detail, disabled, onPress, accent }: { label: st
   );
 }
 
-function Bar({ share, color, label }: { share: number; color: string; label: string }) {
+/** A thin progress bar: board goals, rally shares, poll results and the Plays round clock. */
+export function Bar({ share, color, label }: { share: number; color: string; label: string }) {
   const pct = Math.max(0, Math.min(100, Math.round(share * 100)));
   return (
     <View accessibilityRole="progressbar" accessibilityLabel={label} accessibilityValue={{ min: 0, max: 100, now: pct }} style={styles.bar}>
@@ -220,8 +219,7 @@ type PollState = {
 type Rally = { myria: number; aetheron: number; glint: number };
 type Surge = { level: number; threshold: number; ends_at: string; ended_at: string | null; participants: number };
 type State = { poll: PollState | null; prediction: PollState | null; counters: Counter[]; balance: number | null; max_stake: number; rally: Rally | null; surge: Surge | null; faction: keyof Rally | null; own?: boolean };
-const FACTIONS: [keyof Rally, string, string][] = [["myria", "Myria", "#FF9A1F"], ["aetheron", "Aetheron", "#A68BFF"], ["glint", "Glint", "#E9C35A"]];
-
+const FACTIONS: [keyof Rally, string][] = [["myria", "Myria"], ["aetheron", "Aetheron"], ["glint", "Glint"]];
 
 export function Crowd({ username }: { username: string }) {
   const { account, colors } = useAuth();
@@ -260,37 +258,37 @@ export function Crowd({ username }: { username: string }) {
   const surgeLeft = state.surge ? Math.max(0, Math.ceil((Date.parse(state.surge.ends_at) - now) / 1000)) : 0;
   const total = state.rally ? state.rally.myria + state.rally.aetheron + state.rally.glint : 0;
   return (
-    <View style={{ gap: 16 }}>
+    <View style={styles.stack}>
       {state.surge ? (
-        <Frame>
-          <Text style={styles.heading} accessibilityRole="alert">Surge level {state.surge.level}</Text>
-          <Text style={styles.small}>{state.surge.participants} taking part · next level at {state.surge.threshold * (state.surge.level + 1)} · {Math.floor(surgeLeft / 60)}:{String(surgeLeft % 60).padStart(2, "0")} left</Text>
-        </Frame>
+        <Panel>
+          <Text style={type.display} accessibilityRole="alert">Surge level {state.surge.level}</Text>
+          <Text style={type.small}>{state.surge.participants} taking part · next level at {state.surge.threshold * (state.surge.level + 1)} · {Math.floor(surgeLeft / 60)}:{String(surgeLeft % 60).padStart(2, "0")} left</Text>
+        </Panel>
       ) : null}
       {state.rally ? (
-        <Frame>
-          <Text style={styles.eyebrow}>Faction rally</Text>
-          {FACTIONS.map(([key, name, color]) => {
+        <Panel>
+          <Text style={[type.label, styles.eyebrow]}>Faction rally</Text>
+          {FACTIONS.map(([key, name]) => {
             const share = total ? Math.round((state.rally![key] / total) * 100) : 0;
             return (
               <View key={key} style={styles.rallyRow}>
-                <Text style={[styles.small, { width: 72 }]}>{name}</Text>
-                <View style={{ flex: 1 }}><Bar share={share / 100} color={color} label={`${name}: ${share}%`} /></View>
-                <Text style={[styles.small, { width: 40, textAlign: "right" }]}>{share}%</Text>
+                <Text style={[type.small, styles.rallyName]}>{name}</Text>
+                <View style={styles.grow}><Bar share={share / 100} color={palette[key].accent} label={`${name}: ${share}%`} /></View>
+                <Text style={[type.small, styles.rallyShare]}>{share}%</Text>
               </View>
             );
           })}
-          {state.own ? <Text style={styles.small}>Your viewers rally for their factions here.</Text>
+          {state.own ? <Text style={type.small}>Your viewers rally for their factions here.</Text>
             : state.faction ? <ControlButton label={`Rally for ${FACTIONS.find(f => f[0] === state.faction)?.[1]}`} detail={null} disabled={false} onPress={() => { void rally(); }} accent={colors} />
-            : account ? <Text style={styles.small}>Pick a side on the website to rally.</Text>
-            : <Text style={styles.small}>Log in to rally for your faction.</Text>}
-          {rallyNote ? <Text style={styles.small} accessibilityRole="alert">{rallyNote}</Text> : null}
-        </Frame>
+            : account ? <Text style={type.small}>Pick a side on the website to rally.</Text>
+            : <Text style={type.small}>Log in to rally for your faction.</Text>}
+          {rallyNote ? <Text style={type.small} accessibilityRole="alert">{rallyNote}</Text> : null}
+        </Panel>
       ) : null}
       {state.counters.length > 0 ? (
-        <Frame>
-          {state.counters.map(c => <Text key={c.id} style={styles.body}>{c.label}: <Text style={{ fontFamily: "Barlow_600SemiBold" }}>{counterText(c)}</Text></Text>)}
-        </Frame>
+        <Panel>
+          {state.counters.map(c => <Text key={c.id} style={type.body}>{c.label}: <Text style={styles.semi}>{counterText(c)}</Text></Text>)}
+        </Panel>
       ) : null}
       {state.poll ? <PollCard poll={state.poll} path={path} state={state} now={now} onChange={load} /> : null}
       {state.prediction ? <PollCard poll={state.prediction} path={path} state={state} now={now} onChange={load} /> : null}
@@ -319,29 +317,28 @@ function PollCard({ poll, path, state, now, onChange }: { poll: PollState; path:
     : poll.status === "locked" ? "Locked. Waiting for the result." : open ? `${left}s left` : "Voting has closed.";
   const total = poll.counts.reduce((a, b) => a + b, 0);
   return (
-    <Frame>
-      <Text style={styles.eyebrow}>{prediction ? "Prediction · Engagement Valor" : "Poll"}</Text>
-      <Text style={styles.question}>{poll.question}</Text>
-      <Text style={styles.small} accessibilityRole="text">{status}{poll.mine?.payout != null ? ` · You got back ${poll.mine.payout.toLocaleString()} EV` : ""}</Text>
+    <Panel>
+      <Text style={[type.label, styles.eyebrow]}>{prediction ? "Prediction · Engagement Valor" : "Poll"}</Text>
+      <Text style={[type.strong, styles.question]}>{poll.question}</Text>
+      <Text style={type.small} accessibilityRole="text">{status}{poll.mine?.payout != null ? ` · You got back ${poll.mine.payout.toLocaleString()} Engagement Valor` : ""}</Text>
       {open && !poll.mine && state.balance !== null ? (
-        <View style={{ gap: 8, marginTop: 8 }}>
-          {prediction ? (
-            <View style={{ gap: 4 }}>
-              <Text style={styles.small} nativeID={`stake-${poll.id}`}>Stake (you have {state.balance.toLocaleString()})</Text>
-              <TextInput accessibilityLabelledBy={`stake-${poll.id}`} keyboardType="number-pad" value={stake} onChangeText={setStake} style={[styles.input, { borderColor: `${colors.accent}52` }]} />
-            </View>
-          ) : null}
+        <View style={styles.options}>
+          {prediction ? <Field label={`Stake (you have ${state.balance.toLocaleString()})`} keyboardType="number-pad" value={stake} onChangeText={setStake} /> : null}
           {poll.options.map((option, i) => <ControlButton key={option} label={option} detail={null} disabled={busy} onPress={() => { void vote(i); }} accent={colors} />)}
         </View>
       ) : (
-        <View style={{ gap: 8, marginTop: 8 }}>
+        <View style={styles.options}>
           {poll.options.map((option, i) => {
             const share = total ? Math.round((poll.counts[i] / total) * 100) : 0;
+            const name = `${option}${poll.mine?.option === i ? " (you)" : ""}`;
             return (
-              <View key={option} style={{ gap: 4 }}>
+              <View key={option} style={styles.gapXs}>
                 <View style={styles.rowBetween}>
-                  <Text style={styles.body}>{poll.winner === i ? "✓ " : ""}{option}{poll.mine?.option === i ? " (you)" : ""}</Text>
-                  <Text style={styles.small}>{poll.pools ? `${poll.pools[i].toLocaleString()} EV · ` : ""}{poll.counts[i]} ({share}%)</Text>
+                  <View style={[styles.row, styles.grow]}>
+                    {poll.winner === i ? <CheckIcon color={colors.accentLight} size={16} /> : null}
+                    <Text style={[type.body, styles.grow]} accessibilityLabel={poll.winner === i ? `Winner: ${name}` : undefined}>{name}</Text>
+                  </View>
+                  <Text style={type.small}>{poll.pools ? `${poll.pools[i].toLocaleString()} Engagement Valor · ` : ""}{poll.counts[i]} ({share}%)</Text>
                 </View>
                 <Bar share={share / 100} color={colors.accent} label={`${option}: ${share}%`} />
               </View>
@@ -350,7 +347,7 @@ function PollCard({ poll, path, state, now, onChange }: { poll: PollState; path:
         </View>
       )}
       {note ? <Notice>{note}</Notice> : null}
-    </Frame>
+    </Panel>
   );
 }
 
@@ -405,27 +402,33 @@ export function PlayerEffects({ username }: { username: string }) {
 }
 
 const styles = StyleSheet.create({
-  heading: { fontFamily: "Cinzel_800ExtraBold", color: ink, fontSize: 22 },
-  eyebrow: { fontFamily: "BarlowCondensed_700Bold", color: inkDim, letterSpacing: 1.6, textTransform: "uppercase", fontSize: 13, marginBottom: 6 },
-  question: { color: ink, fontFamily: "Barlow_600SemiBold", fontSize: 17, lineHeight: 23 },
-  body: { color: ink, fontFamily: "Barlow_400Regular", fontSize: 15, lineHeight: 22 },
-  small: { color: inkMuted, fontFamily: "Barlow_400Regular", fontSize: 14, lineHeight: 20 },
-  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
-  link: { minHeight: 44, justifyContent: "center", alignSelf: "flex-start" },
-  tabs: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-  tab: { minHeight: 44, borderWidth: 1, paddingHorizontal: 14, justifyContent: "center" },
-  tabText: { fontFamily: "Cinzel_700Bold", fontSize: 14 },
-  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 8, marginTop: 12 },
-  label: { color: ink, fontFamily: "Barlow_600SemiBold", fontSize: 15, paddingVertical: 6 },
-  control: { minHeight: 52, borderWidth: 1, borderBottomWidth: 2, alignItems: "center", justifyContent: "center", paddingHorizontal: 8, paddingVertical: 6 },
-  controlText: { color: "#0A0A0C", fontFamily: "Cinzel_700Bold", fontSize: 15, letterSpacing: 1, textAlign: "center" },
-  controlDetail: { color: "#0A0A0C", fontFamily: "BarlowCondensed_600SemiBold", fontSize: 12, letterSpacing: 0.6 },
-  stick: { width: 52, height: 52, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.35)" },
-  stickText: { fontSize: 22, fontFamily: "Barlow_600SemiBold" },
-  input: { borderWidth: 1, backgroundColor: "rgba(0,0,0,0.35)", minHeight: 44, paddingHorizontal: 12, color: ink, fontFamily: "Barlow_400Regular", fontSize: 16 },
-  bar: { height: 8, backgroundColor: "rgba(242,240,234,0.1)" },
-  rallyRow: { flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 3 },
-  effect: { position: "absolute", left: 8, right: 8, bottom: 8, alignItems: "center", gap: 4 },
+  panel: { gap: space.xs },
+  stack: { gap: space.l },
+  eyebrow: { marginBottom: space.s },
+  question: { fontSize: 17, lineHeight: 23 },
+  semi: { fontFamily: font.bodySemi },
+  grow: { flex: 1 },
+  row: { flexDirection: "row", alignItems: "center", gap: space.xs },
+  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: space.s },
+  gapXs: { gap: space.xs },
+  gapS: { gap: space.s },
+  options: { gap: space.s, marginTop: space.s },
+  tabs: { flexDirection: "row", flexWrap: "wrap", gap: space.s, marginTop: space.s },
+  tab: { minHeight: 44, borderWidth: 1, paddingHorizontal: space.m, justifyContent: "center" },
+  tabText: { fontFamily: font.label, fontSize: 13, letterSpacing: 1.4, textTransform: "uppercase" },
+  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: space.s, marginTop: space.m },
+  label: { paddingVertical: 6 },
+  control: { minHeight: 52, borderWidth: 1, borderBottomWidth: 2, alignItems: "center", justifyContent: "center", paddingHorizontal: space.s, paddingVertical: 6 },
+  controlText: { color: onAccent, fontFamily: font.displayBold, fontSize: 15, letterSpacing: 1, textAlign: "center" },
+  controlDetail: { color: onAccent, fontFamily: font.labelSemi, fontSize: 12, letterSpacing: 0.6 },
+  stickPad: { alignItems: "center", gap: space.xs },
+  stickRow: { flexDirection: "row", gap: space.xxxl },
+  stick: { width: 52, height: 52, borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: fill },
+  bar: { height: 8, backgroundColor: hexAlpha(ink, 0.1) },
+  rallyRow: { flexDirection: "row", alignItems: "center", gap: space.s, marginVertical: 3 },
+  rallyName: { width: 72 },
+  rallyShare: { width: 40, textAlign: "right" },
+  effect: { position: "absolute", left: space.s, right: space.s, bottom: space.s, alignItems: "center", gap: space.xs },
   effectMark: { fontSize: 28 },
-  effectCaption: { color: ink, backgroundColor: "rgba(0,0,0,0.7)", fontFamily: "Barlow_600SemiBold", fontSize: 14, paddingHorizontal: 10, paddingVertical: 4, textAlign: "center" },
+  effectCaption: { color: ink, backgroundColor: scrim, fontFamily: font.bodySemi, fontSize: 14, paddingHorizontal: space.m, paddingVertical: space.xs, textAlign: "center" },
 });

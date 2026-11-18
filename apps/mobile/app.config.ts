@@ -11,12 +11,15 @@ const config: ExpoConfig = {
   slug: "sver",
   scheme: "sver",
   version: "0.1.0",
-  orientation: "portrait",
+  // The root layout locks portrait; Watch unlocks it for landscape (expo-screen-orientation).
+  orientation: "default",
   userInterfaceStyle: "dark",
   icon: "./assets/icon.png",
   backgroundColor: "#07080B",
   ios: {
     supportsTablet: true,
+    // iPad ignores orientation locks unless the app runs full screen.
+    requireFullScreen: true,
     bundleIdentifier: "tv.sver.app",
     buildNumber: String(build),
     infoPlist: cleartext
@@ -33,6 +36,7 @@ const config: ExpoConfig = {
     "expo-video",
     "expo-secure-store",
     "expo-font",
+    ["expo-screen-orientation", { initialOrientation: "PORTRAIT_UP" }],
     [
       "expo-notifications",
       { color: "#F2F0EA", defaultChannel: "live" },
