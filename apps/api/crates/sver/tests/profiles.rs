@@ -2209,7 +2209,8 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
     let reversed: Vec<Value> = photo_ids
         .iter()
         .rev()
-        .map(|id| json!({"id": id, "alt": format!("Alt {id}")}))
+        .enumerate()
+        .map(|(n, id)| json!({"id": id, "alt": format!("Alt {n}")}))
         .collect();
     owner
         .ok("PUT", "/api/me/setup/photos", json!({"photos": reversed}))
