@@ -4,6 +4,7 @@ iOS and Android client for [sver.tv](https://sver.tv). It is a React Native app 
 
 ## What it does
 
+- **Navigation.** A bar along the bottom holds the main places, as on the website's phone layout (`docs/DESIGN.md` "Phones"): Home (MAGNet), Following when signed in, Beacons, and Log in or Account. Watch, Log in and Alerts open over the bar and go back to it.
 - **MAGNet.** `GET /api/discovery/live` draws every public live stream as a node, in the order the API returns. That order is the fair rotation. Viewer count is a label on the card. Nothing in the app sorts by viewers, followers or payment, and nothing offers a way to pay for a better spot. `GET /api/magnet/global` adds the featured stream and the one-line reason. An empty rotation shows `recent` from the same discovery response.
 - **Watch.** `GET /api/channels/{username}/live?transport=hls` and the HLS address it returns, played by the platform player (AVPlayer on iOS, ExoPlayer on Android). A heartbeat goes to `POST /api/channels/{username}/live/beat` while playback is advancing, the same call the website uses. Mature streams ask before they play. A stream that only offers WebRTC shows that this build cannot play it.
 - **Chat.** `GET` and `POST /api/channels/{username}/chat`, plus the existing socket at `/api/chat/ws`. Sending is a normal text message. Tributes, highlights and Skills are not offered.
