@@ -16,6 +16,7 @@ export default function MagnetScreen() {
   const insets = useSafeAreaInsets();
   const { account, colors } = useAuth();
   const [items, setItems] = useState<StreamCard[]>([]);
+  const [minute, setMinute] = useState(0);
   const [recent, setRecent] = useState<RecentChannel[]>([]);
   const [featured, setFeatured] = useState<MagnetLane["featured"]>(null);
   const [error, setError] = useState("");
@@ -35,6 +36,9 @@ export default function MagnetScreen() {
     }
     const cards = Array.isArray(live.data.items) ? live.data.items.filter(isStreamCard) : [];
     setItems(rotationOrder(cards));
+    // A live still changes under one URL and the Android image cache keeps the first one forever,
+    // so the cards ask for it under a per-minute key, like the website's LiveThumbnail.
+    setMinute(Math.floor(Date.now() / 60000));
     setRecent(Array.isArray(live.data.recent) ? live.data.recent.filter(isRecent) : []);
     setFeatured(lane.ok && lane.data.featured && isStreamCard(lane.data.featured.stream) ? lane.data.featured : null);
     setError("");
@@ -138,7 +142,7 @@ export default function MagnetScreen() {
         ) : (
           <View>
             {items.map((stream, index) => (
-              <Node key={stream.broadcast_id} stream={stream} last={index === items.length - 1} />
+              <Node key={stream.broadcast_id} stream={stream} last={index === items.length - 1} minute={minute} />
             ))}
           </View>
         )}
@@ -147,10 +151,10 @@ export default function MagnetScreen() {
   );
 }
 
-function Node({ stream, last }: { stream: StreamCard; last: boolean }) {
+function Node({ stream, last, minute }: { stream: StreamCard; last: boolean; minute: number }) {
   const color = factionColor(stream.faction);
   const side = factionLabel(stream.faction);
-  const thumb = absolute(stream.thumbnail);
+  const thumb = `${absolute(stream.thumbnail)}${stream.thumbnail.includes("?") ? "&" : "?"}v=${minute}`;
   return (
     <View style={styles.nodeRow}>
       <View style={styles.rail}>
