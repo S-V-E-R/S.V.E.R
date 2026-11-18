@@ -50,6 +50,12 @@ Remote push needs an Expo project and, outside Expo Go on iOS, a development bui
 
 Staff browser push (`VAPID_*`) is a different system and is not used for this app.
 
+## Android test APK
+
+Every push to `main` that touches `apps/mobile` (or a manual run of the **Android test build** workflow) builds a release APK and publishes it as a GitHub prerelease named `Android test build N`. A pull request that touches the app builds the same APK as a workflow artifact without publishing it. Testers download the `.apk` from the repo's Releases page on an Android phone, allow installs from the browser, and open it. Each build carries the run number as its `versionCode` and is signed with the Expo template's debug key, so a newer build installs over an older one. That key is fine for sideloading and is not a Play Store key. The APK is arm64 only and talks to `https://sver.tv`. Push alerts stay off until the Expo project and FCM credentials below exist.
+
+To build the same APK locally (JDK 21, Android SDK): `corepack pnpm exec expo prebuild --platform android`, then `./gradlew assembleRelease` in `android/`. On Windows, build from a short path (`subst S: <repo>`); the native C++ steps fail on long paths.
+
 ## Checks
 
 ```powershell
