@@ -548,6 +548,27 @@ async fn exercise(app: App) {
     let mut tx = app.db.begin().await.unwrap();
     restore(&mut tx, &post_id, "VISIBLE").await.unwrap();
     tx.commit().await.unwrap();
+    // A post leaves the board when its author leaves the faction, and returns if they come back.
+    for (faction, shown) in [("aetheron", 1), ("myria", 0), ("aetheron", 1)] {
+        sqlx::query("UPDATE faction_members SET faction=$1 WHERE user_id='faction-user-1'")
+            .bind(faction)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let board = call(
+            &app,
+            "GET",
+            "/api/factions/aetheron/board",
+            Some(&tokens[3]),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(
+            board.1["items"].as_array().unwrap().len(),
+            shown,
+            "{faction}"
+        );
+    }
     // Elected authority is scoped to one faction and term; a normal member cannot remove it.
     sqlx::query("INSERT INTO faction_moderators(week_id,user_id,faction) VALUES($1,'faction-user-3','aetheron')").bind(week.id).execute(&app.db).await.unwrap();
     assert_eq!(
