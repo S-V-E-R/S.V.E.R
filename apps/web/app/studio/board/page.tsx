@@ -1,11 +1,13 @@
 "use client";
-import { ArrowIcon, StatusMark } from "../../../components/shell/Icons";
+import { StatusMark } from "../../../components/shell/Icons";
 import Link from "next/link";
-import { FormEvent, useCallback, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import type { BoardDef, Control } from "../../../components/Board";
+import { BoardBuilder } from "../../../components/BoardBuilder";
 import { EffectStage, useShown, type BoardEvent } from "../../../components/BoardEffects";
 import { CopyButton } from "../../../components/CopyButton";
 import { Section, Status, type SaveState } from "../../../components/Form";
+import { type History, push, redo, settle, start, undo } from "../../../lib/board-builder";
 import { send, useLoad } from "../../../lib/client-api";
 
 type Mine = {
@@ -18,50 +20,21 @@ type Mine = {
   /** After a load or import: controls whose effect was replaced with "none". */
   changed?: string[];
   checklist: { label: string; ok: boolean; required: boolean }[]; templates: { name: string; board: BoardDef }[];
-  effects: string[]; custom_effects: { value: string; name: string }[]; kinds: Control["kind"][]; audiences: Control["audience"][]; webhook_secret?: string | null;
+  effects: string[]; custom_effects: { value: string; name: string }[]; kinds: Control["kind"][]; colors: string[]; icons: string[]; audiences: Control["audience"][]; webhook_secret?: string | null;
 };
-const KIND_NAMES: Record<Control["kind"], string> = { button: "Button", label: "Label", text: "Text input", goal: "Goal", joystick: "Joystick", rally: "Faction rally" };
-const AUDIENCE_NAMES: Record<Control["audience"], string> = { everyone: "Everyone signed in", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
-const num = (value: string) => (value === "" ? 0 : Number(value));
-
-function fresh(kind: Control["kind"], taken: Set<string>): Control {
-  let n = 1;
-  while (taken.has(`${kind}-${n}`)) n++;
-  return { id: `${kind}-${n}`, kind, label: KIND_NAMES[kind], cost: 0, cooldown_seconds: 0, per_stream_limit: null, audience: "everyone", effect: "none", target: kind === "goal" ? 100 : null, width: kind === "label" ? 4 : 1 };
-}
-
-function ControlEditor({ control, mine, onChange, onMove, onRemove, onTest, saved }: { control: Control; mine: Mine; onChange: (c: Control) => void; onMove: (by: number) => void; onRemove: () => void; onTest: () => void; saved: boolean }) {
-  const c = control;
-  const simple = c.kind === "label" || c.kind === "joystick" || c.kind === "rally";
-  return <fieldset>
-    <legend>{KIND_NAMES[c.kind]} · <code>{c.id}</code></legend>
-    <label className="field"><span>Label</span><input value={c.label} maxLength={40} required onChange={e => onChange({ ...c, label: e.target.value })} /></label>
-    {!simple && <>
-      <label className="field narrow"><span>Cost (Engagement Valor, 0 is free)</span><input type="number" min={0} max={100000} value={c.cost} onChange={e => onChange({ ...c, cost: num(e.target.value) })} />
-        {mine.typical_balance !== null && <small className={c.cost > mine.typical_balance ? "form-message" : "muted"}>{c.cost > mine.typical_balance ? "Above" : "Within"} the typical viewer balance here ({mine.typical_balance.toLocaleString()}).</small>}</label>
-      <label className="field narrow"><span>Cooldown per viewer (seconds)</span><input type="number" min={0} max={3600} value={c.cooldown_seconds} onChange={e => onChange({ ...c, cooldown_seconds: num(e.target.value) })} /></label>
-      <label className="field narrow"><span>Limit per stream</span><input type="number" min={1} max={1000} placeholder="No limit" value={c.per_stream_limit ?? ""} onChange={e => onChange({ ...c, per_stream_limit: e.target.value ? Number(e.target.value) : null })} /></label>
-      <label className="field narrow"><span>Effect</span><select disabled={c.confirm} value={c.effect} onChange={e => onChange({ ...c, effect: e.target.value })}>{mine.effects.map(fx => <option key={fx} value={fx}>{fx === "none" ? "None" : fx[0].toUpperCase() + fx.slice(1)}</option>)}{mine.custom_effects.length > 0 && <optgroup label="Your Skills">{mine.custom_effects.map(fx => <option key={fx.value} value={fx.value}>{fx.name}</option>)}</optgroup>}</select></label>
-    </>}
-    {(c.kind === "button" || c.kind === "text") && <label className="checkbox"><input type="checkbox" checked={!!c.confirm} onChange={e => onChange({ ...c, confirm: e.target.checked, effect: e.target.checked ? "none" : c.effect })} /> Game confirms: hold the viewer&apos;s Engagement Valor until your game or the OBS bridge confirms the press (refunded otherwise, after 60 seconds at most)</label>}
-    {c.kind !== "label" && <label className="field narrow"><span>Who can use it</span><select value={c.audience} onChange={e => onChange({ ...c, audience: e.target.value as Control["audience"] })}>{mine.audiences.map(a => <option key={a} value={a}>{AUDIENCE_NAMES[a]}</option>)}</select></label>}
-    {c.kind === "goal" && <label className="field narrow"><span>Goal</span><input type="number" min={1} max={1000000} value={c.target ?? 1} onChange={e => onChange({ ...c, target: num(e.target.value) })} /></label>}
-    <label className="field narrow"><span>Width</span><select value={c.width} onChange={e => onChange({ ...c, width: Number(e.target.value) })}>{[1, 2, 3, 4].map(w => <option key={w} value={w}>{w} of 4</option>)}</select></label>
-    <div className="row wrap">
-      <button type="button" className="small quiet" onClick={() => onMove(-1)} aria-label={`Move ${c.label} up`}><ArrowIcon dir="up" /></button>
-      <button type="button" className="small quiet" onClick={() => onMove(1)} aria-label={`Move ${c.label} down`}><ArrowIcon dir="down" /></button>
-      {c.kind !== "label" && c.kind !== "joystick" && <button type="button" className="small quiet" disabled={!saved} title={saved ? undefined : "Save the draft first"} onClick={onTest}>Test</button>}
-      <button type="button" className="small quiet" onClick={onRemove}>Remove</button>
-    </div>
-  </fieldset>;
-}
+const TABS = [["build", "Build"], ["publish", "Test and publish"], ["skills", "Skills"], ["overlay", "Overlay"], ["advanced", "Advanced"]] as const;
+type Tab = (typeof TABS)[number][0];
+/** What a server reply does to the draft: leave it, take it as the saved copy, or take it as a new undoable step. */
+type Take = "keep" | "settle" | "push";
 
 /** Creator Studio → Board: build, test and publish the channel's CrowdSync board (docs/CROWDSYNC.md "Boards"). */
 export default function StudioBoard() {
   const [mine, setMine] = useState<Mine | null>(null);
-  const [board, setBoard] = useState<BoardDef | null>(null);
+  const [history, setHistory] = useState<History<BoardDef> | null>(null);
+  /** The draft as the server has it; the board is dirty when the present differs. */
+  const [saved, setSaved] = useState<BoardDef | null>(null);
+  const [tab, setTab] = useState<Tab>("build");
   const [screen, setScreen] = useState(0);
-  const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [state, setState] = useState<SaveState>({});
   const [webhook, setWebhook] = useState("");
@@ -72,9 +45,12 @@ export default function StudioBoard() {
   const [saveAs, setSaveAs] = useState("");
   const [libraryState, setLibraryState] = useState<SaveState>({});
   const [connectionsKey, setConnectionsKey] = useState(0);
-  const accept = useCallback((data: Mine, keepDraft = false) => {
+  const accept = useCallback((data: Mine, take: Take = "settle") => {
     setMine(data);
-    if (!keepDraft) { setBoard(data.draft); setDirty(false); }
+    if (take !== "keep") {
+      setSaved(data.draft);
+      setHistory(h => (!h ? start(data.draft) : take === "push" ? push(h, data.draft) : settle(h, data.draft)));
+    }
     setWebhook(data.webhook_url ?? "");
     setCap(data.input_cap?.toString() ?? "");
   }, []);
@@ -83,20 +59,34 @@ export default function StudioBoard() {
     if (r.ok) accept(r.data); else setState({ error: r.error });
   }, [accept]);
   useLoad(load);
-  if (!mine || !board) return state.error ? <p role="alert" className="form-message error">{state.error}</p> : <p className="loading">Loading…</p>;
+  // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y on the Build tab, outside fields (they keep their own undo).
+  useEffect(() => {
+    if (tab !== "build") return;
+    function onKey(e: KeyboardEvent) {
+      const k = e.key.toLowerCase();
+      if (!(e.ctrlKey || e.metaKey) || (k !== "z" && k !== "y") || (e.target instanceof Element && e.target.closest("input,textarea,select,[contenteditable]"))) return;
+      e.preventDefault();
+      setHistory(h => h && (k === "y" || e.shiftKey ? redo(h) : undo(h)));
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab]);
+  if (!mine || !history) return state.error ? <p role="alert" className="form-message error">{state.error}</p> : <p className="loading">Loading…</p>;
 
+  const board = history.present;
+  const dirty = board !== saved;
   const current = board.screens[Math.min(screen, board.screens.length - 1)];
   const taken = new Set(board.screens.flatMap(s => s.controls.map(c => c.id)));
-  function edit(next: BoardDef) { setBoard(next); setDirty(true); setState({}); }
-  function editScreen(change: (controls: Control[]) => Control[], name?: string) {
-    edit({ screens: board!.screens.map((s, i) => i === screen ? { name: name ?? s.name, controls: change(s.controls) } : s) });
+  function edit(next: BoardDef, key?: string) { setHistory(h => push(h!, next, key)); setState({}); }
+  function editScreen(change: Partial<BoardDef["screens"][number]>, key?: string) {
+    edit({ screens: board.screens.map((s, i) => (i === screen ? { ...s, ...change } : s)) }, key);
   }
   async function act(method: string, path: string, body?: unknown, done?: string, keepDraft = false) {
     setBusy(true); setState({});
     const r = await send<Mine>(method, path, body);
     setBusy(false);
     if (!r.ok) { setState({ error: r.error }); return null; }
-    accept(r.data, keepDraft);
+    accept(r.data, keepDraft ? "keep" : "settle");
     if (done) setState({ saved: done });
     return r.data;
   }
@@ -110,7 +100,7 @@ export default function StudioBoard() {
     const r = await send<Mine>(method, path, body);
     setBusy(false);
     if (!r.ok) { setLibraryState({ error: r.error }); return; }
-    accept(r.data, keepDraft);
+    accept(r.data, keepDraft ? "keep" : "push");
     if (!keepDraft) setScreen(0);
     setLibraryState({ saved: r.data.changed?.length ? `${done} These controls used Skills that aren't yours, so they now play no effect: ${r.data.changed.join(", ")}.` : done });
   }
@@ -131,88 +121,107 @@ export default function StudioBoard() {
   }
   const required = mine.checklist.filter(c => c.required && !c.ok);
   const live = `/api/channels/${encodeURIComponent(mine.username)}/board`;
+  const testable = board.screens.flatMap(s => s.controls).filter(c => c.kind !== "label" && c.kind !== "joystick");
+  const panel = (id: Tab) => ({ role: "tabpanel", id: `board-panel-${id}`, "aria-labelledby": `board-tab-${id}`, hidden: tab !== id });
 
   return <><h1>Board</h1>
     <p className="intro">Viewers use your board under the player. Presses spend your channel&apos;s Engagement Valor (or are free) and play effects on stream. <Link href={`/${mine.username}/live`}>See it on your channel</Link>.</p>
     {mine.set_by && <p role="status" className="form-message">Your board is set by <strong>{mine.set_by}</strong>. Your own board comes back when it disconnects. <button type="button" className="small" disabled={busy} onClick={async () => { await act("POST", "/api/me/board/take-back", undefined, "Your board is back, and that connection may no longer set it.", dirty); setConnectionsKey(k => k + 1); }}>Take it back</button></p>}
-    <Section title="Build" intro="Edits change only the draft. Viewers keep the published board until you publish again.">
-      <div className="row wrap">
-        <label className="field narrow"><span>Start from a template</span><select value="" onChange={e => { const t = mine.templates.find(x => x.name === e.target.value); if (t && window.confirm(`Replace the draft with "${t.name}"?`)) { edit(t.board); setScreen(0); } }}><option value="">Choose…</option>{mine.templates.map(t => <option key={t.name}>{t.name}</option>)}</select></label>
-      </div>
-      <div className="board-screens" role="tablist">{board.screens.map((s, i) => <button key={i} type="button" role="tab" aria-selected={i === screen} className={i === screen ? "small" : "small quiet"} onClick={() => setScreen(i)}>{s.name || "Untitled"}</button>)}
-        {board.screens.length < 4 && <button type="button" className="small quiet" onClick={() => { edit({ screens: [...board.screens, { name: `Screen ${board.screens.length + 1}`, controls: [] }] }); setScreen(board.screens.length); }}>+ Screen</button>}
-      </div>
-      <div className="board-builder">
+    <div className="board-screens studio-tabs" role="tablist" aria-label="Board settings">{TABS.map(([id, name]) => <button key={id} type="button" role="tab" id={`board-tab-${id}`} aria-controls={`board-panel-${id}`} aria-selected={tab === id} className={tab === id ? "small" : "small quiet"} onClick={() => { setTab(id); setState({}); }}>{name}</button>)}</div>
+
+    <div {...panel("build")}>
+      <Section title="Build" intro="Edits change only the draft. Viewers keep the published board until you publish again.">
         <div className="row wrap">
-          <label className="field narrow"><span>Screen name</span><input value={current.name} maxLength={30} onChange={e => editScreen(c => c, e.target.value)} /></label>
+          <label className="field narrow"><span>Start from a template</span><select value="" onChange={e => { const t = mine.templates.find(x => x.name === e.target.value); if (t && window.confirm(`Replace the draft with "${t.name}"?`)) { edit(t.board); setScreen(0); } }}><option value="">Choose…</option>{mine.templates.map(t => <option key={t.name}>{t.name}</option>)}</select></label>
+        </div>
+        <div className="board-screens" role="tablist" aria-label="Screens">{board.screens.map((s, i) => <button key={i} type="button" role="tab" aria-selected={i === screen} className={i === screen ? "small" : "small quiet"} onClick={() => setScreen(i)}>{s.name || "Untitled"}</button>)}
+          {board.screens.length < 4 && <button type="button" className="small quiet" onClick={() => { edit({ screens: [...board.screens, { name: `Screen ${board.screens.length + 1}`, controls: [] }] }); setScreen(board.screens.length); }}>+ Screen</button>}
+        </div>
+        <div className="row wrap">
+          <label className="field narrow"><span>Screen name</span><input value={current.name} maxLength={30} onChange={e => editScreen({ name: e.target.value }, `screen:${screen}:name`)} /></label>
           {board.screens.length > 1 && <button type="button" className="small quiet" onClick={() => { edit({ screens: board.screens.filter((_, i) => i !== screen) }); setScreen(0); }}>Remove screen</button>}
         </div>
-        {current.controls.map((control, index) => <ControlEditor key={control.id} control={control} mine={mine} saved={!dirty}
-          onChange={next => editScreen(list => list.map((c, i) => i === index ? next : c))}
-          onMove={by => editScreen(list => { const to = index + by; if (to < 0 || to >= list.length) return list; const copy = [...list]; [copy[index], copy[to]] = [copy[to], copy[index]]; return copy; })}
-          onRemove={() => editScreen(list => list.filter((_, i) => i !== index))}
-          onTest={() => test(control)} />)}
-        {current.controls.length < 24 && <div className="row wrap"><span>Add:</span>{mine.kinds.map(kind => <button key={kind} type="button" className="small quiet" onClick={() => editScreen(list => [...list, fresh(kind, taken)])}>{KIND_NAMES[kind]}</button>)}</div>}
-      </div>
-      <div className="row wrap">
-        <button type="button" disabled={busy || !dirty} onClick={() => act("PUT", "/api/me/board/draft", { board }, "Draft saved. Test it, then publish.")}>Save draft</button>
-        {dirty && <span className="muted">Unsaved changes</span>}
-      </div>
-      <Status state={state} />
-    </Section>
-    <Section title="Library and files" intro={`Keep up to ${mine.library_max} boards beside your draft, and share a board as a file. Nothing here is live: load a board into the draft, then publish it.`}>
-      <p><Link href="/crowdsync">Find games and ready-made boards in the catalog</Link></p>
-      {mine.library.length > 0 && <ul className="list">{mine.library.map(b => <li key={b.id}>
-        <span><strong>{b.name}</strong> · {b.from_game ? "from a game · " : b.from_catalog ? "from the catalog · " : ""}saved {new Date(b.updated_at).toLocaleDateString()}</span>
-        <span className="row wrap">
-          <button type="button" className="small quiet" disabled={busy} onClick={() => { if (replaceDraft(b.name)) void library("POST", `/api/me/board/library/${b.id}/load`, undefined, `"${b.name}" is now your draft.`, false); }}>Load into draft</button>
-          <button type="button" className="small quiet danger-text" disabled={busy} onClick={() => { if (window.confirm(`Delete "${b.name}" from your library?`)) void library("DELETE", `/api/me/board/library/${b.id}`, undefined, "Deleted.", true); }}>Delete</button>
-        </span>
-      </li>)}</ul>}
-      <form className="row wrap" onSubmit={e => { e.preventDefault(); void library("POST", "/api/me/board/library", { name: saveAs, board }, "Saved to your library.", true); }}>
-        <label className="field narrow"><span>Name</span><input value={saveAs} maxLength={40} required onChange={e => setSaveAs(e.target.value)} /></label>
-        <button className="small" disabled={busy}>Save draft to library</button>
-      </form>
-      <div className="row wrap">
-        <button type="button" className="small quiet" onClick={exportFile}>Export</button>
-        <label className="field narrow"><span>Import a board file (.sverboard.json)</span><input type="file" accept=".json,application/json" onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (file) void importFile(file); }} /></label>
-      </div>
-      <Status state={libraryState} />
-    </Section>
-    <Section title="Test mode" intro="Test plays a control's effect here and in your OBS overlay. Nothing is charged or recorded, and viewers see nothing.">
-      <div className="board-preview"><EffectStage events={shown} calm={false} /></div>
-    </Section>
-    <Section title="Publish" intro={mine.published_at ? `Version ${mine.version} has been live since ${new Date(mine.published_at).toLocaleString()}. Publishing starts goals over.` : "Your board isn't published yet."}>
-      <ul className="list">{mine.checklist.map(c => <li key={c.label}><StatusMark ok={c.ok} optional={!c.required} />{c.label}</li>)}</ul>
-      <div className="row wrap">
-        <button type="button" disabled={busy || dirty || required.length > 0} title={dirty ? "Save the draft first" : undefined} onClick={() => act("POST", "/api/me/board/publish", undefined, "Published.")}>Publish</button>
-        {mine.published && <button type="button" className="quiet" disabled={busy} onClick={async () => { const r = await send("PUT", `${live}/disabled`, { disabled: !mine.disabled }); if (r.ok) await load(); else setState({ error: r.error }); }}>{mine.disabled ? "Resume the board" : "Pause all effects (panic)"}</button>}
-      </div>
-    </Section>
-    <Section title="OBS overlay" intro="Add this private URL as a browser source over your whole scene (1920×1080). While it's connected, effects appear in your video instead of over the player, so every viewer sees them in sync.">
-      <p>{mine.overlay.connected ? "Connected" : mine.overlay.set ? "Not connected right now" : "No overlay URL yet"}</p>
-      {overlayUrl && <p className="form-message">Copy it now; it won&apos;t be shown again. <code>{overlayUrl}</code> <CopyButton value={overlayUrl} label="overlay URL" /></p>}
-      <div className="row wrap">
-        <button type="button" className="small" disabled={busy} onClick={async () => { if (mine.overlay.set && !window.confirm("Make a new URL? The old one stops working.")) return; const r = await send<{ url: string }>("POST", "/api/me/board/overlay"); if (r.ok) { setOverlayUrl(r.data.url); await load(); } else setState({ error: r.error }); }}>{mine.overlay.set ? "Make a new URL" : "Make the overlay URL"}</button>
-        {mine.overlay.set && <button type="button" className="small quiet" disabled={busy} onClick={() => { setOverlayUrl(null); void act("DELETE", "/api/me/board/overlay", undefined, "Overlay URL turned off.", dirty); }}>Turn off</button>}
-      </div>
-    </Section>
-    <Section title="Moderators, webhook and input cap" intro="Over the input cap, viewers see “Busy, try again”; a connected game can set it too. A webhook sends each press to your own HTTPS endpoint, signed with a secret (header SVER-Signature: t=timestamp,v1=HMAC-SHA256 of “timestamp.body”). Private network addresses are refused.">
-      <form onSubmit={async e => {
-        e.preventDefault();
-        const data = await act("PUT", "/api/me/board/settings", { moderators_run: mine.moderators_run, webhook_url: webhook || null, input_cap: cap ? Number(cap) : null }, "Saved.", dirty);
-        if (data?.webhook_secret) setSecret(data.webhook_secret);
-      }}>
-        <label className="checkbox"><input type="checkbox" checked={mine.moderators_run} onChange={async e => { const typed = [webhook, cap] as const; await act("PUT", "/api/me/board/settings", { moderators_run: e.target.checked, webhook_url: mine.webhook_url, input_cap: mine.input_cap }, "Saved.", dirty); setWebhook(typed[0]); setCap(typed[1]); }} /> Let my channel moderators pause the board and block viewers from it</label>
-        <label className="field"><span>Webhook URL (optional)</span><input type="url" value={webhook} maxLength={500} placeholder="https://example.com/sver" onChange={e => setWebhook(e.target.value)} /></label>
-        <label className="field narrow"><span>Input cap (presses and joystick moves a second sent to your game)</span><input type="number" min={1} max={100} placeholder="No cap" value={cap} onChange={e => setCap(e.target.value)} /></label>
-        <button className="small" disabled={busy}>Save</button>
-      </form>
-      {secret && <p className="form-message">Signing secret, shown once: <code>{secret}</code> <CopyButton value={secret} label="signing secret" /></p>}
-    </Section>
-    <SkillSettings />
-    <CustomSkills />
-    <Connections key={connectionsKey} onChange={load} />
+        <BoardBuilder key={screen} controls={current.controls} taken={taken} options={mine} saved={!dirty}
+          onChange={(controls, key) => editScreen({ controls }, key)} onTest={c => { setTab("publish"); void test(c); }} />
+        <div className="row wrap">
+          <button type="button" disabled={busy || !dirty} onClick={() => act("PUT", "/api/me/board/draft", { board }, "Draft saved. Test it, then publish.")}>Save draft</button>
+          <button type="button" className="quiet" disabled={!history.past.length} onClick={() => setHistory(h => h && undo(h))} title="Ctrl+Z">Undo</button>
+          <button type="button" className="quiet" disabled={!history.future.length} onClick={() => setHistory(h => h && redo(h))} title="Ctrl+Shift+Z">Redo</button>
+          {dirty && <span className="muted">Unsaved changes</span>}
+        </div>
+        <Status state={state} />
+      </Section>
+      <Section title="Library and files" intro={`Keep up to ${mine.library_max} boards beside your draft, and share a board as a file. Nothing here is live: load a board into the draft, then publish it.`}>
+        <p><Link href="/crowdsync">Find games and ready-made boards in the catalog</Link></p>
+        {mine.library.length > 0 && <ul className="list">{mine.library.map(b => <li key={b.id}>
+          <span><strong>{b.name}</strong> · {b.from_game ? "from a game · " : b.from_catalog ? "from the catalog · " : ""}saved {new Date(b.updated_at).toLocaleDateString()}</span>
+          <span className="row wrap">
+            <button type="button" className="small quiet" disabled={busy} onClick={() => { if (replaceDraft(b.name)) void library("POST", `/api/me/board/library/${b.id}/load`, undefined, `"${b.name}" is now your draft.`, false); }}>Load into draft</button>
+            <button type="button" className="small quiet danger-text" disabled={busy} onClick={() => { if (window.confirm(`Delete "${b.name}" from your library?`)) void library("DELETE", `/api/me/board/library/${b.id}`, undefined, "Deleted.", true); }}>Delete</button>
+          </span>
+        </li>)}</ul>}
+        <form className="row wrap" onSubmit={e => { e.preventDefault(); void library("POST", "/api/me/board/library", { name: saveAs, board }, "Saved to your library.", true); }}>
+          <label className="field narrow"><span>Name</span><input value={saveAs} maxLength={40} required onChange={e => setSaveAs(e.target.value)} /></label>
+          <button className="small" disabled={busy}>Save draft to library</button>
+        </form>
+        <div className="row wrap">
+          <button type="button" className="small quiet" onClick={exportFile}>Export</button>
+          <label className="field narrow"><span>Import a board file (.sverboard.json)</span><input type="file" accept=".json,application/json" onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (file) void importFile(file); }} /></label>
+        </div>
+        <Status state={libraryState} />
+      </Section>
+    </div>
+
+    <div {...panel("publish")}>
+      <Section title="Test mode" intro="Test plays a control's effect here and in your OBS overlay. Nothing is charged or recorded, and viewers see nothing.">
+        <div className="board-preview"><EffectStage events={shown} calm={false} /></div>
+        {dirty ? <p className="muted">Save the draft on the Build tab to test it.</p>
+          : <div className="row wrap">{testable.map(c => <button key={c.id} type="button" className="small quiet" onClick={() => void test(c)}>Test {c.label}</button>)}</div>}
+      </Section>
+      <Section title="Publish" intro={mine.published_at ? `Version ${mine.version} has been live since ${new Date(mine.published_at).toLocaleString()}. Publishing starts goals over.` : "Your board isn't published yet."}>
+        <ul className="list">{mine.checklist.map(c => <li key={c.label}><StatusMark ok={c.ok} optional={!c.required} />{c.label}</li>)}</ul>
+        <div className="row wrap">
+          <button type="button" disabled={busy || dirty || required.length > 0} title={dirty ? "Save the draft first" : undefined} onClick={() => act("POST", "/api/me/board/publish", undefined, "Published.")}>Publish</button>
+          {mine.published && <button type="button" className="quiet" disabled={busy} onClick={async () => { const r = await send("PUT", `${live}/disabled`, { disabled: !mine.disabled }); if (r.ok) await load(); else setState({ error: r.error }); }}>{mine.disabled ? "Resume the board" : "Pause all effects (panic)"}</button>}
+        </div>
+        <Status state={state} />
+      </Section>
+    </div>
+
+    <div {...panel("skills")}>
+      <SkillSettings />
+      <CustomSkills />
+    </div>
+
+    <div {...panel("overlay")}>
+      <Section title="OBS overlay" intro="Add this private URL as a browser source over your whole scene (1920×1080). While it's connected, effects appear in your video instead of over the player, so every viewer sees them in sync.">
+        <p>{mine.overlay.connected ? "Connected" : mine.overlay.set ? "Not connected right now" : "No overlay URL yet"}</p>
+        {overlayUrl && <p className="form-message">Copy it now; it won&apos;t be shown again. <code>{overlayUrl}</code> <CopyButton value={overlayUrl} label="overlay URL" /></p>}
+        <div className="row wrap">
+          <button type="button" className="small" disabled={busy} onClick={async () => { if (mine.overlay.set && !window.confirm("Make a new URL? The old one stops working.")) return; const r = await send<{ url: string }>("POST", "/api/me/board/overlay"); if (r.ok) { setOverlayUrl(r.data.url); await load(); } else setState({ error: r.error }); }}>{mine.overlay.set ? "Make a new URL" : "Make the overlay URL"}</button>
+          {mine.overlay.set && <button type="button" className="small quiet" disabled={busy} onClick={() => { setOverlayUrl(null); void act("DELETE", "/api/me/board/overlay", undefined, "Overlay URL turned off.", dirty); }}>Turn off</button>}
+        </div>
+        <Status state={state} />
+      </Section>
+    </div>
+
+    <div {...panel("advanced")}>
+      <Section title="Moderators, webhook and input cap" intro="Over the input cap, viewers see “Busy, try again”; a connected game can set it too. A webhook sends each press to your own HTTPS endpoint, signed with a secret (header SVER-Signature: t=timestamp,v1=HMAC-SHA256 of “timestamp.body”). Private network addresses are refused.">
+        <form onSubmit={async e => {
+          e.preventDefault();
+          const data = await act("PUT", "/api/me/board/settings", { moderators_run: mine.moderators_run, webhook_url: webhook || null, input_cap: cap ? Number(cap) : null }, "Saved.", dirty);
+          if (data?.webhook_secret) setSecret(data.webhook_secret);
+        }}>
+          <label className="checkbox"><input type="checkbox" checked={mine.moderators_run} onChange={async e => { const typed = [webhook, cap] as const; await act("PUT", "/api/me/board/settings", { moderators_run: e.target.checked, webhook_url: mine.webhook_url, input_cap: mine.input_cap }, "Saved.", dirty); setWebhook(typed[0]); setCap(typed[1]); }} /> Let my channel moderators pause the board and block viewers from it</label>
+          <label className="field"><span>Webhook URL (optional)</span><input type="url" value={webhook} maxLength={500} placeholder="https://example.com/sver" onChange={e => setWebhook(e.target.value)} /></label>
+          <label className="field narrow"><span>Input cap (presses and joystick moves a second sent to your game)</span><input type="number" min={1} max={100} placeholder="No cap" value={cap} onChange={e => setCap(e.target.value)} /></label>
+          <button className="small" disabled={busy}>Save</button>
+        </form>
+        {secret && <p className="form-message">Signing secret, shown once: <code>{secret}</code> <CopyButton value={secret} label="signing secret" /></p>}
+        <Status state={state} />
+      </Section>
+      <Connections key={connectionsKey} onChange={load} />
+    </div>
   </>;
 }
 

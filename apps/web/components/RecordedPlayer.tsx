@@ -4,6 +4,7 @@ import type Hls from "hls.js";
 import { send } from "../lib/client-api";
 import type { Chapter, VideoPage } from "../lib/videos";
 import { duration } from "../lib/videos";
+import { parseStart } from "../lib/share";
 import { Turnstile } from "./Turnstile";
 import "../styles/videos.css";
 
@@ -13,7 +14,9 @@ export function RecordedPlayer({ id, ageAck = false, chapters = [], onTime, auto
   const [attempt, setAttempt] = useState(0);
   const [sitekey, setSitekey] = useState<string | null>(null);
   const token = useRef("");
+  const start = useRef<number | null>(null);
   const onToken = useCallback((value: string) => { token.current = value; }, []);
+  useEffect(() => { start.current = parseStart(new URLSearchParams(window.location.search).get("t")); }, [id]);
   useEffect(() => {
     const element = video.current;
     if (!element) return;
@@ -28,7 +31,12 @@ export function RecordedPlayer({ id, ageAck = false, chapters = [], onTime, auto
       if (!result.ok) { setError(result.error); loading = false; return; }
       const at = element!.currentTime, resume = !element!.paused || autoPlay;
       if (seek) element!.removeEventListener("loadedmetadata", seek);
-      seek = () => { element!.currentTime = at; if (resume) void element!.play().catch(() => {}); };
+      seek = () => {
+        const jump = start.current;
+        if (jump && element!.currentTime < 1) { element!.currentTime = jump; start.current = null; }
+        else element!.currentTime = at;
+        if (resume) void element!.play().catch(() => {});
+      };
       element!.addEventListener("loadedmetadata", seek, { once: true });
       try {
         if (result.data.video.kind === "CLIP" || element!.canPlayType("application/vnd.apple.mpegurl")) element!.src = result.data.playback;

@@ -139,13 +139,6 @@ async fn subscribe(
         switches::guard(&mut db, "purchases").await?;
         switches::guard(&mut db, "supporter_sales").await?;
     }
-    let renewing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM platform_subscriptions WHERE user_id=$1 AND stripe_subscription IS NOT NULL AND paid_through>now())")
-        .bind(&user.id).fetch_one(&app.db).await?;
-    if renewing {
-        return Err(Fail::conflict(
-            "You already support S.V.E.R. Change your tier or cancel from your wallet.",
-        ));
-    }
     sec::reserve(
         &app,
         vec![format!("supporter-checkout:{}", user.id)],
@@ -157,6 +150,23 @@ async fn subscribe(
     let mut tx = app.db.begin().await?;
     // One checkout at a time per buyer, so concurrent tabs can't slip past the under-18 cap.
     ledger::lock(&mut tx, &format!("checkout:{}", user.id)).await?;
+    // One renewing membership, checked under the lock. A lapsed one Stripe is still retrying ends
+    // now, so its late charge can't land beside the new subscription's.
+    let card: Option<(String, bool)> = sqlx::query_as("SELECT stripe_subscription,paid_through>now() FROM platform_subscriptions WHERE user_id=$1 AND stripe_subscription IS NOT NULL")
+        .bind(&user.id).fetch_optional(&mut *tx).await?;
+    match card {
+        Some((_, true)) => {
+            return Err(Fail::conflict(
+                "You already support S.V.E.R. Change your tier or cancel from your wallet.",
+            ));
+        }
+        Some((lapsed, false)) => {
+            stripe::cancel(&app.http, &app.config.stripe, &lapsed).await?;
+            sqlx::query("UPDATE platform_subscriptions SET stripe_subscription=NULL,cancel_at_period_end=false,pending_tier=NULL,updated_at=now() WHERE stripe_subscription=$1")
+                .bind(&lapsed).execute(&mut *tx).await?;
+        }
+        None => {}
+    }
     // One supporter checkout at a time: a new one first closes the last, so two tabs can't start
     // two renewing subscriptions. A session Stripe can't close was paid or is finishing.
     let previous: Vec<(String, String)> = sqlx::query_as("SELECT c.id,c.status FROM checkout_sessions c WHERE c.user_id=$1 AND c.kind='platform' AND c.detail->>'upgrade' IS NULL AND c.created_at>now()-interval '1 hour' AND (c.status='open' OR c.status='paid' AND NOT EXISTS(SELECT 1 FROM platform_invoices i WHERE i.user_id=c.user_id AND i.created_at>c.created_at))")

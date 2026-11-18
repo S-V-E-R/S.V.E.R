@@ -460,8 +460,19 @@ async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -
             Ok(())
         }
         "charge.refunded" => refunded(app, tx, object).await,
-        "charge.dispute.created" => disputed(app, tx, object, false).await,
-        "charge.dispute.closed" if object["status"] == "won" => {
+        // An inquiry (`warning_*`) takes no money, so it reverses nothing; if it becomes a
+        // chargeback, Stripe withdraws the funds and says so. Posting is once per dispute.
+        "charge.dispute.created" | "charge.dispute.updated" | "charge.dispute.funds_withdrawn"
+            if object["status"]
+                .as_str()
+                .is_some_and(|s| !s.starts_with("warning_") && !matches!(s, "won" | "lost")) =>
+        {
+            disputed(app, tx, object, false).await
+        }
+        // `warning_closed` posts back a reversal made for an inquiry before inquiries were skipped.
+        "charge.dispute.closed"
+            if matches!(object["status"].as_str(), Some("won" | "warning_closed")) =>
+        {
             disputed(app, tx, object, true).await
         }
         "account.updated" => sync_account(tx, object).await,
@@ -743,13 +754,17 @@ async fn refunded(app: &App, tx: &mut PgConnection, object: &Value) -> Res<()> {
     if refunded <= before {
         return Ok(());
     }
+    // A refund reverses only what an open or lost dispute hasn't already reversed, so nothing is
+    // reversed twice (`disputed` does the same the other way round).
+    let room = cents - disputed_cents(tx, &intent).await?;
+    let (now, was) = (refunded.min(room).max(0), before.min(room).max(0));
     post_pairs(
         tx,
         "refund",
         &format!("refund:{intent}:{refunded}"),
         json!({"payment_intent": intent, "refunded_cents": refunded}),
         &pairs,
-        |amount| -(amount * refunded / cents - amount * before / cents),
+        |amount| -(amount * now / cents - amount * was / cents).max(0),
     )
     .await?;
     // An ad campaign reacts to partial refunds too (adnet.rs tells its own refunds apart).
@@ -760,6 +775,12 @@ async fn refunded(app: &App, tx: &mut PgConnection, object: &Value) -> Res<()> {
         crate::seats::taken_back(tx, &intent).await?;
     }
     Ok(())
+}
+
+/// Cents of a payment that disputes have reversed and not posted back (open or lost).
+async fn disputed_cents(tx: &mut PgConnection, intent: &str) -> Res<i64> {
+    Ok(sqlx::query_scalar("SELECT COALESCE(sum((d.detail->>'cents')::bigint),0)::bigint FROM ledger_transactions d WHERE d.kind='dispute' AND d.detail->>'payment_intent'=$1 AND NOT EXISTS(SELECT 1 FROM ledger_transactions w WHERE w.reference='dispute-won:'||(d.detail->>'dispute'))")
+        .bind(intent).fetch_one(tx).await?)
 }
 
 /// Disputed Valor that was already spent: what it paid creators (tributes, Valor months and gifts)
@@ -860,6 +881,8 @@ async fn disputed(app: &App, tx: &mut PgConnection, object: &Value, won: bool) -
     // Winning posts back exactly what the dispute took; if its reversal was never posted, neither
     // is this.
     ledger::lock(tx, &format!("refund:{intent}")).await?;
+    let refunded: i64 = sqlx::query_scalar("SELECT COALESCE(max((detail->>'refunded_cents')::bigint),0) FROM ledger_transactions WHERE kind IN ('valor_refund','refund') AND detail->>'payment_intent'=$1")
+        .bind(&intent).fetch_one(&mut *tx).await?;
     let amount = if won {
         let took: Option<i64> = sqlx::query_scalar(
             "SELECT (detail->>'cents')::bigint FROM ledger_transactions WHERE reference=$1",
@@ -868,12 +891,11 @@ async fn disputed(app: &App, tx: &mut PgConnection, object: &Value, won: bool) -
         .fetch_optional(&mut *tx)
         .await?;
         match took {
-            Some(took) => took,
+            // Money refunded while the dispute was open stays reversed.
+            Some(took) => took.min(cents - refunded),
             None => return Ok(()),
         }
     } else {
-        let refunded: i64 = sqlx::query_scalar("SELECT COALESCE(max((detail->>'refunded_cents')::bigint),0) FROM ledger_transactions WHERE kind IN ('valor_refund','refund') AND detail->>'payment_intent'=$1")
-            .bind(&intent).fetch_one(&mut *tx).await?;
         object["amount"]
             .as_i64()
             .unwrap_or(cents)

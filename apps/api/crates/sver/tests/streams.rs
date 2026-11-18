@@ -506,7 +506,10 @@ async fn streaming_lifecycle_and_security() {
         .route("/v1/transfers", get(stripe).post(stripe))
         .route("/v1/payouts", post(stripe))
         .route("/v1/refunds", post(stripe))
-        .route("/v1/subscriptions/{id}", get(stripe).post(stripe))
+        .route(
+            "/v1/subscriptions/{id}",
+            get(stripe).post(stripe).delete(stripe),
+        )
         .route("/v1/accounts/{id}/login_links", post(stripe))
         .route("/hook", post(board_hook))
         .with_state(fake.clone());

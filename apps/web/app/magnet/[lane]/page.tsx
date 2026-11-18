@@ -2,7 +2,15 @@ import { MagnetHype } from "../../../components/MagnetHype";
 import { currentAccount } from "../../session";
 import "../../../styles/home.css";
 
-export const metadata = { title: "MAGNet | S.V.E.R" };
+import type { Metadata } from "next";
+import { publicMeta } from "../../../lib/seo";
+import { isFaction, factionInfo } from "../../../lib/factions";
+
+export async function generateMetadata({ params }: { params: Promise<{ lane: string }> }): Promise<Metadata> {
+  const { lane } = await params;
+  const name = isFaction(lane) ? factionInfo(lane).name : "MAGNet";
+  return publicMeta(`${name} MAGNet | S.V.E.R`, `The ${name} MAGNet lane gives every stream in it a turn, whether it has 3 viewers or 3,000.`, `/magnet/${encodeURIComponent(lane)}`);
+}
 export default async function LaneHype({ params }: { params: Promise<{ lane: string }> }) {
   const { lane } = await params;
   const account = await currentAccount();

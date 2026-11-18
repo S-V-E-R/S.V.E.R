@@ -1,7 +1,7 @@
 import SitePage from "../../components/SitePage";
 import { apiGet } from "../../lib/server-api";
 
-export const metadata = { title: "Open data | S.V.E.R", description: "How S.V.E.R is doing and where the money goes, week by week." };
+export const metadata = { title: "Open data | S.V.E.R", description: "How S.V.E.R is doing and where the money goes, week by week.", alternates: { canonical: "https://sver.tv/open-data" } };
 
 type Row = { period: string; from?: string; complete: boolean; [metric: string]: number | string | boolean | null | undefined };
 type Data = { weekly: Row[]; monthly: Row[]; notes: Record<string, string>; updated: string | null };

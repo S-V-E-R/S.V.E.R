@@ -1,5 +1,5 @@
 "use client";
-import { ArrowIcon } from "./shell/Icons";
+import { ArrowIcon, BanIcon, BellIcon, CheckIcon, ClockIcon, CrossIcon, FactionIcon, HeartIcon, LockIcon, MessageIcon, MusicIcon, SearchIcon, ShieldIcon } from "./shell/Icons";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { send } from "../lib/client-api";
@@ -7,23 +7,40 @@ import { UsernameInput } from "./UsernameInput";
 import { REDUCE_KEY, type BoardEvent } from "./BoardEffects";
 import "../styles/boards.css";
 
-export type Control = { id: string; kind: "button" | "label" | "text" | "goal" | "joystick" | "rally"; label: string; cost: number; cooldown_seconds: number; per_stream_limit: number | null; audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number; confirm?: boolean };
+export type Control = { id: string; kind: "button" | "label" | "text" | "goal" | "joystick" | "rally"; label: string; cost: number; cooldown_seconds: number; per_stream_limit: number | null; audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number; confirm?: boolean; color?: string; icon?: string };
 export type BoardDef = { screens: { name: string; controls: Control[] }[] };
 type View = { board: BoardDef | null; version: number; disabled: boolean; starting?: boolean; screen?: number | null; live: boolean; overlay: boolean; goals: Record<string, number>; used: Record<string, number>; last_press: Record<string, string>; balance: number | null; signed_in: boolean; can_run: boolean; blocks: string[] | null; state?: Record<string, { label?: string; disabled?: boolean }> };
 const AUDIENCE = { everyone: "", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
 const STICK: ["up" | "left" | "right" | "down", number, number][] = [["up", 0, -1], ["left", -1, 0], ["right", 1, 0], ["down", 0, 1]];
 
+/** Button styles (the lists are fixed in boards.rs): each colour is one of the site's theme palettes. */
+export const BOARD_COLORS: Record<string, { name: string; theme: string }> = { steel: { name: "Steel", theme: "neutral" }, ember: { name: "Ember", theme: "myria" }, violet: { name: "Violet", theme: "aetheron" }, gold: { name: "Gold", theme: "glint" } };
+export const BOARD_ICONS: Record<string, { name: string; Icon: (props: { size?: number }) => React.ReactNode }> = {
+  heart: { name: "Heart", Icon: HeartIcon }, music: { name: "Music", Icon: MusicIcon }, bell: { name: "Bell", Icon: BellIcon }, shield: { name: "Shield", Icon: ShieldIcon },
+  flag: { name: "Flag", Icon: FactionIcon }, clock: { name: "Clock", Icon: ClockIcon }, message: { name: "Message", Icon: MessageIcon }, check: { name: "Check", Icon: CheckIcon },
+  cross: { name: "Cross", Icon: CrossIcon }, ban: { name: "No entry", Icon: BanIcon }, lock: { name: "Lock", Icon: LockIcon }, search: { name: "Search", Icon: SearchIcon },
+};
+/** A styled button's colour: it wears that theme's tokens, so it is beveled like every button. */
+const tone = (c: Control) => (c.color && BOARD_COLORS[c.color] ? { "data-theme": BOARD_COLORS[c.color].theme } : {});
+function Mark({ c }: { c: Control }) {
+  const Icon = c.icon ? BOARD_ICONS[c.icon]?.Icon : undefined;
+  return Icon ? <Icon size={14} /> : null;
+}
+
+/** One control as viewers see it, with nothing to press: the catalog's and the builder's previews. */
+export function ControlFace({ c, span }: { c: Control; span?: boolean }) {
+  const style = span ? { gridColumn: `span ${c.width || 1}` } : undefined;
+  const price = (c.cost ? `${c.cost.toLocaleString("en-US")} EV` : "Free") + (AUDIENCE[c.audience] ? ` · ${AUDIENCE[c.audience]}` : "");
+  if (c.kind === "label") return <p className="board-label" style={style}>{c.label}</p>;
+  if (c.kind === "goal") return <div className="board-goal" style={style}><span>{c.label} · 0 / {c.target?.toLocaleString("en-US")}</span><progress max={c.target ?? 1} value={0} aria-label={c.label} /><small className="muted">{price}</small></div>;
+  const styled = c.kind === "button" || c.kind === "text";
+  return <button type="button" style={style} disabled {...(styled ? tone(c) : {})}>{styled && <Mark c={c} />}{c.label}<small>{c.kind === "joystick" ? "Joystick" : c.kind === "text" ? `Text · ${price}` : price}</small></button>;
+}
 /** A board drawn as viewers see it, with nothing to press: the catalog's preview of a listing's board. */
 export function BoardPreview({ board }: { board: BoardDef }) {
   return <>{board.screens.map((s, i) => <div key={s.name + i}>
     {board.screens.length > 1 && <h3>{s.name}</h3>}
-    <div className="board-grid">{s.controls.map(c => {
-      const span = { gridColumn: `span ${c.width || 1}` };
-      const price = (c.cost ? `${c.cost.toLocaleString("en-US")} EV` : "Free") + (AUDIENCE[c.audience] ? ` · ${AUDIENCE[c.audience]}` : "");
-      if (c.kind === "label") return <p key={c.id} className="board-label" style={span}>{c.label}</p>;
-      if (c.kind === "goal") return <div key={c.id} className="board-goal" style={span}><span>{c.label} · 0 / {c.target?.toLocaleString("en-US")}</span><progress max={c.target ?? 1} value={0} aria-label={c.label} /><small className="muted">{price}</small></div>;
-      return <button key={c.id} type="button" style={span} disabled>{c.label}<small>{c.kind === "joystick" ? "Joystick" : c.kind === "text" ? `Text · ${price}` : price}</small></button>;
-    })}</div>
+    <div className="board-grid">{s.controls.map(c => <ControlFace key={c.id} c={c} span />)}</div>
   </div>)}</>;
 }
 
@@ -151,14 +168,14 @@ export function Board({ username }: { username: string }) {
         if (c.kind === "joystick") return <div key={c.id} style={span}><span className="small">{c.label}</span><div className="board-stick" role="group" aria-label={c.label}>{STICK.map(([arrow, x, y]) => <button key={arrow} type="button" className="small quiet" disabled={!canPress} aria-label={`${c.label} ${arrow}`} onClick={e => move(c, x, y, e.timeStamp)}><ArrowIcon dir={arrow} /></button>)}</div></div>;
         if (c.kind === "text") return <form key={c.id} style={span} onSubmit={e => { e.preventDefault(); void press(c, { text: texts[c.id] ?? "" }); }}>
           <label className="field"><span>{c.label} <small className="muted">{price(c)}</small></span><input value={texts[c.id] ?? ""} maxLength={200} disabled={!canPress} onChange={e => setTexts(t => ({ ...t, [c.id]: e.target.value }))} /></label>
-          <button className="small" disabled={off || !(texts[c.id] ?? "").trim()}>{why ?? "Send"}</button>
+          <button className="small" disabled={off || !(texts[c.id] ?? "").trim()} {...tone(c)}><Mark c={c} />{why ?? "Send"}</button>
         </form>;
         if (c.kind === "goal") return <div key={c.id} className="board-goal" style={span}>
           <span>{c.label} · {(view.goals[c.id] ?? 0).toLocaleString()} / {c.target?.toLocaleString()}</span>
           <progress max={c.target ?? 1} value={view.goals[c.id] ?? 0} aria-label={c.label} />
           <button type="button" className="small" disabled={off} onClick={() => press(c)}>{why ?? `Add (${price(c)})`}</button>
         </div>;
-        return <button key={c.id} type="button" style={span} disabled={off} onClick={() => press(c)}>{c.label}<small>{why ?? price(c)}</small></button>;
+        return <button key={c.id} type="button" style={span} disabled={off} onClick={() => press(c)} {...(c.kind === "button" ? tone(c) : {})}>{c.kind === "button" && <Mark c={c} />}{c.label}<small>{why ?? price(c)}</small></button>;
       })}</div>}
       <label className="checkbox"><input type="checkbox" checked={calm} onChange={e => setReduce(e.target.checked)} /> Reduce effects</label>
       {view.can_run && <div className="board-run">

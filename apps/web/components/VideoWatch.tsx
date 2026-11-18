@@ -9,6 +9,7 @@ import { RecordedPlayer } from "./RecordedPlayer";
 import { VideoCut } from "./VideoCut";
 import { ReportButton, TakeDownLink, type ReportTarget } from "./Report";
 import { ShareButton } from "./ShareButton";
+import { timestampParam } from "../lib/share";
 
 function Replay({ id, at, ageAck }: { id: string; at: number; ageAck: boolean }) {
   const [messages, setMessages] = useState<{ id: string; offset_ms: number; author: Chip; body: string }[]>([]);
@@ -28,7 +29,7 @@ function Replay({ id, at, ageAck }: { id: string; at: number; ageAck: boolean })
   }, [id, ageAck]);
   return <aside className="video-replay panel" aria-label="Chat replay"><h2>Chat replay</h2><p className="muted">Messages from this moment in the broadcast.</p>{note ? <p role="status">{note}</p> : <ol>{messages.map(m => <li key={m.id}><time>{duration(m.offset_ms)}</time><strong>{m.author.display_name}</strong> {m.body}</li>)}</ol>}</aside>;
 }
-export function VideoWatch({ id, initial = null, embed = false }: { id: string; initial?: VideoPage | null; embed?: boolean }) {
+export function VideoWatch({ id, initial = null, embed = false, credit = null }: { id: string; initial?: VideoPage | null; embed?: boolean; credit?: string | null }) {
   const [data, setData] = useState(initial);
   const [ageAck, setAgeAck] = useState(false);
   const [error, setError] = useState("");
@@ -60,7 +61,7 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
       {data.live && <Link className="button" href={`/${data.channel.username}/live`}>Watch live</Link>}
       {data.signed_in && v.kind !== "CLIP" && data.clip_permission !== "OFF" && <button className="quiet" onClick={() => setCut(cut === "CLIP" ? null : "CLIP")}>Create clip</button>}
       {data.can_highlight && v.recording && v.kind === "VOD" && <button className="quiet" onClick={() => setCut(cut === "HIGHLIGHT" ? null : "HIGHLIGHT")}>Save Highlight</button>}
-      <ShareButton path={`/${v.kind === "CLIP" ? "clips" : "videos"}/${id}`} title={v.title} className="quiet" />
+      <ShareButton path={`/${v.kind === "CLIP" ? "clips" : "videos"}/${id}`} title={v.title} className="quiet" credit={credit} networks params={() => ({ t: timestampParam(time) })} />
       {data.is_owner && v.kind === "CLIP" && v.status === "READY" && v.approval === "APPROVED" && <Link className="button quiet" href={`/studio/beacons?clip=${id}`}>Make a Beacon</Link>}
       {data.can_download && v.kind !== "CLIP" && <button className="quiet" onClick={() => void requestDownload()}>Prepare download</button>}
       {download && <a className="button" href={download}>Download MP4</a>}
