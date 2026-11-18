@@ -1,194 +1,209 @@
-import { useCallback, useState } from "react";
-import { Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
-import { router } from "expo-router";
+import { useCallback, useState, type ReactNode } from "react";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { send } from "../../src/api";
 import { useAuth } from "../../src/auth";
-import { factionColor, factionLabel } from "../../src/brand";
-import { isFaction } from "../../../web/lib/factions";
-import { useLoad } from "../../src/load";
+import { factionColor } from "../../src/brand";
+import { ChannelRow, StreamCard } from "../../src/cards";
+import { ago } from "../../src/format";
+import { SearchIcon } from "../../src/icons";
 import { rotationOrder } from "../../src/streams";
-import { isStreamCard, type MagnetLane, type RecentChannel, type SearchResult, type StreamCard } from "../../src/types";
-import { Field, Frame, MagnetMark, Notice, Screen, Tag, ink, inkDim, inkMuted } from "../../src/ui";
-import { absolute, crestUrl } from "../../src/urls";
+import { space } from "../../src/theme";
+import { isHomeFeed, isStreamCard, streamCards, type MagnetLane, type RecentChannel, type Spotlight, type StreamCard as Card } from "../../src/types";
+import { Button, CardSkeleton, EmptyState, Frame, IconButton, MagnetMark, Notice, Page, SectionHead, Tag, type } from "../../src/ui";
+
+type Spot = Spotlight & { stream: Card };
+type Recent = RecentChannel & { user: { username: string } };
+type Feed = { live: Card[]; following: Card[]; spotlights: Spot[]; recent: Recent[] };
 
 export default function MagnetScreen() {
   const insets = useSafeAreaInsets();
   const { account, colors } = useAuth();
-  const [items, setItems] = useState<StreamCard[]>([]);
-  const [minute, setMinute] = useState(0);
-  const [recent, setRecent] = useState<RecentChannel[]>([]);
+  const [home, setHome] = useState<Feed | null>(null);
   const [featured, setFeatured] = useState<MagnetLane["featured"]>(null);
+  const [minute, setMinute] = useState(0);
   const [error, setError] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
-  const [query, setQuery] = useState("");
-  const [found, setFound] = useState<SearchResult | null>(null);
-  const [searchError, setSearchError] = useState("");
+  // No empty state before the first answer arrives.
+  const [loaded, setLoaded] = useState(false);
+  const viewerFaction = account?.faction ?? null;
 
-  const load = useCallback(async () => {
-    const [live, lane] = await Promise.all([
-      send<{ items?: unknown; recent?: unknown }>("GET", "/api/discovery/live"),
+  /** Loads the feed and returns when MAGNet next rotates (ms), if known. */
+  const load = useCallback(async (): Promise<number | null> => {
+    const [res, lane] = await Promise.all([
+      send<unknown>("GET", "/api/discovery/home"),
       send<MagnetLane>("GET", "/api/magnet/global"),
     ]);
-    if (!live.ok) {
-      setError(live.error);
-      return;
+    setLoaded(true);
+    if (!res.ok || !isHomeFeed(res.data)) {
+      setError(res.ok ? "Live channels couldn’t be loaded." : res.error);
+      return null;
     }
-    const cards = Array.isArray(live.data.items) ? live.data.items.filter(isStreamCard) : [];
-    setItems(rotationOrder(cards));
+    const data = res.data;
+    setHome({
+      // The API's fair rotation; never re-sorted here (docs/MAGNET.md).
+      live: rotationOrder(streamCards(data.live)),
+      following: streamCards(data.following),
+      // Staff picks have no stream while the channel is offline.
+      spotlights: data.spotlights.filter(isSpot),
+      recent: data.recent.filter(isRecent),
+    });
     // A live still changes under one URL and the Android image cache keeps the first one forever,
     // so the cards ask for it under a per-minute key, like the website's LiveThumbnail.
     setMinute(Math.floor(Date.now() / 60000));
-    setRecent(Array.isArray(live.data.recent) ? live.data.recent.filter(isRecent) : []);
     setFeatured(lane.ok && lane.data.featured && isStreamCard(lane.data.featured.stream) ? lane.data.featured : null);
     setError("");
+    return data.rotates_at ? Date.parse(data.rotates_at) : null;
   }, []);
 
-  useLoad(load, 30000);
+  // Reload on focus, then when MAGNet rotates (at least 30s apart), only while this tab is focused.
+  // Between reloads the order never changes under the finger.
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      const next = await load();
+      if (active) timer = setTimeout(() => { void tick(); }, Math.max(30000, (next ?? 0) + 1000 - Date.now()));
+    };
+    void tick();
+    return () => { active = false; clearTimeout(timer); };
+  }, [load]));
 
-  async function refresh() {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }
+  const retry = () => { void load(); };
+  const live = home?.live ?? [];
+  const next = featured ? live[(live.findIndex(s => s.username === featured.stream.username) + 1) % live.length] : undefined;
+  const upNext = next && next.username !== featured?.stream.username ? next : null;
+  // One stream live and it is the featured one: Live now would only show it a second time (docs/DESIGN.md "Home").
+  const repeated = live.length === 1 && featured?.stream.username === live[0].username;
 
-  async function search() {
-    const q = query.trim();
-    if (q.length < 2 || q.length > 50) {
-      setSearchError("Search for 2–50 characters.");
-      return;
-    }
-    const result = await send<SearchResult>("GET", `/api/search?q=${encodeURIComponent(q)}`);
-    if (!result.ok) {
-      setSearchError(result.error);
-      return;
-    }
-    setSearchError("");
-    setFound(result.data);
-  }
-
-  return (
-    <Screen>
-      <ScrollView
-        contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: 24, paddingHorizontal: 16, gap: 16 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { void refresh(); }} tintColor={colors.accent} />}
-      >
-        <View>
-          <Text style={[styles.logo, { color: colors.accentLight }]}>S.V.E.R</Text>
-          <View style={styles.markRow}><MagnetMark /><Text style={styles.kicker}>MAGNet</Text></View>
-        </View>
-        <Text style={styles.lead}>Every live stream gets a turn here, whether it has 3 viewers or 3,000.</Text>
-        {account?.deletion_due ? <Notice>This account is pending deletion.</Notice> : null}
-        {error ? <Notice>{error}</Notice> : null}
-        <Field label="Search channels" value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} returnKeyType="search" onSubmitEditing={() => { void search(); }} />
-        {searchError ? <Notice>{searchError}</Notice> : null}
-        {found ? (
-          <Frame>
-            <View style={styles.rowBetween}>
-              <Text style={styles.section}>Channels</Text>
-              <Pressable accessibilityRole="button" onPress={() => setFound(null)}><Text style={{ color: colors.accentLight }}>Clear</Text></Pressable>
-            </View>
-            {found.channels.length === 0 ? <Text style={styles.dim}>No channels match.</Text> : found.channels.map(channel => channel.username ? (
-              <Pressable key={channel.username} accessibilityRole="button" onPress={() => router.push(`/watch/${channel.username}`)} style={styles.searchRow}>
-                <Text style={styles.name}>{channel.display_name}</Text>
-                <Text style={styles.dim}>@{channel.username}</Text>
-              </Pressable>
-            ) : null)}
-            {found.categories.length > 0 ? <Text style={styles.dim}>Categories: {found.categories.map(category => category.name).join(" · ")}</Text> : null}
-          </Frame>
-        ) : null}
-        {featured?.stream ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={`Featured: ${featured.stream.title}`} onPress={() => router.push(`/watch/${featured.stream.username}`)}>
-            <Frame>
-              <Text style={styles.kicker}>Featured now</Text>
-              <Text style={[styles.section, { color: colors.accentLight }]}>{featured.stream.display_name}</Text>
-              <Text style={styles.name}>{featured.stream.title}</Text>
-              {featured.reason ? <Text style={styles.dim}>{featured.reason}</Text> : null}
-              {featured.holding ? <Text style={styles.dim}>This stream isn’t available to you on MAGNet right now.</Text> : null}
-            </Frame>
-          </Pressable>
-        ) : null}
-        {items.length === 0 && !error ? (
-          <Frame>
-            <Text style={styles.section}>Nothing live right now.</Text>
-            {recent.length === 0 ? <Text style={styles.dim}>Recently live channels show up here when a broadcast has ended.</Text> : recent.map(row => row.user.username ? (
-              <Pressable key={row.user.username} accessibilityRole="button" onPress={() => router.push(`/watch/${row.user.username}`)} style={styles.searchRow}>
-                <Text style={styles.name}>{row.user.display_name}</Text>
-                <Text style={styles.dim}>Recently live</Text>
-              </Pressable>
-            ) : null)}
-          </Frame>
-        ) : (
-          <View>
-            {items.map((stream, index) => (
-              <Node key={stream.broadcast_id} stream={stream} last={index === items.length - 1} minute={minute} />
-            ))}
-          </View>
-        )}
-      </ScrollView>
-    </Screen>
-  );
-}
-
-function Node({ stream, last, minute }: { stream: StreamCard; last: boolean; minute: number }) {
-  const color = factionColor(stream.faction);
-  const side = factionLabel(stream.faction);
-  const thumb = `${absolute(stream.thumbnail)}${stream.thumbnail.includes("?") ? "&" : "?"}v=${minute}`;
-  return (
-    <View style={styles.nodeRow}>
-      <View style={styles.rail}>
-        {!last ? <View style={[styles.trail, { backgroundColor: color }]} /> : null}
-        <View style={[styles.node, { backgroundColor: color }]} />
-      </View>
-      <Pressable accessibilityRole="button" accessibilityLabel={`${stream.title}, ${stream.display_name}`} onPress={() => router.push(`/watch/${stream.username}`)} style={styles.nodeCard}>
-        <Frame>
-          <View style={styles.cardTop}>
-            <Image source={{ uri: thumb }} style={styles.thumb} accessibilityIgnoresInvertColors />
-            <View style={styles.cardBody}>
-              {isFaction(stream.faction) ? <Image source={{ uri: crestUrl(stream.faction) }} style={styles.crest} accessibilityIgnoresInvertColors /> : null}
-              <View style={styles.tags}>
-                <Tag label="Live" tone="live" />
-                {stream.mature ? <Tag label="Mature" /> : null}
-                {side ? <Tag label={side} tone="accent" /> : null}
-                {stream.label ? <Tag label={stream.label} /> : null}
-              </View>
-              <Text style={styles.name} numberOfLines={2}>{stream.title}</Text>
-              <Text style={styles.dim}>{stream.display_name}{stream.category ? ` · ${stream.category}` : ""}</Text>
-              <Text style={styles.count}>{stream.viewers.toLocaleString()} watching</Text>
-            </View>
-          </View>
-        </Frame>
-      </Pressable>
+  const header = (
+    <View style={[styles.header, { paddingTop: insets.top, minHeight: 56 + insets.top }]}>
+      <Text style={[type.logo, { color: colors.accentLight }]} accessibilityRole="header">S.V.E.R</Text>
+      <View style={styles.mark}><MagnetMark /><Text style={type.label}>MAGNet</Text></View>
+      <View style={styles.grow} />
+      <IconButton icon={c => <SearchIcon color={c} />} label="Search" onPress={() => router.navigate("/browse?focus=1")} />
     </View>
   );
+
+  return (
+    <Page header={header} onRefresh={load} tabbed>
+      {!account ? (
+        <View style={styles.lead}>
+          <Text style={[type.small, styles.grow]}>Find your people. Forge your legacy.</Text>
+          <Button label="Log in" tone="quiet" compact onPress={() => router.push("/sign-in")} />
+        </View>
+      ) : null}
+      {account?.deletion_due ? <Notice>This account is pending deletion.</Notice> : null}
+
+      {!loaded ? (
+        <>
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+        </>
+      ) : !home ? (
+        <Notice onRetry={retry}>{error}</Notice>
+      ) : (
+        <>
+          {featured ? (
+            <Frame style={styles.hero}>
+              <Text style={type.label}>Featured now</Text>
+              <StreamCard stream={featured.stream} size="full" minute={minute} viewerFaction={viewerFaction} />
+              {featured.reason ? <Text style={[type.small, { color: colors.accentLight }]}>{featured.reason}</Text> : null}
+              {featured.holding ? <Text style={type.small}>This stream isn’t available to you on MAGNet right now.</Text> : null}
+              <Button label="Watch" onPress={() => router.push(`/watch/${featured.stream.username}`)} />
+              {upNext ? <Text style={type.small}>Up next in rotation: {upNext.display_name}{upNext.category ? ` · ${upNext.category}` : ""}</Text> : null}
+            </Frame>
+          ) : null}
+          {home.spotlights.length > 0 ? (
+            <Rail>
+              {home.spotlights.map(s => (
+                <View key={s.stream.broadcast_id} style={styles.spot}>
+                  <Tag label={s.reason} tone="accent" />
+                  <StreamCard stream={s.stream} size="compact" minute={minute} viewerFaction={viewerFaction} />
+                </View>
+              ))}
+            </Rail>
+          ) : null}
+
+          {account && home.following.length > 0 ? (
+            <>
+              <SectionHead title="Following" action={{ label: "View all", onPress: () => router.navigate("/following") }} />
+              <Rail>
+                {home.following.map(s => <StreamCard key={s.broadcast_id} stream={s} size="compact" minute={minute} viewerFaction={viewerFaction} />)}
+              </Rail>
+            </>
+          ) : null}
+
+          {error ? <Notice onRetry={retry}>{error}</Notice> : null}
+
+          {live.length === 0 ? (
+            <EmptyState title="Nothing live right now." action={{ label: "Watch Beacons", onPress: () => router.navigate("/beacons") }}>
+              {home.recent.slice(0, 5).map(row => (
+                <ChannelRow key={row.user.username} user={row.user} meta={`Live ${ago(row.ended_at)}`} onPress={() => router.push(`/watch/${row.user.username}`)} />
+              ))}
+            </EmptyState>
+          ) : !repeated ? (
+            <>
+              <SectionHead title="Live now" note="Ordered by MAGNet, not by viewer count." />
+              <View style={styles.trailList}>
+                {live.map((stream, index) => {
+                  const color = factionColor(stream.faction);
+                  return (
+                    <View key={stream.broadcast_id} style={styles.node}>
+                      <View style={styles.rail}>
+                        {index < live.length - 1 ? <View style={[styles.trail, { backgroundColor: color }]} /> : null}
+                        <View style={[styles.diamond, { backgroundColor: color }]} />
+                      </View>
+                      <View style={styles.grow}>
+                        <StreamCard stream={stream} size="full" minute={minute} viewerFaction={viewerFaction} />
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </>
+          ) : null}
+        </>
+      )}
+    </Page>
+  );
 }
 
-function isRecent(value: unknown): value is RecentChannel {
+/** A horizontal row of compact cards that runs to the screen edges. */
+function Rail({ children }: { children: ReactNode }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.railScroll} contentContainerStyle={styles.railContent}>
+      {children}
+    </ScrollView>
+  );
+}
+
+function isSpot(value: unknown): value is Spot {
+  return !!value && typeof value === "object" && typeof (value as Spot).reason === "string" && isStreamCard((value as Spot).stream);
+}
+
+function isRecent(value: unknown): value is Recent {
   if (!value || typeof value !== "object") return false;
-  const row = value as { user?: { username?: unknown; display_name?: unknown } };
-  return !!row.user && typeof row.user.display_name === "string";
+  const row = value as { user?: { username?: unknown; display_name?: unknown }; ended_at?: unknown };
+  return !!row.user && typeof row.user.username === "string" && typeof row.user.display_name === "string" && typeof row.ended_at === "string";
 }
 
 const styles = StyleSheet.create({
-  logo: { fontFamily: "Cinzel_800ExtraBold", fontSize: 28 },
-  markRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
-  kicker: { fontFamily: "BarlowCondensed_700Bold", color: inkDim, letterSpacing: 1.6, textTransform: "uppercase", fontSize: 13 },
-  lead: { color: inkMuted, fontFamily: "Barlow_400Regular", fontSize: 15, lineHeight: 22 },
-  section: { fontFamily: "Cinzel_800ExtraBold", color: ink, fontSize: 22, marginBottom: 8 },
-  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  searchRow: { minHeight: 44, justifyContent: "center" },
-  name: { color: ink, fontFamily: "Barlow_600SemiBold", fontSize: 16 },
-  dim: { color: inkMuted, fontFamily: "Barlow_400Regular", fontSize: 14, marginTop: 2 },
-  count: { color: inkDim, fontFamily: "BarlowCondensed_600SemiBold", fontSize: 13, letterSpacing: 0.6, marginTop: 4 },
-  nodeRow: { flexDirection: "row", gap: 12 },
-  rail: { width: 28, alignItems: "center" },
-  trail: { position: "absolute", top: 16, bottom: -8, width: 2, opacity: 0.45 },
+  header: { flexDirection: "row", alignItems: "center", gap: space.s, paddingHorizontal: space.l },
+  mark: { flexDirection: "row", alignItems: "center", gap: space.s },
+  grow: { flex: 1 },
+  lead: { flexDirection: "row", alignItems: "center", gap: space.m },
+  hero: { gap: space.m },
+  spot: { gap: space.s, alignItems: "flex-start" },
+  railScroll: { marginHorizontal: -space.l },
+  railContent: { paddingHorizontal: space.l, gap: space.m },
+  trailList: { gap: space.xl },
+  node: { flexDirection: "row", gap: space.s },
+  rail: { width: 20, alignItems: "center" },
+  // The trail runs from this node's diamond down through the gap to the next one.
+  trail: { position: "absolute", top: 12, bottom: -space.xl, width: 2, opacity: 0.45 },
   // docs/DESIGN.md's section-heading marker: an 8 px square turned 45°, no glow or rounding.
-  node: { width: 8, height: 8, marginTop: 23, transform: [{ rotate: "45deg" }] },
-  nodeCard: { flex: 1, marginBottom: 12 },
-  cardTop: { flexDirection: "row", gap: 12 },
-  thumb: { width: 96, height: 54, backgroundColor: "#000" },
-  cardBody: { flex: 1, gap: 4 },
-  tags: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  crest: { width: 28, height: 28 },
+  diamond: { width: 8, height: 8, marginTop: 8, transform: [{ rotate: "45deg" }] },
 });

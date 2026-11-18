@@ -3,8 +3,19 @@
   "compilerOptions": {
     "strict": true,
     "noEmit": true,
-    "paths": { "@/*": ["./*"] }
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
   },
-  "include": ["**/*.ts", "**/*.tsx", "expo-env.d.ts"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.test.ts"
+  ]
 }

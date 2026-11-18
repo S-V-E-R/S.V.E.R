@@ -1,13 +1,13 @@
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { StyleSheet, Switch, Text, View } from "react-native";
 import { router } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { send } from "../src/api";
 import { useAuth } from "../src/auth";
 import { useLoad } from "../src/load";
 import type { PushSettings } from "../src/push";
 import { forgetDevice, registerDevice, thisPhone, type PushState } from "../src/register-push";
-import { Button, Frame, Notice, Screen, ink, inkMuted } from "../src/ui";
+import { space } from "../src/theme";
+import { Button, EmptyState, HeaderBar, Notice, Page, Panel, RowSkeleton, hexAlpha, ink, type } from "../src/ui";
 
 const KINDS: [string, string][] = [
   ["guild_application", "New guild applications"],
@@ -30,8 +30,7 @@ function phoneLine(phone: PushState | null, registered: boolean): string {
 }
 
 export default function AlertsScreen() {
-  const insets = useSafeAreaInsets();
-  const { account, colors } = useAuth();
+  const { account } = useAuth();
   const [settings, setSettings] = useState<PushSettings | null>(null);
   const [phone, setPhone] = useState<PushState | null>(null);
   const [registered, setRegistered] = useState(false);
@@ -84,73 +83,77 @@ export default function AlertsScreen() {
   }
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24, paddingHorizontal: 16, gap: 16 }}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={styles.back}>
-          <Text style={{ color: colors.accentLight, fontFamily: "Cinzel_700Bold" }}>Back</Text>
-        </Pressable>
-        <Frame>
-          <Text style={[styles.title, { color: colors.accentLight }]}>Alerts</Text>
-          {!account ? (
-            <View style={styles.stack}>
-              <Text style={styles.body}>Log in to choose which alerts reach this phone.</Text>
-              <Button label="Log in" onPress={() => router.push("/sign-in")} />
-            </View>
-          ) : !settings ? (
-            <Text style={styles.body}>{message || "Loading…"}</Text>
-          ) : (
-            <View style={styles.stack}>
-              <Text style={styles.section}>Go-live</Text>
-              <Text style={styles.body}>When a channel you follow goes live. At most once every six hours for each channel. This is the same push switch as the website, so turning it off stops push there too. To stop one channel, use the bell beside Following on the website.</Text>
-              <Row label="Push when a channel you follow goes live" checked={settings.push} disabled={busy} onChange={value => { void save({ ...settings, push: value }); }} />
-              <Text style={styles.section}>Other alerts</Text>
-              <Text style={styles.body}>These use the same per-type push switch as the website. In-site notices that have no push switch are not sent to this phone.</Text>
-              {KINDS.map(([kind, label]) => {
-                const row = settings.community.find(item => item.kind === kind);
-                if (!row) return null;
-                return (
-                  <Row
-                    key={kind}
-                    label={label}
-                    checked={row.push}
-                    disabled={busy}
-                    onChange={value => {
-                      void save({
-                        ...settings,
-                        community: settings.community.map(item => item.kind === kind ? { ...item, push: value } : item),
-                      });
-                    }}
-                  />
-                );
-              })}
-              <Text style={styles.section}>This phone</Text>
-              <Text style={styles.body}>{phoneLine(phone, registered)}</Text>
-              <Button
-                label={busy ? "Please wait…" : registered ? "Turn off alerts on this phone" : "Turn on alerts on this phone"}
-                kind="quiet"
-                disabled={busy}
-                onPress={() => { void togglePhone(); }}
-              />
-              {message ? <Notice>{message}</Notice> : null}
-            </View>
-          )}
-        </Frame>
-      </ScrollView>
-    </Screen>
+    <Page header={<HeaderBar title="Alerts" onBack={() => router.back()} />}>
+      {!account ? (
+        <EmptyState title="Log in for alerts" body="Log in to choose which alerts reach this phone." action={{ label: "Log in", onPress: () => router.push("/sign-in") }} />
+      ) : !settings ? (
+        message ? <Notice onRetry={() => { void load(); }}>{message}</Notice> : <><RowSkeleton /><RowSkeleton /><RowSkeleton /><RowSkeleton /></>
+      ) : (
+        <>
+          <Text style={type.title}>Go-live</Text>
+          <Panel>
+            <Row
+              label="Push when a channel you follow goes live"
+              hint="At most once every six hours for each channel. This is the same push switch as the website, so turning it off stops push there too. To stop one channel, use the bell beside Following on the website."
+              checked={settings.push}
+              disabled={busy}
+              onChange={value => { void save({ ...settings, push: value }); }}
+            />
+          </Panel>
+          <Text style={type.title}>Other alerts</Text>
+          <Text style={type.small}>These use the same per-type push switch as the website. In-site notices that have no push switch are not sent to this phone.</Text>
+          <Panel>
+            {KINDS.map(([kind, label]) => {
+              const row = settings.community.find(item => item.kind === kind);
+              if (!row) return null;
+              return (
+                <Row
+                  key={kind}
+                  label={label}
+                  checked={row.push}
+                  disabled={busy}
+                  onChange={value => {
+                    void save({
+                      ...settings,
+                      community: settings.community.map(item => item.kind === kind ? { ...item, push: value } : item),
+                    });
+                  }}
+                />
+              );
+            })}
+          </Panel>
+          <Text style={type.title}>This phone</Text>
+          <Panel style={styles.stack}>
+            <Text style={type.small}>{phoneLine(phone, registered)}</Text>
+            <Button
+              label={busy ? "Please wait…" : registered ? "Turn off alerts on this phone" : "Turn on alerts on this phone"}
+              tone="quiet"
+              disabled={busy}
+              onPress={() => { void togglePhone(); }}
+            />
+          </Panel>
+          {message ? <Notice>{message}</Notice> : null}
+        </>
+      )}
+    </Page>
   );
 }
 
-function Row({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (value: boolean) => void }) {
+function Row({ label, hint, checked, disabled, onChange }: { label: string; hint?: string; checked: boolean; disabled: boolean; onChange: (value: boolean) => void }) {
   const { colors } = useAuth();
   return (
     <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
+      <View style={styles.grow}>
+        <Text style={type.strong}>{label}</Text>
+        {hint ? <Text style={type.small}>{hint}</Text> : null}
+      </View>
       <Switch
         accessibilityLabel={label}
+        accessibilityHint={hint}
         value={checked}
         disabled={disabled}
         onValueChange={onChange}
-        trackColor={{ false: "#3A3D44", true: colors.accent }}
+        trackColor={{ false: hexAlpha(ink, 0.2), true: colors.accent }}
         thumbColor={ink}
       />
     </View>
@@ -158,11 +161,7 @@ function Row({ label, checked, disabled, onChange }: { label: string; checked: b
 }
 
 const styles = StyleSheet.create({
-  back: { minHeight: 44, justifyContent: "center", alignSelf: "flex-start" },
-  stack: { gap: 14 },
-  title: { fontFamily: "Cinzel_800ExtraBold", fontSize: 28, marginBottom: 8 },
-  section: { fontFamily: "Cinzel_700Bold", color: ink, fontSize: 18 },
-  body: { color: inkMuted, fontFamily: "Barlow_400Regular", fontSize: 15, lineHeight: 22 },
-  row: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 12 },
-  rowLabel: { flex: 1, color: ink, fontFamily: "Barlow_400Regular", fontSize: 15, lineHeight: 20 },
+  stack: { gap: space.m },
+  row: { minHeight: 56, flexDirection: "row", alignItems: "center", gap: space.m, paddingVertical: space.s },
+  grow: { flex: 1, gap: space.xs },
 });

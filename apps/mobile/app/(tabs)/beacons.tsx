@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
-import { router } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ActivityIndicator, Alert, AppState, FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { router, useIsFocused } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { send } from "../../src/api";
 import { useAuth } from "../../src/auth";
 import { cookieHeader } from "../../src/cookies";
 import { SafetySheet, type SafetyTarget } from "../../src/safety";
 import { browserId, loadJar } from "../../src/session";
-import { Tag, ink, inkMuted } from "../../src/ui";
+import { CheckIcon, FlagIcon, FollowingIcon, HeartIcon } from "../../src/icons";
+import { black, font, scrim, space } from "../../src/theme";
+import { EmptyState, IconButton, Tag, ink, type } from "../../src/ui";
 import { absolute } from "../../src/urls";
 
 type Item = {
@@ -26,11 +28,13 @@ const SEED = Math.random().toString(36).slice(2, 12);
 /**
  * The Beacons feed: one vertical video per screen, swipe to move. Videos start muted; a tap turns
  * sound on for the rest of the session. Only the Beacon on screen has a player.
+ * Leaving the tab (or opening Watch over it) drops the player, so only one video plays at a time.
  * ponytail: 18+ Beacons are left out (age_ack=false) until the app has the 18+ confirmation; comments,
- * share, report and mute stay on the website for now.
+ * share and mute stay on the website for now.
  */
 export default function BeaconsScreen() {
   const { account, colors } = useAuth();
+  const focused = useIsFocused();
   const [items, setItems] = useState<Item[]>([]);
   const [next, setNext] = useState(0);
   const [more, setMore] = useState(true);
@@ -86,14 +90,15 @@ export default function BeaconsScreen() {
           onEndReached={() => { void loadMore(); }}
           onEndReachedThreshold={3}
           renderItem={({ item, index: i }) => (
-            <BeaconCard item={item} height={height} active={i === index && cookie !== null} cookie={cookie ?? ""}
-              sound={sound} onSound={() => setSound(true)} signedIn={!!account} accent={colors.accent}
+            <BeaconCard item={item} height={height} active={focused && i === index && cookie !== null} cookie={cookie ?? ""}
+              sound={sound} onSound={() => setSound(true)} signedIn={!!account}
               onReport={() => setReporting({ type: "beacon", id: item.beacon.id, label: "Beacon", username: item.channel.username, displayName: item.channel.display_name })} />
           )}
           ListEmptyComponent={
             <View style={[styles.empty, { height }]}>
-              <Text style={styles.title}>{error || (loaded ? "No Beacons yet" : "Loading Beacons…")}</Text>
-              {loaded && !error ? <Text style={styles.body}>Creators post short videos here that lead to their streams.</Text> : null}
+              {!loaded ? <ActivityIndicator color={colors.accent} size="large" accessibilityLabel="Loading" />
+                : error ? <EmptyState title="Beacons didn't load" body={error} action={{ label: "Try again", onPress: () => { void loadMore(); } }} />
+                : <EmptyState title="No Beacons yet" body="Creators post short videos here that lead to their streams." />}
             </View>
           }
         />
@@ -105,8 +110,8 @@ export default function BeaconsScreen() {
   );
 }
 
-function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, accent, onReport }: {
-  item: Item; height: number; active: boolean; cookie: string; sound: boolean; onSound: () => void; signedIn: boolean; accent: string; onReport: () => void;
+function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, onReport }: {
+  item: Item; height: number; active: boolean; cookie: string; sound: boolean; onSound: () => void; signedIn: boolean; onReport: () => void;
 }) {
   const { beacon: b, channel: c } = item;
   const [liked, setLiked] = useState(item.liked);
@@ -120,12 +125,17 @@ function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, ac
     const result = await send<{ liked: boolean; likes: number }>(liked ? "DELETE" : "PUT", `/api/beacons/${b.id}/like`);
     if (result.ok) { setLiked(result.data.liked); setLikes(result.data.likes); } else setMessage(result.error);
   }
-  async function follow() {
+  function follow() {
     if (!signedIn) { router.push("/sign-in"); return; }
+    if (!followed) void setFollow();
+    else Alert.alert(`Unfollow ${c.display_name}?`, undefined, [{ text: "Cancel", style: "cancel" }, { text: "Unfollow", style: "destructive", onPress: () => { void setFollow(); } }]);
+  }
+  async function setFollow() {
     if (!c.username) return;
-    const result = await send("PUT", `/api/follows/${encodeURIComponent(c.username)}`);
+    const result = await send<{ following: boolean }>(followed ? "DELETE" : "PUT", `/api/follows/${encodeURIComponent(c.username)}`);
     if (!result.ok) { setMessage(result.error); return; }
-    setFollowed(true);
+    setFollowed(result.data.following);
+    if (!result.data.following) return;
     // Credits this Beacon for the follow (docs/BEACONS.md "Counts").
     await send("POST", `/api/beacons/${b.id}/followed`);
   }
@@ -137,15 +147,15 @@ function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, ac
   }
 
   return (
-    <View style={{ height, backgroundColor: "#000" }}>
+    <View style={{ height, backgroundColor: black }}>
       {active && item.playback ? (
         <BeaconVideo id={b.id} uri={absolute(item.playback.sd)} headers={headers} sound={sound} onSound={onSound} />
       ) : item.thumbnail ? (
         <Image source={{ uri: absolute(item.thumbnail), headers }} style={StyleSheet.absoluteFill} resizeMode="contain" accessibilityIgnoresInvertColors />
       ) : (
-        <View style={styles.empty}><Text style={styles.body}>{item.playback ? "" : "This Beacon isn't available."}</Text></View>
+        <View style={styles.empty}><Text style={[styles.body, { textAlign: "center" }]}>{item.playback ? "" : "This Beacon isn't available."}</Text></View>
       )}
-      <View style={[styles.caption, { paddingBottom: 16 }]} pointerEvents="box-none">
+      <View style={styles.caption} pointerEvents="box-none">
         <View style={{ flex: 1, gap: 4 }} pointerEvents="none">
           <Text style={styles.captionTitle} numberOfLines={3}>{b.title}</Text>
           <Text style={styles.body}>{c.username ? `@${c.username}` : c.display_name}{b.category ? ` · ${b.category}` : ""}</Text>
@@ -153,25 +163,34 @@ function BeaconCard({ item, height, active, cookie, sound, onSound, signedIn, ac
         </View>
         <View style={styles.rail}>
           {c.live ? (
-            <Pressable accessibilityRole="button" accessibilityLabel={`Watch ${c.display_name} live`} onPress={() => { void watchLive(); }} style={styles.railButton}>
-              <Tag label="Live" tone="live" />
-              <Text style={styles.railText}>Watch</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Watch ${c.display_name} live`} onPress={() => { void watchLive(); }} style={styles.live}>
+              <Tag label="Live now" tone="live" />
             </Pressable>
           ) : null}
-          <Pressable accessibilityRole="button" accessibilityLabel={liked ? "Unlike" : "Like"} accessibilityState={{ selected: liked }} onPress={() => { void like(); }} style={styles.railButton}>
-            <View style={[styles.likeMark, { backgroundColor: liked ? accent : "transparent", borderColor: liked ? accent : ink }]} />
-            <Text style={styles.railText}>{likes.toLocaleString()}</Text>
-          </Pressable>
-          {!followed && c.username ? (
-            <Pressable accessibilityRole="button" accessibilityLabel={`Follow ${c.display_name}`} onPress={() => { void follow(); }} style={styles.railButton}>
-              <Text style={[styles.railText, { color: accent }]}>Follow</Text>
-            </Pressable>
+          <Rail caption={likes.toLocaleString()}>
+            <IconButton icon={color => <HeartIcon color={color} filled={liked} />} label={`${liked ? "Unlike" : "Like"}, ${likes.toLocaleString()} likes`} selected={liked} onPress={() => { void like(); }} />
+          </Rail>
+          {c.username ? (
+            <Rail caption={followed ? "Following" : "Follow"}>
+              <IconButton icon={color => (followed ? <CheckIcon color={color} /> : <FollowingIcon color={color} />)}
+                label={followed ? `Unfollow ${c.display_name}` : `Follow ${c.display_name}`} selected={followed} onPress={follow} />
+            </Rail>
           ) : null}
-          <Pressable accessibilityRole="button" accessibilityLabel="Report or block" onPress={onReport} style={styles.railButton}>
-            <Text style={styles.railText}>Report</Text>
-          </Pressable>
+          <Rail caption="Report">
+            <IconButton icon={color => <FlagIcon color={color} />} label="Report or block" onPress={onReport} />
+          </Rail>
         </View>
       </View>
+    </View>
+  );
+}
+
+/** A rail control with its caption under it; the control's own label is what a screen reader says. */
+function Rail({ caption, children }: { caption: string; children: ReactNode }) {
+  return (
+    <View style={styles.railItem}>
+      {children}
+      <Text style={styles.railText} importantForAccessibility="no" accessibilityElementsHidden>{caption}</Text>
     </View>
   );
 }
@@ -207,17 +226,15 @@ function BeaconVideo({ id, uri, headers, sound, onSound }: { id: string; uri: st
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#000" },
-  back: { position: "absolute", left: 16, minHeight: 44, justifyContent: "center", paddingHorizontal: 4 },
-  empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8, padding: 24 },
-  title: { color: ink, fontFamily: "Cinzel_800ExtraBold", fontSize: 22, textAlign: "center" },
-  body: { color: inkMuted, fontFamily: "Barlow_400Regular", fontSize: 14, lineHeight: 20 },
-  caption: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", alignItems: "flex-end", gap: 12, paddingHorizontal: 16, backgroundColor: "rgba(0,0,0,0.45)", paddingTop: 12 },
-  captionTitle: { color: ink, fontFamily: "Barlow_600SemiBold", fontSize: 16, lineHeight: 22 },
-  rail: { alignItems: "center", gap: 14 },
-  railButton: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center", gap: 4 },
-  railText: { color: ink, fontFamily: "BarlowCondensed_700Bold", fontSize: 13, letterSpacing: 1, textTransform: "uppercase" },
-  // The like mark is the design system's diamond: outlined, filled with the accent once liked.
-  likeMark: { width: 16, height: 16, borderWidth: 2, transform: [{ rotate: "45deg" }], marginBottom: 2 },
-  soundHint: { position: "absolute", top: "45%", alignSelf: "center", color: ink, fontFamily: "BarlowCondensed_700Bold", letterSpacing: 1.2, textTransform: "uppercase", backgroundColor: "rgba(0,0,0,0.6)", paddingHorizontal: 10, paddingVertical: 6 },
+  screen: { flex: 1, backgroundColor: black },
+  empty: { flex: 1, justifyContent: "center", padding: space.l },
+  body: { ...type.small, color: ink },
+  // The screen ends at the tab bar, so the caption's own padding is all it needs to clear it.
+  caption: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", alignItems: "flex-end", gap: space.m, paddingHorizontal: space.l, paddingTop: space.m, paddingBottom: space.l, backgroundColor: scrim },
+  captionTitle: { ...type.strong, lineHeight: 22 },
+  rail: { alignItems: "center", gap: space.s },
+  railItem: { alignItems: "center" },
+  railText: { color: ink, fontFamily: font.label, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" },
+  live: { minHeight: 44, justifyContent: "center" },
+  soundHint: { position: "absolute", top: "45%", alignSelf: "center", color: ink, fontFamily: font.label, letterSpacing: 1.2, textTransform: "uppercase", backgroundColor: scrim, paddingHorizontal: space.m, paddingVertical: space.s },
 });

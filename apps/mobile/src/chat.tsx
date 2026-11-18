@@ -1,20 +1,30 @@
-import { useCallback, useEffect, useState } from "react";
-import { DeviceEventEmitter, Pressable, StyleSheet, Text, View } from "react-native";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DeviceEventEmitter, FlatList, Keyboard, LayoutAnimation, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions, type KeyboardEvent, type ListRenderItemInfo } from "react-native";
+import { router } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BOARD_EVENT, BOARD_TYPES } from "./crowd";
 import { send } from "./api";
 import { useAuth } from "./auth";
-import { factionColor, factionLabel } from "./brand";
+import { factionColor } from "./brand";
 import { cookieHeader } from "./cookies";
+import { SendIcon } from "./icons";
 import { SafetySheet, type SafetyTarget } from "./safety";
 import { loadJar, newId } from "./session";
-import { isChatMessage, type ChatMessage } from "./types";
-import { Button, Field, Frame, Notice, ink, inkDim, inkMuted } from "./ui";
+import { fill, font, ink, inkDim, line, onAccent, space } from "./theme";
+import { isChatMessage, type ChatMessage, type ChatRoom } from "./types";
+import { Button, Notice, Panel, Skeleton, type } from "./ui";
 import { appOrigin, chatSocketUrl } from "./urls";
+
+/** The newest messages kept on screen. */
+const CAP = 200;
+/** The website's role badges (apps/web/components/Chat.tsx). */
+const ROLES: Record<string, string> = { owner: "Broadcaster", moderator: "Moderator", staff: "Staff" };
+const LOADING = ["40%", "75%", "55%", "90%", "65%", "80%"] as const;
 
 function merge(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   const byId = new Map(current.map(message => [message.id, message]));
   for (const message of incoming) byId.set(message.id, message);
-  return [...byId.values()].sort((a, b) => a.seq - b.seq);
+  return [...byId.values()].sort((a, b) => a.seq - b.seq).slice(-CAP);
 }
 
 function openSocket(url: string, headers: Record<string, string>): WebSocket {
@@ -22,26 +32,72 @@ function openSocket(url: string, headers: Record<string, string>): WebSocket {
   return new Socket(url, undefined, { headers });
 }
 
-export function Chat({ username }: { username: string }) {
-  const { account } = useAuth();
+/**
+ * A channel's chat: dense rows, newest at the bottom, and the composer. It owns its keyboard
+ * avoidance, so the player and streamer bar above it never move. Its bottom edge is the window's
+ * bottom (Watch's pane and side panel), so the lift is the keyboard's height less the home inset. `onUnread` fires when messages
+ * arrive while `active` is false. The socket also carries CrowdSync events (BOARD_EVENT), so keep
+ * this mounted while the stream's Play panels are.
+ */
+export function Chat({ username, active, onUnread, readOnly }: { username: string; active: boolean; onUnread: () => void; readOnly?: boolean }) {
+  const insets = useSafeAreaInsets();
+  const { account, colors } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [body, setBody] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [pinned, setPinned] = useState<ChatMessage | null>(null);
+  const [followersOnly, setFollowersOnly] = useState<string | null>(null);
+  const [subsOnly, setSubsOnly] = useState(false);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
   const [reporting, setReporting] = useState<SafetyTarget | null>(null);
   // Hidden at once after a block; the server leaves them out of history and the socket from then on.
   const [blocked, setBlocked] = useState<Set<string>>(new Set());
+  const [unseen, setUnseen] = useState(0);
+  const list = useRef<FlatList<ChatMessage>>(null);
+  const away = useRef(false);
+  const buffer = useRef<ChatMessage[]>([]);
+  const unread = useRef({ active, onUnread });
+  useEffect(() => { unread.current = { active, onUnread }; });
+  const { height } = useWindowDimensions();
+  const [keyTop, setKeyTop] = useState(0);
+  useEffect(() => {
+    const move = (e: KeyboardEvent | null) => {
+      if (e?.duration) LayoutAnimation.configureNext({ duration: e.duration, update: { duration: e.duration, type: LayoutAnimation.Types.keyboard } });
+      setKeyTop(e?.endCoordinates.screenY ?? 0);
+    };
+    const ios = Platform.OS === "ios";
+    const subs = [Keyboard.addListener(ios ? "keyboardWillChangeFrame" : "keyboardDidShow", move), Keyboard.addListener(ios ? "keyboardWillHide" : "keyboardDidHide", () => move(null))];
+    return () => subs.forEach(sub => sub.remove());
+  }, []);
+  // A window the system already shrank for the keyboard (Android resize) needs no lift.
+  const lift = keyTop > 0 ? Math.max(0, height - keyTop - insets.bottom) : 0;
 
   const pull = useCallback(async () => {
-    const result = await send<{ messages?: unknown }>("GET", `/api/channels/${encodeURIComponent(username)}/chat`);
+    const result = await send<Partial<ChatRoom>>("GET", `/api/channels/${encodeURIComponent(username)}/chat`);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    const list = Array.isArray(result.data.messages) ? result.data.messages.filter(isChatMessage) : [];
-    setMessages(current => merge(current, list));
+    const incoming = Array.isArray(result.data.messages) ? result.data.messages.filter(isChatMessage) : [];
+    setMessages(current => merge(current, incoming));
+    setPinned(isChatMessage(result.data.pinned) ? result.data.pinned : null);
+    setFollowersOnly(result.data.followers_only_until ?? null);
+    setSubsOnly(!!result.data.subs_only);
+    setLoaded(true);
     setError("");
   }, [username]);
+
+  // Socket messages land in a buffer drawn every 150 ms, so a busy chat renders a few times a second, not per message.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const batch = buffer.current;
+      if (!batch.length) return;
+      buffer.current = [];
+      setMessages(current => merge(current, batch));
+      if (!unread.current.active) unread.current.onUnread();
+      if (away.current) setUnseen(n => n + batch.length);
+    }, 150);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let closed = false;
@@ -78,13 +134,26 @@ export function Chat({ username }: { username: string }) {
         let payload: unknown;
         try { payload = JSON.parse(event.data); } catch { return; }
         if (!payload || typeof payload !== "object") return;
-        const record = payload as { type?: string; messages?: unknown; message?: unknown; id?: unknown };
+        const record = payload as Partial<ChatRoom> & { type?: string; message?: unknown; id?: unknown; until?: unknown; on?: unknown };
         if (record.type === "snapshot" && Array.isArray(record.messages)) {
-          setMessages(record.messages.filter(isChatMessage));
+          buffer.current = [];
+          setMessages(record.messages.filter(isChatMessage).slice(-CAP));
+          setPinned(isChatMessage(record.pinned) ? record.pinned : null);
+          setFollowersOnly(record.followers_only_until ?? null);
+          setSubsOnly(!!record.subs_only);
+          setLoaded(true);
         } else if (record.type === "message" && isChatMessage(record.message)) {
-          setMessages(current => merge(current, [record.message as ChatMessage]));
+          buffer.current.push(record.message);
         } else if (record.type === "delete" && typeof record.id === "string") {
-          setMessages(current => current.filter(message => message.id !== record.id));
+          const id = record.id;
+          buffer.current = buffer.current.filter(message => message.id !== id);
+          setMessages(current => current.filter(message => message.id !== id));
+        } else if (record.type === "pin") {
+          setPinned(isChatMessage(record.pinned) ? record.pinned : null);
+        } else if (record.type === "protect") {
+          setFollowersOnly(typeof record.until === "string" ? record.until : null);
+        } else if (record.type === "subs_only") {
+          setSubsOnly(record.on === true);
         } else if (record.type && BOARD_TYPES.has(record.type)) {
           // Board presses, polls, counters, rally and Surge go to the CrowdSync panels and player effects (src/crowd.tsx).
           DeviceEventEmitter.emit(BOARD_EVENT, { channel: username.toLowerCase(), event: payload });
@@ -98,79 +167,139 @@ export function Chat({ username }: { username: string }) {
     };
   }, [pull, username, account?.id]);
 
+  // Newest first for the inverted list.
+  const shown = useMemo(() => messages.filter(message => !message.author.username || !blocked.has(message.author.username)).reverse(), [messages, blocked]);
+  const report = useCallback((message: ChatMessage) => setReporting({ type: "chat_message", id: message.id, label: "message", username: message.author.username, displayName: message.author.display_name }), []);
+  const renderItem = useCallback(({ item }: ListRenderItemInfo<ChatMessage>) => <Row message={item} onReport={report} />, [report]);
+  const border = line(colors.accent);
+
+  return (
+    <View style={[styles.fill, { paddingBottom: lift }]}>
+      {pinned ? (
+        <Panel style={styles.pinned}>
+          <Text style={type.label}>Pinned</Text>
+          <Text style={styles.text} numberOfLines={2}><Name message={pinned} />{pinned.body ? `: ${pinned.body}` : ""}</Text>
+        </Panel>
+      ) : null}
+      {error ? <Notice onRetry={() => { void pull(); }}>{error}</Notice> : null}
+      <View style={styles.fill}>
+        {!loaded ? (
+          error ? null : <View style={styles.loading} accessible accessibilityLabel="Loading">{LOADING.map(w => <Skeleton key={w} w={w} h={14} />)}</View>
+        ) : shown.length === 0 ? (
+          <Text style={[type.small, styles.empty]}>No messages yet. Say hello.</Text>
+        ) : (
+          <FlatList
+            ref={list}
+            inverted
+            data={shown}
+            keyExtractor={message => message.id}
+            renderItem={renderItem}
+            maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 48 }}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            scrollEventThrottle={100}
+            onScroll={event => {
+              const far = event.nativeEvent.contentOffset.y > 48;
+              if (far === away.current) return;
+              away.current = far;
+              if (!far) setUnseen(0);
+            }}
+          />
+        )}
+        {unseen > 0 ? (
+          <View pointerEvents="box-none" style={styles.pillSpot}>
+            <Pressable accessibilityRole="button" hitSlop={6} onPress={() => { list.current?.scrollToOffset({ offset: 0, animated: true }); setUnseen(0); }}
+              style={({ pressed }) => [styles.pill, { backgroundColor: colors.accent }, pressed && styles.pressed]}>
+              <Text style={styles.pillText}>{unseen === 1 ? "1 new message" : `${unseen} new messages`}</Text>
+            </Pressable>
+          </View>
+        ) : null}
+      </View>
+      <SafetySheet target={reporting} onClose={() => setReporting(null)} onBlocked={name => setBlocked(current => new Set(current).add(name))} />
+      {readOnly ? null : (
+        <View style={[styles.composer, { borderTopColor: border, paddingBottom: insets.bottom + space.s }]}>
+          {followersOnly ? <Text style={type.small}>Followers-only chat</Text> : null}
+          {subsOnly ? <Text style={type.small}>Subscriber-only chat</Text> : null}
+          {account ? (
+            <Composer username={username} border={border} onSent={failure => { setError(failure); if (!failure) void pull(); }} />
+          ) : (
+            <Button tone="quiet" label="Log in to chat" onPress={() => router.push("/sign-in")} />
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** The input row. Typing re-renders only this, not the message list. `onSent` gets "" or the error. */
+function Composer({ username, border, onSent }: { username: string; border: string; onSent: (error: string) => void }) {
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ready = body.trim().length > 0;
   async function submit() {
     const text = body.trim();
     if (!text || busy) return;
-    if (text.length > 500) {
-      setError("Messages are 1–500 characters.");
-      return;
-    }
-    if ((text.match(/\n/g) ?? []).length > 4) {
-      setError("Use at most four line breaks.");
-      return;
-    }
     setBusy(true);
     const result = await send("POST", `/api/channels/${encodeURIComponent(username)}/chat`, { id: newId(), body: text });
     setBusy(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    setBody("");
-    setError("");
-    void pull();
+    if (result.ok) setBody("");
+    onSent(result.ok ? "" : result.error);
   }
-
   return (
-    <Frame>
-      <Text style={styles.heading}>Chat</Text>
-      {error ? <Notice>{error}</Notice> : null}
-      <View style={styles.list}>
-        {messages.length === 0 ? <Text style={styles.empty}>No messages yet.</Text> : messages
-          .filter(message => !message.author.username || !blocked.has(message.author.username))
-          .map(message => <Message key={message.id} message={message} onReport={() => setReporting({ type: "chat_message", id: message.id, label: "message", username: message.author.username, displayName: message.author.display_name })} />)}
-      </View>
-      {messages.length > 0 ? <Text style={styles.hint}>Press and hold a message to report it or block its author.</Text> : null}
-      <SafetySheet target={reporting} onClose={() => setReporting(null)} onBlocked={name => setBlocked(current => new Set(current).add(name))} />
-      {account ? (
-        <View style={styles.composer}>
-          <Field label="Message" value={body} onChangeText={setBody} multiline onSubmitEditing={() => { void submit(); }} />
-          <Button label={busy ? "Sending…" : "Send"} onPress={() => { void submit(); }} disabled={busy || body.trim().length === 0} />
-        </View>
-      ) : (
-        <Text style={styles.empty}>Log in to chat.</Text>
-      )}
-    </Frame>
+    <View style={styles.inputRow}>
+      <TextInput
+        accessibilityLabel="Message"
+        placeholder="Send a message"
+        placeholderTextColor={inkDim}
+        value={body}
+        onChangeText={setBody}
+        maxLength={500}
+        returnKeyType="send"
+        submitBehavior="submit"
+        onSubmitEditing={() => { void submit(); }}
+        style={[styles.input, { borderColor: border }]}
+      />
+      <Button compact label="Send" icon={c => <SendIcon color={c} />} tone={ready ? "primary" : "quiet"} disabled={busy || !ready} onPress={() => { void submit(); }} />
+    </View>
   );
 }
 
-function Message({ message, onReport }: { message: ChatMessage; onReport: () => void }) {
-  const color = factionColor(message.author.faction);
-  const side = factionLabel(message.author.faction);
-  const role = message.role === "owner" ? "Broadcaster" : message.role === "moderator" ? "Moderator" : message.role === "staff" ? "Staff" : null;
+function Name({ message }: { message: ChatMessage }) {
+  return <Text style={[styles.name, { color: factionColor(message.author.faction) }]}>{message.author.display_name}</Text>;
+}
+
+/** One dense row: role, the name in the author's faction color, then the message. Press and hold to report or block. */
+const Row = memo(function Row({ message, onReport }: { message: ChatMessage; onReport: (message: ChatMessage) => void }) {
+  const role = message.role ? ROLES[message.role] : undefined;
+  const press = () => onReport(message);
   return (
-    <Pressable style={styles.message} onLongPress={onReport} accessibilityRole="button" accessibilityHint="Press and hold to report or block"
-      accessibilityActions={[{ name: "longpress", label: "Report or block" }]} onAccessibilityAction={onReport}>
-      <Text style={styles.meta}>
-        <Text style={{ color }}>{message.author.display_name}</Text>
-        {side ? <Text style={styles.dim}> · {side}</Text> : null}
-        {role ? <Text style={styles.dim}> · {role}</Text> : null}
+    <Pressable onLongPress={press} accessibilityActions={[{ name: "longpress", label: "Report or block" }]} onAccessibilityAction={press} style={styles.row}>
+      <Text style={styles.text}>
+        {role ? <Text style={styles.role}>{role} </Text> : null}
+        <Name message={message} />
         {/* Skills are bought and sent on the website; the app only shows them (docs/MOBILE.md). */}
-        {message.skill ? <Text style={styles.dim}> · ✨ {message.skill}</Text> : null}
+        {message.skill ? <Text style={styles.dim}> played {message.skill}</Text> : null}
+        {message.body ? `: ${message.body}` : ""}
       </Text>
-      {message.body ? <Text style={styles.body}>{message.body}</Text> : null}
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
-  heading: { fontFamily: "Cinzel_800ExtraBold", color: ink, fontSize: 22, marginBottom: 12 },
-  list: { gap: 0 },
-  empty: { color: inkMuted, fontFamily: "Barlow_400Regular", fontSize: 15, paddingVertical: 8 },
-  message: { paddingVertical: 8, gap: 2 },
-  meta: { fontFamily: "Barlow_600SemiBold", fontSize: 14 },
-  dim: { color: inkDim, fontFamily: "Barlow_400Regular" },
-  body: { color: ink, fontFamily: "Barlow_400Regular", fontSize: 15, lineHeight: 22 },
-  composer: { gap: 12, marginTop: 8 },
-  hint: { color: inkDim, fontFamily: "Barlow_400Regular", fontSize: 13, marginTop: 4 },
+  fill: { flex: 1 },
+  pinned: { padding: space.m, marginHorizontal: space.m, marginTop: space.s, gap: space.xs },
+  loading: { padding: space.m, gap: space.m },
+  empty: { textAlign: "center", paddingTop: space.xl },
+  row: { paddingVertical: space.xs, paddingHorizontal: space.m },
+  text: { fontFamily: font.body, fontSize: 14, lineHeight: 20, color: ink },
+  role: { fontFamily: font.label, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: inkDim },
+  name: { fontFamily: font.bodySemi },
+  dim: { color: inkDim },
+  pillSpot: { position: "absolute", left: 0, right: 0, bottom: space.s, alignItems: "center" },
+  pill: { minHeight: 32, justifyContent: "center", paddingHorizontal: space.m },
+  pillText: { fontFamily: font.label, fontSize: 12, letterSpacing: 1.4, textTransform: "uppercase", color: onAccent },
+  pressed: { opacity: 0.85 },
+  composer: { borderTopWidth: 1, paddingTop: space.s, paddingHorizontal: space.m, gap: space.s },
+  inputRow: { flexDirection: "row", gap: space.s },
+  input: { flex: 1, minHeight: 44, borderWidth: 1, color: ink, backgroundColor: fill, paddingHorizontal: space.m, fontFamily: font.body, fontSize: 15 },
 });

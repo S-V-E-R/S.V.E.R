@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { send } from "./api";
 import { useAuth } from "./auth";
-import { Button, Frame, Notice, bg, ink, inkMuted } from "./ui";
+import { line, scrim, space } from "./theme";
+import { Button, Notice, Panel, bg, ink, inkMuted, type } from "./ui";
 
 /** The website's report reasons (apps/web/lib/types.ts), checked again by the API (safety.rs REASONS). */
 export const REASONS: [string, string][] = [
@@ -21,6 +23,7 @@ export type SafetyTarget = { type: "chat_message" | "beacon" | "live_stream"; id
  */
 export function SafetySheet({ target, onClose, onBlocked }: { target: SafetyTarget | null; onClose: () => void; onBlocked?: (username: string) => void }) {
   const { account, colors } = useAuth();
+  const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState("");
   const [error, setError] = useState("");
@@ -53,50 +56,46 @@ export function SafetySheet({ target, onClose, onBlocked }: { target: SafetyTarg
     ]);
   }
 
-  // --line in docs/DESIGN.md: the accent at 32% opacity.
-  const line = `${colors.accent}52`;
   return (
-    <Modal visible={!!target} transparent animationType="slide" onRequestClose={close}>
+    <Modal visible={!!target} transparent animationType="slide" onRequestClose={close} supportedOrientations={["portrait", "landscape"]}>
       <View style={styles.backdrop}>
-        <View style={styles.sheet}>
-          <Frame>
-            <ScrollView contentContainerStyle={{ gap: 12 }}>
-              <Text style={[styles.title, { color: colors.accentLight }]}>{target ? `Report ${target.label}` : ""}</Text>
-              {!account ? (
-                <>
-                  <Text style={styles.body}>Log in to report or block.</Text>
-                  <Button label="Log in" onPress={() => { close(); router.push("/sign-in"); }} />
-                </>
-              ) : done ? (
-                <Text style={styles.body} accessibilityRole="alert">{done}</Text>
-              ) : (
-                <>
-                  <Text style={styles.body}>Why are you reporting this?</Text>
-                  {error ? <Notice>{error}</Notice> : null}
-                  {REASONS.map(([value, label]) => (
-                    <Pressable key={value} accessibilityRole="button" disabled={busy} onPress={() => { void report(value); }} style={[styles.reason, { borderColor: line }]}>
-                      <Text style={styles.reasonText}>{label}</Text>
-                    </Pressable>
-                  ))}
-                  {target?.username && target.username !== account.username ? (
-                    <Button label={`Block ${target.displayName}`} kind="quiet" onPress={block} disabled={busy} />
-                  ) : null}
-                </>
-              )}
-              <Button label={done ? "Done" : "Cancel"} kind="quiet" onPress={close} />
-            </ScrollView>
-          </Frame>
-        </View>
+        {/* A sheet, not a bracketed slot: a plain panel with only its top edge drawn. */}
+        <Panel style={{ ...styles.sheet, paddingBottom: insets.bottom + space.m }}>
+          <ScrollView contentContainerStyle={{ gap: space.m }}>
+            <Text style={[type.display, { color: colors.accentLight }]} accessibilityRole="header">{target ? `Report ${target.label}` : ""}</Text>
+            {!account ? (
+              <>
+                <Text style={styles.body}>Log in to report or block.</Text>
+                <Button label="Log in" onPress={() => { close(); router.push("/sign-in"); }} />
+              </>
+            ) : done ? (
+              <Text style={styles.body} accessibilityRole="alert">{done}</Text>
+            ) : (
+              <>
+                <Text style={styles.body}>Why are you reporting this?</Text>
+                {error ? <Notice>{error}</Notice> : null}
+                {REASONS.map(([value, label]) => (
+                  <Pressable key={value} accessibilityRole="button" disabled={busy} onPress={() => { void report(value); }} style={[styles.reason, { borderColor: line(colors.accent) }]}>
+                    <Text style={styles.reasonText}>{label}</Text>
+                  </Pressable>
+                ))}
+                {target?.username && target.username !== account.username ? (
+                  <Button label={`Block ${target.displayName}`} tone="danger" onPress={block} disabled={busy} />
+                ) : null}
+              </>
+            )}
+            <Button label={done ? "Done" : "Cancel"} tone="quiet" onPress={close} />
+          </ScrollView>
+        </Panel>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.6)" },
-  sheet: { maxHeight: "85%", backgroundColor: bg, padding: 12 },
-  title: { fontFamily: "Cinzel_800ExtraBold", fontSize: 22 },
-  body: { color: inkMuted, fontFamily: "Barlow_400Regular", fontSize: 15, lineHeight: 22 },
-  reason: { minHeight: 44, justifyContent: "center", borderWidth: 1, paddingHorizontal: 12 },
-  reasonText: { color: ink, fontFamily: "Barlow_600SemiBold", fontSize: 15 },
+  backdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: scrim },
+  sheet: { maxHeight: "85%", backgroundColor: bg, borderWidth: 0, borderTopWidth: 1, padding: space.m },
+  body: { ...type.body, color: inkMuted },
+  reason: { minHeight: 44, justifyContent: "center", borderWidth: 1, paddingHorizontal: space.m },
+  reasonText: { ...type.strong, color: ink },
 });
