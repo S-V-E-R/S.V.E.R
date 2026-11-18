@@ -1,0 +1,69 @@
+name: Android test build
+
+# A sideloadable APK of apps/mobile for testers, published as a GitHub prerelease.
+# Signed with the Expo template's debug key: every build installs over the last one,
+# but it is not a Play Store key. A real upload key comes with the store release.
+on:
+  push:
+    branches: [main]
+    paths: [apps/mobile/**, apps/web/lib/factions.ts, .github/workflows/android.yml]
+  # PRs build the APK as a workflow artifact; only main publishes a release.
+  pull_request:
+    paths: [apps/mobile/**, apps/web/lib/factions.ts, .github/workflows/android.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      EXPO_NO_TELEMETRY: "1"
+      SVER_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/mobile/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec expo prebuild --platform android --no-install
+      # arm64 for phones, x86_64 for emulators and Chromebooks; 32-bit ABIs are left out to keep the build small.
+      - run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64
+        working-directory: apps/mobile/android
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sver-android-${{ github.run_number }}
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
+      - name: Publish prerelease
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="android-${version}-${{ github.run_number }}"
+          apk="sver-${version}-${{ github.run_number }}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$apk"
+          gh release create "$tag" "$apk" --prerelease --target "${{ github.sha }}" \
+            --title "Android test build ${{ github.run_number }}" \
+            --notes "Test APK of the S.V.E.R app from ${GITHUB_SHA::8}, pointed at sver.tv. On the phone: download the .apk, allow installs from your browser, open it. Later builds install over this one. Push alerts are not set up in this build."

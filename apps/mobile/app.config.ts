@@ -1,8 +1,10 @@
-import { AndroidConfig, withAndroidManifest } from "@expo/config-plugins";
+import { AndroidConfig, withAndroidManifest } from "expo/config-plugins";
 import type { ExpoConfig } from "expo/config";
 
 const api = process.env.EXPO_PUBLIC_API_URL ?? "https://sver.tv";
 const cleartext = api.startsWith("http://");
+// CI sets the run number so each test APK installs over the last one.
+const build = Number(process.env.SVER_BUILD_NUMBER) || 1;
 
 const config: ExpoConfig = {
   name: "S.V.E.R",
@@ -16,12 +18,14 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: true,
     bundleIdentifier: "tv.sver.app",
+    buildNumber: String(build),
     infoPlist: cleartext
       ? { NSAppTransportSecurity: { NSAllowsArbitraryLoads: true } }
       : { NSAppTransportSecurity: { NSAllowsArbitraryLoads: false } },
   },
   android: {
     package: "tv.sver.app",
+    versionCode: build,
     adaptiveIcon: { backgroundColor: "#07080B", foregroundImage: "./assets/icon.png" },
   },
   plugins: [
