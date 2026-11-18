@@ -15,12 +15,16 @@ export function StaffStepUp() {
   const [busy, setBusy] = useState(false);
   // One pending confirmation is shared by every request refused while the prompt is open.
   const pending = useRef<{ promise: Promise<boolean>; resolve: (ok: boolean) => void } | null>(null);
+  const dialog = useRef<HTMLDialogElement | null>(null);
+  // Focus goes back where it was when the prompt closes.
+  const returnTo = useRef<HTMLElement | null>(null);
   useEffect(() => {
     setStepUpHandler(() => {
       if (!pending.current) {
         let resolve: (ok: boolean) => void = () => {};
         const promise = new Promise<boolean>(r => { resolve = r; });
         pending.current = { promise, resolve };
+        returnTo.current = document.activeElement as HTMLElement | null;
         setError(""); setOpen(true);
       }
       return pending.current.promise;
@@ -31,6 +35,8 @@ export function StaffStepUp() {
     pending.current?.resolve(ok);
     pending.current = null;
     setOpen(false); setUsePassword(false);
+    dialog.current?.close();
+    returnTo.current?.focus();
   }
   async function confirm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -43,7 +49,8 @@ export function StaffStepUp() {
     if (result.ok) finish(true); else setError(result.error);
   }
   if (!open) return null;
-  return <div className="step-up" role="dialog" aria-modal="true" aria-labelledby="step-up-title">
+  // A native modal: it traps focus, and Escape cancels.
+  return <dialog className="step-up" aria-labelledby="step-up-title" ref={el => { dialog.current = el; if (el && !el.open) el.showModal(); }} onCancel={e => { e.preventDefault(); finish(false); }}>
     <form className="panel" onSubmit={confirm}>
       <h2 id="step-up-title">Confirm it&apos;s you</h2>
       <p>Staff tools lock after 15 minutes without a staff action. Confirm to continue; what you were doing finishes on its own.</p>
@@ -60,5 +67,5 @@ export function StaffStepUp() {
       </div>
       {error && <p role="alert">{error}</p>}
     </form>
-  </div>;
+  </dialog>;
 }

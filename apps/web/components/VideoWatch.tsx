@@ -9,6 +9,7 @@ import { RecordedPlayer } from "./RecordedPlayer";
 import { VideoCut } from "./VideoCut";
 import { ReportButton, TakeDownLink, type ReportTarget } from "./Report";
 import { ShareButton } from "./ShareButton";
+import { timestampParam } from "../lib/share";
 
 function Replay({ id, at, ageAck }: { id: string; at: number; ageAck: boolean }) {
   const [messages, setMessages] = useState<{ id: string; offset_ms: number; author: Chip; body: string }[]>([]);
@@ -17,10 +18,14 @@ function Replay({ id, at, ageAck }: { id: string; at: number; ageAck: boolean })
   useEffect(() => { position.current = at; }, [at]);
   useEffect(() => {
     let stopped = false;
+    let fetched = -1;
     async function load() {
-      const result = await send<{ enabled: boolean; messages: typeof messages }>("GET", `/api/videos/${id}/chat?at_ms=${position.current}&age_ack=${ageAck}`);
+      // Paused or hidden: the messages for this moment are already shown.
+      const at = position.current;
+      if (document.hidden || at === fetched) return;
+      const result = await send<{ enabled: boolean; messages: typeof messages }>("GET", `/api/videos/${id}/chat?at_ms=${at}&age_ack=${ageAck}`);
       if (stopped) return;
-      if (result.ok) { setMessages(result.data.messages); setNote(result.data.enabled ? "" : "Chat replay is turned off."); }
+      if (result.ok) { fetched = at; setMessages(result.data.messages); setNote(result.data.enabled ? "" : "Chat replay is turned off."); }
       else { setMessages([]); setNote(result.error); }
     }
     void load(); const timer = setInterval(() => void load(), 3000);
@@ -28,7 +33,7 @@ function Replay({ id, at, ageAck }: { id: string; at: number; ageAck: boolean })
   }, [id, ageAck]);
   return <aside className="video-replay panel" aria-label="Chat replay"><h2>Chat replay</h2><p className="muted">Messages from this moment in the broadcast.</p>{note ? <p role="status">{note}</p> : <ol>{messages.map(m => <li key={m.id}><time>{duration(m.offset_ms)}</time><strong>{m.author.display_name}</strong> {m.body}</li>)}</ol>}</aside>;
 }
-export function VideoWatch({ id, initial = null, embed = false }: { id: string; initial?: VideoPage | null; embed?: boolean }) {
+export function VideoWatch({ id, initial = null, embed = false, credit = null }: { id: string; initial?: VideoPage | null; embed?: boolean; credit?: string | null }) {
   const [data, setData] = useState(initial);
   const [ageAck, setAgeAck] = useState(false);
   const [error, setError] = useState("");
@@ -43,7 +48,9 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
     if (result.ok) { setData(result.data); setError(""); } else { setData(null); setError(result.error); }
   }, [id, ageAck]);
   useLoad(load);
-  useEffect(() => { const timer = setInterval(() => void load(), 15000); return () => clearInterval(timer); }, [load]);
+  // Poll only while the video is processing, so the page updates when it is ready.
+  const processing = data?.video.status === "PROCESSING";
+  useEffect(() => { if (!processing) return; const timer = setInterval(() => { if (!document.hidden) void load(); }, 15000); return () => clearInterval(timer); }, [load, processing]);
   async function action(method: string, path: string, body?: unknown) { const result = await send(method, path, body); setMessage(result.ok ? "Saved." : result.error); if (result.ok) await load(); return result.ok; }
   async function requestDownload() { const result = await send<{ url?: string }>("POST", `/api/videos/${id}/download`); if (result.ok) { setDownload(result.data.url ?? ""); setMessage(result.data.url ? "Your download is ready." : "Your MP4 is being prepared. Check again shortly."); } else setMessage(result.error); }
   if (!data) return <section className="panel video-manage"><h1>Recording</h1><p role="status">{error || "Loading…"}</p>{error.startsWith("Confirm that you are 18") && <button onClick={() => setAgeAck(true)} disabled={ageAck}>I am 18 or older</button>} {error && <Link href="/login">Sign in</Link>}</section>;
@@ -60,7 +67,7 @@ export function VideoWatch({ id, initial = null, embed = false }: { id: string; 
       {data.live && <Link className="button" href={`/${data.channel.username}/live`}>Watch live</Link>}
       {data.signed_in && v.kind !== "CLIP" && data.clip_permission !== "OFF" && <button className="quiet" onClick={() => setCut(cut === "CLIP" ? null : "CLIP")}>Create clip</button>}
       {data.can_highlight && v.recording && v.kind === "VOD" && <button className="quiet" onClick={() => setCut(cut === "HIGHLIGHT" ? null : "HIGHLIGHT")}>Save Highlight</button>}
-      <ShareButton path={`/${v.kind === "CLIP" ? "clips" : "videos"}/${id}`} title={v.title} className="quiet" />
+      <ShareButton path={`/${v.kind === "CLIP" ? "clips" : "videos"}/${id}`} title={v.title} className="quiet" credit={credit} networks params={() => ({ t: timestampParam(time) })} />
       {data.is_owner && v.kind === "CLIP" && v.status === "READY" && v.approval === "APPROVED" && <Link className="button quiet" href={`/studio/beacons?clip=${id}`}>Make a Beacon</Link>}
       {data.can_download && v.kind !== "CLIP" && <button className="quiet" onClick={() => void requestDownload()}>Prepare download</button>}
       {download && <a className="button" href={download}>Download MP4</a>}

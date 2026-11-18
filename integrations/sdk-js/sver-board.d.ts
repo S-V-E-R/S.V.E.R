@@ -17,6 +17,10 @@ export type Control = {
   cost: number; cooldown_seconds: number; per_stream_limit: number | null;
   audience: "everyone" | "followers" | "subscribers" | "moderators"; effect: string; target: number | null; width: number;
   confirm?: boolean;
+  /** Buttons and text inputs only. */
+  color?: "steel" | "ember" | "violet" | "gold";
+  /** Buttons and text inputs only. */
+  icon?: "heart" | "music" | "bell" | "shield" | "flag" | "clock" | "message" | "check" | "cross" | "ban" | "lock" | "search";
 };
 export type Board = { screens: { name: string; controls: Control[] }[] };
 /** A board a game defines: only `id`, `kind` and `label` are required per control. */

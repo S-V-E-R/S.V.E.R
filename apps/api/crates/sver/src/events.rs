@@ -136,6 +136,9 @@ pub async fn emit_after(app: &App, channel: &str, kind: &str, data: Value) -> Re
 }
 
 static CURSOR: AtomicI64 = AtomicI64::new(-1);
+/// IDs the cursor passed without a row (an insert not yet committed, or rolled back), with when:
+/// rechecked every tick for 2 minutes, so an event that commits late still goes out, once.
+static GAPS: LazyLock<Mutex<HashMap<i64, std::time::Instant>>> = LazyLock::new(Mutex::default);
 /// Every second: new outbox rows go out on the hub (one API instance, as for chat).
 pub async fn drain(app: &App) -> Res<()> {
     if CURSOR.load(Ordering::Relaxed) < 0 {
@@ -144,15 +147,42 @@ pub async fn drain(app: &App) -> Res<()> {
             .await?;
         CURSOR.store(start, Ordering::Relaxed);
     }
+    let gaps: Vec<i64> = {
+        let mut gaps = GAPS.lock().unwrap_or_else(|e| e.into_inner());
+        gaps.retain(|_, at| at.elapsed() < std::time::Duration::from_secs(120));
+        gaps.keys().copied().collect()
+    };
+    if !gaps.is_empty() {
+        let late: Vec<Row> =
+            sqlx::query_as("SELECT id,topic,data,at FROM events WHERE id=ANY($1) ORDER BY id")
+                .bind(&gaps)
+                .fetch_all(&app.db)
+                .await?;
+        for row in late {
+            GAPS.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&row.0);
+            app.chat.publish(HUB, None, row.0, event(row));
+        }
+    }
     let rows: Vec<Row> =
         sqlx::query_as("SELECT id,topic,data,at FROM events WHERE id>$1 ORDER BY id LIMIT 1000")
             .bind(CURSOR.load(Ordering::Relaxed))
             .fetch_all(&app.db)
             .await?;
+    if let Some(last) = rows.last() {
+        let mut gaps = GAPS.lock().unwrap_or_else(|e| e.into_inner());
+        let seen: HashSet<i64> = rows.iter().map(|r| r.0).collect();
+        // ponytail: tracks at most 10,000 skipped IDs per tick; a bigger jump (setval) is not chased.
+        for id in (CURSOR.load(Ordering::Relaxed) + 1..last.0).take(10_000) {
+            if !seen.contains(&id) {
+                gaps.insert(id, std::time::Instant::now());
+            }
+        }
+        CURSOR.store(last.0, Ordering::Relaxed);
+    }
     for row in rows {
-        let id = row.0;
-        app.chat.publish(HUB, None, id, event(row));
-        CURSOR.store(id, Ordering::Relaxed);
+        app.chat.publish(HUB, None, row.0, event(row));
     }
     Ok(())
 }
@@ -331,6 +361,10 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
     let mut chats: HashMap<String, String> = HashMap::new();
     // The person's own topics: DM hub channel `dm:{id}` -> whispers topic; notifications are polled.
     let mut own = Own::default();
+    let Ok(mut blocks) = crate::chat::Hidden::load(&app, user.as_ref().map(|u| u.0.as_str())).await
+    else {
+        return;
+    };
     // ponytail: one indexed query per socket every 5 s (two with notifications), so a removed
     // grant stops events within 5 s; publish revocations and notifications on the hub if many
     // sockets connect.
@@ -374,7 +408,7 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
                     }
                 }
                 Ok(e) if chats.contains_key(&e.channel) => {
-                    let Ok(hidden) = crate::chat::hidden(&app, user.as_ref().map(|u| u.0.as_str())).await else { return; };
+                    let Ok(hidden) = blocks.current(&app, user.as_ref().map(|u| u.0.as_str())).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut data = e.payload.clone();
                     match data["type"].as_str() {
@@ -382,8 +416,7 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
                         // no S.V.E.R author to block; hiding it later sends a delete.
                         Some("message") if !data["message"]["outside"].is_null() => {}
                         Some("message") => {
-                            let Ok(message) = crate::chat::fresh(&app, &data, &hidden).await else { return; };
-                            let Some(message) = message else { continue; };
+                            let Some(message) = crate::chat::fresh(&app.chat, &data, hidden) else { continue; };
                             data["message"] = message;
                         }
                         Some("delete") => {}

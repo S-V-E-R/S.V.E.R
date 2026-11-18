@@ -84,9 +84,10 @@ export function Chrome({ logo, actions, sidebar, footer, signedIn, children }: P
     <div className="workspace">
       {open && <button type="button" className="drawer-backdrop" aria-label="Close menu" tabIndex={-1} onClick={close} />}
       <aside ref={drawer} id="site-sidebar" className={open ? "sidebar open" : "sidebar"} aria-label="Sidebar">{open && <button type="button" className="drawer-close" onClick={close}><CloseIcon />Close menu</button>}{sidebar}</aside>
-      <div className="content"><main id="main">{children}</main>{footer}</div>
+      {/* The open drawer keeps focus: the page and the bottom bar behind it are inert. */}
+      <div className="content" inert={open}><main id="main">{children}</main>{footer}</div>
     </div>
-    <BottomNav signedIn={signedIn} />
+    <div inert={open}><BottomNav signedIn={signedIn} /></div>
   </>;
 }
 

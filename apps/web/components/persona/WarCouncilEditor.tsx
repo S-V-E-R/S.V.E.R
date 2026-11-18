@@ -15,14 +15,14 @@ export function WarCouncilEditor({ embedded = false, onSaved }: { embedded?: boo
   const [state, setState] = useState<SaveState>({});
   // Short queries show nothing; stale results stay hidden until the next search lands.
   const shown = query.trim().length < 2 ? [] : results;
-  const load = useCallback(async () => { const r = await send<{ members: Member[]; revision: number }>("GET", "/api/me/war-council"); if (r.ok) { setMembers(r.data.members); setRevision(r.data.revision); } }, []);
+  const load = useCallback(async () => { const r = await send<{ members: Member[]; revision: number }>("GET", "/api/me/war-council"); if (r.ok) { setMembers(r.data.members); setRevision(r.data.revision); } else setState(r); }, []);
   useLoad(load);
   useEffect(() => {
     if (query.trim().length < 2) return;
     const timer = setTimeout(async () => { const r = await send<{ results: Chip[] }>("GET", `/api/me/war-council/search?q=${encodeURIComponent(query.trim())}`); if (r.ok) setResults(r.data.results); }, 300);
     return () => clearTimeout(timer);
   }, [query]);
-  if (!members) return <p className="loading">Loading…</p>;
+  if (!members) return state.error ? <Status state={state} /> : <p className="loading">Loading…</p>;
   const move = (i: number, d: number) => { const next = [...members]; [next[i], next[i + d]] = [next[i + d], next[i]]; setMembers(next); };
   async function save() {
     const result = await send<{ revision: number }>("PUT", "/api/me/war-council", { members: members!.map(m => m.user.username).filter(Boolean), revision });

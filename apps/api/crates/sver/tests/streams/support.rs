@@ -265,6 +265,26 @@ pub async fn exercise(e: &Env) {
     );
     assert_eq!(valor(e, &buyer).await, 975);
     assert_eq!(earnings(e).await, earned);
+    // An inquiry takes no money, so nothing is reversed when it opens or when it closes.
+    let inquiry = |evt: &str, kind: &str, status: &str| {
+        json!({"id": evt, "type": kind, "data": {"object": {
+            "id": "dp_sp_2", "payment_intent": "pi_sp_4", "amount": 999, "status": status}}})
+    };
+    for (evt, kind, status) in [
+        (
+            "evt_sp_i1",
+            "charge.dispute.created",
+            "warning_needs_response",
+        ),
+        ("evt_sp_i2", "charge.dispute.closed", "warning_closed"),
+    ] {
+        assert_eq!(
+            event(e, inquiry(evt, kind, status), true).await,
+            StatusCode::OK
+        );
+        assert_eq!(valor(e, &buyer).await, 975, "{kind}");
+        assert_eq!(earnings(e).await, earned, "{kind}");
+    }
 
     // Without any webhook, opening the wallet asks Stripe about open checkouts and credits paid
     // ones once; a later webhook for the same session changes nothing.
@@ -321,6 +341,22 @@ pub async fn exercise(e: &Env) {
     assert_eq!(wallet["guardian_confirmed"], true);
     let (_, payouts) = call(e, "GET", "/api/me/payouts", Some(&teen), Value::Null).await;
     assert_eq!(payouts["guardian"], true);
+
+    // A refund while a chargeback is open reverses nothing twice, and winning the chargeback
+    // afterwards doesn't post refunded money back.
+    let before = valor(e, &buyer).await;
+    for body in [
+        json!({"id": "evt_sp_d3", "type": "charge.dispute.funds_withdrawn", "data": {"object": {
+            "id": "dp_sp_3", "payment_intent": "pi_sp_4", "amount": 999, "status": "needs_response"}}}),
+        json!({"id": "evt_sp_r4", "type": "charge.refunded", "data": {"object": {
+            "payment_intent": "pi_sp_4", "amount": 999, "amount_refunded": 999,
+            "metadata": {"sver_user": "sp-buyer"}}}}),
+        json!({"id": "evt_sp_d4", "type": "charge.dispute.closed", "data": {"object": {
+            "id": "dp_sp_3", "payment_intent": "pi_sp_4", "amount": 999, "status": "won"}}}),
+    ] {
+        assert_eq!(event(e, body, true).await, StatusCode::OK);
+        assert_eq!(valor(e, &buyer).await, before - 1_075, "reversed once");
+    }
 
     // The ledger balances in every unit and can't be rewritten.
     let unbalanced: i64 = sqlx::query_scalar(

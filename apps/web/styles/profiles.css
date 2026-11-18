@@ -120,6 +120,7 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .chat h2{margin:0;font-size:16px}
 .chat-messages{list-style:none;margin:0;padding:0;max-height:60vh;min-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
 .chat-body{white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-newest{display:block;margin:4px auto 0}
 .chat-quote{margin:4px 0;padding:4px 8px;border-left:2px solid var(--line);color:var(--ink-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.9em}
 .chat-pin{border:1px solid var(--line);background:var(--tint);padding:12px;overflow-wrap:anywhere}
 .chat-pin-content{margin:8px 0}
@@ -166,7 +167,9 @@ button.dock-tile:not(:disabled):hover,button.dock-tile:focus-visible{border-colo
 .welcome-line{color:var(--muted);margin:4px 0 0}
 .page-vibe strong{color:var(--text);font-weight:600}
 .intro-card h2{margin-top:0}.intro-body,.setup-description{white-space:pre-wrap;margin:0}
-.share{display:inline-flex;align-items:center;gap:8px;position:relative}
+.share{display:inline-flex;align-items:center;gap:8px;position:relative;flex-wrap:wrap}
+.share-networks{display:inline-flex;align-items:center;gap:10px}
+.share-networks a,.share-networks .link-button{min-height:44px;display:inline-flex;align-items:center;color:var(--ink-muted);font-size:13px}
 .share-fallback{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
 .share-fallback input{min-width:220px}
 .mood-presets{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
@@ -209,7 +212,7 @@ progress::-webkit-progress-bar{background:var(--bg)}progress::-webkit-progress-v
 .part-options li.active,.part-options li[aria-selected="true"]{background:var(--panel-hi);outline:1px solid var(--steel);outline-offset:-1px}
 .small-print{font-size:12px;margin:4px 0 0}
 .part-review{margin-top:8px}
-.step-up{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.6)}
+.step-up{position:fixed;inset:0;z-index:50;display:grid;place-items:center;width:auto;height:auto;max-width:none;max-height:none;margin:0;padding:16px;border:0;color:inherit;background:rgba(0,0,0,.6)}
 .step-up .panel{width:min(440px,100%)}
 
 .chat-emote { display: inline-block; width: 28px; height: 28px; vertical-align: middle; object-fit: contain; }

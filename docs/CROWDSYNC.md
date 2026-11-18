@@ -197,6 +197,16 @@ From a review against MixPlay: the server side holds up, but a developer can't s
 - Buttons get a style: one of the palette colours and an optional icon from the icon set.
 - Studio → Board splits into tabs: Build, Test and publish, Skills, Overlay, and Advanced (webhook, input cap, connections).
 
+**As built (November 11, 2026; no migration, `boards.rs`, `components/BoardBuilder.tsx`, `lib/board-builder.ts`, `tests/streams/boards.rs`):**
+
+- **Grid:** each screen is drawn as viewers see it on the 4-column grid. Drag a control onto another to take its place; drag its right edge to set its width (1 to 4 columns). Below 600 pixels the edge handle is hidden and the width menu in the side panel does the same job. Controls can be reached with the keyboard (Tab, then Enter to pick one), and the side panel has Move earlier and Move later.
+- **Side panel:** click a control to edit it: every setting it had before, plus colour and icon, Duplicate (a copy right after it, under a new ID, unless the screen has 24), Test and Remove.
+- **Undo and redo:** buttons beside Save draft, and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y on the Build tab outside a text field (fields keep the browser's own undo). Typing in one field, or one drag of an edge, is one step. The last 100 steps are kept, and saving doesn't clear them; undoing past a save marks the draft unsaved again. Loading a template, a library board or a file is a step too.
+- **Preview:** "What viewers see" draws the current screen at desktop width or at phone width (two columns, as viewers' phones show it).
+- **Button style:** buttons and text inputs may have `color` (`steel`, `ember`, `violet`, `gold`: the site's neutral, Myria, Aetheron and gold palettes) and `icon` (12 from the site's icon set: heart, music, bell, shield, flag, clock, message, check, cross, ban, lock, search). Both are optional and checked on every save, import, catalog listing and game `define`; other kinds ignore them. Viewers, the catalog preview and the builder draw them. The lists are fixed in `boards.rs` and sent to Studio with the board.
+- **Tabs:** Build (builder, library and files), Test and publish (test stage with a Test button per control, checklist, publish, pause), Skills (categories and your own Skills), Overlay, and Advanced (moderators, webhook, input cap, connections). Every tab stays loaded when hidden, so a token or URL shown once survives switching tabs.
+- **Checked:** in a browser against a stand-in API: picking, typing as one undo step, undo and redo, duplicate, edge resize, drag to reorder, Ctrl+Z, the phone preview, saving, the tabs, and phone width with no sideways scroll.
+
 ### 5. Developer docs, sandbox and press log
 
 - `/developers/crowdsync`: quickstart, the gateway protocol (moved out of the repository README), charging rules, Crowd Runner walkthrough, and the publishing rules for the catalog.

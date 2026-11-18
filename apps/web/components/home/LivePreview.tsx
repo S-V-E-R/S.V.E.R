@@ -10,7 +10,7 @@ import { LiveThumbnail } from "../LiveThumbnail";
  * as a viewer; watching starts on the stream's page. The still stays underneath until the video
  * plays, and is all that shows with reduced motion, data saving, or any playback failure.
  */
-export function LivePreview({ username, thumbnail, label }: { username: string; thumbnail?: string | null; label: string }) {
+export function LivePreview({ username, thumbnail, label, paused = false }: { username: string; thumbnail?: string | null; label: string; paused?: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   useEffect(() => {
@@ -33,6 +33,11 @@ export function LivePreview({ username, thumbnail, label }: { username: string; 
     })();
     return () => { cancelled = true; stop?.(); };
   }, [username]);
+  useEffect(() => {
+    const element = video.current;
+    if (!element || !playing) return;
+    if (paused) element.pause(); else void element.play().catch(() => {});
+  }, [paused, playing]);
   return <span className="live-preview">
     <LiveThumbnail src={thumbnail} label={label} />
     <video ref={video} muted playsInline autoPlay aria-hidden="true" tabIndex={-1} className={playing ? "on" : undefined} />

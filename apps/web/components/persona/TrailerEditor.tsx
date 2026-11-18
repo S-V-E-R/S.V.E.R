@@ -11,7 +11,7 @@ export function TrailerEditor({ username, onSaved }: { username: string; onSaved
   const [state, setState] = useState<SaveState>({});
   const load = useCallback(async () => {
     const r = await send<{ channel: { trailer: Trailer } }>("GET", `/api/channels/${encodeURIComponent(username)}`);
-    if (r.ok) setTrailer(r.data.channel.trailer);
+    if (r.ok) setTrailer(r.data.channel.trailer); else setState(r);
   }, [username]);
   useLoad(load);
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -26,7 +26,7 @@ export function TrailerEditor({ username, onSaved }: { username: string; onSaved
     setState(r.ok ? { saved: "Trailer removed." } : r);
     if (r.ok) { setTrailer(null); onSaved?.(); }
   }
-  if (trailer === undefined) return <p className="loading">Loading…</p>;
+  if (trailer === undefined) return state.error ? <Status state={state} /> : <p className="loading">Loading…</p>;
   return <Section title="Channel trailer" intro="A short intro video so visitors get a feel for you before they watch. Paste a link to one of your own public clips or Highlights, or a YouTube video. It sits at the top of your Home and in the player while you're offline, and only plays when someone presses Play.">
     <form onSubmit={save}>
       <label className="field"><span>Clip, Highlight or YouTube link</span><input name="url" type="url" required defaultValue={trailer?.url || ""} placeholder="https://sver.tv/clips/… or https://www.youtube.com/watch?v=…" /></label>

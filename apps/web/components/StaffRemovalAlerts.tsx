@@ -7,7 +7,7 @@ export function StaffRemovalAlerts() {
   const [count,setCount]=useState(0);
   const load=useCallback(async () => { const result=await send<{ urgent_take_down?:number }>("GET","/api/me/alerts"); if(result.ok) setCount(result.data.urgent_take_down || 0); },[]);
   useLoad(load);
-  useEffect(() => { const timer=setInterval(() => { void load(); },30000); return () => clearInterval(timer); },[load]);
+  useEffect(() => { const timer=setInterval(() => { if(!document.hidden) void load(); },30000); return () => clearInterval(timer); },[load]);
   return count>0 ? <Link className="button small" href="/admin/take-it-down" role="status">{count} urgent removal request{count===1 ? "" : "s"}</Link> : null;
 }
 

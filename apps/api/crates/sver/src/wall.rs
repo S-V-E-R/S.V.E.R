@@ -704,6 +704,9 @@ pub async fn review(
         _ => return Err(Fail::missing()),
     }
     tx.commit().await?;
+    if action == "block-author" {
+        app.chat.blocks_changed();
+    }
     Ok(Json(json!({"done": true})))
 }
 

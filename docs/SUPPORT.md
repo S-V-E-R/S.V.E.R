@@ -155,7 +155,7 @@ Decided by Joe on October 3, 2026.
 
 **Configuration** (private env, never in the repo): `STRIPE_SECRET_KEY` (test keys only outside production; the API refuses an `sk_live_` key in development), `STRIPE_WEBHOOK_SECRET` (comma-separated when the platform and Connect endpoints have separate secrets) and optionally `STRIPE_API_URL` for tests.
 
-**Webhook:** `POST /api/stripe/webhook`, signature-checked (5-minute tolerance). Events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed` on the platform endpoint, `invoice.paid`, `customer.subscription.updated` and `customer.subscription.deleted` on the platform endpoint (part 2), and `account.updated` on a Connect ("connected accounts") endpoint. Every event is stored before processing; a failed or early event returns 503 so Stripe retries it.
+**Webhook:** `POST /api/stripe/webhook`, signature-checked (5-minute tolerance). Events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.funds_withdrawn`, `charge.dispute.closed` on the platform endpoint (a dispute inquiry, status `warning_*`, takes no money and reverses nothing; November 11, 2026), `invoice.paid`, `customer.subscription.updated` and `customer.subscription.deleted` on the platform endpoint (part 2), and `account.updated` on a Connect ("connected accounts") endpoint. Every event is stored before processing; a failed or early event returns 503 so Stripe retries it.
 
 **Part 2: subscriptions.**
 

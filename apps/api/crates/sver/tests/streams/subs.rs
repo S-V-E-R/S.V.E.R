@@ -196,6 +196,27 @@ pub async fn exercise(e: &Env) {
             && form.contains("custom_text%5Bsubmit%5D%5Bmessage%5D=Renews"),
         "the renewal terms sit above Checkout's pay button: {form}"
     );
+    // A second tab: the new checkout first closes the open one, so only one can be paid.
+    let (status, again) = post(
+        e,
+        &gifter,
+        "/subscription",
+        json!({"tier": 2, "pay": "card"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    let open: Vec<String> = sqlx::query_scalar("SELECT status FROM checkout_sessions WHERE user_id='sb-gifter' AND kind='sub' ORDER BY created_at")
+        .fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(open, ["expired", "open"]);
+    assert!(
+        e.fake
+            .lock()
+            .unwrap()
+            .stripe
+            .iter()
+            .any(|(p, _)| p.ends_with("/expire")),
+        "the earlier Checkout was expired at Stripe"
+    );
     // Keep a gifted subscription: a reminder 3 days before it ends; card checkout starts as a trial
     // ending with the gift; the $0 trial invoice turns on renewal without adding a month.
     let keeper = person(e, "sb-keeper", "SbKeeper", true).await;

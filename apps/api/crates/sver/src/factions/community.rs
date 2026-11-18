@@ -91,25 +91,23 @@ pub async fn board(
     let cursor = profiles::parse_cursor(&query.cursor)?;
     let mut db = app.db.acquire().await?;
     member(&mut db, &user.id, &faction, false).await?;
-    let rows:Vec<(String,String,String,DateTime<Utc>)>=sqlx::query_as("SELECT id,author_id,body,created_at FROM faction_posts WHERE faction=$1 AND status='VISIBLE' AND author_id IS NOT NULL AND ($2::timestamptz IS NULL OR (created_at,id)<($2,$3)) ORDER BY created_at DESC,id DESC LIMIT 31")
+    let rows:Vec<(String,String,String,DateTime<Utc>)>=sqlx::query_as("SELECT id,author_id,body,created_at FROM faction_posts p WHERE faction=$1 AND status='VISIBLE' AND EXISTS(SELECT 1 FROM faction_members m WHERE m.user_id=p.author_id AND m.faction=$1) AND ($2::timestamptz IS NULL OR (created_at,id)<($2,$3)) ORDER BY created_at DESC,id DESC LIMIT 31")
         .bind(&faction).bind(cursor.as_ref().map(|c|c.0)).bind(cursor.as_ref().map(|c|c.1.as_str()).unwrap_or("")).fetch_all(&mut *db).await?;
     let next = (rows.len() > 30).then(|| profiles::make_cursor(rows[29].3, &rows[29].0));
-    let users = profiles::public_channels(
-        &mut db,
-        &rows
-            .iter()
-            .take(30)
-            .map(|r| r.1.clone())
-            .collect::<Vec<_>>(),
-    )
-    .await?;
+    let authors = rows
+        .iter()
+        .take(30)
+        .map(|r| r.1.clone())
+        .collect::<Vec<_>>();
+    let users = profiles::public_channels(&mut db, &authors).await?;
+    let blocked = profiles::blocked_among(&mut db, &user.id, &authors).await?;
     let moderator = is_moderator(&mut db, &user.id, &faction).await?;
     let mut items = Vec::new();
     for (id, author, body, at) in rows.into_iter().take(30) {
         let Some(profile) = users.iter().find(|u| u.id == author) else {
             continue;
         };
-        if profiles::blocked_between(&mut db, &user.id, &author).await? {
+        if blocked.contains(&author) {
             continue;
         }
         items.push(json!({"id":id,"author":profiles::chip(&app,profile),"body":body,"created_at":at,"can_delete":author==user.id || moderator,"can_report":author!=user.id}));
@@ -193,7 +191,10 @@ pub async fn remove_post(
     .fetch_optional(&mut *tx)
     .await?;
     let author = author.ok_or_else(Fail::missing)?;
-    member(&mut tx, &user.id, &faction, true).await?;
+    // Authors can always take down their own post, even after leaving the faction.
+    if author != user.id {
+        member(&mut tx, &user.id, &faction, true).await?;
+    }
     if author != user.id && !is_moderator(&mut tx, &user.id, &faction).await? {
         return Err(Fail::denied(
             "Only the author or an elected faction moderator can remove this post.",

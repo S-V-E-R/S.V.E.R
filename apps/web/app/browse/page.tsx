@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cache } from "react";
 import { SeenCards } from "../../components/SeenCards";
 import { RecentChannels, SectionHead, StreamGrid } from "../../components/home/Shelves";
 import type { LiveCard, Recent } from "../../components/home/types";
@@ -13,7 +14,22 @@ import { AdSlot } from "../../components/Ads";
 import "../../styles/home.css";
 
 
-export const metadata = { title: "Browse | S.V.E.R" };
+import { publicMeta } from "../../lib/seo";
+/** One genre list per request, shared by metadata and the page. */
+const loadBrowse = cache(() => apiGet<{ genres: BrowseGenre[]; live: number }>("/api/discovery/browse"));
+
+export async function generateMetadata({ searchParams }: { searchParams: Promise<{ genre?: string; category?: string }> }) {
+  const params = await searchParams;
+  const genres = (await loadBrowse()).data?.genres ?? [];
+  const category = genres.flatMap(g => g.categories).find(c => c.id === params.category);
+  // Canonical keeps only genre and category; a category's canonical genre is the one that owns it.
+  const genre = category ? genres.find(g => g.categories.includes(category)) : genres.find(g => g.id === params.genre);
+  const name = category?.name ?? genre?.name;
+  if (!genre || !name) return publicMeta("Browse | S.V.E.R", "Live streams by category. Every channel gets a turn. Nothing here is ordered by viewer count.", "/browse");
+  const canonical = new URLSearchParams({ genre: genre.id });
+  if (category) canonical.set("category", category.id);
+  return publicMeta(`${name} live streams | S.V.E.R`, `Live ${name} streams on S.V.E.R. Every channel gets a turn. Nothing here is ordered by viewer count.`, `/browse?${canonical}`);
+}
 
 /**
  * Browse (docs/DESIGN.md "Browse"; docs/MAGNET.md "Browse"): genre tabs grouped by holding faction,
@@ -35,7 +51,7 @@ export default async function Browse({ searchParams }: { searchParams: Promise<{
   if (language === "mine") query.set("fallback", languages.join(","));
   const [account, browse, list, warRes] = await Promise.all([
     currentAccount(),
-    apiGet<{ genres: BrowseGenre[]; live: number }>("/api/discovery/browse"),
+    loadBrowse(),
     apiGet<{ items: LiveCard[]; recent: Recent[] }>(`/api/discovery/live?${query}`),
     apiGet<War>("/api/factions/war"),
   ]);

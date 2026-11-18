@@ -286,8 +286,8 @@ export default function Messages() {
             <span className="grow" />
             <button type="button" className={`small${thread.private ? "" : " quiet"}`} aria-pressed={thread.private} disabled={!device && !thread.private && !confirmDevice} title={device ? "Private mode: end-to-end encrypted on your devices" : deviceNote} onClick={() => { if (!device && confirmDevice) setPanel("settings"); else void togglePrivate(); }}>{thread.private ? <><LockIcon /> Private</> : "Private: off"}</button>
             <details className="menu messages-more"><summary className="button small quiet" aria-label="More actions"><MoreIcon /></summary>
-              <div className="menu-list panel" role="menu">
-                {(["mute", "clear", "block"] as const).map(kind => <button key={kind} type="button" role="menuitem" className={`link-button${kind === "block" ? " danger-text" : ""}`} onClick={e => { e.currentTarget.closest("details")?.removeAttribute("open"); void action(kind); }}>{kind === "mute" ? thread.muted ? "Unmute" : "Mute" : kind === "clear" ? "Delete for me" : "Block"}</button>)}
+              <div className="menu-list panel">
+                {(["mute", "clear", "block"] as const).map(kind => <button key={kind} type="button" className={`link-button${kind === "block" ? " danger-text" : ""}`} onClick={e => { e.currentTarget.closest("details")?.removeAttribute("open"); void action(kind); }}>{kind === "mute" ? thread.muted ? "Unmute" : "Mute" : kind === "clear" ? "Delete for me" : "Block"}</button>)}
               </div>
             </details>
           </header>

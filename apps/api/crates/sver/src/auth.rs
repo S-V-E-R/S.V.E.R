@@ -293,6 +293,47 @@ pub struct Signup {
     date_of_birth: String,
     password: String,
     turnstile_token: String,
+    /// Public username from a share link. Unknown names are ignored; signup still succeeds.
+    #[serde(rename = "ref", default)]
+    referrer: String,
+}
+/// Records who a new account enlisted from, when `name` is an eligible public username.
+/// A miss, a reserved name or the account itself changes nothing. Never a ranking signal.
+pub async fn attach_referral(db: &mut PgConnection, user_id: &str, name: &str) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() || sec::validate_username(name).is_err() {
+        return Ok(());
+    }
+    let referrer: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM channel_users WHERE lower(username)=lower($1) AND eligible",
+    )
+    .bind(name)
+    .fetch_optional(&mut *db)
+    .await?;
+    let Some(referrer) = referrer else {
+        return Ok(());
+    };
+    if referrer == user_id {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO signup_referrals(user_id, referrer_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(referrer)
+    .execute(&mut *db)
+    .await?;
+    Ok(())
+}
+pub async fn referrals(State(app): State<App>, jar: CookieJar) -> Result<Json<Value>> {
+    let (tx, user, _) = session(&app, &jar, true).await?;
+    tx.commit().await?;
+    let enlisted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM signup_referrals WHERE referrer_id=$1")
+            .bind(&user.id)
+            .fetch_one(&app.db)
+            .await?;
+    Ok(Json(json!({ "enlisted": enlisted })))
 }
 pub async fn signup(
     State(app): State<App>,
@@ -309,6 +350,7 @@ pub async fn signup(
     let hash = sec::new_password(&app, input.password).await?;
     let mut tx = app.db.begin().await?;
     let user = create_user(&mut tx, &email, &input.username, dob, Some(&hash), false).await?;
+    attach_referral(&mut tx, &user.id, &input.referrer).await?;
     crate::jobs::queue_email(&app, &mut tx, &user, "verify").await?;
     let jar = new_session(&app, &mut tx, &user, jar, &headers, false).await?;
     tx.commit().await?;
@@ -344,13 +386,21 @@ pub async fn login(
         .bind(&identifier)
         .fetch_optional(&app.db)
         .await?;
-    // Both identifiers must share one account limit, including across different IPs.
+    // Both identifiers share one account key. The strict budget is per account and IP, so guesses
+    // from elsewhere cannot lock the owner out; a looser account-wide ceiling still caps a botnet.
     let account_key = user.as_ref().map_or_else(
         || format!("login:identifier:{}", sec::digest(&identifier)),
         |user| format!("login:user:{}", user.id),
     );
     let ip = sec::client_ip(&app, peer, &headers);
-    let permits = sec::reserve(&app, vec![account_key, format!("login:ip:{ip}")], 5, 900).await?;
+    let mut permits = sec::reserve(
+        &app,
+        vec![format!("{account_key}:ip:{ip}"), format!("login:ip:{ip}")],
+        5,
+        900,
+    )
+    .await?;
+    permits.extend(sec::reserve(&app, vec![account_key], 50, 3600).await?);
     let hash = user
         .as_ref()
         .and_then(|u| u.password_hash.clone())
@@ -546,6 +596,9 @@ pub async fn revoke_all(
 ) -> Result<(CookieJar, Json<Value>)> {
     let (mut tx, user, _) = session(&app, &jar, false).await?;
     invalidate(&mut tx, &user.id, None).await?;
+    crate::devapps::revoke_all(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
     tx.commit().await?;
     Ok((
         clear_cookie(&app, jar, app.config.cookie_name()),
@@ -701,16 +754,17 @@ pub async fn reset(
     let hash = sec::new_password(&app, input.password).await?;
     let (mut tx, user) = consume(&app, &input.token, "reset").await?;
     crate::streams::revoke(&mut tx, &user.id).await?;
+    // A reset ends third-party app access along with every session.
+    crate::devapps::revoke_all(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
     // A reset link proves who owns the address. On an account that never verified it, whoever
-    // signed up may be someone else: the sign-in providers and app access they added go too.
+    // signed up may be someone else: the sign-in providers they added go too.
     if !user.email_verified {
         sqlx::query("DELETE FROM identities WHERE user_id=$1")
             .bind(&user.id)
             .execute(&mut *tx)
             .await?;
-        crate::devapps::revoke_all(&mut tx, &user.id)
-            .await
-            .map_err(|_| Error::internal())?;
     }
     sqlx::query("UPDATE users SET password_hash=$2 WHERE id=$1")
         .bind(&user.id)

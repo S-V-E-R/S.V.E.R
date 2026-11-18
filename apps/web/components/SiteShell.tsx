@@ -51,7 +51,7 @@ export default function SiteShell({ account, alerts, actions, sidebar, banner, c
       </nav>
       <nav className="account-navigation" aria-label="Account">{account ? <>
         <Link href={`/${account.username}`} className="account-name">@{account.username}</Link>
-        <Link href="/settings/profile">Settings{alerts && <span className="nav-dot" aria-label="New notices" />}</Link>
+        <Link href="/settings/profile">Settings{alerts && <><span className="nav-dot" aria-hidden="true" /><span className="sr-only"> (new notices)</span></>}</Link>
         <Link href="/account">Account security</Link>
       </> : <><Link href="/login">Log in</Link><Link href="/signup" className="button small">Enlist</Link></>}</nav>
     </header>

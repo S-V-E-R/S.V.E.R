@@ -16,15 +16,21 @@ export const currentAccount = cache(async (): Promise<{ username: string; factio
   }
 });
 
-/** Unread report notices or unacknowledged strikes, for the Settings dot (Module 2). */
-export const hasAlerts = cache(async (): Promise<boolean> => {
+const meAlerts = cache(async (): Promise<Record<string, unknown> | null> => {
   const jar = await cookies();
   try {
     const response = await fetch(`${process.env.API_INTERNAL_ORIGIN || "http://127.0.0.1:8080"}/api/me/alerts`, { headers: { cookie: jar.toString() }, cache: "no-store" });
-    if (!response.ok) return false;
-    const alerts = await response.json();
-    return Number(alerts.unread_reports) > 0 || Number(alerts.new_strikes) > 0 || Number(alerts.notifications) > 0;
+    return response.ok ? await response.json() : null;
   } catch {
-    return false;
+    return null;
   }
 });
+/** Unread report notices or unacknowledged strikes, for the Settings dot (Module 2). */
+export async function hasAlerts(): Promise<boolean> {
+  const alerts = await meAlerts();
+  return !!alerts && (Number(alerts.unread_reports) > 0 || Number(alerts.new_strikes) > 0 || Number(alerts.notifications) > 0);
+}
+/** Staff with MFA get a number for urgent removal requests; everyone else gets null. */
+export async function seesUrgentRemovals(): Promise<boolean> {
+  return typeof (await meAlerts())?.urgent_take_down === "number";
+}

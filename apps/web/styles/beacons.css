@@ -15,7 +15,9 @@
 .beacon-caption .muted, .beacon-caption .muted a { color: rgba(255, 255, 255, .78); }
 .beacon-shine .eyebrow { color: var(--accent-light); margin-right: 4px; }
 .beacon-unmute { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
-.beacon-paused { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 8px 12px; background: rgba(0, 0, 0, .6); color: #fff; font: 700 13px var(--font-label); letter-spacing: .14em; text-transform: uppercase; pointer-events: none; }
+.beacon-paused { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); min-height: 0; padding: 8px 12px; border: 0; box-shadow: none; background: rgba(0, 0, 0, .6); color: #fff; font: 700 13px var(--font-label); letter-spacing: .14em; text-transform: uppercase; pointer-events: none; }
+/* Playing: the Pause button shows only to keyboard focus. */
+.beacon-paused[aria-pressed="false"]:not(:focus-visible) { opacity: 0; }
 .beacon-gate { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%; padding: 24px; text-align: center; color: #fff; }
 .beacon-rail { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-bottom: 8px; }
 .beacon-creator { position: relative; display: block; }

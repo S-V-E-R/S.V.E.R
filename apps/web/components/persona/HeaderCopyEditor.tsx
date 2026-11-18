@@ -9,9 +9,9 @@ type Header = { page_label: string; welcome_line: string; intro_title: string; i
 export function HeaderCopyEditor({ embedded = false, onSaved }: { embedded?: boolean; onSaved?: () => void }) {
   const [data, setData] = useState<Header | null>(null);
   const [state, setState] = useState<SaveState>({});
-  const load = useCallback(async () => { const r = await send<Header>("GET", "/api/me/header"); if (r.ok) setData(r.data); }, []);
+  const load = useCallback(async () => { const r = await send<Header>("GET", "/api/me/header"); if (r.ok) setData(r.data); else setState(r); }, []);
   useLoad(load);
-  if (!data) return <p className="loading">Loading…</p>;
+  if (!data) return state.error ? <Status state={state} /> : <p className="loading">Loading…</p>;
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const f = new FormData(event.currentTarget);

@@ -67,7 +67,7 @@ Not done in this module: email or push notifications of any kind, live state, fa
   - title `Display Name (@username) | S.V.E.R`
   - Open Graph title, avatar image and description (the bio, or "Channel on S.V.E.R")
   - canonical URL `https://sver.tv/{username}`
-  - Staging keeps `X-Robots-Tag: noindex, nofollow`.
+  - Public channel pages are indexable. A host that is not the public site keeps `X-Robots-Tag: noindex, nofollow`.
 - No shared caching of channel HTML or API responses. The Login rule that authenticated HTML must never be served to another visitor applies to every profile route.
 
 ## Usernames

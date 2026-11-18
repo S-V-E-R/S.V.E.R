@@ -40,7 +40,7 @@ export function WatchLayout({ play, children }: { play: boolean; children: React
   return <div className="channel watch" data-pane={pane}>
     <div className="watch-switch" role="group" aria-label="Show">
       <button type="button" className={pane === "play" ? "small" : "small quiet"} aria-pressed={pane === "play"} onClick={() => show("play")}>Play</button>
-      <button type="button" className={pane === "chat" ? "small" : "small quiet"} aria-pressed={pane === "chat"} onClick={() => show("chat")}>Chat{unread && pane !== "chat" && <span className="nav-dot" aria-label="New messages" />}</button>
+      <button type="button" className={pane === "chat" ? "small" : "small quiet"} aria-pressed={pane === "chat"} onClick={() => show("chat")}>Chat{unread && pane !== "chat" && <><span className="nav-dot" aria-hidden="true" /><span className="sr-only"> (new messages)</span></>}</button>
     </div>
     {children}
   </div>;

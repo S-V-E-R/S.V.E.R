@@ -426,10 +426,11 @@ pub async fn alerts(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
         .fetch_one(&app.db)
         .await?;
     let mut db = app.db.acquire().await?;
+    // null for everyone but staff, so the web only mounts the urgent-removal poller for staff.
     let urgent = if user.mfa_enabled && is_staff(&mut db, &user.id).await? {
-        crate::take_down::open_count(&mut db).await?
+        Some(crate::take_down::open_count(&mut db).await?)
     } else {
-        0
+        None
     };
     let notifications = crate::alerts::unread(&app, &user.id).await?;
     Ok(Json(
