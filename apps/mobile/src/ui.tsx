@@ -96,7 +96,7 @@ export function MagnetMark() {
   );
 }
 
-function hexAlpha(hex: string, alpha: number): string {
+export function hexAlpha(hex: string, alpha: number): string {
   const n = Math.round(alpha * 255).toString(16).padStart(2, "0");
   return `${hex}${n}`;
 }
