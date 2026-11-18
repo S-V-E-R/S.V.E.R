@@ -180,13 +180,16 @@ pub fn captions(ts: &[u8]) -> bool {
 }
 const CAPTION_SIGNATURE: &[u8] = &[0xb5, 0x00, 0x31, b'G', b'A', b'9', b'4', 0x03];
 
-/// Decodes one frame of a segment to a 640-pixel-wide WebP. The stream itself is never altered.
+/// The most representative of a segment's first 30 frames (FFmpeg's `thumbnail` filter, after
+/// scaling so it buffers small frames) as a 640-pixel-wide WebP. The first frame alone is often a
+/// fade or a game's black transition, and a still stays on every card for a minute. The stream
+/// itself is never altered.
 pub async fn snapshot(ts: Vec<u8>) -> Option<Vec<u8>> {
     let out = first_frame(
         ts,
         &[
             "-vf",
-            "scale=640:-2",
+            "scale=640:-2,thumbnail=30",
             "-c:v",
             "libwebp",
             "-quality",
@@ -347,6 +350,29 @@ mod tests {
         );
         let decoded = image::load_from_memory(&webp).expect("valid WebP");
         assert_eq!((decoded.width(), decoded.height()), (640, 576));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ffmpeg with libwebp; run explicitly with --ignored"]
+    async fn snapshot_skips_a_dark_opening() {
+        // A segment that opens on a game's black transition (10 frames) before the scene (20).
+        let frame = |shade: u8| {
+            let mut f = b"P6\n64 36\n255\n".to_vec();
+            f.resize(f.len() + 64 * 36 * 3, shade);
+            f
+        };
+        let mut input = Vec::new();
+        for i in 0..30 {
+            input.extend(frame(if i < 10 { 0x18 } else { 0xf8 }));
+        }
+        let webp = snapshot(input).await.expect("ffmpeg snapshot");
+        let still = image::load_from_memory(&webp)
+            .expect("valid WebP")
+            .to_rgb8();
+        assert!(
+            still.get_pixel(10, 10)[0] > 0x80,
+            "the still must be the scene, not the black opening"
+        );
     }
 
     fn packet(pid: u16, start: bool, payload: &[u8]) -> Vec<u8> {
