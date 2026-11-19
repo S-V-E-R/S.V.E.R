@@ -23,7 +23,7 @@ Any account that is verified, has authenticator 2FA, and has finished Stripe Con
 
 ## Payments and the ledger
 
-- Stripe Checkout for Valor packs and subscriptions; Stripe Connect Express for payouts. Card data never touches S.V.E.R servers.
+- Stripe Checkout for Valor packs and subscriptions on the website; the App Store and Google Play for Valor packs in the app (Store packs, below); Stripe Connect Express for payouts. Card data never touches S.V.E.R servers.
 - Every money movement is a double-entry ledger row in Postgres (AGENTS.md). Balances are derived from the ledger, never stored only as a mutable number.
 - Stripe webhooks are signature-checked, stored, and processed idempotently by event ID; a replayed or out-of-order event never double-credits.
 - Refunds and chargebacks post reversing entries. A chargeback on a Valor purchase can push the buyer's Purchased Valor balance negative, which locks spending until settled.
@@ -66,7 +66,7 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - Cancel anytime; benefits run to the end of the paid month. Upgrading tiers takes effect immediately with Stripe's proration.
 - Deleting an account stops renewal of its card subscriptions and membership at once (November 10, 2026); benefits run to the end of the paid month, and restoring the account doesn't turn renewal back on. Subscriptions to a deleted channel stop renewing when it is erased after 14 days. If Stripe can't be reached, the jobs loop retries, and nothing is erased until it succeeds.
 - **Renewal terms** (California's automatic renewal law; added October 7, 2026): the Subscribe panel states the monthly price and that card subscriptions renew until cancelled right beside each card button, the same terms sit above Stripe Checkout's pay button (`custom_text`), and a new card subscription gets an acknowledgment email with the terms, the next charge date and how to cancel. Renewals don't send it again. The "keep a gifted subscription" step ([CHANNEL_ADDITIONS.md](CHANNEL_ADDITIONS.md)) must show the same terms when it's built.
-- Buyers aged 13 to 17, and accounts with no date of birth on file (some imported accounts): before their first purchase a parent or guardian confirms, at checkout, that they are the cardholder and consent to the purchase. Purchases by an account under 18 are capped at $50 a calendar month (UTC), counting card subscription renewals already charged that month and those still due before it ends, so a purchase can never leave a later renewal over the cap. A parent can report an unauthorized purchase through support for a refund, which reverses the Valor or subscription.
+- Buyers aged 13 to 17, and accounts with no date of birth on file (some imported accounts): before their first purchase a parent or guardian confirms, at checkout, that they are the cardholder and consent to the purchase. Purchases by an account under 18 are capped at $50 a calendar month (UTC), counting Valor bought in the app (Store packs, below) and card subscription renewals already charged that month and those still due before it ends, so a purchase can never leave a later renewal over the cap. A parent can report an unauthorized purchase through support for a refund, which reverses the Valor or subscription.
 
 ## Purchased Valor
 
@@ -86,6 +86,53 @@ Carried over from legacy and decided by Joe on October 3, 2026. Every streamer s
 - Spent as **tributes** in chat (a viewer "pays tribute" with a message: minimum 10 Valor; the message is highlighted and shows the amount) and on subscriptions.
 - No expiry. Not transferable between accounts. Viewers can't cash it out. Purchases are non-refundable except where the law or the refund policy says otherwise.
 - Tributes obey chat rules: a tribute message that breaks banned-word or link rules is rejected before any Valor moves. A tribute to a channel that banned or blocked the viewer is refused.
+
+### Store packs (App Store, Google Play)
+
+Decided by Joe on November 18, 2026 (`docs/MOBILE.md`). The app sells Valor through the App Store and Google Play:
+
+| Price | Valor |
+| --- | --- |
+| $0.99 | 100 |
+| $1.99 | 200 |
+| $4.99 | 500 |
+| $9.99 | 1,000 |
+| $19.99 | 2,000 |
+| $49.99 | 5,000 |
+| $99.99 | 10,000 |
+
+- **No bonus.** Bonus Valor is a website perk. In the US storefront, store packs cost the same as the website's packs, with no upcharge; in other storefronts the store sets the local price. The product ids are `tv.sver.app.valor.100` to `tv.sver.app.valor.10000`, the same on both stores. The Valor amount comes from the server's pack list, never from the phone, and the app shows the store's own local price.
+- **Economics.** The store keeps a fee, and the streamer still earns 0.8¢ per Valor, which is 80¢ per 100 Valor spent.
+  - At a 15% fee (the reduced rate both stores offer smaller developers; Apple's needs enrollment in the Small Business Program), S.V.E.R nets about 84¢ per 100 Valor and keeps about 4¢ after the streamer's 80¢.
+  - At 30%, it nets about 69¢, a loss of about 11¢ per 100 Valor spent.
+  - **VAT.** Store prices include VAT, and the store takes its fee from what is left after the tax. A 99¢ price with 20% VAT leaves about 82.5¢, and a 15% fee leaves about 70¢. That is below the streamer's 80¢, so in VAT storefronts every pack loses money, and higher VAT rates lose more.
+  - **Storefront decision:** packs go on sale first only in the US and in storefronts with no VAT or low tax. Joe picks them in App Store Connect and Play Console (`docs/STORE_SETUP.md`); the code doesn't choose. Opening a VAT storefront later means either accepting the loss or raising prices there, which would break "no upcharge". That is Joe's call. In a storefront without packs, the app says the packs couldn't load.
+  - The ledger books store sales at the US list price (`usd:apple`, `usd:google`). The store's fee and taxes are reconciled later against the store's financial reports, the same way Stripe fees aren't posted today.
+- **Link to the website, US only.** In the US storefront only, the app's Buy Valor section says "Bonus Valor packs are on sver.tv." and opens the website's wallet. Apple needs no extra permission for this in the US storefront. On Android, the link also needs `STORE_GOOGLE_US_LINK` turned on (default off). Turn it on only after Joe has enrolled in Google's US program for external links and the app makes the calls that program requires.
+- **How a purchase is credited.**
+  1. Before the store's purchase sheet opens, the app asks the server (`POST /api/me/wallet/store`). The server runs the same checks as card checkout: a verified email, the purchases switch, a known pack, the rate limit, then the under-13 refusal, parent or guardian consent and the $50 cap. It then holds that amount against the cap for 30 minutes and returns the account's store token.
+  2. The app opens the store's purchase sheet with that token. The token is a random id with no personal data in it. It becomes Apple's app account token or Google's obfuscated account id.
+  3. The app sends the purchase's transaction id or purchase token to the server. The server reads the purchase from the store's own API and credits the account the token belongs to. If the token belongs to a different account than the one signed in, that account gets the Valor.
+  4. The app tells the store the purchase is finished only after the credit. Until then the store keeps handing the purchase back to the app.
+- **What the pre-check can and can't do.** The pre-check stops our own app from opening a store sheet for a minor who is over the cap or has no consent. It binds only our app: the token stays the same for an account and isn't a secret, so the check can't stop a purchase made some other way. Two rules cover the rest:
+  - A purchase with no token is never credited. It's refused and left unfinished, and Google Play refunds an unconsumed purchase on its own after 3 days.
+  - A purchase that lands over the cap anyway (for example Ask to Buy approved days later) has already been paid, so it's credited and flagged: `over_cap` in its ledger detail, a warning in the server log, and a mark on the staff money page.
+- **One $50 cap.** For accounts under 18, card checkouts, store purchases and store purchases the pre-check let through in the last 30 minutes add up to one $50 a month cap. A credited purchase replaces its hold.
+- **Refunds.** Only Apple and Google can refund a store purchase. Buyers, and parents reporting a purchase made without their permission, ask the store. When the store refunds:
+  - The Valor is removed in proportion to the refunded share (Apple's refund percentage, or the share of a Google purchase's quantity that was refunded). If it was already spent, the balance can go below zero, which locks spending. What that Valor paid creators is taken back, newest spend first, exactly as for a lost card dispute (`dispute_clawback`).
+  - **Apple:** a refund notification makes the server re-read the purchase. Every hour the server also reads the last 2 days of Apple's notification history, so a missed notification is caught. If Apple reverses a refund, the Valor and the creators' earnings come back.
+  - **Google:** a voided-purchase notification makes the server re-read that purchase. Every hour the server also reads Google's list of voided purchases for the full 30 days Google keeps. A Google refund only ever grows; a later read never gives Valor back.
+  - Ledger kinds: `store_purchase`, `store_refund` and `store_refund_reversed`. The staff money page lists store purchases and both refund kinds.
+- **Notifications.** Apple and Google send purchase and refund notifications to `/api/store/apple/notifications/<secret>` and `/api/store/google/notifications/<secret>`, where `<secret>` is `STORE_NOTIFY_SECRET`. Any other path gets 404, and with the secret unset both endpoints are off. A notification's own contents are never trusted: it only tells the server which purchase to re-read from the store's API. A notification the server will never act on (an unknown token, a test purchase from someone not on the test list) gets 200, so the store stops sending it; a temporary failure gets 503, so the store tries again.
+- **Test purchases.** App Review and testers buy in Apple's sandbox or as Google Play license testers, and those purchases cost nothing. The production server credits them only for accounts listed in `STORE_TEST_USERS`, posts them against `valor:test` so they stand out in the ledger, and credits at most `STORE_TEST_MONTHLY_VALOR` (default 2,000) per test account each calendar month (UTC). A test purchase over that limit is refused with "This account has used its test purchases for this month." and stays unfinished on the phone. Test Valor spends like any other Valor, and tributes from it pay real creators, so keep the list to the App Review demo account and accounts with no ties to any creator. A development server accepts only test purchases and refuses real ones, the same rule as live Stripe keys.
+- **Configuration** (private env on the API host, never in the repo):
+  - `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_KEY_ID` and `APPLE_IAP_PRIVATE_KEY` (the contents of the `.p8` key file): all three or none. A partial set, or a key that won't load, stops the API at startup.
+  - `GOOGLE_PLAY_SERVICE_ACCOUNT`: the Google Cloud service account's JSON key. If it's set but invalid, the API stops at startup.
+  - `STORE_NOTIFY_SECRET`: the last part of both notification paths. A random value of at least 32 characters, using only letters, digits, `-` and `_`; anything else stops the API at startup.
+  - `STORE_TEST_USERS`: S.V.E.R user ids, comma-separated, allowed to credit test purchases on production.
+  - `STORE_TEST_MONTHLY_VALOR`: the monthly Valor limit per test account, a whole number (default 2,000).
+  - `STORE_GOOGLE_US_LINK`: `true` shows the US link on Android; `false` or unset hides it. Any other value stops the API at startup.
+  - With a store's keys unset, `/api/me/wallet` reports that store as off, and the pre-check and claims answer "Buying Valor in the app isn't available yet." Spending Valor in the app needs none of these.
 
 ## Engagement Valor
 

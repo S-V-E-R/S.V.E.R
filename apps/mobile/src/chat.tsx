@@ -10,10 +10,13 @@ import { cookieHeader } from "./cookies";
 import { SendIcon } from "./icons";
 import { SafetySheet, type SafetyTarget } from "./safety";
 import { loadJar, newId } from "./session";
-import { fill, font, ink, inkDim, line, onAccent, space } from "./theme";
+import { SkillsSheet } from "./skills";
+import { Attempt, parseTribute } from "./spend";
+import { fill, font, hexAlpha, ink, inkDim, line, onAccent, space } from "./theme";
 import { isChatMessage, type ChatMessage, type ChatRoom } from "./types";
 import { Button, Notice, Panel, Skeleton, type } from "./ui";
 import { appOrigin, chatSocketUrl } from "./urls";
+import { GetValorSheet } from "./valor";
 
 /** The newest messages kept on screen. */
 const CAP = 200;
@@ -231,35 +234,69 @@ export function Chat({ username, active, onUnread, readOnly }: { username: strin
   );
 }
 
-/** The input row. Typing re-renders only this, not the message list. `onSent` gets "" or the error. */
+/**
+ * The input row, then Tribute and Skills. Typing re-renders only this, not the message list. `onSent`
+ * gets "" or the error. A tribute is paid with the message over HTTP, so a refusal shows before any
+ * Valor moves; "Pay tribute" is the confirmation, as on the website.
+ */
 function Composer({ username, border, onSent }: { username: string; border: string; onSent: (error: string) => void }) {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
+  // The tribute field's text while Tribute is on; null when off.
+  const [tribute, setTribute] = useState<string | null>(null);
+  const [skills, setSkills] = useState(false);
+  const [getValor, setGetValor] = useState(false);
+  const [attempt] = useState(() => new Attempt(newId));
   const ready = body.trim().length > 0;
   async function submit() {
     const text = body.trim();
     if (!text || busy) return;
+    const valor = tribute === null ? null : parseTribute(tribute);
+    if (tribute !== null && valor === null) { onSent("A tribute is at least 10 Valor."); return; }
     setBusy(true);
-    const result = await send("POST", `/api/channels/${encodeURIComponent(username)}/chat`, { id: newId(), body: text });
+    // A lost answer keeps the id, so trying again can't pay twice. Only the amount starts a new tribute.
+    const id = attempt.take(valor ? `tribute:${valor}` : `message:${text}`);
+    const result = await send("POST", `/api/channels/${encodeURIComponent(username)}/chat`, { id, body: text, ...(valor ? { tribute: valor } : {}) });
+    // A retry whose first try went through: the server already has this message, charged once.
+    const sent = result.ok || (attempt.reused && result.status === 409);
+    attempt.settle(result);
     setBusy(false);
-    if (result.ok) setBody("");
-    onSent(result.ok ? "" : result.error);
+    if (sent) { setBody(""); setTribute(null); }
+    onSent(sent ? "" : result.ok ? "" : result.error);
   }
   return (
-    <View style={styles.inputRow}>
-      <TextInput
-        accessibilityLabel="Message"
-        placeholder="Send a message"
-        placeholderTextColor={inkDim}
-        value={body}
-        onChangeText={setBody}
-        maxLength={500}
-        returnKeyType="send"
-        submitBehavior="submit"
-        onSubmitEditing={() => { void submit(); }}
-        style={[styles.input, { borderColor: border }]}
-      />
-      <Button compact label="Send" icon={c => <SendIcon color={c} />} tone={ready ? "primary" : "quiet"} disabled={busy || !ready} onPress={() => { void submit(); }} />
+    <View style={styles.gapS}>
+      <View style={styles.inputRow}>
+        <TextInput
+          accessibilityLabel="Message"
+          placeholder="Send a message"
+          placeholderTextColor={inkDim}
+          value={body}
+          onChangeText={setBody}
+          maxLength={500}
+          returnKeyType="send"
+          submitBehavior="submit"
+          onSubmitEditing={() => { void submit(); }}
+          style={[styles.input, { borderColor: border }]}
+        />
+        <Button compact label={tribute === null ? "Send" : "Pay tribute"} icon={c => <SendIcon color={c} />} tone={ready ? "primary" : "quiet"} disabled={busy || !ready} onPress={() => { void submit(); }} />
+      </View>
+      {tribute === null ? (
+        <View style={styles.tools}>
+          <Button compact tone="quiet" label="Tribute" disabled={busy} onPress={() => setTribute("10")} />
+          <Button compact tone="quiet" label="Skills" onPress={() => setSkills(true)} />
+        </View>
+      ) : (
+        <View style={styles.tools}>
+          <Text style={type.label}>Valor</Text>
+          <TextInput accessibilityLabel="Tribute in Valor" value={tribute} onChangeText={t => setTribute(t.replace(/[^0-9]/g, ""))} keyboardType="number-pad" maxLength={7}
+            style={[styles.input, styles.amount, { borderColor: border }]} />
+          <Button compact tone="quiet" label="No tribute" onPress={() => setTribute(null)} />
+          <Button compact tone="quiet" label="Get Valor" onPress={() => setGetValor(true)} />
+        </View>
+      )}
+      <SkillsSheet username={username} visible={skills} onClose={() => setSkills(false)} />
+      <GetValorSheet visible={getValor} onClose={() => setGetValor(false)} />
     </View>
   );
 }
@@ -270,14 +307,19 @@ function Name({ message }: { message: ChatMessage }) {
 
 /** One dense row: role, the name in the author's faction color, then the message. Press and hold to report or block. */
 const Row = memo(function Row({ message, onReport }: { message: ChatMessage; onReport: (message: ChatMessage) => void }) {
+  const { colors } = useAuth();
   const role = message.role ? ROLES[message.role] : undefined;
   const press = () => onReport(message);
+  // The website's chat-tribute and chat-highlight rows.
+  const marked = message.tribute ? { borderLeftWidth: 3, borderLeftColor: colors.accent, backgroundColor: hexAlpha(colors.accent, 0.1) }
+    : message.highlighted ? { backgroundColor: hexAlpha(colors.accentLight, 0.16) } : null;
   return (
-    <Pressable onLongPress={press} accessibilityActions={[{ name: "longpress", label: "Report or block" }]} onAccessibilityAction={press} style={styles.row}>
+    <Pressable onLongPress={press} accessibilityActions={[{ name: "longpress", label: "Report or block" }]} onAccessibilityAction={press} style={[styles.row, marked]}>
       <Text style={styles.text}>
+        {message.tribute ? <Text style={[styles.role, { color: colors.accentLight }]}>{message.tribute.toLocaleString()} Valor </Text> : null}
         {role ? <Text style={styles.role}>{role} </Text> : null}
         <Name message={message} />
-        {/* Skills are bought and sent on the website; the app only shows them (docs/MOBILE.md). */}
+        {/* A Skill played from the app or the website. */}
         {message.skill ? <Text style={styles.dim}> played {message.skill}</Text> : null}
         {message.body ? `: ${message.body}` : ""}
       </Text>
@@ -301,5 +343,8 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.85 },
   composer: { borderTopWidth: 1, paddingTop: space.s, paddingHorizontal: space.m, gap: space.s },
   inputRow: { flexDirection: "row", gap: space.s },
+  gapS: { gap: space.s },
+  tools: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: space.s },
+  amount: { flex: 0, width: 96 },
   input: { flex: 1, minHeight: 44, borderWidth: 1, color: ink, backgroundColor: fill, paddingHorizontal: space.m, fontFamily: font.body, fontSize: 15 },
 });

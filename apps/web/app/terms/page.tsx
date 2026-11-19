@@ -13,7 +13,7 @@ export default function TermsPage() {
     "You must be at least 13 and keep your account credentials private.",
     "Stream something you play, build or make; follow our content and conduct rules.",
     "You keep ownership of your content and grant the permissions described below.",
-    "Paid features run through Stripe. Purchases are non-refundable except as these terms or the law say.",
+    "Paid features run through Stripe, and Valor in our app through the App Store or Google Play. Purchases are non-refundable except as these terms or the law say.",
     "Creators earn by tier and are paid every two weeks; earnings are never guaranteed.",
     "We never use your content to train AI, or sell or license it to anyone for that.",
     "Read the full terms for moderation, account closure, liability and dispute rules.",
@@ -46,21 +46,21 @@ export default function TermsPage() {
       <p>See <Link href="/dmca">Copyright & DMCA</Link> for infringement notices and counter-notices.</p>
     </> },
     { title: "Purchases", content: <>
-      <p>Prices are in US dollars and are shown before you pay. Card payments are processed by Stripe; S.V.E.R never receives your card details. You need a verified email to buy anything.</p>
+      <p>Prices are in US dollars and are shown before you pay. Card payments are processed by Stripe; S.V.E.R never receives your card details. In our iOS and Android app, Valor is bought through the App Store or Google Play, which take the payment under their own terms and show the price in your store&apos;s currency. You need a verified email to buy anything.</p>
       <ul>
         <li><strong>Channel subscriptions</strong> cost $4.99, $9.99 or $24.99 a month. A card subscription renews every month until you cancel it. You can cancel anytime, and its benefits last until the end of the month you paid for. Upgrading takes effect at once, and the difference is charged prorated. You can instead pay for one month at a time with 499, 999 or 2,499 Purchased Valor, which doesn&apos;t renew.</li>
         <li><strong>Gift subscriptions</strong> give one month to a named viewer, or 5, 10 or 20 one-month gifts to random signed-in viewers who recently chatted in that channel and allow gifts. A gifted month never renews.</li>
-        <li><strong>Purchased Valor</strong> is bought in packs shown in your <Link href="/wallet">wallet</Link>. You can spend it on tributes in chat (at least 10 Valor with a message), Skills and subscriptions. It doesn&apos;t expire, can&apos;t be transferred to another account and can&apos;t be cashed out. A tribute or Skill must follow the channel&apos;s chat rules, and nothing is spent if the message is refused.</li>
+        <li><strong>Purchased Valor</strong> is bought in packs shown in your <Link href="/wallet">wallet</Link>, or in our app through the App Store or Google Play. Packs bought in the app include no bonus Valor. In the US they cost the same as on the website; elsewhere the store sets the local price. You can spend it on tributes in chat (at least 10 Valor with a message), Skills and subscriptions. It doesn&apos;t expire, can&apos;t be transferred to another account and can&apos;t be cashed out. A tribute or Skill must follow the channel&apos;s chat rules, and nothing is spent if the message is refused.</li>
         <li><strong>Engagement Valor</strong> is earned by watching, chatting and following in a channel and can be spent only in that channel. It can&apos;t be bought, transferred or cashed out, and has no cash value.</li>
         <li><strong>Platform supporter subscriptions</strong> support S.V.E.R itself: Wolfsworn costs $5 a month and Greycloak $25 a month, by card only. They can&apos;t be paid with Valor or gifted. All of the money goes to S.V.E.R. The perks are cosmetic only: badges, a silver name and player-card frame, and &ldquo;Supporting since&rdquo; on your profile. Supporting never changes discovery, faction influence, XP, Valor or chat rules. Upgrading to Greycloak takes effect at once, prorated; downgrading takes effect at your next renewal; cancelling keeps your perks until the end of the paid month.</li>
         <li><strong>Founder marks:</strong> the first 500 accounts to pay for a full Greycloak month get a numbered Founder mark (#001 to #500), kept after cancelling or downgrading. An upgrade from Wolfsworn claims a mark at its first full Greycloak renewal. A mark can&apos;t be bought any other way, sold or transferred, and it is revoked if the payment that claimed it is fully refunded or lost to a dispute. See <Link href="/supporters">Support S.V.E.R</Link>.</li>
         <li><strong>Wall seats</strong> are not on sale. Their terms will be published here before sales open.</li>
       </ul>
-      <p>If you are 13 to 17, or we don&apos;t have your date of birth, a parent or legal guardian must confirm at checkout that they are the cardholder and consent before your first purchase. Purchases by an account under 18 are limited to $50 per calendar month (UTC), including subscription renewals due that month.</p>
+      <p>If you are 13 to 17, or we don&apos;t have your date of birth, a parent or legal guardian must confirm at checkout that they are the cardholder (in our app, that the store account on the device is theirs) and consent before your first purchase. Purchases by an account under 18 are limited to $50 per calendar month (UTC), on the website and in our app together, including subscription renewals due that month.</p>
     </> },
     { title: "Refunds and chargebacks", content: <>
-      <p>Purchases are non-refundable except as these Terms describe or where the law requires a refund. A parent or guardian can report a purchase made by a minor without their permission through <Link href="/contact">support</Link> for a refund.</p>
-      <p>When a payment is refunded or disputed:</p>
+      <p>Purchases are non-refundable except as these Terms describe or where the law requires a refund. A parent or guardian can report a purchase made by a minor without their permission through <Link href="/contact">support</Link> for a refund. Purchases made in our app are refunded only by Apple or Google, under their own policies; ask them for those refunds.</p>
+      <p>When a payment is refunded or disputed, including a refund by Apple or Google:</p>
       <ul>
         <li>The Purchased Valor it bought is removed in proportion to the amount refunded. If that Valor was already spent, your balance can go below zero, and spending is locked until it is back above zero. Valor from a dispute you win is restored.</li>
         <li>A full refund of the latest payment for a channel or platform supporter subscription ends its benefits at once and stops it from renewing.</li>

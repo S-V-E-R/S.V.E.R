@@ -36,6 +36,8 @@ const config: ExpoConfig = {
     "expo-video",
     "expo-secure-store",
     "expo-font",
+    // Valor packs through StoreKit 2 and Play Billing (src/valor.tsx). Not in Expo Go.
+    "expo-iap",
     ["expo-screen-orientation", { initialOrientation: "PORTRAIT_UP" }],
     [
       "expo-notifications",

@@ -68,6 +68,7 @@ export function Account({ tab = false }: { tab?: boolean }) {
           {!account.email_verified ? <Text style={[type.body, styles.muted]}>Confirm your email to chat and go live. You can browse and watch now.</Text> : null}
         </Frame>
         <View>
+          <Row label="Valor" onPress={() => router.push("/wallet")} />
           <Row label="Alerts" onPress={() => router.push("/alerts")} />
           <Row label="Settings on sver.tv" link onPress={() => openSite("/settings")} />
         </View>

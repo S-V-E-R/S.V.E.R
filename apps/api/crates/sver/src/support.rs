@@ -29,7 +29,7 @@ pub const PACKS: [(i64, i64); 7] = [
     (9_999, 11_500),
 ];
 /// Purchases by an account aged 13 to 17 are capped at $50 a calendar month.
-const MINOR_CAP_CENTS: i64 = 5_000;
+pub(crate) const MINOR_CAP_CENTS: i64 = 5_000;
 
 /// Age in whole years from the date of birth; None when it isn't on file.
 pub(crate) async fn age(db: &mut PgConnection, user: &str) -> Res<Option<i32>> {
@@ -49,17 +49,18 @@ pub async fn can_earn(db: &mut PgConnection, owner: &str) -> Res<bool> {
 
 // ---- Wallet and Valor packs ----
 
-/// What an account spends by card this calendar month (UTC), for the under-18 cap: checkouts
-/// (open ones too, since they expire after 30 minutes, so two tabs can't pass the cap), renewals
-/// already charged, and renewals of card subscriptions still due before the month ends, so a
-/// purchase can't leave a later renewal over the cap.
-async fn month_cents(db: &mut PgConnection, user: &str) -> Res<i64> {
+/// What an account spends this calendar month (UTC), for the under-18 cap: checkouts (open ones
+/// too, since they expire after 30 minutes, so two tabs can't pass the cap), renewals already
+/// charged, renewals of card subscriptions still due before the month ends, so a purchase can't
+/// leave a later renewal over the cap, and App Store and Google Play packs (with purchases the
+/// pre-check let through in the last 30 minutes, like open checkouts).
+pub(crate) async fn month_cents(db: &mut PgConnection, user: &str) -> Res<i64> {
     Ok(sqlx::query_scalar("WITH m AS (SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS start) SELECT ( \
         (SELECT COALESCE(sum(amount_cents),0) FROM checkout_sessions, m WHERE user_id=$1 AND status IN ('open','paid') AND created_at>=m.start) \
         + (SELECT COALESCE(sum(amount_cents),0) FROM sub_invoices, m WHERE user_id=$1 AND renewal AND created_at>=m.start) \
         + (SELECT COALESCE(sum(amount_cents),0) FROM platform_invoices, m WHERE user_id=$1 AND renewal AND created_at>=m.start) \
         + (SELECT COALESCE(sum(($2::bigint[])[tier]),0) FROM channel_subs, m WHERE user_id=$1 AND stripe_subscription IS NOT NULL AND NOT cancel_at_period_end AND paid_through>=now() AND paid_through<m.start+interval '1 month') \
-        + (SELECT COALESCE(sum(($3::bigint[])[coalesce(pending_tier,tier)]),0) FROM platform_subscriptions, m WHERE user_id=$1 AND stripe_subscription IS NOT NULL AND NOT cancel_at_period_end AND paid_through>=now() AND paid_through<m.start+interval '1 month') \
+        + (SELECT COALESCE(sum(($3::bigint[])[coalesce(pending_tier,tier)]),0) FROM platform_subscriptions, m WHERE user_id=$1 AND stripe_subscription IS NOT NULL AND NOT cancel_at_period_end AND paid_through>=now() AND paid_through<m.start+interval '1 month')         + (SELECT COALESCE(sum(cents),0) FROM store_purchases, m WHERE user_id=$1 AND created_at>=m.start)         + (SELECT COALESCE(sum(cents),0) FROM store_intents, m WHERE user_id=$1 AND created_at>=m.start AND created_at>now()-interval '30 minutes') \
         )::bigint")
         .bind(user).bind(&crate::subs::PRICES[..]).bind(&crate::supporters::PRICES[..]).fetch_one(db).await?)
 }
@@ -122,6 +123,7 @@ pub async fn wallet(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> 
         "allow_gifts": allow_gifts,
         "month_cents": if minor { Some(spent) } else { None },
         "cap_cents": if minor { Some(MINOR_CAP_CENTS) } else { None },
+        "store": crate::store::catalog(&app.config.store),
     })))
 }
 
@@ -787,8 +789,8 @@ async fn disputed_cents(tx: &mut PgConnection, intent: &str) -> Res<i64> {
 /// is taken back, newest spend first, for as much Valor as the dispute left the wallet short. The
 /// buyer's balance stays negative, so spending stays locked; a creator's earnings may go negative
 /// and are recovered from later earnings. Winning the dispute posts the same amounts back. The
-/// caller holds the wallet's lock.
-async fn claw_back_spent(
+/// caller holds the wallet's lock. Store refunds (store.rs) use it too.
+pub(crate) async fn claw_back_spent(
     tx: &mut PgConnection,
     dispute: &str,
     intent: &str,
