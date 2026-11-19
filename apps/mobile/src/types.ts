@@ -124,8 +124,12 @@ export type ChatMessage = {
   created_at: string;
   author: ChatAuthor;
   role?: string | null;
-  /** A Skill's name when the message played one (bought on the website). */
+  /** A Skill's name when the message played one. */
   skill?: string | null;
+  /** Valor paid as a tribute with the message. */
+  tribute?: number | null;
+  /** Highlighted with the channel's Engagement Valor. */
+  highlighted?: boolean;
 };
 
 /**

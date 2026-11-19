@@ -15,6 +15,7 @@ import { useLoad } from "../../src/load";
 import { HlsPlayer } from "../../src/player";
 import { PlaysControls } from "../../src/plays";
 import { SafetySheet, type SafetyTarget } from "../../src/safety";
+import { SubscribeButton } from "../../src/subscribe";
 import { bg, black, font, inkMuted, line, palette, space, themeFor } from "../../src/theme";
 import { isChannelHeader, isChannelRedirect, streamCards, type ChannelHeader, type Live, type StreamCard as Card } from "../../src/types";
 import { Avatar, Button, IconButton, Notice, SectionHead, Skeleton, type } from "../../src/ui";
@@ -204,7 +205,9 @@ export default function WatchScreen() {
         {meta && !tight ? <Text style={styles.meta} numberOfLines={1}>{meta}</Text> : null}
       </Pressable>
       {header && !header.viewer.is_owner ? (
-        <View>
+        <View style={styles.barButtons}>
+          {/* Kept mounted while the keyboard is up, so its status isn't fetched again. */}
+          <View style={tight && styles.hidden}><SubscribeButton username={username} /></View>
           <Button compact label={following ? "Following" : "Follow"} tone={following ? "quiet" : "primary"} icon={following ? c => <CheckIcon color={c} /> : undefined} disabled={followBusy} onPress={follow} />
         </View>
       ) : null}
@@ -320,6 +323,7 @@ const styles = StyleSheet.create({
   rest: { flex: 1, backgroundColor: bg },
   side: { backgroundColor: bg, borderLeftWidth: 1 },
   sideHead: { flexDirection: "row", alignItems: "center", minHeight: 44, paddingLeft: space.m },
+  barButtons: { flexDirection: "row", gap: space.s },
   streamer: { flexDirection: "row", alignItems: "center", gap: space.s, minHeight: 64, paddingVertical: space.s, paddingHorizontal: space.m, borderBottomWidth: 1 },
   meta: { fontFamily: font.labelSemi, fontSize: 12, letterSpacing: 1, textTransform: "uppercase", color: inkMuted, marginTop: 2 },
   tabs: { flexDirection: "row", borderBottomWidth: 1 },

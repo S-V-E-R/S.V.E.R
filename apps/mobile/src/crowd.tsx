@@ -14,7 +14,7 @@ import { Button, Field, Notice, Panel, type } from "./ui";
  * Faction Rally and Surge, plus effects over the player. Live updates arrive on the chat socket
  * and are passed here as BOARD_EVENT, the website's "sver:board" event. Owner and moderator tools
  * (starting polls, resolving, counters, panic, board blocks) stay on the website.
- * Skills are never offered here: they spend Purchased Valor (docs/MOBILE.md, no purchases).
+ * Skills are played from chat (src/skills.tsx), as in the website's chat dock.
  */
 export const BOARD_EVENT = "sver:board";
 export const BOARD_TYPES = new Set(["board_effect", "board_input", "board", "poll", "counters", "rally", "surge", "board_state", "board_result"]);

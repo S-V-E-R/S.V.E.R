@@ -114,6 +114,8 @@ mod skirmish;
 mod staff_streams;
 #[path = "streams/staff_window.rs"]
 mod staff_window;
+#[path = "streams/store.rs"]
+mod store;
 #[path = "streams/subs.rs"]
 mod subs;
 #[path = "streams/support.rs"]
@@ -665,6 +667,20 @@ async fn kick_linked_chat() {
         std::env::remove_var("KICK_CLIENT_ID");
         std::env::remove_var("KICK_CLIENT_SECRET");
     }
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    result.unwrap();
+}
+/// App Store and Google Play packs (docs/SUPPORT.md "Store packs") against synthetic stores, with
+/// development, production and unconfigured servers sharing one database.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn store_purchases() {
+    let (admin, db, schema) = isolated_database().await;
+    let result = tokio::spawn(store::exercise(db.clone())).await;
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)

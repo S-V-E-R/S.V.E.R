@@ -16,6 +16,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../src/auth";
 import { usePushOpen } from "../src/register-push";
 import { bg, black, ink } from "../src/theme";
+import { StoreSync } from "../src/valor";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -55,6 +56,8 @@ function Shell({ fontsFailed }: { fontsFailed: boolean }) {
   return (
     <>
       <StatusBar style="light" />
+      {/* Claims store purchases while someone is signed in. */}
+      <StoreSync />
       {fontsFailed ? <Text style={{ color: ink, backgroundColor: bg, padding: 8 }}>Typefaces didn’t load. Text is using the device fallback.</Text> : null}
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: bg } }}>
         {/* Watch rises over the tabs on a black stage; on iOS a downward swipe puts it away. */}

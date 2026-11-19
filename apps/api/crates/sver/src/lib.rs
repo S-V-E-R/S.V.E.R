@@ -77,6 +77,7 @@ pub mod squads;
 pub mod staff_console;
 pub mod staff_push;
 pub mod staff_streams;
+pub mod store;
 pub mod streams;
 pub mod stripe;
 pub mod studio;
@@ -157,6 +158,8 @@ pub struct Config {
     /// Expo push service. Fixed; device tokens never choose the URL.
     pub expo_push_url: String,
     pub stripe: stripe::Config,
+    /// App Store and Google Play packs (store.rs).
+    pub store: store::Config,
     pub videos: videos::Config,
     pub beacons: beacons::Config,
 }
@@ -238,6 +241,7 @@ impl Config {
             expo_access_token: env("EXPO_ACCESS_TOKEN"),
             expo_push_url: "https://exp.host/--/api/v2/push/send".into(),
             stripe: stripe::Config::from_env(production)?,
+            store: store::Config::from_env()?,
             videos: videos::Config::from_env(production)?,
             beacons: beacons::Config::from_env(production)?,
             youtube_oembed_url: "https://www.youtube.com/oembed".into(),
@@ -393,6 +397,10 @@ async fn boundaries(State(app): State<App>, req: Request, next: Next) -> Respons
         && req.uri().path() != "/api/notifications/unsubscribe"
         // Stripe posts webhooks without an Origin; the signature is checked in support::webhook.
         && req.uri().path() != "/api/stripe/webhook"
+        // App Store and Google Play notifications post without an Origin; they sit behind a secret
+        // path segment, and store.rs only re-reads the purchase from the store's API.
+        && !req.uri().path().starts_with("/api/store/apple/notifications/")
+        && !req.uri().path().starts_with("/api/store/google/notifications/")
         // Twitch EventSub posts without an Origin; its HMAC signature is checked in linked_chat.
         && req.uri().path() != "/api/integrations/twitch/eventsub"
         // Kick posts chat webhooks without an Origin; its RSA signature is checked in linked_chat.
@@ -548,6 +556,7 @@ pub fn router(app: App) -> Router {
         .merge(take_down::routes())
         .merge(staff_push::routes())
         .merge(support::routes())
+        .merge(store::routes())
         .merge(subs::routes())
         .merge(open_data::routes())
         .merge(progression::routes())
