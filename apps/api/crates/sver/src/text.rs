@@ -35,6 +35,13 @@ fn is_emoji_component(c: char) -> bool {
         || c == '*'
 }
 
+/// Bidi controls, zero-width and other invisible format characters: never drawn, so they can hide
+/// a banned word or a link from a filter, or reorder text on screen. ZWJ (U+200D) is listed too;
+/// `clean` still allows it between emoji.
+pub fn invisible(c: char) -> bool {
+    matches!(c as u32, 0x00AD | 0x034F | 0x061C | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF)
+}
+
 /// NFC-normalizes and trims, then rejects control, bidi-override and zero-width characters.
 /// ZWJ is allowed only between emoji. `allow_newlines` keeps `\n` (after normalizing `\r\n`).
 pub fn clean(value: &str, field: &'static str, allow_newlines: bool) -> Result<String, Fail> {
@@ -44,7 +51,8 @@ pub fn clean(value: &str, field: &'static str, allow_newlines: bool) -> Result<S
     for (i, &c) in chars.iter().enumerate() {
         let code = c as u32;
         let bad = (c.is_control() && !(allow_newlines && c == '\n'))
-            || matches!(code, 0x200B | 0x200C | 0x200E | 0x200F | 0x2028 | 0x2029 | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF | 0x061C | 0x180E);
+            || matches!(code, 0x2028 | 0x2029)
+            || (invisible(c) && code != 0x200D);
         if bad {
             return Err(Fail::field(
                 field,
