@@ -247,8 +247,9 @@ async fn replay(
     let start = (query.at_ms - 30000).max(0);
     let rows: Vec<ReplayMessage> = if video.kind == "VOD" {
         let sql = format!(
-            "WITH chat AS ({}) SELECT c.id AS message_id,c.author_id,s.start_ms+(extract(epoch FROM c.created_at-s.wall_start)*1000)::bigint AS offset_ms,c.message FROM video_segments s JOIN chat c ON c.channel_id=$2 AND c.created_at>=s.wall_start AND c.created_at<s.wall_start+make_interval(secs=>s.duration_ms::float8/1000) WHERE s.video_id=$1 AND s.start_ms<=$4 AND s.start_ms+s.duration_ms>=$3 ORDER BY c.created_at DESC,c.id DESC LIMIT 200",
-            crate::chat::replay_source_sql()
+            "WITH chat AS ({}) SELECT c.id AS message_id,c.author_id,s.start_ms+(extract(epoch FROM c.created_at-s.wall_start)*1000)::bigint AS offset_ms,c.message FROM video_segments s JOIN chat c ON {} AND c.created_at>=s.wall_start AND c.created_at<s.wall_start+make_interval(secs=>s.duration_ms::float8/1000) WHERE s.video_id=$1 AND s.start_ms<=$4 AND s.start_ms+s.duration_ms>=$3 ORDER BY c.created_at DESC,c.id DESC LIMIT 200",
+            crate::chat::replay_source_sql(),
+            replay_room("$2")
         );
         sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(&id)

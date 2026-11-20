@@ -398,6 +398,7 @@ async fn recordings_retry_privacy_cuts_and_retention() {
         json!({"title":"Public recording","visibility":"PUBLIC"}),
     )
     .await;
+    co_stream_replay(&e, &video).await;
     let request = uuid::Uuid::new_v4().to_string();
     let cut =
         json!({"kind":"CLIP","title":"A moment","start_ms":0,"end_ms":6000,"request_id":request});
@@ -621,6 +622,82 @@ async fn recordings_retry_privacy_cuts_and_retention() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// A guest's VOD (and the clips cut from it) replays the merged co-stream's shared chat from the
+/// time it was in the co-stream, and nothing after it left.
+async fn co_stream_replay(e: &Env, video: &str) {
+    use super::chat::{call, person};
+    let db = &e.app.db;
+    person(e, "squad-host", "SquadHost", true).await;
+    let walls: Vec<(i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT start_ms,wall_start FROM video_segments WHERE video_id=$1 ORDER BY start_ms",
+    )
+    .bind(video)
+    .fetch_all(db)
+    .await
+    .unwrap();
+    let millis = chrono::Duration::milliseconds(100);
+    e.sql("INSERT INTO squads(id,host_id,mode) VALUES('replay-squad','squad-host','MERGED')")
+        .await;
+    sqlx::query("INSERT INTO squad_members(squad_id,user_id,broadcast_id,joined_at) SELECT 'replay-squad','stream-owner',broadcast_id,$2 FROM videos WHERE id=$1")
+        .bind(video).bind(walls[0].1 - chrono::Duration::minutes(1)).execute(db).await.unwrap();
+    for (id, body, at) in [
+        (
+            "shared-during",
+            "shared while together",
+            walls[1].1 + millis,
+        ),
+        ("shared-after", "shared after leaving", walls[5].1 + millis),
+    ] {
+        sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,squad_id,created_at) VALUES($1,'squad-host','squad-host',$2,'replay-squad',$3)")
+            .bind(id).bind(body).bind(at).execute(db).await.unwrap();
+    }
+    // Leaving closes the stay; it's then moved back to mid-recording.
+    e.sql("DELETE FROM squad_members WHERE user_id='stream-owner'")
+        .await;
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT left_at IS NOT NULL FROM squad_appearances WHERE user_id='stream-owner'"
+        )
+        .fetch_one(db)
+        .await
+        .unwrap()
+    );
+    sqlx::query("UPDATE squad_appearances SET left_at=$1 WHERE user_id='stream-owner'")
+        .bind(walls[3].1)
+        .execute(db)
+        .await
+        .unwrap();
+    let end = walls.last().unwrap().0 + 1000;
+    let replay = call(
+        e,
+        "GET",
+        &format!("/api/videos/{video}/chat?at_ms={end}"),
+        None,
+        Value::Null,
+    )
+    .await
+    .1
+    .to_string();
+    assert!(replay.contains("shared while together"), "{replay}");
+    assert!(!replay.contains("shared after leaving"), "{replay}");
+    let mut conn = db.acquire().await.unwrap();
+    sver::videos::copy_replay(&mut conn, video, video, "stream-owner", 0, end, true)
+        .await
+        .unwrap();
+    let copied: Vec<String> = sqlx::query_scalar(
+        "SELECT message_id FROM video_chat WHERE video_id=$1 AND message_id LIKE 'shared-%'",
+    )
+    .bind(video)
+    .fetch_all(db)
+    .await
+    .unwrap();
+    assert_eq!(copied, ["shared-during"]);
+    e.sql("DELETE FROM video_chat WHERE message_id LIKE 'shared-%'")
+        .await;
+    // A cascade that removes a member and its stays together still goes through.
+    e.sql("INSERT INTO squad_members(squad_id,user_id,broadcast_id) SELECT 'replay-squad','stream-owner',broadcast_id FROM squad_appearances WHERE user_id='stream-owner'").await;
+    e.sql("DELETE FROM squads WHERE id='replay-squad'").await;
+}
 async fn library_pages(e: &Env, highlight: &str) {
     let mut fixtures = Vec::new();
     for _ in 0..101 {
