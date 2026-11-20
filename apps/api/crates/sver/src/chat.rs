@@ -541,7 +541,7 @@ pub(crate) const VISIBLE: &str = "m.deleted_at IS NULL AND (m.expires_at>now() O
 /// visibility rules; recordings supply their segment-to-wall-clock mapping around this query.
 pub fn replay_source_sql() -> String {
     format!(
-        "SELECT m.id,m.author_id,m.channel_id,m.created_at,jsonb_build_object('id',m.id,'body',m.body,'author',{},'role',m.role,'created_at',m.created_at) AS message FROM chat_messages m JOIN channel_users a ON a.id=m.author_id WHERE {VISIBLE} AND a.eligible",
+        "SELECT m.id,m.author_id,m.channel_id,m.squad_id,m.created_at,jsonb_build_object('id',m.id,'body',m.body,'author',{},'role',m.role,'created_at',m.created_at) AS message FROM chat_messages m JOIN channel_users a ON a.id=m.author_id WHERE {VISIBLE} AND a.eligible",
         profiles::chip_sql("a")
     )
 }
