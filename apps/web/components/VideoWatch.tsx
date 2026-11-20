@@ -10,9 +10,13 @@ import { VideoCut } from "./VideoCut";
 import { ReportButton, TakeDownLink, type ReportTarget } from "./Report";
 import { ShareButton } from "./ShareButton";
 import { timestampParam } from "../lib/share";
+import { Crest } from "./FactionIdentity";
+
+/** The same role badges as live chat. */
+const ROLES = { owner: "Broadcaster", moderator: "Moderator", staff: "Staff" } as const;
 
 function Replay({ id, at, ageAck }: { id: string; at: number; ageAck: boolean }) {
-  const [messages, setMessages] = useState<{ id: string; offset_ms: number; author: Chip; body: string }[]>([]);
+  const [messages, setMessages] = useState<{ id: string; offset_ms: number; author: Chip; role?: keyof typeof ROLES | null; body: string }[]>([]);
   const [note, setNote] = useState("");
   const position = useRef(at);
   useEffect(() => { position.current = at; }, [at]);
@@ -31,7 +35,7 @@ function Replay({ id, at, ageAck }: { id: string; at: number; ageAck: boolean })
     void load(); const timer = setInterval(() => void load(), 3000);
     return () => { stopped = true; clearInterval(timer); };
   }, [id, ageAck]);
-  return <aside className="video-replay panel" aria-label="Chat replay"><h2>Chat replay</h2><p className="muted">Messages from this moment in the broadcast.</p>{note ? <p role="status">{note}</p> : <ol>{messages.map(m => <li key={m.id}><time>{duration(m.offset_ms)}</time><strong>{m.author.display_name}</strong> {m.body}</li>)}</ol>}</aside>;
+  return <aside className="video-replay panel" aria-label="Chat replay"><h2>Chat replay</h2><p className="muted">Messages from this moment in the broadcast.</p>{note ? <p role="status">{note}</p> : <ol>{messages.map(m => <li key={m.id}><time>{duration(m.offset_ms)}</time>{m.author.faction && <Crest faction={m.author.faction} size={14} />} <strong className="faction-name" data-faction={m.author.faction ?? undefined} data-style={m.author.name_style ?? undefined}>{m.author.display_name}</strong>{m.role && <> <span className="badge">{ROLES[m.role]}</span></>} {m.body}</li>)}</ol>}</aside>;
 }
 export function VideoWatch({ id, initial = null, embed = false, credit = null }: { id: string; initial?: VideoPage | null; embed?: boolean; credit?: string | null }) {
   const [data, setData] = useState(initial);
