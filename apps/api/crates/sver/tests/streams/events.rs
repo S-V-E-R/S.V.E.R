@@ -179,6 +179,55 @@ pub async fn exercise(e: &Env) {
     );
     e.sql("DELETE FROM outside_chat_messages WHERE body='From outside'")
         .await;
+    // Someone who blocks a channel's moderator still reaches that moderator's chat topic.
+    let troll = person(e, "ev-troll", "EvTroll", true).await;
+    person(e, "ev-mod", "EvMod", true).await;
+    e.sql("INSERT INTO channel_moderators(channel_id,user_id) VALUES('stream-owner','ev-mod')")
+        .await;
+    e.sql("INSERT INTO user_blocks(blocker_id,blocked_id) VALUES('ev-troll','ev-mod')")
+        .await;
+    e.sql("INSERT INTO oauth_grants(id,app_id,user_id,scopes) SELECT 'ev-mod-grant',id,'ev-mod',ARRAY['user:read'] FROM dev_apps WHERE name='Alerts Overlay'").await;
+    sqlx::query("INSERT INTO oauth_tokens(token_hash,grant_id,kind,expires_at) VALUES($1,'ev-mod-grant','access',now()+interval '1 hour')")
+        .bind(sver::security::digest("ev-mod-token")).execute(&e.app.db).await.unwrap();
+    let (mut moderating, _) = connect(format!("client_id={client}&access_token=ev-mod-token"))
+        .await
+        .unwrap();
+    moderating
+        .send(send(json!({"type":"method","id":"m","method":"subscribe","params":{"topics":["chat:streamer"]}})))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_json(&mut moderating).await["result"]["subscribed"],
+        json!(["chat:streamer"])
+    );
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/channels/streamer/chat",
+        Some(&troll),
+        json!({"id":uuid::Uuid::new_v4().to_string(),"body":"blocked you anyway"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        next_json(&mut moderating).await["data"]["message"]["body"],
+        "blocked you anyway"
+    );
+    // The anonymous reader of that topic hears it too.
+    assert_eq!(
+        next_json(&mut late).await["data"]["message"]["body"],
+        "blocked you anyway"
+    );
+    drop(moderating);
+    for statement in [
+        "DELETE FROM chat_messages WHERE author_id='ev-troll'",
+        "DELETE FROM user_blocks WHERE blocker_id='ev-troll'",
+        "DELETE FROM channel_moderators WHERE user_id='ev-mod'",
+        "DELETE FROM oauth_tokens WHERE grant_id='ev-mod-grant'",
+        "DELETE FROM oauth_grants WHERE id='ev-mod-grant'",
+    ] {
+        e.sql(statement).await;
+    }
 
     // The person's own topics, only with their own token.
     late.send(send(json!({"type":"method","id":9,"method":"subscribe","params":{"topics":["user:streamer:notifications"]}}))).await.unwrap();
