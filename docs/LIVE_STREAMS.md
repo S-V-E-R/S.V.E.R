@@ -176,6 +176,7 @@ Studio's Stop action closes the broadcast and revokes its key so OBS cannot inst
 - Decision 1: a channel ban also refuses signed-in playback (`banned: true`, no URLs, heartbeats not counted). Logged-out viewing is unaffected.
 - Web: moderator Delete/Timeout/Ban actions in the chat panel, plus inline quick tools (one-click delete, one-click 10-minute timeout, ban after one confirm, stock reasons) and the owner's /mod, /unmod and Mod button, Studio → Chat for rules, moderators, active restrictions and the log, and the player's banned and no-playback states.
 - Covered by `tests/streams/moderation.rs` and a unit test for link and phrase matching.
+- Studio → Chat → Timeouts and bans also times out or bans by username, for someone who never chatted or whose messages scrolled away. Owners and moderators both see it; without a reason it waits for review like any other.
 
 ## Chat core (phase 4a) — October 3
 

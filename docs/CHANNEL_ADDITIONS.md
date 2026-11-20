@@ -111,6 +111,7 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 - Each channel can pick one of its open emotes (not a subscriber emote) as its **signature emote**.
 - Once staff approve it in the existing emote review (`/admin/media`), anyone can use it in any channel's chat, written as `username/Code` (for example `kilnworks/Walnut`). It shows the owner's crest on hover.
 - The emote picker has a **Signature** tab listing the signature emotes of channels the viewer follows.
+- The Emotes and Signature tabs each have a search box (exact matches, then prefix, then the channel's own emotes before 7TV, BTTV and FFZ). Subscriber emotes are listed after open ones and marked "Tier N"; they stay pickable because the channel's own team can use every tier. The panel takes focus when it opens and Escape closes it.
 - Channel owners can turn off other channels' signature emotes in their own chat (Studio → Chat; default allowed).
 - Reports, removal, banned words and strikes work as for other emotes. Removing the emote, or rejecting it in review, ends cross-channel use immediately.
 

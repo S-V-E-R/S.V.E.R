@@ -1,13 +1,16 @@
 "use client";
+import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 import { Section } from "../../../components/Form";
 import { send, useLoad, type Result } from "../../../lib/client-api";
 
-type Command = { name: string; reply: string; access: string; cooldown_seconds: number; uses: number };
-type Timer = { id: string; body: string; every_minutes: number; enabled: boolean; last_sent_at: string | null };
+/** `blocked`: your chat's banned words or link rule would stop the bot saying it. */
+type Command = { name: string; reply: string; access: string; cooldown_seconds: number; uses: number; blocked?: boolean };
+type Timer = { id: string; body: string; every_minutes: number; enabled: boolean; last_sent_at: string | null; blocked?: boolean };
 type Data = { commands: Command[]; timers: Timer[]; bot: { key: string; name: string; chosen: string | null; personality: string; rivalry: boolean; quips: boolean }; max_timers: number; automod: AutoMod };
 type AutoMod = { caps: boolean; repeats: boolean; spam: boolean; ladder: number[] };
 type ImportReport = { imported: string[]; skipped: { line: string; why: string }[]; flagged: { name: string; variables: string[] }[] };
+const Blocked = () => <><br /><small className="danger-text">Won&apos;t post: blocked by your <Link href="/studio/chat">chat rules</Link>.</small></>;
 const step = (s: number) => s === 0 ? "Warn" : s < 120 ? `${s}s` : s < 7200 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`;
 
 const BOTS: Record<string, string> = { pyre: "PYRE (Myria)", echo: "ECHO (Aetheron)", favor: "FAVOR (Glint)", volk: "VOLK (neutral)" };
@@ -74,7 +77,7 @@ export default function CommandsPage() {
     </Section>
     <Section title="Custom commands" intro="Viewers type !name and your bot replies. Variables: {user}, {channel}, {uptime}, {game}, {followers}. Replies follow your chat's banned words and link rule. Viewers can type /help to see them.">
       {data.commands.length > 0 && <ul className="list">{data.commands.map(c => <li key={c.name} className="row between wrap">
-        <span><strong>!{c.name}</strong> <span className="muted small">{ACCESS[c.access]} · {c.cooldown_seconds}s cooldown · used {c.uses.toLocaleString()} times</span><br />{c.reply}</span>
+        <span><strong>!{c.name}</strong> <span className="muted small">{ACCESS[c.access]} · {c.cooldown_seconds}s cooldown · used {c.uses.toLocaleString()} times</span><br />{c.reply}{c.blocked && <Blocked />}</span>
         <button type="button" className="small quiet danger-text" onClick={async () => apply(await send<Data>("DELETE", `/api/me/commands/${c.name}`), `!${c.name} deleted.`)}>Delete</button>
       </li>)}</ul>}
       <form className="stack" onSubmit={saveCommand}>
@@ -116,7 +119,7 @@ export default function CommandsPage() {
     </Section>
     <Section title="Timed messages" intro={`Up to ${data.max_timers} messages your bot posts every N minutes (at least 10) while you're live, and only when chat has been active since the last one.`}>
       {data.timers.length > 0 && <ul className="list">{data.timers.map(t => <li key={t.id} className="row between wrap">
-        <span>{t.body} <span className="muted small">every {t.every_minutes} min{t.last_sent_at ? ` · last posted ${new Date(t.last_sent_at).toLocaleTimeString()}` : ""}</span></span>
+        <span>{t.body} <span className="muted small">every {t.every_minutes} min{t.last_sent_at ? ` · last posted ${new Date(t.last_sent_at).toLocaleTimeString()}` : ""}</span>{t.blocked && <Blocked />}</span>
         <span className="row">
           <label className="row"><input type="checkbox" checked={t.enabled} onChange={async e => apply(await send<Data>("PATCH", `/api/me/timers/${t.id}`, { enabled: e.target.checked }), e.target.checked ? "Timer on." : "Timer off.")} /> On</label>
           <button type="button" className="small quiet danger-text" onClick={async () => apply(await send<Data>("DELETE", `/api/me/timers/${t.id}`), "Timed message deleted.")}>Delete</button>
