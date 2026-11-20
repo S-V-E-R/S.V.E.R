@@ -706,5 +706,52 @@ async fn expo_delivery(e: &Env, live_token: &str) {
         1,
         "a dead phone does not remove the other device"
     );
+
+    // A direct-message push for a conversation read past that message is dropped, not sent; one
+    // still unread goes out.
+    call(
+        e,
+        "PUT",
+        "/api/me/notifications/settings",
+        Some(&reader),
+        json!({"site":true,"push":true,"email":false,"community":[{"kind":"dm","site":true,"push":true}]}),
+    )
+    .await;
+    e.sql("INSERT INTO dm_conversations(id,user_a,user_b) VALUES('al-read','al-h','al-i')")
+        .await;
+    e.sql("INSERT INTO dm_state(conversation_id,user_id,read_seq) VALUES('al-read','al-i',5)")
+        .await;
+    let mut db = e.app.db.acquire().await.unwrap();
+    for (key, seq) in [("al-read", 3), ("al-unread", 9)] {
+        sver::alerts::community(
+            &mut db,
+            "al-i",
+            "al-h",
+            "dm",
+            key,
+            None,
+            &json!({"title":"New message","body":"AlertFanH sent you a message.","url":"/messages?with=AlertFanH","seq":seq}),
+        )
+        .await
+        .unwrap();
+    }
+    drop(db);
+    seen.lock().unwrap().clear();
+    sver::alerts::deliver_expo(&sender).await.unwrap();
+    let messages = seen.lock().unwrap().clone();
+    assert_eq!(
+        messages.len(),
+        1,
+        "the read message's push is dropped: {messages:?}"
+    );
+    assert_eq!(messages[0]["title"], "New message");
+    assert_eq!(
+        count(
+            e,
+            "SELECT count(*) FROM expo_push_jobs j JOIN expo_devices d ON d.id=j.device_id WHERE d.user_id='al-i'"
+        )
+        .await,
+        0
+    );
     server.abort();
 }

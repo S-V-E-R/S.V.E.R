@@ -25,7 +25,9 @@ pub const COMMUNITY_TYPES: [&str; 6] = [
     "dm",
     "light",
 ];
-/// A durable community event. Its stable key also deduplicates push work on retries.
+/// A durable community event. Its stable key also deduplicates push work on retries. A direct
+/// message's key is its conversation: a notice the recipient already read comes back as new (and
+/// pushes again); an unread one stays a single notice.
 #[allow(clippy::too_many_arguments)]
 pub async fn community(
     db: &mut sqlx::PgConnection,
@@ -53,10 +55,11 @@ pub async fn community(
     if !site && !push {
         return Ok(());
     }
-    let id = profiles::new_id();
-    let inserted=sqlx::query("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload,guild_id,site_visible) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING")
-        .bind(&id).bind(recipient).bind(kind).bind(actor).bind(format!("{kind}:{key}")).bind(payload).bind(guild).bind(site).execute(&mut *db).await?.rows_affected();
-    if inserted > 0 && push {
+    let id: Option<String> = sqlx::query_scalar("INSERT INTO notifications(id,user_id,kind,channel_id,event_key,payload,guild_id,site_visible) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT(user_id,event_key) DO UPDATE SET created_at=now(),read_at=NULL,payload=EXCLUDED.payload,site_visible=EXCLUDED.site_visible
+        WHERE notifications.kind='dm' AND notifications.read_at IS NOT NULL RETURNING id")
+        .bind(profiles::new_id()).bind(recipient).bind(kind).bind(actor).bind(format!("{kind}:{key}")).bind(payload).bind(guild).bind(site).fetch_optional(&mut *db).await?;
+    if let Some(id) = id.filter(|_| push) {
         sqlx::query("INSERT INTO push_jobs(id,subscription_id,notification_id) SELECT gen_random_uuid()::text,id,$2 FROM push_subscriptions WHERE user_id=$1 ON CONFLICT DO NOTHING")
             .bind(recipient).bind(&id).execute(&mut *db).await?;
         sqlx::query("INSERT INTO expo_push_jobs(id,device_id,notification_id) SELECT gen_random_uuid()::text,id,$2 FROM expo_devices WHERE user_id=$1 ON CONFLICT DO NOTHING")
@@ -64,6 +67,10 @@ pub async fn community(
     }
     Ok(())
 }
+
+/// A direct-message notice the recipient has since read, or whose conversation they've read or
+/// cleared past the message (`payload.seq`): its push is dropped, not sent.
+const STALE_DM: &str = "coalesce(n.kind='dm' AND (n.read_at IS NOT NULL OR EXISTS(SELECT 1 FROM dm_state s WHERE s.conversation_id=split_part(n.event_key,':',2) AND s.user_id=n.user_id AND greatest(s.read_seq,s.cleared_seq)>=(n.payload->>'seq')::bigint)),false)";
 
 async fn deliver_community(app: &App) -> Res<()> {
     type PushRow = (
@@ -76,21 +83,33 @@ async fn deliver_community(app: &App) -> Res<()> {
         String,
         Option<String>,
         Value,
+        bool,
     );
     let Some(key) = staff_push::signing_key(app)? else {
         return Ok(());
     };
     for _ in 0..50 {
         let mut tx = app.db.begin().await?;
-        let row:Option<PushRow>=sqlx::query_as("SELECT j.id,s.id,s.subscription,j.attempts,n.user_id,n.channel_id,n.kind,n.guild_id,n.payload FROM push_jobs j JOIN notifications n ON n.id=j.notification_id JOIN push_subscriptions s ON s.id=j.subscription_id WHERE j.available_at<=now() ORDER BY j.available_at FOR UPDATE OF j SKIP LOCKED LIMIT 1")
+        let row:Option<PushRow>=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT j.id,s.id,s.subscription,j.attempts,n.user_id,n.channel_id,n.kind,n.guild_id,n.payload,{STALE_DM} FROM push_jobs j JOIN notifications n ON n.id=j.notification_id JOIN push_subscriptions s ON s.id=j.subscription_id WHERE j.available_at<=now() ORDER BY j.available_at FOR UPDATE OF j SKIP LOCKED LIMIT 1")))
             .fetch_optional(&mut *tx).await?;
-        let Some((job, subscription, sealed, attempts, user, actor, kind, guild, mut payload)) =
-            row
+        let Some((
+            job,
+            subscription,
+            sealed,
+            attempts,
+            user,
+            actor,
+            kind,
+            guild,
+            mut payload,
+            stale,
+        )) = row
         else {
             break;
         };
         let enabled:bool=sqlx::query_scalar("SELECT coalesce((SELECT push FROM notification_type_settings WHERE user_id=$1 AND kind=$2),true)").bind(&user).bind(&kind).fetch_one(&mut *tx).await?;
         let allowed = enabled
+            && !stale
             && !profiles::blocked_between(&mut tx, &user, &actor).await?
             && profiles::channel_user_by_id(&mut tx, &user)
                 .await?
@@ -626,7 +645,7 @@ async fn post_expo(app: &App, message: &Value) -> Sent {
     }
 }
 
-/// job, device, sealed token, attempts, channel username, display name, kind, payload, recipient, actor, guild.
+/// job, device, sealed token, attempts, channel username, display name, kind, payload, recipient, actor, guild, stale DM.
 type ExpoRow = (
     String,
     String,
@@ -639,6 +658,7 @@ type ExpoRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    bool,
 );
 
 /// Sends queued phone notifications. Kinds that are in-site only never get a job here.
@@ -653,7 +673,7 @@ pub async fn deliver_expo(app: &App) -> Res<()> {
     }
     for _ in 0..50 {
         let mut tx = app.db.begin().await?;
-        let row: Option<ExpoRow> = sqlx::query_as("SELECT j.id,d.id,d.token,j.attempts,c.username,c.display_name,n.kind,n.payload,n.user_id,n.channel_id,n.guild_id FROM expo_push_jobs j JOIN expo_devices d ON d.id=j.device_id JOIN users u ON u.id=d.user_id AND u.deleted_at IS NULL LEFT JOIN broadcasts b ON b.id=j.broadcast_id LEFT JOIN channel_users c ON c.id=b.owner_id LEFT JOIN notifications n ON n.id=j.notification_id WHERE j.available_at<=now() ORDER BY j.available_at FOR UPDATE OF j SKIP LOCKED LIMIT 1")
+        let row: Option<ExpoRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT j.id,d.id,d.token,j.attempts,c.username,c.display_name,n.kind,n.payload,n.user_id,n.channel_id,n.guild_id,{STALE_DM} FROM expo_push_jobs j JOIN expo_devices d ON d.id=j.device_id JOIN users u ON u.id=d.user_id AND u.deleted_at IS NULL LEFT JOIN broadcasts b ON b.id=j.broadcast_id LEFT JOIN channel_users c ON c.id=b.owner_id LEFT JOIN notifications n ON n.id=j.notification_id WHERE j.available_at<=now() ORDER BY j.available_at FOR UPDATE OF j SKIP LOCKED LIMIT 1")))
             .fetch_optional(&mut *tx).await?;
         let Some((
             job,
@@ -667,6 +687,7 @@ pub async fn deliver_expo(app: &App) -> Res<()> {
             recipient,
             actor,
             guild,
+            stale,
         )) = row
         else {
             break;
@@ -689,6 +710,7 @@ pub async fn deliver_expo(app: &App) -> Res<()> {
                 let actor = actor.as_deref().unwrap_or("");
                 let enabled: bool = sqlx::query_scalar("SELECT coalesce((SELECT push FROM notification_type_settings WHERE user_id=$1 AND kind=$2),true)").bind(user).bind(kind).fetch_one(&mut *tx).await?;
                 enabled
+                    && !stale
                     && !user.is_empty()
                     && !actor.is_empty()
                     && !profiles::blocked_between(&mut tx, user, actor).await?
