@@ -609,14 +609,13 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
             sqlx::query("UPDATE magnet_lanes SET current_broadcast=NULL,current_kind=NULL,current_reason=NULL,current_since=NULL,pending_broadcast=NULL,pending_kind=NULL,pending_reason=NULL,switch_at=NULL WHERE id=$1")
                 .bind(lane).execute(&mut *tx).await?;
             tx.commit().await?;
-            publish(app, lane);
+            follow(app, lane, true).await;
         } else {
             tx.commit().await?;
         }
         return Ok(());
     }
     // A staff pick whose broadcast ended is released, so the lane never waits on it.
-    let mut changed = false;
     let forced = match forced {
         Some(id) => {
             let ended: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM broadcasts WHERE id=$1 AND state IN ('LIVE','RECONNECTING'))")
@@ -627,7 +626,6 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
                     .execute(&mut *tx)
                     .await?;
                 record(&mut tx, lane, &json!({"kind":"released","chosen":id,"reason":"The staff pick ended","candidates":[]})).await?;
-                changed = true;
                 None
             } else {
                 Some(id)
@@ -642,9 +640,7 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
     if let (Some(next), Some(at)) = (&pending, switch_at) {
         if at > now + Duration::seconds(1) {
             tx.commit().await?;
-            if changed {
-                publish(app, lane);
-            }
+            follow(app, lane, false).await;
             return Ok(());
         }
         if let Some(unit) = cands.iter().find(|c| c.has(next)) {
@@ -658,7 +654,7 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
             )
             .await?;
             tx.commit().await?;
-            publish(app, lane);
+            follow(app, lane, true).await;
             return Ok(());
         }
         // The next stream ended or became ineligible during the countdown: decide again now
@@ -666,7 +662,6 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
         sqlx::query("UPDATE magnet_lanes SET pending_broadcast=NULL,pending_kind=NULL,pending_reason=NULL,switch_at=NULL WHERE id=$1")
             .bind(lane).execute(&mut *tx).await?;
         record(&mut tx, lane, &json!({"kind":"cancelled","chosen":next,"reason":"The next stream left before the switch","candidates":[]})).await?;
-        changed = true;
     }
     let state = LaneState {
         current: current.clone(),
@@ -681,12 +676,12 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
             "broadcast":c.broadcast,"members":c.members,"username":s.username,"score":c.score,"moment":c.moment,"last_featured":c.last_featured,
             "signals":{"chatters":g.chatters,"chat_base":g.chat_base,"follows":g.follows,"follow_base":g.follow_base,"raided_by":g.raided_by,"flagged":g.flagged,"unsettled":g.unsettled,"crowd":g.crowd,"crowd_base":g.crowd_base,"game":g.game}})).collect::<Vec<_>>()})
     };
+    // A countdown changes nothing in the room yet.
+    let mut switched = true;
     match &decision {
         Decision::Hold => {
             tx.commit().await?;
-            if changed {
-                publish(app, lane);
-            }
+            follow(app, lane, false).await;
             return Ok(());
         }
         Decision::Clear => {
@@ -709,6 +704,7 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
                 .as_deref()
                 .is_some_and(|c| cands.iter().any(|x| x.has(c)));
             if showing {
+                switched = false;
                 // Viewers get a countdown with a still of the next stream and a Stay button.
                 sqlx::query("UPDATE magnet_lanes SET pending_broadcast=$2,pending_kind=$3,pending_reason=$4,switch_at=now()+make_interval(secs=>$5) WHERE id=$1")
                     .bind(lane).bind(broadcast).bind(kind).bind(reason).bind(t.countdown_seconds as f64).execute(&mut *tx).await?;
@@ -723,7 +719,7 @@ pub async fn tick_lane(app: &App, lane: &str) -> Res<()> {
         }
     }
     tx.commit().await?;
-    publish(app, lane);
+    follow(app, lane, switched).await;
     Ok(())
 }
 async fn record(db: &mut PgConnection, lane: &str, entry: &Value) -> Res<()> {
@@ -793,10 +789,13 @@ async fn commit(
         .bind(lane).bind(broadcast).bind(kind).bind(reason).execute(&mut *db).await?;
     Ok(())
 }
-/// Tells open Hype pages to refresh now (they also poll).
-fn publish(app: &App, lane: &str) {
-    app.chat
-        .publish(&format!("magnet:{lane}"), None, 0, json!({"type":"magnet"}));
+/// Open Hype rooms follow the lane: they read the room again when the featured stream `switched`
+/// or where its chat merges changed (a co-stream forming or ending, chat merging turned off).
+/// The page itself polls for the countdown.
+async fn follow(app: &App, lane: &str, switched: bool) {
+    if crate::chat::follow_lane(app, lane, switched).await.is_err() {
+        eprintln!("magnet_event=follow lane={lane} outcome=failed");
+    }
 }
 
 /// The lane's display name.
@@ -1020,6 +1019,12 @@ async fn save(
     let user = profiles::signed_in(&app, &jar).await?;
     sqlx::query("INSERT INTO magnet_settings(user_id,opt_out,chat_merge) VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET opt_out=$2,chat_merge=$3")
         .bind(&user.id).bind(input.opt_out).bind(input.chat_merge).execute(&app.db).await?;
+    // Chat merging turned on or off reaches open Hype rooms showing this channel or its co-stream.
+    let lanes: Vec<String> = sqlx::query_scalar("SELECT l.id FROM magnet_lanes l JOIN broadcasts b ON b.id=l.current_broadcast WHERE b.owner_id=$1 OR b.owner_id IN (SELECT o.user_id FROM squad_members o JOIN squad_members s ON s.squad_id=o.squad_id WHERE s.user_id=$1)")
+        .bind(&user.id).fetch_all(&app.db).await?;
+    for lane in lanes {
+        crate::chat::follow_lane(&app, &lane, false).await?;
+    }
     mine(State(app), jar).await
 }
 /// When streams were featured on any MAGNet channel since `from`, as (owner, start, end): one

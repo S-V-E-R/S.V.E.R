@@ -338,7 +338,7 @@ async fn game(app: &App, c: &Connection, set: &str) {
     }
 }
 async fn run(app: &App, c: &Connection, mut ws: WebSocket) {
-    let mut events = app.chat.subscribe();
+    let mut events = app.chat.subscribe_room(&c.channel);
     let Ok(snapshot) = board(app, &c.channel).await else {
         return;
     };
@@ -379,7 +379,7 @@ async fn run(app: &App, c: &Connection, mut ws: WebSocket) {
                 }
             }
             event = events.recv() => match event {
-                Ok(e) if forward(&e, &c.channel) => {
+                Ok(e) if forward(&e) => {
                     let mut out = e.payload.clone();
                     if out["type"] == "board" {
                         // Published or paused: send the whole board again.
@@ -420,12 +420,11 @@ fn merge(target: &mut Value, from: Value) {
     }
 }
 /// Board presses and effects, joystick moves, board changes and game-set state.
-fn forward(e: &Arc<Event>, channel: &str) -> bool {
-    e.channel == channel
-        && matches!(
-            e.payload["type"].as_str(),
-            Some("board_effect" | "board_input" | "board" | "board_state" | "board_result")
-        )
+fn forward(e: &Arc<Event>) -> bool {
+    matches!(
+        e.payload["type"].as_str(),
+        Some("board_effect" | "board_input" | "board" | "board_state" | "board_result")
+    )
 }
 /// One message from a client: "ping", or (games only) "state" with control changes, "ready" when
 /// the game is listening, and "cap" with the most inputs per second it wants (`per_second`); games

@@ -426,16 +426,22 @@ async fn socket_ends_with_session(e: &Env, c: &str, d: &str) {
         .await
         .unwrap()
     });
-    let mut request = format!("ws://{address}/api/dms/socket")
-        .into_client_request()
-        .unwrap();
-    request
-        .headers_mut()
-        .insert("origin", e.app.config.origin.parse().unwrap());
-    request
-        .headers_mut()
-        .insert("cookie", format!("sver_dev={d}").parse().unwrap());
-    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let connect = |token: String| async move {
+        let mut request = format!("ws://{address}/api/dms/socket")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("origin", e.app.config.origin.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("cookie", format!("sver_dev={token}").parse().unwrap());
+        tokio_tungstenite::connect_async(request).await.unwrap().0
+    };
+    let mut socket = connect(d.to_string()).await;
+    let mut sender = connect(c.to_string()).await;
+    let outsider = person(e, "dm-outsider", "DmOutsider", true).await;
+    let mut outsider = connect(outsider).await;
     // DM sockets listen on their own hub, not the site-wide chat bus.
     e.app.chat.publish(
         "dm:dm-d",
@@ -455,6 +461,18 @@ async fn socket_ends_with_session(e: &Env, c: &str, d: &str) {
         (&json!("DmCharlie"), &json!("DmCharlie"))
     );
     assert!(live["message"]["created_at"].is_string(), "{live}");
+    // Only the two people in the conversation hear it.
+    assert_eq!(
+        super::chat::next_json(&mut sender).await["message"]["body"],
+        "while signed in"
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(500), outsider.next())
+            .await
+            .is_err(),
+        "someone else's socket heard the message"
+    );
+    drop((sender, outsider));
     e.sql("DELETE FROM sessions WHERE user_id='dm-d'").await;
     charlie_to_delta(e, c, "after signing out").await;
     loop {

@@ -1919,8 +1919,9 @@ async fn overlay_socket(
         .on_upgrade(move |ws| overlay_session(app, channel, digest, ws)))
 }
 async fn overlay_session(app: App, channel: String, digest: String, mut ws: WebSocket) {
-    let mut events = app.chat.subscribe();
     let test_room = format!("overlay:{channel}");
+    let mut events = crate::chat::Rooms::default();
+    events.set(&app.chat, &[channel.clone(), test_room.clone()]);
     // The overlay shows the channel's counters from the start.
     let Ok(counters) =
         async { crate::crowd::counters_json(&mut *app.db.acquire().await?, &channel).await }.await
@@ -1943,7 +1944,7 @@ async fn overlay_session(app: App, channel: String, digest: String, mut ws: WebS
                 beat_ok = matches!(still, Ok(r) if r.rows_affected() == 1);
             }
             event = events.recv() => match event {
-                Ok(e) if forward(&e, &channel, &test_room) => {
+                Ok(e) if forward(&e) => {
                     if ws.send(Message::Text(e.payload.to_string().into())).await.is_err() { break; }
                 }
                 Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
@@ -1965,14 +1966,11 @@ async fn overlay_session(app: App, channel: String, digest: String, mut ws: WebS
     .await;
 }
 
-fn forward(e: &Arc<Event>, channel: &str, test_room: &str) -> bool {
-    (e.channel == channel || e.channel == test_room)
-        && matches!(
-            e.payload["type"].as_str(),
-            Some(
-                "board_effect" | "board_input" | "board" | "poll" | "counters" | "rally" | "surge"
-            )
-        )
+fn forward(e: &Arc<Event>) -> bool {
+    matches!(
+        e.payload["type"].as_str(),
+        Some("board_effect" | "board_input" | "board" | "poll" | "counters" | "rally" | "surge")
+    )
 }
 
 // ---- Webhooks (outbox) ----

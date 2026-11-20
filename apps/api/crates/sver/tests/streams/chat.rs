@@ -415,6 +415,19 @@ pub async fn exercise(e: &Env) {
         1,
         "three sockets share one read"
     );
+    // A burst in another channel never wakes this channel's sockets or makes them fall behind.
+    for _ in 0..5_000 {
+        e.app
+            .chat
+            .publish("another-channel", None, 0, json!({"type":"board_input"}));
+    }
+    e.app.chat.publish(
+        "stream-owner",
+        None,
+        0,
+        json!({"type":"counters","counters":[]}),
+    );
+    assert!(next_of(&mut guest, "counters").await["counters"].is_array());
 
     // Blocking a moderator doesn't hide you from them: they still see the line, live and in
     // history, while an ordinary chatter you blocked doesn't.

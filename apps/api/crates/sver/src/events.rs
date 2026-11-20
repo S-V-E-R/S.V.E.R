@@ -354,8 +354,10 @@ async fn reply(ws: &mut WebSocket, value: Value) -> bool {
         .is_ok()
 }
 async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mut ws: WebSocket) {
+    // Chat topics come and go, so this socket reads every event and keeps its own.
     let mut events = app.chat.subscribe();
-    let mut dms = app.dms.subscribe();
+    // The person's own DM room, only while they follow their whispers topic.
+    let mut dms = crate::chat::Rooms::default();
     let mut topics: HashSet<String> = HashSet::new();
     // Chat topics: channel ID -> topic. Messages come straight from the chat hub, not the outbox.
     let mut chats: HashMap<String, String> = HashMap::new();
@@ -462,7 +464,9 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
                         continue;
                     };
                     let mut out = json!({"type": "reply", "id": call["id"]});
-                    match handle(&app, user.as_ref(), &mut topics, &mut chats, &mut own, &call).await {
+                    let handled = handle(&app, user.as_ref(), &mut topics, &mut chats, &mut own, &call).await;
+                    dms.set(&app.dms, own.whispers.as_ref().map(|w| w.0.clone()).as_slice());
+                    match handled {
                         Ok((result, replay)) => {
                             out["result"] = result;
                             if !reply(&mut ws, out).await { return; }
