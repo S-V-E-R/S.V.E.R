@@ -21,6 +21,8 @@ pub struct Kick {
     unsubscribed: Vec<String>,
     posted: Vec<Value>,
     revoked: Vec<String>,
+    /// Kick fails every unsubscribe while set.
+    down: bool,
 }
 pub type Shared = Arc<Mutex<Kick>>;
 
@@ -54,7 +56,11 @@ fn fake(k: Shared) -> Router {
                     {"name":"moderation.banned","version":1,"subscription_id":"sub-ban","error":null}]}))
             })
             .delete(|State(k): State<Shared>, RawQuery(q): RawQuery| async move {
-                k.lock().unwrap().unsubscribed.push(q.unwrap_or_default());
+                let mut k = k.lock().unwrap();
+                if k.down {
+                    return StatusCode::BAD_GATEWAY;
+                }
+                k.unsubscribed.push(q.unwrap_or_default());
                 StatusCode::NO_CONTENT
             }),
         )
@@ -274,9 +280,30 @@ pub async fn exercise(e: &Env, k: Shared, key: SigningKey<Sha256>) {
         json!({"type":"user","broadcaster_user_id":4242,"content":"thanks!","reply_to_message_id":"k1"})
     );
 
-    // The stream ending removes the subscriptions.
+    // The stream ending removes the subscriptions; ones Kick didn't remove are kept and tried
+    // again, and what they still deliver doesn't show while the channel is offline.
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now() WHERE id='kick-b'")
         .await;
+    k.lock().unwrap().down = true;
+    sver::linked_chat::tick(&e.app).await.unwrap();
+    assert_eq!(
+        account(e).await,
+        (
+            "connected".into(),
+            vec!["sub-chat".into(), "sub-ban".into()]
+        )
+    );
+    let late = person(8, "Late", json!([]));
+    deliver(
+        e,
+        &key,
+        "chat.message.sent",
+        message("k4", late, "anyone?"),
+        now(),
+    )
+    .await;
+    assert_eq!(shown(e).await.len(), 2, "nothing shows while offline");
+    k.lock().unwrap().down = false;
     sver::linked_chat::tick(&e.app).await.unwrap();
     assert_eq!(k.lock().unwrap().unsubscribed, ["id=sub-chat&id=sub-ban"]);
     assert_eq!(account(e).await, ("idle".into(), vec![]));
