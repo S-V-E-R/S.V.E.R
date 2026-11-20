@@ -12,8 +12,8 @@ export const REASONS: [string, string][] = [
   ["copyright", "Copyright"], ["mature_label", "Should be labeled mature"], ["other", "Something else"],
 ];
 
-/** What is being reported: a chat message, a Beacon or a live stream, and who posted it. */
-export type SafetyTarget = { type: "chat_message" | "beacon" | "live_stream"; id: string; label: string; username: string | null; displayName: string };
+/** What is being reported: a chat message, a linked-platform chat line, a Beacon or a live stream, and who posted it (null for no S.V.E.R account). */
+export type SafetyTarget = { type: "chat_message" | "outside_message" | "beacon" | "live_stream"; id: string; label: string; username: string | null; displayName: string };
 
 /**
  * Report and block, required by both app stores for chat and videos. Reports go to the same staff
