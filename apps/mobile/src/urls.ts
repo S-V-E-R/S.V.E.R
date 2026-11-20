@@ -19,7 +19,8 @@ export function playbackKey(url: string): string {
   return url.replace(/\/bcdn_token=[^/]*/, "");
 }
 
-export function chatSocketUrl(username: string): string {
+/** A channel's chat socket, or a merged co-stream's shared chat when `squad` is set. */
+export function chatSocketUrl(username: string, squad?: string | null): string {
   const base = apiUrl.replace(/^http/i, "ws");
-  return `${base}/api/chat/ws?channel=${encodeURIComponent(username)}`;
+  return `${base}/api/chat/ws?${squad ? `squad=${encodeURIComponent(squad)}` : `channel=${encodeURIComponent(username)}`}`;
 }
