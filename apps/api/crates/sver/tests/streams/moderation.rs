@@ -858,6 +858,23 @@ async fn shared_chat_and_evidence(e: &Env) {
     .unwrap();
     assert!(gone);
 
+    // A channel timeout of a partner (protected in the shared chat) leaves their shared lines.
+    let (status, body) = owner(
+        e,
+        "POST",
+        &format!("{BASE}/chat/restrictions"),
+        json!({"username":"ModPartner","kind":"timeout","seconds":60,"reason":"test"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let kept: bool = sqlx::query_scalar(
+        "SELECT deleted_at IS NULL FROM chat_messages WHERE id='mod-shared-partner'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert!(kept, "a partner's shared lines stay");
+
     // Evidence older than 90 days loses its chat; newer evidence keeps it.
     let has_chat = |user: &'static str| async move {
         sqlx::query_scalar::<_, bool>("SELECT coalesce(bool_or(detail ? 'chat'),false) FROM channel_moderation_log WHERE target_id=$1")
@@ -879,11 +896,22 @@ async fn shared_chat_and_evidence(e: &Env) {
             .unwrap()
     };
     assert!(quoted().await);
+    // Another account's line under a name the erased one also held stays.
+    e.sql("INSERT INTO channel_moderation_log(id,channel_id,actor_id,actor_role,action,detail,reason) VALUES('mod-reused','stream-owner','stream-owner','owner','ban','{\"chat\":[{\"user\":\"ModOutsider\",\"author\":\"mod-chatter\",\"body\":\"not theirs\"}]}','test')").await;
     let mut tx = e.app.db.begin().await.unwrap();
     sver::profile_jobs::erase(&mut tx, "mod-outsider")
         .await
         .unwrap();
     tx.commit().await.unwrap();
+    let reused: i32 = sqlx::query_scalar(
+        "SELECT jsonb_array_length(detail->'chat') FROM channel_moderation_log WHERE id='mod-reused'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(reused, 1, "erased by account, not by a reused name");
+    e.sql("DELETE FROM channel_moderation_log WHERE id='mod-reused'")
+        .await;
     assert!(!quoted().await);
     assert!(has_chat("mod-chatter").await, "other lines stay");
 

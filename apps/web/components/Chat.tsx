@@ -29,13 +29,14 @@ export function subBadge(months: number) {
   const step = [9, 6, 3].find(m => months >= m) ?? 1;
   return `${step} ${step === 1 ? "month" : "months"}`;
 }
-type Snapshot = { messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean; allow_signatures?: boolean; gifs?: GifAccess };
+/** `now`: the server's time, so backlog lines keep their real ages (the overlay fade never uses the PC clock). */
+type Snapshot = { now?: string; messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean; allow_signatures?: boolean; gifs?: GifAccess };
 /** Another channel's signature emote, written username/Code (docs/CHANNEL_ADDITIONS.md "Signature emote"). */
 const SIGNATURE = /(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)/g;
 const BOARD_EVENTS = new Set(["board_effect", "board_input", "board", "poll", "counters", "rally", "surge", "board_state", "board_result"]);
 type BoardEvent = { type: "board_effect" | "board_input" | "board" | "poll" | "counters" | "rally" | "surge" | "board_state" | "board_result"; source?: string };
 // `outside`: the channel's 7TV/BTTV/FFZ set changed too. `source`: a co-stream member's own event, named by its channel.
-type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes?: ChannelEmote[]; outside?: boolean; allow_signatures?: boolean } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string; retry?: number } | { type: "delete"; id: string } | { type: "raid"; raid: unknown; source?: string } | { type: "raid_cancelled"; id: string; source?: string } | { type: "system"; text: string } | { type: "protect"; until: string | null } | { type: "subs_only"; on: boolean } | BoardEvent;
+type Event = ({ type: "snapshot" } & Snapshot) | { type: "emotes"; emotes?: ChannelEmote[]; outside?: boolean; allow_signatures?: boolean } | { type: "pin"; pinned: Message | null } | { type: "message"; message: Message } | { type: "ack"; id: string; message: Message } | { type: "error"; id?: string; message: string; retry?: number } | { type: "delete"; id: string } | { type: "raid"; raid: unknown; source?: string } | { type: "raid_cancelled"; id: string; source?: string } | { type: "system"; text: string } | { type: "protect"; until: string | null } | { type: "subs_only"; on: boolean } | { type: "room"; squad: string | null } | BoardEvent;
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 const NONE: ChannelEmote[] = [];
@@ -113,9 +114,10 @@ export function useRetryWait() {
   const start = useCallback((seconds?: number) => { if (seconds && seconds > 0) setWait({ left: Math.ceil(seconds), total: Math.ceil(seconds) }); }, []);
   return [wait, start] as const;
 }
-/** Read out once (the total); the visible count ticks without being announced every second. */
+/** Read out once (the total); the visible count ticks without being announced every second. The live
+ *  region is always there, so screen readers announce the text when it appears. */
 export function RetryNotice({ wait }: { wait: { left: number; total: number } | null }) {
-  return wait && <p role="status" className="muted small chat-retry"><span className="sr-only">You can send again in {wait.total} seconds.</span><span aria-hidden="true">Send again in {wait.left}s</span></p>;
+  return <p role="status" className="muted small chat-retry">{wait && <><span className="sr-only">You can send again in {wait.total} seconds.</span><span aria-hidden="true">Send again in {wait.left}s</span></>}</p>;
 }
 
 /** Replies to a deleted message quote it as "Message deleted". */
@@ -181,9 +183,11 @@ export function ChatLine({ m, account, lookup, host, tools, children }: { m: Mes
 /**
  * `variant`: the channel page ("full", with a Pop out button), the pop-out window ("popout"), an OBS
  * dock ("dock": no header, compact) or a read-only OBS overlay ("overlay": messages fade after `fade`
- * seconds). See docs/CHANNEL_ADDITIONS.md "Pop-out chat".
+ * seconds). See docs/CHANNEL_ADDITIONS.md "Pop-out chat". `channel`: the viewed channel, when a shared
+ * chat's `username` is its host (Pop out opens the viewed one's). `onRoom`: the room may have changed
+ * (the channel merged into a co-stream or left one, or the shared chat ended).
  */
-export function Chat({ username, account, squad, variant = "full", fade = 30, top }: { username: string; account: string | null; squad?: string; variant?: "full" | "popout" | "dock" | "overlay"; fade?: number; top?: React.ReactNode }) {
+export function Chat({ username, account, squad, channel = username, onRoom, variant = "full", fade = 30, top }: { username: string; account: string | null; squad?: string; channel?: string; onRoom?: () => void; variant?: "full" | "popout" | "dock" | "overlay"; fade?: number; top?: React.ReactNode }) {
   const [clock, setClock] = useState(() => Date.now());
   // A chat dock signed out in OBS picks up a sign-in made in another dock.
   useSignInElsewhere(variant === "dock" && !account);
@@ -240,16 +244,22 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
   const host = squad ? username : undefined;
 
   // Deduplicates by ID in server order: the latest 100 while following, up to 500 while the reader is
-  // scrolled up (a reload then merges in too, so their scrollback stays). Each message is stamped with
-  // when it arrived here; a backlog keeps its relative ages, so the overlay fade never uses the PC clock.
-  const merge = useCallback((incoming: Message[], replace = false) => {
+  // scrolled up (a reload then merges in too, so their scrollback stays, minus lines the reload's range
+  // no longer has: deleted or moderated meanwhile). Each message is stamped with when it arrived here; a
+  // backlog line with its age by the server's clock (`serverNow`), or as long gone without it, so the
+  // overlay never replays an old line and its fade never uses the PC clock.
+  const merge = useCallback((incoming: Message[], replace = false, serverNow?: string) => {
     if (replace) loaded.current = true;
     const now = Date.now();
-    const newest = Math.max(0, ...incoming.map(m => Date.parse(m.created_at)));
+    const skew = serverNow ? now - Date.parse(serverNow) : null;
+    const seqs = incoming.map(m => m.seq);
+    const [oldest, newest] = [Math.min(...seqs), Math.max(...seqs)];
+    const ids = new Set(incoming.map(m => m.id));
     setMessages(current => {
       const arrived = new Map(current.map(m => [m.id, m.arrived]));
-      const byId = new Map((replace && follow.current ? [] : current).map(m => [m.id, m]));
-      for (const m of incoming) byId.set(m.id, { ...m, arrived: arrived.get(m.id) ?? (replace ? now - (newest - Date.parse(m.created_at)) : now) });
+      const kept = !replace ? current : follow.current ? [] : current.filter(m => m.seq < oldest || m.seq > newest || ids.has(m.id));
+      const byId = new Map(kept.map(m => [m.id, m]));
+      for (const m of incoming) byId.set(m.id, { ...m, arrived: arrived.get(m.id) ?? (!replace ? now : skew === null ? -Infinity : Date.parse(m.created_at) + skew) });
       return [...byId.values()].sort((a, b) => a.seq - b.seq).slice(follow.current ? -100 : -500);
     });
   }, []);
@@ -326,7 +336,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     let poll: ReturnType<typeof setInterval> | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     const settleIn = (list: Message[]) => { const s = sending.current; if (s && list.some(m => m.id === s.id)) ack(s.id); };
-    const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true); settleIn(r.data.messages); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setFollowersOnly(r.data.followers_only_until ?? null); setSubsOnly(!!r.data.subs_only); setAllowSignatures(r.data.allow_signatures ?? true); setGifs(r.data.gifs ?? null); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
+    const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true, r.data.now); settleIn(r.data.messages); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setFollowersOnly(r.data.followers_only_until ?? null); setSubsOnly(!!r.data.subs_only); setAllowSignatures(r.data.allow_signatures ?? true); setGifs(r.data.gifs ?? null); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
     // Polling covers only the time the socket is down; the socket's snapshot takes over again.
     const startPoll = () => {
       if (closed || poll) return;
@@ -346,16 +356,16 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
         const data = JSON.parse(event.data) as Event;
         // A co-stream member's CrowdSync and raid events name their own channel.
         const channel = ("source" in data && data.source ? data.source : username).toLowerCase();
-        if (data.type === "snapshot") { attempt = 0; merge(data.messages, true); settleIn(data.messages); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); }
+        if (data.type === "snapshot") { attempt = 0; merge(data.messages, true, data.now); settleIn(data.messages); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); }
         else if (data.type === "protect") setFollowersOnly(data.until);
         else if (data.type === "subs_only") setSubsOnly(data.on);
         else if (data.type === "emotes") {
           if (data.emotes) setEmotes(data.emotes);
           if (typeof data.allow_signatures === "boolean") setAllowSignatures(data.allow_signatures);
-          void refreshSignatures();
-          // Only a changed outside set reloads it, spread over 3 seconds so viewers don't all ask at once.
-          if (data.outside) setTimeout(() => { if (!closed) setEmotesVersion(v => v + 1); }, Math.random() * 3000);
+          // Spread over 3 seconds so viewers don't all ask at once: signatures, and the outside set only when it changed.
+          setTimeout(() => { if (closed) return; void refreshSignatures(); if (data.outside) setEmotesVersion(v => v + 1); }, Math.random() * 3000);
         }
+        else if (data.type === "room") onRoom?.();
         else if (data.type === "pin") setPinned(data.pinned);
         else if (data.type === "message" || data.type === "ack") {
           merge([data.message]);
@@ -382,8 +392,9 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       ws.onclose = event => {
         if (socket.current === ws) socket.current = null;
         if (closed) return;
-        // 4003: this chat became age-restricted for this viewer. Final; one read shows the server's reason.
-        if (event.code === 4003) { void load(); return; }
+        // 4003: final (this chat became age-restricted for this viewer, or the shared chat ended or barred
+        // them); one read shows the server's reason, and the room is checked again.
+        if (event.code === 4003) { void load(); onRoom?.(); return; }
         // Never gives up. Polls meanwhile if no socket ever opened or the outage outlasts two retries.
         if (!everOpened || attempt >= 2) startPoll(); else setMode("connecting");
         retry = setTimeout(open, reconnectDelay(attempt, event.code));
@@ -392,7 +403,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     };
     open();
     return () => { closed = true; clearInterval(poll); clearTimeout(retry); socket.current?.close(); };
-  }, [path, username, squad, merge, remove, ack, pending, startWait, refreshSignatures]);
+  }, [path, username, squad, merge, remove, ack, pending, startWait, refreshSignatures, onRoom]);
 
   // New messages are followed only while the reader is at the bottom (see the list's onScroll);
   // scrolling the list itself never moves the page.
@@ -488,15 +499,6 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       setDraft("");
       return;
     }
-    // The streamer posts out: a reply to an outside message, or the platform chosen in "Also post on".
-    const platform = outsideReply?.platform ?? (squad ? "" : postOn);
-    if (platform && !pinDraft) {
-      setBusy(true);
-      const result = await send("POST", "/api/me/linked-chat/reply", { platform, body, ...(outsideReply ? { reply_to: outsideReply.id } : {}) });
-      setBusy(false);
-      if (result.ok) { setDraft(""); setOutsideReply(null); } else { setError(result.error); startWait(result.retry); }
-      return;
-    }
     const mod = /^\/(mod|unmod)\s+@?([A-Za-z0-9_]{3,25})$/i.exec(body);
     if (mod && role === "owner" && !squad && !pinDraft) {
       if (await setModerator(mod[2], mod[1].toLowerCase() === "mod")) setDraft("");
@@ -516,6 +518,17 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       if (raid[1].toLowerCase() === "raid" && !raid[2]) { setError("Use /raid username."); return; }
       const result = raid[1].toLowerCase() === "raid" ? await send("POST", "/api/me/raids", { username: raid[2] }) : await send("DELETE", "/api/me/raids");
       if (result.ok) setDraft(""); else setError(result.error);
+      return;
+    }
+    // The streamer posts out (after the commands, which always act here): a reply to an outside message,
+    // or the platform chosen in "Also post on". Tributes and highlights are S.V.E.R only.
+    const platform = outsideReply?.platform ?? (squad ? "" : postOn);
+    if (platform && !pinDraft) {
+      if (tribute !== null || highlight !== null) { setError("Tributes and highlights post on S.V.E.R only. Choose S.V.E.R only to send this one."); return; }
+      setBusy(true);
+      const result = await send("POST", "/api/me/linked-chat/reply", { platform, body, ...(outsideReply ? { reply_to: outsideReply.id } : {}) });
+      setBusy(false);
+      if (result.ok) { setDraft(""); setOutsideReply(null); } else { setError(result.error); startWait(result.retry); }
       return;
     }
     const id = pending.id(JSON.stringify({ body, reply: reply?.id, tribute, highlight: highlight !== null, pin: pinDraft }));
@@ -558,7 +571,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
   </section>;
   return <section className={variant === "dock" ? "chat panel chat-compact" : "chat panel"} aria-label="Chat">
     {variant !== "dock" && <h2>Chat {mode !== "live" && <span className="muted small">{mode === "polling" ? "(updates every few seconds)" : "(connecting…)"}</span>}
-      {variant === "full" && <button type="button" className="small quiet chat-popout" onClick={() => window.open(`/${encodeURIComponent(username)}/chat`, `sver-chat-${username}`, "width=400,height=700")}>Pop out</button>}</h2>}
+      {variant === "full" && <button type="button" className="small quiet chat-popout" onClick={() => window.open(`/${encodeURIComponent(channel)}/chat`, `sver-chat-${channel}`, "width=400,height=700")}>Pop out</button>}</h2>}
     {top}
     {pinned && <aside className="chat-pin" aria-label="Pinned message" aria-live="polite">
       <strong>Pinned message</strong><div className="chat-pin-content"><strong>{pinned.author.display_name}: </strong><MessageBody message={pinned} account={account} lookup={shown} /></div>
@@ -629,7 +642,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       <label htmlFor="chat-input" className="sr-only">Message</label>
       <textarea ref={input} id="chat-input" value={draft} disabled={busy} maxLength={500} rows={2} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
       <button type="submit" disabled={busy || !!wait}>{tribute ? "Pay tribute" : "Send"}</button>
-      {tribute === null ? <button type="button" className="quiet small" disabled={busy} onClick={() => setTribute(10)}>Tribute</button>
+      {tribute === null ? !outsideReply && !postOn && <button type="button" className="quiet small" disabled={busy} onClick={() => setTribute(10)}>Tribute</button>
         : <span className="tribute-draft"><label htmlFor="tribute-amount">Valor</label> <input id="tribute-amount" type="number" min={10} step={1} value={tribute} onChange={e => setTribute(Math.max(0, Math.floor(Number(e.target.value) || 0)))} /> <button type="button" className="quiet small" onClick={() => setTribute(null)}>No tribute</button> <Link href="/wallet" className="small">Get Valor</Link></span>}
       {gifs && !outsideReply && !postOn && <button type="button" className="quiet small" disabled={busy || !!wait} aria-expanded={picking} onClick={() => setPicking(p => !p)}>GIF</button>}
       {gifs && picking && <GifPicker access={gifs} account={account} onPick={sendGif} onClose={() => setPicking(false)} />}

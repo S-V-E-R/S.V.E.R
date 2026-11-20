@@ -62,6 +62,9 @@ pub struct Hub {
     rule_reads: Arc<AtomicUsize>,
     /// Each shared chat's open roster (None once it ended), shared by its sockets for a second.
     squads: Arc<Shared<Option<Vec<String>>>>,
+    /// The merged co-stream each channel's own chat has moved into, shared by its sockets for five
+    /// seconds, so open chats learn to switch rooms without every viewer asking.
+    merged: Arc<Shared<Option<String>>>,
     /// Bumped after any block or unblock commits, so sockets re-read their block list only then.
     blocks: Arc<AtomicUsize>,
     /// Bumped after a ban or a shared-chat restriction commits, so shared-chat sockets re-check
@@ -147,6 +150,7 @@ impl Default for Hub {
             rules: Arc::default(),
             rule_reads: Arc::default(),
             squads: Arc::default(),
+            merged: Arc::default(),
             blocks: Arc::default(),
             access: Arc::default(),
             pins: Arc::default(),
@@ -207,7 +211,12 @@ impl Hub {
         }
         // A quiet room may never be published to again, so empty ones are dropped here too.
         rooms.retain(|_, tx| tx.receiver_count() > 0);
-        let (tx, rx) = broadcast::channel(ROOM);
+        // The app events room takes a whole outbox drain (up to 1000 rows) in one pass.
+        let (tx, rx) = broadcast::channel(if room == crate::events::HUB {
+            4096
+        } else {
+            ROOM
+        });
         rooms.insert(room.into(), tx);
         rx
     }
@@ -246,10 +255,13 @@ impl Hub {
         } else {
             Vec::new()
         };
-        // A MAGNet room that hears anything is read again by the next reader.
+        // A MAGNet room that hears anything it shows is read again by the next reader (linked
+        // platforms' and the bot's lines stay in the channel's own chat).
+        let shown = kind != "message" || payload["message"]["outside"].is_null();
         for room in std::iter::once(channel)
             .filter(|c| c.starts_with("magnet:"))
             .chain(lanes.iter().map(String::as_str))
+            .filter(|_| shown)
         {
             self.hype.forget(room);
         }
@@ -280,6 +292,13 @@ impl Hub {
     /// Call after a channel ban or a shared-chat restriction commits.
     pub(crate) fn access_changed(&self) {
         self.access.fetch_add(1, Ordering::Release);
+    }
+    async fn merged(&self, app: &App, channel: &str) -> Res<Option<String>> {
+        self.merged
+            .get(channel, Duration::from_secs(5), None, || {
+                merged_squad(app, channel)
+            })
+            .await
     }
     /// Call after a co-stream's roster changes, so its sockets see it at once.
     pub(crate) fn squad_changed(&self, id: &str) {
@@ -577,8 +596,7 @@ async fn pinned(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Value
 
 /// Tells open chats that a message is gone: its room, the Hype room it came from, and every Hype
 /// room that merged with its channel while it was posted (they keep that window's lines after
-/// MAGNet moves on). Those are looked up in the background, so a row already deleted outright
-/// (expiry) reaches only its room and origin.
+/// MAGNet moves on). Those are looked up in the background.
 pub(crate) fn publish_delete(app: &App, channel: Option<&str>, origin: Option<&str>, id: &str) {
     let delete = json!({"type":"delete","id":id});
     if let Some(channel) = channel {
@@ -625,8 +643,14 @@ pub async fn expire(app: &App) -> crate::Result<()> {
     let removed: Vec<(Option<String>, Option<String>, String)> = sqlx::query_as("DELETE FROM chat_messages m WHERE id=ANY($1) AND NOT EXISTS(SELECT 1 FROM chat_pins WHERE message_id=m.id) RETURNING coalesce(squad_id,channel_id),origin,id")
         .bind(ids).fetch_all(&mut *tx).await?;
     tx.commit().await?;
+    // Gone outright, so there's no row left to find its merged MAGNet windows by: only its room
+    // and origin hear.
     for (channel, origin, id) in removed {
-        publish_delete(app, channel.as_deref(), origin.as_deref(), &id);
+        if let Some(channel) = channel {
+            app.chat
+                .publish(&channel, None, 0, json!({"type":"delete","id":id}));
+        }
+        publish_delete(app, None, origin.as_deref(), &id);
     }
     Ok(())
 }
@@ -931,6 +955,24 @@ pub(crate) async fn send_from(
     origin: Option<&str>,
     squad: Option<&str>,
 ) -> Res<Value> {
+    // A retry of a stored message is acknowledged with it, even if the room has changed since
+    // (a co-stream merged, say) and a fresh send would be refused.
+    let existing: Option<Row> =
+        // select() contains only fixed SQL and a literal chip alias; message values are bound.
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND m.author_id=$2 AND m.channel_id IS NOT DISTINCT FROM $3 AND m.squad_id IS NOT DISTINCT FROM $4 AND m.origin IS NOT DISTINCT FROM $5 AND {VISIBLE}", select())))
+            .bind(&input.id)
+            .bind(&user.id)
+            .bind(channel)
+            .bind(squad)
+            .bind(origin)
+            .fetch_optional(&app.db)
+            .await?;
+    if let Some(row) = existing {
+        return Ok(visible_message(
+            row.hydrated(app).await?,
+            &hidden(app, Some(&user.id)).await?,
+        ));
+    }
     // A stale page, dock or app must not post into a room no co-stream viewer reads. MAGNet's
     // merged sends carry `origin` and `hype_merge` already picks the shared chat for them.
     if squad.is_none()
@@ -995,22 +1037,6 @@ pub(crate) async fn send_from(
     }
     if body.matches('\n').count() > 4 {
         return Err(Fail::field("body", "Use at most four line breaks."));
-    }
-    let existing: Option<Row> =
-        // select() contains only fixed SQL and a literal chip alias; message values are bound.
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1 AND m.author_id=$2 AND m.channel_id IS NOT DISTINCT FROM $3 AND m.squad_id IS NOT DISTINCT FROM $4 AND m.origin IS NOT DISTINCT FROM $5 AND {VISIBLE}", select())))
-            .bind(&input.id)
-            .bind(&user.id)
-            .bind(channel)
-            .bind(squad)
-            .bind(origin)
-            .fetch_optional(&app.db)
-            .await?;
-    if let Some(row) = existing {
-        return Ok(visible_message(
-            row.hydrated(app).await?,
-            &hidden(app, Some(&user.id)).await?,
-        ));
     }
     let standing: Option<(bool, bool)> =
         sqlx::query_as("SELECT email_verified, eligible FROM channel_users WHERE id=$1")
@@ -1306,7 +1332,7 @@ pub async fn read(
     .await?;
     let rules = app.chat.rules(&app, &channel).await?;
     Ok(Json(
-        json!({"overlay_fade_seconds": fade, "allow_signatures": rules.allow_signatures, "gifs": gifs(&app, &channel).await?, "messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":rules.emotes, "followers_only_until":rules.followers_only, "subs_only":rules.subs_only}),
+        json!({"now": Utc::now(), "overlay_fade_seconds": fade, "allow_signatures": rules.allow_signatures, "gifs": gifs(&app, &channel).await?, "messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":rules.emotes, "followers_only_until":rules.followers_only, "subs_only":rules.subs_only}),
     ))
 }
 pub async fn post(
@@ -1359,7 +1385,7 @@ pub async fn squad_read(
     let (hidden, _) = hidden_for(&app, viewer.as_ref().map(|u| u.id.as_str()), &members).await?;
     let rules = squad_rules(&app, &member_names(&app, &members).await?).await?;
     Ok(Json(
-        json!({"messages":history(&app,channel,&hidden,Some(&id)).await?,"pinned":null,"emotes":rules.emotes,"allow_signatures":rules.allow_signatures,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only}),
+        json!({"now":Utc::now(),"messages":history(&app,channel,&hidden,Some(&id)).await?,"pinned":null,"emotes":rules.emotes,"allow_signatures":rules.allow_signatures,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only}),
     ))
 }
 /// Members' usernames, in member order.
@@ -1705,7 +1731,7 @@ async fn session(
     let Ok(gifs) = gifs(&app, &channel).await else {
         return;
     };
-    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":rules.emotes,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only,"allow_signatures":rules.allow_signatures,"gifs":gifs}).to_string();
+    let first = json!({"type":"snapshot","now":Utc::now(),"messages":snapshot,"pinned":pin,"emotes":rules.emotes,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only,"allow_signatures":rules.allow_signatures,"gifs":gifs}).to_string();
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
     }
@@ -1724,6 +1750,8 @@ async fn session(
     let mut access = tokio::time::interval(Duration::from_secs(1));
     access.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let (mut checked, mut checked_at) = (None, Instant::now());
+    // The merged co-stream this channel's chat moved into, as last told to the client.
+    let mut moved: Option<String> = None;
     loop {
         tokio::select! {
             _ = refresh.tick() => {
@@ -1741,6 +1769,16 @@ async fn session(
                     let _ = ws.send(Message::Close(Some(CloseFrame { code: 4003, reason: "mature".into() }))).await;
                     return;
                 }
+                // A channel's own chat that merges into a co-stream, or stops, tells the client to
+                // switch rooms (a shared chat that ends closes with 4003 instead).
+                if squad.is_none()
+                    && let Ok(now) = app.chat.merged(&app, &channel).await
+                    && now != moved
+                {
+                    moved = now;
+                    let frame = json!({"type":"room","squad":moved});
+                    if ws.send(Message::Text(frame.to_string().into())).await.is_err() { return; }
+                }
                 let Ok(next) = rules_for(&app, &channel, names.as_deref()).await else { continue; };
                 for frame in rule_changes(&rules, &next, None) {
                     if ws.send(Message::Text(frame.to_string().into())).await.is_err() { return; }
@@ -1751,9 +1789,14 @@ async fn session(
                 let Some(id) = squad.as_deref() else { continue; };
                 let generation = app.chat.access_generation();
                 // A transient error keeps the socket open; the next tick tries again.
+                // Ended or barred closes with 4003, which clients treat as final (one read then
+                // shows why) instead of reconnecting to a socket that would be refused.
                 let current = match app.chat.squad(&app, id).await {
                     Ok(Some(current)) => current,
-                    Ok(None) => return,
+                    Ok(None) => {
+                        let _ = ws.send(Message::Close(Some(CloseFrame { code: 4003, reason: "ended".into() }))).await;
+                        return;
+                    }
                     Err(_) => continue,
                 };
                 if current == members && checked == Some(generation) && checked_at.elapsed() < Duration::from_secs(30) {
@@ -1762,7 +1805,10 @@ async fn session(
                 if let Some(v) = viewer_id.as_deref() {
                     match crate::squads::barred(&app.db, id, v, &current).await {
                         Ok(None) => {}
-                        Ok(Some(_)) => return,
+                        Ok(Some(_)) => {
+                            let _ = ws.send(Message::Close(Some(CloseFrame { code: 4003, reason: "barred".into() }))).await;
+                            return;
+                        }
                         Err(_) => continue,
                     }
                 }
@@ -2268,7 +2314,13 @@ async fn hype_session(
     loop {
         tokio::select! {
             _ = recheck.tick(), if minor => {
-                let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks, None).await else { continue; };
+                // Merges and switches arrive as `magnet`; only a mature label can close or open the
+                // merged room meanwhile, so the room is read again only when that flips.
+                let owners = app.chat.lanes.lock().unwrap_or_else(|e| e.into_inner()).get(&room).cloned().flatten().map(|m| m.1).unwrap_or_default();
+                let Ok(mature) = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM stream_settings WHERE mature AND owner_id=ANY($1) AND owner_id IS DISTINCT FROM $2)")
+                    .bind(&owners).bind(viewer.as_deref()).fetch_one(&app.db).await else { continue; };
+                if mature == gated { continue; }
+                let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks, Some(Instant::now())).await else { continue; };
                 let closed = next["holding"] == true && owner.is_none();
                 if owner != merged || closed != gated {
                     (merged, gated) = (owner, closed);

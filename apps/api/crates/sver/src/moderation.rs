@@ -17,6 +17,13 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 
+/// A log row `l`'s chat evidence as the team reads it: without each line's author account ID.
+macro_rules! evidence_shown {
+    () => {
+        "coalesce((SELECT jsonb_agg(e-'author' ORDER BY i) FROM jsonb_array_elements(l.detail->'chat') WITH ORDINALITY t(e,i)),'[]')"
+    };
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Role {
     Owner,
@@ -255,15 +262,9 @@ pub(crate) async fn log_restriction(
     Ok(())
 }
 
-/// `text` without invisible format characters, which could otherwise split a banned word or a link.
-fn visible(text: &str) -> String {
-    text.chars()
-        .filter(|c| !crate::text::invisible(*c))
-        .collect()
-}
-/// Case-folded, whitespace-normalized text for banned-phrase matching.
+/// Case-folded, whitespace-normalized text for banned-phrase matching (`text::unmasked`).
 fn fold(text: &str) -> String {
-    visible(text)
+    crate::text::unmasked(text)
         .to_lowercase()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -272,7 +273,7 @@ fn fold(text: &str) -> String {
 /// Plain-text URL/domain detection, including mixed case, `www.` and scheme-less forms. Never
 /// fetches anything and is not a complete obfuscation detector.
 fn has_link(body: &str) -> bool {
-    visible(body)
+    crate::text::unmasked(body)
         .to_lowercase()
         .split_whitespace()
         .any(|token| {
@@ -632,9 +633,9 @@ pub async fn view(
         .for_each(|v| profiles::hydrate(&app, v));
     // Timeouts and bans waiting for a reason: a moderator sees their own, the owner and staff all
     // (`theirs` flags the ones another moderator left).
-    let reviews: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'action',l.action,'actor',a.username,'target',t.username,'created_at',l.created_at,'chat',l.detail->'chat','clip',l.detail->>'clip','theirs',l.actor_id<>$2) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 AND l.needs_review AND ($3 OR l.actor_id=$2) ORDER BY l.created_at")
+    let reviews: Vec<Value> = sqlx::query_scalar(concat!("SELECT jsonb_build_object('id',l.id,'action',l.action,'actor',a.username,'target',t.username,'created_at',l.created_at,'chat',", evidence_shown!(), ",'clip',l.detail->>'clip','theirs',l.actor_id<>$2) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 AND l.needs_review AND ($3 OR l.actor_id=$2) ORDER BY l.created_at"))
         .bind(&channel).bind(&me.id).bind(role != Role::Moderator).fetch_all(&app.db).await?;
-    let log: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',l.id,'action',l.action,'actor_role',l.actor_role,'actor',a.username,'target',t.username,'reason',l.reason,'detail',l.detail,'created_at',l.created_at) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 ORDER BY l.created_at DESC LIMIT 50")
+    let log: Vec<Value> = sqlx::query_scalar(concat!("SELECT jsonb_build_object('id',l.id,'action',l.action,'actor_role',l.actor_role,'actor',a.username,'target',t.username,'reason',l.reason,'detail',CASE WHEN l.detail ? 'chat' THEN jsonb_set(l.detail,'{chat}',", evidence_shown!(), ") ELSE l.detail END,'created_at',l.created_at) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 ORDER BY l.created_at DESC LIMIT 50"))
         .bind(&channel).fetch_all(&app.db).await?;
     // A provisional (spike) window on the live broadcast offers the followers-only prompt.
     let spike: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING') AND l.provisional_until>now())")
@@ -780,21 +781,27 @@ macro_rules! rooms_of {
         "((m.channel_id=$1 AND m.squad_id IS NULL) OR m.squad_id IN (SELECT squad_id FROM squad_members WHERE user_id=$1))"
     };
 }
-/// Evidence for the team: up to 30 lines of the last 10 minutes of the channel's chat.
+/// Evidence for the team: up to 30 lines of the last 10 minutes of the channel's chat. Each keeps
+/// its author's account ID, so erasing that account removes exactly its lines (names get reused);
+/// `evidence_shown!` leaves it out of what the team reads.
 async fn evidence(db: &mut PgConnection, channel: &str) -> Res<Vec<Value>> {
-    Ok(sqlx::query_scalar(concat!("SELECT jsonb_build_object('user',u.username,'body',m.body,'at',m.created_at,'deleted',m.deleted_at IS NOT NULL) FROM (SELECT m.* FROM chat_messages m WHERE ", rooms_of!(), " AND m.created_at>now()-interval '10 minutes' ORDER BY m.created_at DESC LIMIT 30) m JOIN users u ON u.id=m.author_id ORDER BY m.created_at"))
+    Ok(sqlx::query_scalar(concat!("SELECT jsonb_build_object('user',u.username,'author',m.author_id,'body',m.body,'at',m.created_at,'deleted',m.deleted_at IS NOT NULL) FROM (SELECT m.* FROM chat_messages m WHERE ", rooms_of!(), " AND m.created_at>now()-interval '10 minutes' ORDER BY m.created_at DESC LIMIT 30) m JOIN users u ON u.id=m.author_id ORDER BY m.created_at"))
         .bind(channel).fetch_all(db).await?)
 }
 /// Messages to tell open chats about: each one's room, Hype lane and ID.
 pub(crate) type Cleared = Vec<(String, Option<String>, String)>;
 /// A timeout or ban removes the person's lines from the last 10 minutes of the channel's chat
-/// (and its shared co-stream room). Publish the result after commit with `publish_cleared`.
+/// (and its shared co-stream room, unless they're protected there: a member streamer, a member's
+/// moderator or staff, as the shared chat's own restrict refuses). Publish the result after
+/// commit with `publish_cleared`.
 pub(crate) async fn clear_recent(
     db: &mut PgConnection,
     channel: &str,
     target: &str,
 ) -> Res<Cleared> {
-    Ok(sqlx::query_as(concat!("UPDATE chat_messages m SET deleted_at=now() WHERE ", rooms_of!(), " AND m.author_id=$2 AND m.deleted_at IS NULL AND m.created_at>now()-interval '10 minutes' RETURNING coalesce(m.squad_id,m.channel_id),m.origin,m.id"))
+    Ok(sqlx::query_as(concat!("UPDATE chat_messages m SET deleted_at=now() WHERE ", rooms_of!(), " AND m.author_id=$2 AND m.deleted_at IS NULL AND m.created_at>now()-interval '10 minutes'
+        AND (m.squad_id IS NULL OR NOT (EXISTS(SELECT 1 FROM squad_members q WHERE q.squad_id=m.squad_id AND (q.user_id=$2 OR EXISTS(SELECT 1 FROM channel_moderators d WHERE d.channel_id=q.user_id AND d.user_id=$2))) OR EXISTS(SELECT 1 FROM staff_roles WHERE user_id=$2)))
+        RETURNING coalesce(m.squad_id,m.channel_id),m.origin,m.id"))
         .bind(channel).bind(target).fetch_all(db).await?)
 }
 /// Chat, pop-outs, docks, the overlay and MAGNet drop each removed line.
@@ -917,15 +924,18 @@ pub async fn review(
             "Only the moderator who gave it, or the owner, can review this.",
         ));
     }
-    // A co-stream restriction is logged in every member's channel at once; reviewing one reviews all.
-    sqlx::query("UPDATE channel_moderation_log l SET needs_review=false, reason=coalesce($2,l.reason) FROM channel_moderation_log e WHERE e.id=$1 AND (l.id=e.id OR (e.detail->>'squad' IS NOT NULL AND l.detail->>'squad'=e.detail->>'squad' AND l.created_at=e.created_at AND l.target_id=e.target_id AND l.action=e.action))")
+    // A co-stream restriction is logged in every member's channel at once; reviewing one reviews
+    // all, while the reviewing channel is still in that shared chat.
+    sqlx::query("UPDATE channel_moderation_log l SET needs_review=false, reason=coalesce($2,l.reason) FROM channel_moderation_log e WHERE e.id=$1 AND (l.id=e.id OR (e.detail->>'squad' IS NOT NULL AND l.detail->>'squad'=e.detail->>'squad' AND l.created_at=e.created_at AND l.target_id=e.target_id AND l.action=e.action AND EXISTS(SELECT 1 FROM squad_members s WHERE s.squad_id=e.detail->>'squad' AND s.user_id=e.channel_id)))")
         .bind(&id).bind(&reason).execute(&mut *tx).await?;
     // Undo lifts only this action's restriction, never a newer one someone gave since (a shared
-    // chat's has no time of its own, so its end must still match).
+    // chat's has no time of its own, so its end must still match, and only a channel still in
+    // that shared chat can lift it).
     let mut lifted = false;
     if !input.keep {
         let undo = if squad.is_some() {
-            "DELETE FROM squad_restrictions WHERE squad_id=$1 AND user_id=$2 AND kind=$3 AND until IS NOT DISTINCT FROM (SELECT (detail->>'until')::timestamptz FROM channel_moderation_log WHERE id=$4)"
+            "DELETE FROM squad_restrictions WHERE squad_id=$1 AND user_id=$2 AND kind=$3 AND until IS NOT DISTINCT FROM (SELECT (detail->>'until')::timestamptz FROM channel_moderation_log WHERE id=$4)
+             AND EXISTS(SELECT 1 FROM squad_members s JOIN channel_moderation_log l ON l.channel_id=s.user_id WHERE s.squad_id=$1 AND l.id=$4)"
         } else {
             "DELETE FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND kind=$3 AND created_at<=(SELECT created_at FROM channel_moderation_log WHERE id=$4)"
         };
@@ -1301,5 +1311,15 @@ mod tests {
             assert!(!has_link(text), "{text}");
         }
         assert_eq!(fold("  Bad   WORD\n here "), "bad word here");
+        // Variation selectors, tags, Hangul fillers and fullwidth forms can't disguise either.
+        for masked in ["s\u{FE0F}lur", "s\u{E0041}lur", "s\u{3164}lur", "ｓｌｕｒ"] {
+            assert_eq!(fold(masked), "slur", "{masked:?}");
+        }
+        assert!(has_link("ｗｗｗ．example．com"));
+        // Chat refuses selectors and tags outside emoji, and keeps them in emoji.
+        assert!(crate::text::clean("s\u{FE0F}lur", "body", false).is_err());
+        assert!(crate::text::clean("s\u{E0041}lur", "body", false).is_err());
+        let emoji = "\u{2764}\u{FE0F} 1\u{FE0F}\u{20E3} \u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+        assert!(crate::text::clean(emoji, "body", false).is_ok());
     }
 }

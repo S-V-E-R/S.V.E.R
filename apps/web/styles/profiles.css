@@ -130,6 +130,8 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .chat-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
 .chat-form textarea{resize:vertical;min-width:0;width:100%}
 .chat-form .error,.chat-form .chat-retry,.chat-post-on{grid-column:1/-1;margin:0}
+/* The retry notice's live region stays mounted while empty, out of the layout's flow. */
+.chat-retry:empty{position:absolute}
 /* Chat dock (ChatDock): Emotes, Rewards and Skills under the box; each opens a panel over the
    bottom of the chat with tiles, so the chat column stays messages plus the box. */
 .chat-dock{position:relative;margin-top:8px}

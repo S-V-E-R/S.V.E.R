@@ -25,7 +25,8 @@ function openSocket(url: string, headers: Record<string, string>): WebSocket {
 /**
  * A channel's chat, or a merged co-stream's shared chat when `squad` (and its `host`) is set. Live over
  * the socket, which reconnects with backoff; polls only while it's down and the app is in front.
- * `onRoomGone` runs on a 409, so the watch screen can re-check the co-stream and switch rooms.
+ * `onRoomGone` runs on a 409 or a `room` frame (the channel merged into a co-stream or left one), so the
+ * watch screen can re-check the co-stream and switch rooms.
  */
 export function Chat({ username, squad, host, onRoomGone }: { username: string; squad?: string | null; host?: string | null; onRoomGone?: () => unknown }) {
   const { account, colors } = useAuth();
@@ -67,7 +68,8 @@ export function Chat({ username, squad, host, onRoomGone }: { username: string; 
 
   useEffect(() => {
     let closed = false;
-    // Close code 4003: the chat is now mature-gated for this account. Final, no reconnect (chat.rs).
+    // Close code 4003: the chat is now mature-gated for this account, or the shared chat ended or barred
+    // them. Final, no reconnect (chat.rs); one read shows why (an ended one answers 409).
     let final = false;
     let connecting = false;
     let socket: WebSocket | null = null;
@@ -140,6 +142,8 @@ export function Chat({ username, squad, host, onRoomGone }: { username: string; 
           setFollowersOnly(typeof record.until === "string" ? record.until : null);
         } else if (record.type === "subs_only") {
           setSubsOnly(record.on === true);
+        } else if (record.type === "room") {
+          onRoomGone?.();
         } else if (record.type && BOARD_TYPES.has(record.type)) {
           // Board presses, polls, counters, rally and Surge go to the CrowdSync panels and player effects (src/crowd.tsx).
           // A shared chat forwards each member's events with `source`, so each stays with its own channel.
@@ -172,7 +176,7 @@ export function Chat({ username, squad, host, onRoomGone }: { username: string; 
       state.remove();
       socket?.close();
     };
-  }, [pull, apply, username, squad, room, account?.id]);
+  }, [pull, apply, username, squad, room, account?.id, onRoomGone]);
 
   useEffect(() => {
     const left = retryAt - Date.now();

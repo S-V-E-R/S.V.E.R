@@ -535,6 +535,19 @@ pub async fn exercise(e: &Env) {
         (status, refused["squad"].as_str()),
         (StatusCode::CONFLICT, Some(squad.as_str()))
     );
+    // A retry of a line stored before the merge is acknowledged with it, not refused.
+    let stored = id();
+    sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body) VALUES($1,'team-2','team-fan','Before the merge')")
+        .bind(&stored).execute(&e.app.db).await.unwrap();
+    let retried = ok(
+        e,
+        &fan,
+        "POST",
+        "/api/channels/TeamPerson2/chat",
+        json!({"id":stored,"body":"Before the merge"}),
+    )
+    .await;
+    assert_eq!(retried["message"]["id"], stored.as_str());
     // Any member's watch page finds the shared view; a channel outside it does not.
     let found = ok(
         e,
@@ -932,7 +945,30 @@ pub async fn exercise(e: &Env) {
         call(e, "GET", &chat, Some(&fan), Value::Null).await.0,
         StatusCode::FORBIDDEN
     );
+    // A channel that has left can no longer undo the shared chat's restrictions on review.
+    ok(
+        e,
+        &tokens[5],
+        "POST",
+        &format!("{chat}/restrictions"),
+        json!({"username":"TeamViewer","kind":"ban"}),
+    )
+    .await;
     ok(e, b, "POST", &format!("{path}/leave"), Value::Null).await;
+    let review: String = sqlx::query_scalar("SELECT id FROM channel_moderation_log WHERE channel_id='team-1' AND detail->>'squad'=$1 AND action='ban' AND needs_review")
+        .bind(&squad).fetch_one(&e.app.db).await.unwrap();
+    let undone = ok(
+        e,
+        b,
+        "POST",
+        &format!("/api/channels/TeamPerson1/chat/reviews/{review}"),
+        json!({"keep":false}),
+    )
+    .await;
+    assert_eq!(undone["lifted"], false, "a channel that left can't lift it");
+    let waiting: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_moderation_log WHERE detail->>'squad'=$1 AND action='ban' AND needs_review")
+        .bind(&squad).fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(waiting, 3, "the members still in it review their own");
     assert_eq!(
         ok(e, a, "GET", &path, Value::Null).await["members"]
             .as_array()

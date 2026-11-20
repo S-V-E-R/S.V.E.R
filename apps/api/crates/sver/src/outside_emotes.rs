@@ -390,6 +390,10 @@ pub async fn sync(app: &App) -> Res<()> {
             }
         }
     }
+    // Failures of emotes no longer in any set are forgotten.
+    sqlx::query("DELETE FROM outside_emote_failures x WHERE NOT EXISTS(SELECT 1 FROM outside_emotes e WHERE e.provider=x.provider AND e.emote_id=x.emote_id)")
+        .execute(&app.db)
+        .await?;
     // Images not copied yet (or animated ones without stills), newest first, skipping any still
     // inside its failure backoff.
     // ponytail: 30 images per pass, one at a time; copy concurrently if new channels wait too long.
@@ -398,7 +402,7 @@ pub async fn sync(app: &App) -> Res<()> {
             LEFT JOIN outside_emote_files f ON f.provider=e.provider AND f.emote_id=e.emote_id
             WHERE (f.emote_id IS NULL OR (e.animated AND NOT f.still)) AND e.provider=ANY($1)
             AND NOT EXISTS(SELECT 1 FROM outside_emote_failures x WHERE x.provider=e.provider AND x.emote_id=e.emote_id
-                AND x.failed_at > now() - interval '1 hour' * least(24, power(2, x.attempts)))
+                AND x.failed_at > now() - interval '1 hour' * least(24, power(2, least(x.attempts, 5))))
             ORDER BY e.provider,e.emote_id,e.seen_at DESC) m
         ORDER BY seen_at DESC LIMIT 30")
         .bind(&on).fetch_all(&app.db).await?;

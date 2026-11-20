@@ -38,14 +38,15 @@ export default function WatchScreen() {
 
   useLoad(load, 15000);
 
-  // A merged co-stream shares one chat across its members; follow it as it starts and ends.
+  // A merged co-stream shares one chat across its members; follow it as it starts and ends (the chat
+  // says when, so this re-check is only a slow fallback).
   const [squad, setSquad] = useState<Squad | null>(null);
   const loadSquad = useCallback(async () => {
     if (!username) return;
     const result = await send<{ squad?: Squad | null }>("GET", `/api/channels/${encodeURIComponent(username)}/squad`);
     if (result.ok) setSquad(result.data.squad ?? null);
   }, [username]);
-  useLoad(loadSquad, 15000);
+  useLoad(loadSquad, 60000);
   const squadHost = squad?.mode === "MERGED" && !squad.ended ? squad.members.find(m => m.host)?.username ?? null : null;
   const sharedChat = squad && squadHost ? squad.id : null;
 

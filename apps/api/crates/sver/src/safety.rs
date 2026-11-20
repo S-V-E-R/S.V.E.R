@@ -1861,7 +1861,8 @@ pub async fn tick(app: &App) -> Res<()> {
     }
     // Snapshots are purged 90 days after the report closes.
     sqlx::query("UPDATE reports SET snapshot='{\"purged\":true}' WHERE status<>'OPEN' AND closed_at<=now()-interval '90 days' AND NOT snapshot ? 'purged'").execute(&app.db).await?;
-    // Chat evidence on channel timeouts and bans goes after 90 days too, with its clip.
-    sqlx::query("UPDATE channel_moderation_log SET detail=detail-'chat'-'clip' WHERE detail ? 'chat' AND created_at<=now()-interval '90 days'").execute(&app.db).await?;
+    // Chat evidence on channel timeouts and bans goes after 90 days too, with its clip, a batch
+    // per tick (channel_moderation_log_evidence finds them).
+    sqlx::query("UPDATE channel_moderation_log SET detail=detail-'chat'-'clip' WHERE ctid IN (SELECT ctid FROM channel_moderation_log WHERE detail ? 'chat' AND created_at<=now()-interval '90 days' LIMIT 1000)").execute(&app.db).await?;
     Ok(())
 }
