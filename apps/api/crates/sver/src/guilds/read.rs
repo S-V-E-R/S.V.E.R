@@ -232,7 +232,12 @@ pub async fn hydrate_badges(app: &App, items: &mut [Value]) -> Res<()> {
                 .map(str::to_owned)
         })
         .collect();
-    let held = media::removal::held_roots(&mut *app.db.acquire().await?, &roots).await?;
+    // Most chatters have no emblem: skip the pool checkout then; the loop still runs to rename keys.
+    let held = if roots.is_empty() {
+        Default::default()
+    } else {
+        media::removal::held_roots(&mut *app.db.acquire().await?, &roots).await?
+    };
     for item in items {
         if let Some(g) = item
             .get_mut("author")

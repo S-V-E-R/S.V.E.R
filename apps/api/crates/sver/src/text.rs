@@ -42,6 +42,17 @@ pub fn invisible(c: char) -> bool {
     matches!(c as u32, 0x00AD | 0x034F | 0x061C | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF)
 }
 
+/// A character carrying more than 8 stacked code points (emoji parts aside), such as piled-up
+/// combining marks that draw over the lines around them.
+pub fn stacked(value: &str) -> bool {
+    value.graphemes(true).any(|g| {
+        g.chars()
+            .filter(|&c| !is_emoji_component(c) && c != '\u{200D}')
+            .count()
+            > 8
+    })
+}
+
 /// NFC-normalizes and trims, then rejects control, bidi-override and zero-width characters.
 /// ZWJ is allowed only between emoji. `allow_newlines` keeps `\n` (after normalizing `\r\n`).
 pub fn clean(value: &str, field: &'static str, allow_newlines: bool) -> Result<String, Fail> {

@@ -50,8 +50,9 @@ pub struct Hub {
     /// Bumped after any block or unblock commits, so sockets re-read their block list only then.
     blocks: Arc<AtomicUsize>,
     /// Messages deleted in the last minute, so a message event published just after its own
-    /// delete (a removal racing the send's fanout) is never delivered.
-    deleted: Arc<Mutex<HashMap<String, Instant>>>,
+    /// delete (a removal racing the send's fanout) is never delivered. Kept with the last prune,
+    /// so a burst of deletes doesn't rescan the map on every one.
+    deleted: Arc<Mutex<(Instant, HashMap<String, Instant>)>>,
 }
 type Catalogs = HashMap<String, (Instant, Vec<Value>)>;
 impl Default for Hub {
@@ -62,7 +63,7 @@ impl Default for Hub {
             addresses: Arc::default(),
             catalogs: Arc::default(),
             blocks: Arc::default(),
-            deleted: Arc::default(),
+            deleted: Arc::new(Mutex::new((Instant::now(), HashMap::new()))),
         }
     }
 }
@@ -88,8 +89,12 @@ impl Hub {
         if payload["type"] == "delete"
             && let Some(id) = payload["id"].as_str()
         {
-            let mut deleted = self.deleted.lock().unwrap_or_else(|e| e.into_inner());
-            deleted.retain(|_, at| at.elapsed() < Duration::from_secs(60));
+            let mut guard = self.deleted.lock().unwrap_or_else(|e| e.into_inner());
+            let (pruned, deleted) = &mut *guard;
+            if pruned.elapsed() >= Duration::from_secs(1) {
+                deleted.retain(|_, at| at.elapsed() < Duration::from_secs(60));
+                *pruned = Instant::now();
+            }
             deleted.insert(id.into(), Instant::now());
         }
         let _ = self.tx.send(Arc::new(Event {
@@ -107,6 +112,7 @@ impl Hub {
         self.deleted
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .1
             .get(id)
             .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
     }
@@ -115,6 +121,7 @@ impl Hub {
         self.deleted
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .1
             .remove(id);
     }
     /// Takes a socket slot at connect (released when the socket closes), or refuses.
@@ -159,30 +166,53 @@ fn pings() -> tokio::time::Interval {
     tokio::time::interval_at(tokio::time::Instant::now() + every, every)
 }
 pub(crate) struct SocketSlot(Hub, IpAddr);
-/// One socket's view of who it hides: the block list, re-read only after a block changes.
+/// One socket's view of who it hides (`hidden_for` over its chat's channels): re-read after a
+/// block changes anywhere, after the scope changes, or on `recheck` when a role could matter.
 pub(crate) struct Hidden {
+    /// The block generation read with `ids`; `STALE` forces a read.
     seen: usize,
-    pub(crate) ids: HashSet<String>,
+    scope: Vec<String>,
+    /// Someone blocks this viewer, so whether they moderate the scope changes the set.
+    role_matters: bool,
+    ids: HashSet<String>,
 }
+const STALE: usize = usize::MAX;
 impl Hidden {
-    pub(crate) async fn load(app: &App, viewer: Option<&str>) -> Res<Self> {
-        // Read the generation first: a block committed during the query bumps it again.
-        let seen = app.chat.blocks.load(Ordering::Acquire);
-        Ok(Self {
-            seen,
-            ids: hidden(app, viewer).await?,
-        })
+    /// Read lazily, on the first `current`.
+    pub(crate) fn new(scope: Vec<String>) -> Self {
+        Self {
+            seen: STALE,
+            scope,
+            role_matters: false,
+            ids: HashSet::new(),
+        }
     }
-    /// The current set, re-read only if a block changed anywhere since the last read.
+    /// The current set, re-read only if it went stale since the last read.
     pub(crate) async fn current(
         &mut self,
         app: &App,
         viewer: Option<&str>,
     ) -> Res<&HashSet<String>> {
-        if app.chat.blocks.load(Ordering::Acquire) != self.seen {
-            *self = Self::load(app, viewer).await?;
+        let generation = app.chat.blocks.load(Ordering::Acquire);
+        if generation != self.seen {
+            // The generation is read first: a block committed during the query bumps it again.
+            (self.ids, self.role_matters) = hidden_for(app, viewer, &self.scope).await?;
+            self.seen = generation;
         }
         Ok(&self.ids)
+    }
+    /// A different set of channels (a co-stream's members changed, MAGNet switched).
+    pub(crate) fn rescope(&mut self, scope: Vec<String>) {
+        if scope != self.scope {
+            self.scope = scope;
+            self.seen = STALE;
+        }
+    }
+    /// On a refresh tick: appointing or removing a moderator takes effect without a reconnect.
+    pub(crate) fn recheck(&mut self) {
+        if self.role_matters {
+            self.seen = STALE;
+        }
     }
 }
 impl Drop for SocketSlot {
@@ -228,6 +258,11 @@ pub(crate) struct Row {
     /// The author's platform supporter tier, months and Founder number, only while subscribed
     /// (docs/SUPPORTERS.md). Decided here, never by the client.
     supporter: Option<Value>,
+    /// Live, unlike `role` (stored at send): the author is the owner, a moderator or staff now,
+    /// so nobody times them out or bans them from this line (`moderation::protected`).
+    protected: bool,
+    /// Live: the author moderates this channel now (in shared chat: any member channel).
+    moderator: bool,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -237,7 +272,7 @@ impl Row {
     }
     pub(crate) fn json(mut self, app: &App) -> Value {
         profiles::hydrate(app, &mut self.author);
-        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier, "skill":self.skill, "gif":self.gif, "supporter":self.supporter, "loyalty":crate::progression::loyalty(self.earned.unwrap_or(0))})
+        json!({"id": self.id, "seq": self.seq, "author": self.author, "body": self.body, "created_at": self.created_at, "role": self.role, "mentions":self.mentions, "reply":self.reply, "origin":self.origin, "tribute":self.tribute, "sub":self.sub, "highlighted":self.highlighted, "creator_tier":self.creator_tier, "skill":self.skill, "gif":self.gif, "supporter":self.supporter, "protected":self.protected, "moderator":self.moderator, "loyalty":crate::progression::loyalty(self.earned.unwrap_or(0))})
     }
 }
 pub(crate) fn select() -> String {
@@ -247,6 +282,10 @@ pub(crate) fn select() -> String {
         (SELECT e.earned FROM engagement e WHERE e.channel_id=m.channel_id AND e.user_id=m.author_id) AS earned,
         (SELECT jsonb_build_object('tier',s.tier,'months',s.months) FROM channel_subs s WHERE s.channel_id=m.channel_id AND s.user_id=m.author_id AND s.paid_through>now()) AS sub,
         {} AS supporter,
+        EXISTS(SELECT 1 FROM channel_moderators d WHERE d.user_id=m.author_id AND (d.channel_id=m.channel_id OR d.channel_id IN (SELECT q.user_id FROM squad_members q WHERE q.squad_id=m.squad_id))) AS moderator,
+        (coalesce(m.author_id=m.channel_id,false) OR m.author_id IN (SELECT q.user_id FROM squad_members q WHERE q.squad_id=m.squad_id)
+            OR EXISTS(SELECT 1 FROM channel_moderators d WHERE d.user_id=m.author_id AND (d.channel_id=m.channel_id OR d.channel_id IN (SELECT q.user_id FROM squad_members q WHERE q.squad_id=m.squad_id)))
+            OR EXISTS(SELECT 1 FROM staff_roles sr WHERE sr.user_id=m.author_id)) AS protected,
         ARRAY(SELECT username FROM channel_users WHERE id=ANY(m.mention_ids) AND eligible) AS mentions,
         CASE WHEN m.reply_to IS NOT NULL THEN jsonb_build_object('id',m.reply_to,
             'author_id',r.author_id,'username',ra.username,
@@ -409,12 +448,31 @@ async fn channel(app: &App, name: &str) -> Res<String> {
 }
 /// People whose messages the viewer doesn't see: blocks in either direction.
 pub(crate) async fn hidden(app: &App, viewer: Option<&str>) -> Res<HashSet<String>> {
+    Ok(hidden_for(app, viewer, &[]).await?.0)
+}
+/// `hidden` for reading the chat of these channels. Blocking whoever moderates them doesn't
+/// defeat moderation: their owner, moderators and staff hide only the people they block
+/// themselves. Also returns whether anyone blocks the viewer (only then does the role matter).
+pub(crate) async fn hidden_for(
+    app: &App,
+    viewer: Option<&str>,
+    scope: &[String],
+) -> Res<(HashSet<String>, bool)> {
     let Some(viewer) = viewer else {
-        return Ok(HashSet::new());
+        return Ok((HashSet::new(), false));
     };
-    let ids: Vec<String> = sqlx::query_scalar("SELECT blocked_id FROM user_blocks WHERE blocker_id=$1 UNION SELECT blocker_id FROM user_blocks WHERE blocked_id=$1")
-        .bind(viewer).fetch_all(&app.db).await?;
-    Ok(ids.into_iter().collect())
+    let rows: Vec<(String, bool, bool)> = sqlx::query_as("SELECT blocked_id,true,false FROM user_blocks WHERE blocker_id=$1
+        UNION ALL SELECT blocker_id,false,cardinality($2::text[])>0 AND ($1=ANY($2) OR EXISTS(SELECT 1 FROM channel_moderators WHERE channel_id=ANY($2) AND user_id=$1) OR EXISTS(SELECT 1 FROM staff_roles WHERE user_id=$1))
+        FROM user_blocks WHERE blocked_id=$1")
+        .bind(viewer).bind(scope).fetch_all(&app.db).await?;
+    let blocked_by = rows.iter().any(|(_, mine, _)| !mine);
+    Ok((
+        rows.into_iter()
+            .filter(|(_, mine, moderates)| *mine || !moderates)
+            .map(|(id, ..)| id)
+            .collect(),
+        blocked_by,
+    ))
 }
 pub(crate) async fn history(
     app: &App,
@@ -517,7 +575,7 @@ impl Gif {
         let title: String = self
             .title
             .chars()
-            .filter(|c| !c.is_control())
+            .filter(|c| !c.is_control() && !crate::text::invisible(*c))
             .take(100)
             .collect();
         match title.trim() {
@@ -637,18 +695,27 @@ pub(crate) async fn send_from(
         None => None,
     };
     let body = match &gif {
-        Some((_, alt)) => alt.as_str(),
-        None => input.body.trim(),
+        Some((_, alt)) => alt.clone(),
+        None => {
+            // Refuses bidi overrides and zero-width characters, which could hide a banned word
+            // or reorder the line on screen.
+            let body = crate::text::clean(&input.body, "body", true)?;
+            if crate::text::stacked(&body) {
+                return Err(Fail::field(
+                    "body",
+                    "Remove the stacked accent marks and try again.",
+                ));
+            }
+            body
+        }
     };
+    let body = body.as_str();
     let length = body.chars().count();
     if length == 0 || length > 500 {
         return Err(Fail::field("body", "Messages are 1–500 characters."));
     }
     if body.matches('\n').count() > 4 {
         return Err(Fail::field("body", "Use at most four line breaks."));
-    }
-    if body.chars().any(|c| c.is_control() && c != '\n') {
-        return Err(Fail::field("body", "Messages can only contain text."));
     }
     let existing: Option<Row> =
         // select() contains only fixed SQL and a literal chip alias; message values are bound.
@@ -928,7 +995,12 @@ pub async fn read(
     let channel = channel(&app, &name).await?;
     let viewer = profiles::viewer(&app, &jar).await?;
     mature_gate(&app, &channel, viewer.as_ref().map(|v| v.id.as_str())).await?;
-    let hidden = hidden(&app, viewer.as_ref().map(|v| v.id.as_str())).await?;
+    let (hidden, _) = hidden_for(
+        &app,
+        viewer.as_ref().map(|v| v.id.as_str()),
+        std::slice::from_ref(&channel),
+    )
+    .await?;
     let fade: i32 = sqlx::query_scalar(
         "SELECT coalesce((SELECT overlay_fade_seconds FROM chat_settings WHERE channel_id=$1),30)",
     )
@@ -989,7 +1061,7 @@ pub async fn squad_read(
     let viewer = profiles::viewer(&app, &jar).await?;
     let members = squad_members(&app, &id, viewer.as_ref().map(|u| u.id.as_str())).await?;
     let channel = members.first().ok_or_else(Fail::missing)?;
-    let hidden = hidden(&app, viewer.as_ref().map(|u| u.id.as_str())).await?;
+    let (hidden, _) = hidden_for(&app, viewer.as_ref().map(|u| u.id.as_str()), &members).await?;
     Ok(Json(
         json!({"messages":history(&app,channel,&hidden,Some(&id)).await?,"pinned":null,"emotes":crate::emotes::catalog(&app,channel).await?}),
     ))
@@ -1136,30 +1208,29 @@ pub async fn socket(
     }
     let ip = network(sec::client_ip(&app, peer, &headers));
     sec::reserve(&app, vec![format!("chat-connect:{ip}")], 30, 60).await?;
-    let channel = if let Some(id) = &join.squad {
+    // A shared chat's members (host first), or the one channel.
+    let members = if let Some(id) = &join.squad {
         let viewer = profiles::viewer(&app, &jar).await?;
-        squad_members(&app, id, viewer.as_ref().map(|u| u.id.as_str()))
-            .await?
-            .into_iter()
-            .next()
-            .ok_or_else(Fail::missing)?
+        squad_members(&app, id, viewer.as_ref().map(|u| u.id.as_str())).await?
     } else {
         let channel = channel(&app, &join.channel).await?;
         let viewer = profiles::viewer(&app, &jar).await?;
         mature_gate(&app, &channel, viewer.as_ref().map(|v| v.id.as_str())).await?;
-        channel
+        vec![channel]
     };
+    let channel = members.first().cloned().ok_or_else(Fail::missing)?;
     let slot = app.chat.open(ip)?;
     Ok(upgrade
         .max_message_size(FRAME)
         .max_frame_size(FRAME)
-        .on_upgrade(move |ws| session(app, jar, channel, join.squad, slot, ws)))
+        .on_upgrade(move |ws| session(app, jar, channel, members, join.squad, slot, ws)))
 }
 
 async fn session(
     app: App,
     jar: CookieJar,
     channel: String,
+    members: Vec<String>,
     squad: Option<String>,
     _slot: SocketSlot,
     mut ws: WebSocket,
@@ -1169,16 +1240,23 @@ async fn session(
     let mut events = app.chat.tx.subscribe();
     let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
     let viewer_id = viewer.as_ref().map(|v| v.id.clone());
-    let Ok(mut blocks) = Hidden::load(&app, viewer_id.as_deref()).await else {
+    let mut blocks = Hidden::new(members);
+    let Ok(hidden) = blocks.current(&app, viewer_id.as_deref()).await else {
         return;
     };
-    let Ok(snapshot) = history(&app, &channel, &blocks.ids, squad.as_deref()).await else {
+    let Ok(snapshot) = history(&app, &channel, hidden, squad.as_deref()).await else {
         return;
     };
-    let cursor = snapshot.last().and_then(|m| m["seq"].as_i64()).unwrap_or(0);
-    let Ok(mut pin) = pinned(&app, &channel, &blocks.ids).await else {
+    let Ok(mut pin) = pinned(&app, &channel, hidden).await else {
         return;
     };
+    // Messages the snapshot already holds aren't sent again. Not a seq cursor: a slow send (a
+    // tribute) can commit after a later seq, and must still reach this socket.
+    let mut seen: HashSet<String> = snapshot
+        .iter()
+        .filter_map(|m| m["id"].as_str().map(String::from))
+        .collect();
+    let joined = Instant::now();
     let Ok(mut emotes) = crate::emotes::catalog(&app, &channel).await else {
         return;
     };
@@ -1216,9 +1294,15 @@ async fn session(
     loop {
         tokio::select! {
             _ = refresh.tick() => {
+                // Any duplicate of the snapshot has arrived by now.
+                if !seen.is_empty() && joined.elapsed() > Duration::from_secs(60) {
+                    seen = HashSet::new();
+                }
+                blocks.recheck();
                 if let Some(id) = &squad {
                     let viewer = match profiles::viewer(&app,&jar).await { Ok(v)=>v, Err(_)=>return };
-                    if crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
+                    let Ok(members) = crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await else { return; };
+                    blocks.rescope(members);
                     checked = std::time::Instant::now();
                 }
                 let Ok(current) = app.chat.emotes(&app, &channel).await else { return; };
@@ -1232,7 +1316,7 @@ async fn session(
             }
             event = events.recv() => match event {
                 Ok(e) if e.channel == room
-                    && (e.seq == 0 || e.seq > cursor) => {
+                    && (e.seq == 0 || !e.payload["message"]["id"].as_str().is_some_and(|id| seen.contains(id))) => {
                     if let Some(id) = &squad
                         && checked.elapsed() >= std::time::Duration::from_secs(1)
                     {
@@ -1275,12 +1359,12 @@ async fn session(
                     }
                     frames += 1;
                     let reply = match serde_json::from_str::<Send>(&text) {
-                        Ok(_) if frames > 10 => json!({"type":"error","message":"You're sending too fast."}),
+                        Ok(_) if frames > 10 => json!({"type":"error","message":"You're sending too fast.","retry":1}),
                         Ok(input) => {
                             let id = input.id.clone();
                             match send(&app, &jar, &channel, input, squad.as_deref()).await {
                                 Ok(message) => json!({"type":"ack","id":id,"message":message}),
-                                Err(fail) => json!({"type":"error","id":id,"message":fail.message}),
+                                Err(fail) => json!({"type":"error","id":id,"message":fail.message,"retry":fail.retry}),
                             }
                         }
                         Err(_) => json!({"type":"error","message":"Invalid chat command."}),
@@ -1418,9 +1502,12 @@ async fn hype_snapshot(
     app: &App,
     lane: &str,
     viewer: Option<&str>,
+    blocks: &mut Hidden,
 ) -> Res<(Value, Option<String>)> {
     let merge = hype_merge(app, lane).await?;
-    let hidden = hidden(app, viewer).await?;
+    // The featured streamers' owners, moderators and staff still see who blocks them.
+    blocks.rescope(merge.as_ref().map(|m| m.owners.clone()).unwrap_or_default());
+    let hidden = blocks.current(app, viewer).await?;
     // Chat in a channel labeled mature is closed to under-18 accounts (`mature_gate`), and merging
     // must not open it: its messages stay out of their view of the room, from this merge and
     // earlier ones. A merged co-stream with one labeled member is closed as a whole.
@@ -1456,7 +1543,7 @@ async fn hype_snapshot(
         .into_iter()
         .rev()
         .filter(|r| !hidden.contains(&r.author_id))
-        .map(|r| visible_message(r.json(app), &hidden))
+        .map(|r| visible_message(r.json(app), hidden))
         .collect();
     crate::guilds::hydrate_badges(app, &mut messages).await?;
     let (merged_with, holding) = match &merge {
@@ -1488,9 +1575,14 @@ async fn hype_read(
     hype_lane(&app, &lane).await?;
     let viewer = profiles::viewer(&app, &jar).await?;
     Ok(Json(
-        hype_snapshot(&app, &lane, viewer.as_ref().map(|v| v.id.as_str()))
-            .await?
-            .0,
+        hype_snapshot(
+            &app,
+            &lane,
+            viewer.as_ref().map(|v| v.id.as_str()),
+            &mut Hidden::new(Vec::new()),
+        )
+        .await?
+        .0,
     ))
 }
 /// POST /api/magnet/{lane}/chat: while merged the message goes into the featured channel's chat
@@ -1556,10 +1648,9 @@ async fn hype_session(
     let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
     let viewer = viewer.as_ref().map(|v| v.id.clone());
     let room = format!("magnet:{lane}");
-    let Ok(mut blocks) = Hidden::load(&app, viewer.as_deref()).await else {
-        return;
-    };
-    let Ok((first, mut merged)) = hype_snapshot(&app, &lane, viewer.as_deref()).await else {
+    let mut blocks = Hidden::new(Vec::new());
+    let Ok((first, mut merged)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks).await
+    else {
         return;
     };
     // Holding with no merged room is the mature gate: while it lasts every new message belongs to
@@ -1575,10 +1666,12 @@ async fn hype_session(
     loop {
         tokio::select! {
             event = events.recv() => match event {
-                Ok(e) if e.channel == room || merged.as_deref() == Some(e.channel.as_str()) => {
+                // A delete passes from any room: an earlier merge's lines stay in this room's
+                // history after MAGNet moves on, and clients ignore ids they don't hold.
+                Ok(e) if e.channel == room || merged.as_deref() == Some(e.channel.as_str()) || e.payload["type"] == "delete" => {
                     // A switch: merge or detach, and resend the room.
                     if e.payload["type"] == "magnet" {
-                        let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref()).await else { return; };
+                        let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks).await else { return; };
                         merged = owner;
                         gated = next["holding"] == true && merged.is_none();
                         if ws.send(Message::Text(next.to_string().into())).await.is_err() { return; }
@@ -1588,6 +1681,8 @@ async fn hype_session(
                     if gated && e.payload["type"] == "message" { continue; }
                     // A merged Hype message arrives on both; forward it once.
                     if e.channel != room && e.payload["message"]["origin"] == lane.as_str() { continue; }
+                    // Linked-platform lines and the channel bot's stay in the channel's own chat.
+                    if !e.payload["message"]["outside"].is_null() { continue; }
                     let Ok(hidden) = blocks.current(&app, viewer.as_deref()).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut payload = e.payload.clone();
@@ -1605,6 +1700,8 @@ async fn hype_session(
                 Err(broadcast::error::RecvError::Closed) => return,
             },
             _ = ping.tick() => {
+                // A featured streamer's newly appointed or removed moderator sees the right lines.
+                blocks.recheck();
                 if alive.elapsed() > SILENT || ws.send(Message::Ping(Default::default())).await.is_err() { return; }
             }
             incoming = ws.recv() => match incoming {

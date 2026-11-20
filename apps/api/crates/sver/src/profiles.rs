@@ -99,6 +99,9 @@ impl IntoResponse for Fail {
         if let Some(field) = self.field {
             body["field"] = json!(field);
         }
+        if let Some(seconds) = self.retry {
+            body["retry"] = json!(seconds);
+        }
         let mut response = (self.status, Json(body)).into_response();
         if let Some(seconds) = self.retry {
             response
