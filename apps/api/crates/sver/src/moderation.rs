@@ -682,6 +682,10 @@ pub async fn restrict(
     // After the evidence, which still shows them: their recent lines leave every chat.
     let cleared = clear_recent(&mut tx, &channel, &target).await?;
     tx.commit().await?;
+    if input.kind == "ban" {
+        // Shared chats this channel is in re-check their viewers' access.
+        app.chat.access_changed();
+    }
     publish_cleared(&app, cleared);
     Ok(Json(
         json!({"kind": input.kind, "until": until, "review": review}),
@@ -798,6 +802,7 @@ pub async fn sweep(
     counted.push(&channel);
     crate::social::refresh_counts(&mut tx, &counted).await?;
     tx.commit().await?;
+    app.chat.access_changed();
     publish_cleared(&app, removed);
     Ok(Json(json!({"banned": targets.len(), "review": review})))
 }
@@ -1007,6 +1012,11 @@ pub async fn save_settings(
         .bind(&channel).bind(input.slow_mode_seconds).bind(input.block_links).bind(&words).bind(input.overlay_fade_seconds).bind(input.allow_signatures).bind(input.min_loyalty).bind(&input.gifs).bind(input.min_account_days).execute(&mut *tx).await?;
     log(&mut tx, &channel, &user.id, role, "settings", None, None, json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words.len(), "min_loyalty": input.min_loyalty, "gifs": input.gifs, "min_account_days": input.min_account_days}), &reason).await?;
     tx.commit().await?;
+    if input.allow_signatures.is_some() {
+        // Open chats pick up the signature setting now, with their emotes.
+        app.chat
+            .publish(&channel, None, 0, json!({"type":"emotes"}));
+    }
     Ok(Json(
         json!({"slow_mode_seconds": input.slow_mode_seconds, "block_links": input.block_links, "banned_words": words}),
     ))

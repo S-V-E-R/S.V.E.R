@@ -18,7 +18,7 @@ import "../styles/teams.css";
 
 type Reply = { id: string; username: string | null; body: string | null };
 /** `protected` and `moderator` are live (the stored `role` is from send time); `arrived` is stamped here for the overlay fade. */
-export type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null; loyalty?: number; outside?: Outside | null; gif?: Gif | null; supporter?: { tier: SupporterTier; months: number; founder: number | null } | null; protected?: boolean; moderator?: boolean; arrived?: number };
+export type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number; channel?: string } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null; loyalty?: number; outside?: Outside | null; gif?: Gif | null; supporter?: { tier: SupporterTier; months: number; founder: number | null } | null; protected?: boolean; moderator?: boolean; arrived?: number };
 /** A message from a linked platform (docs/LINKED_CHAT.md): always badged, never a S.V.E.R account. */
 type Outside = { platform: string; sender_id: string; name: string; login: string; role: string | null; url: string | null };
 const PLATFORM_NAMES: Record<string, string> = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
@@ -155,7 +155,7 @@ function Identity({ m, host, card = true }: { m: Message; host?: string; card?: 
     {m.creator_tier ? <a href="/help/creator-tiers" target="_blank" rel="noopener" className="badge tier-badge" title={`${CREATOR_TIERS[m.creator_tier]} creator tier: see every tier`}>{CREATOR_TIERS[m.creator_tier]}</a> : null}
     {m.supporter && <SupporterBadge tier={m.supporter.tier} monthsSupported={m.supporter.months} />}
     {m.supporter?.founder ? <FounderMark number={m.supporter.founder} /> : null}
-    {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber`}>{subBadge(m.sub.months)}</span>}
+    {m.sub && <span className="badge sub-badge" title={`Tier ${m.sub.tier} subscriber${m.sub.channel ? ` to ${m.sub.channel}` : ""}`}>{subBadge(m.sub.months)}{m.sub.channel && <span className="sr-only"> subscriber to {m.sub.channel}</span>}</span>}
     {m.origin && <span className="badge magnet-badge" title="Sent from MAGNet">MAGNet</span>}
     {m.role && <span className="badge">{m.role === "owner" && host && m.author.username?.toLowerCase() !== host.toLowerCase() ? "Co-streamer" : ROLES[m.role]}</span>}
   </>;
