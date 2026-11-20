@@ -20,6 +20,9 @@ type Thread = {
 type MyDevice = { id: string; created_at: string };
 
 const LINK = /https?:\/\/|www\./i;
+/** Characters that can hide or reorder text (text.rs `clean`): checked here for a private message,
+ *  which the server can't read. */
+const HIDDEN = /[\u061C\u180E\u200B\u200C\u200E\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/;
 /** "now", "5m", "3h", "2d", then a date: for the conversation list. */
 function ago(iso: string) {
   const minutes = Math.floor((Date.now() - Date.parse(iso)) / 60000);
@@ -29,6 +32,7 @@ function ago(iso: string) {
   if (minutes < 10080) return `${Math.floor(minutes / 1440)}d`;
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+const key = (c: Conversation) => c.with.username?.toLowerCase();
 const time = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 /** A page of a conversation (dms.rs PAGE): a full page means there may be older ones. */
 const PAGE = 50;
@@ -43,6 +47,13 @@ export default function Messages() {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const bottom = useRef<HTMLLIElement>(null);
+  // Follow new messages only while the reader is at the bottom; otherwise offer a button.
+  const follow = useRef(true);
+  const [behind, setBehind] = useState(false);
+  // Read aloud: only a message the other person just sent.
+  const [spoken, setSpoken] = useState("");
+  // More conversations after the loaded ones (GET /api/dms `next`).
+  const [nextPage, setNextPage] = useState<string | null>(null);
   // Private mode: this browser's device key, and what it could decrypt (null: not readable here).
   const [device, setDevice] = useState<ThisDevice | null>(null);
   const [deviceNote, setDeviceNote] = useState("");
@@ -59,15 +70,35 @@ export default function Messages() {
   // The message whose time and Report are shown (the last of each run always shows them).
   const [shown, setShown] = useState<string | null>(null);
   const opened = useRef<string | null>(null);
+  // An older page of the thread was loaded, so a resync mustn't reset "Load older messages".
+  const olderLoaded = useRef(false);
+  const thisThread = useRef<Thread | null>(null);
+  useEffect(() => { thisThread.current = thread; }, [thread]);
 
-  const loadList = useCallback(async () => {
-    const r = await send<{ conversations: Conversation[] }>("GET", "/api/dms");
-    if (r.ok) setList(r.data.conversations); else setError(r.error);
-  }, []);
   // The list follows the socket: a message moves its conversation to the top; one not listed yet
   // (a new conversation) loads the list.
   const listed = useRef<Conversation[] | null>(null);
   useEffect(() => { listed.current = list; }, [list]);
+  /** Loads the newest page. Older pages already shown under a full first page stay. */
+  const loadList = useCallback(async () => {
+    const r = await send<{ conversations: Conversation[]; next?: string | null }>("GET", "/api/dms");
+    if (!r.ok) { setError(r.error); return; }
+    const fresh = r.data.conversations;
+    const old = listed.current;
+    const end = fresh.at(-1)?.last_at;
+    const names = new Set(fresh.map(key));
+    const keep = r.data.next && end && old && old.length > fresh.length ? old.filter(c => !names.has(key(c)) && Date.parse(c.last_at) <= Date.parse(end)) : [];
+    setList([...fresh, ...keep]);
+    if (!keep.length) setNextPage(r.data.next ?? null);
+    window.dispatchEvent(new Event("sver:dms-read"));
+  }, []);
+  async function loadMoreList() {
+    if (!nextPage) return;
+    const r = await send<{ conversations: Conversation[]; next?: string | null }>("GET", `/api/dms?before=${encodeURIComponent(nextPage)}`);
+    if (!r.ok) { setError(r.error); return; }
+    setList(l => { const names = new Set((l ?? []).map(key)); return [...(l ?? []), ...r.data.conversations.filter(c => !names.has(key(c)))]; });
+    setNextPage(r.data.next ?? null);
+  }
   const touch = useCallback((name: string, m: Message, unread: boolean) => {
     const same = (c: Conversation) => c.with.username?.toLowerCase() === name.toLowerCase();
     if (!listed.current?.some(same)) { void loadList(); return; }
@@ -81,15 +112,28 @@ export default function Messages() {
     const r = await send<{ devices: MyDevice[] }>("GET", "/api/me/dm-devices");
     if (r.ok) setDevices(r.data.devices);
   }, []);
-  const loadThread = useCallback(async (name: string) => {
+  /** Loads the newest page of a conversation. `merge` (a resync: poll, reconnect, socket) keeps the
+   *  messages already shown, older pages included; otherwise (opening it, clear, block) it replaces them. */
+  const loadThread = useCallback(async (name: string, merge = false) => {
     const r = await send<Thread>("GET", `/api/dms/${encodeURIComponent(name)}`);
     if (!r.ok) { setError(r.error); return; }
-    setThread(r.data);
-    setMore(r.data.messages.length >= PAGE);
+    const same = (t: Thread | null) => t?.with.username?.toLowerCase() === name.toLowerCase();
+    if (merge && same(thisThread.current)) {
+      setThread(t => {
+        if (!t || !same(t)) return r.data;
+        const ids = new Set(t.messages.map(m => m.id));
+        return { ...r.data, messages: [...t.messages, ...r.data.messages.filter(m => !ids.has(m.id))].sort((a, b) => a.seq - b.seq) };
+      });
+      if (!olderLoaded.current) setMore(r.data.messages.length >= PAGE);
+    } else {
+      olderLoaded.current = false;
+      setThread(r.data);
+      setMore(r.data.messages.length >= PAGE);
+    }
     // Recomputed on every load, so a device change never leaves an old number showing.
     const keys = r.data.private ? await send<{ mine: Device[]; theirs: Device[] }>("GET", `/api/dms/${encodeURIComponent(name)}/keys`) : null;
     setSafety(keys?.ok ? await safetyNumber(keys.data.mine, keys.data.theirs) : "");
-    if (r.data.messages.length) await send("POST", `/api/dms/${encodeURIComponent(name)}/read`);
+    if (r.data.messages.length) { await send("POST", `/api/dms/${encodeURIComponent(name)}/read`); window.dispatchEvent(new Event("sver:dms-read")); }
     setList(l => l && l.map(c => c.with.username?.toLowerCase() === name.toLowerCase() ? { ...c, unread: 0 } : c));
   }, []);
   const loadAll = useCallback(async () => {
@@ -114,24 +158,34 @@ export default function Messages() {
   useEffect(() => {
     let closed = false;
     let socket: WebSocket | null = null;
-    const poll = setInterval(() => { if (!socket || socket.readyState !== WebSocket.OPEN) { void loadList(); if (opened.current) void loadThread(opened.current); } }, 15000);
+    const poll = setInterval(() => { if (!socket || socket.readyState !== WebSocket.OPEN) { void loadList(); if (opened.current) void loadThread(opened.current, true); } }, 15000);
     let reconnect = false;
     const connect = () => {
       socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}/api/dms/socket`);
-      socket.onopen = () => { if (reconnect) { void loadList(); if (opened.current) void loadThread(opened.current); } reconnect = true; };
+      socket.onopen = () => { if (reconnect) { void loadList(); if (opened.current) void loadThread(opened.current, true); } reconnect = true; };
       socket.onmessage = event => {
-        const data = JSON.parse(event.data) as { type: string; with?: string; message?: Message };
+        const data = JSON.parse(event.data) as { type: string; with?: string; id?: string; message?: Message };
         // The socket fell behind (resync) or Private mode changed: reload the open conversation too.
         const here = !!opened.current && data.with?.toLowerCase() === opened.current.toLowerCase();
-        if (opened.current && (data.type === "resync" || (data.type === "private" && here))) void loadThread(opened.current);
-        if (data.type === "resync") void loadList();
+        if (opened.current && (data.type === "resync" || (data.type === "private" && here))) void loadThread(opened.current, true);
+        // A block hides the conversation for both people: reload it whole, so its messages go.
+        if (opened.current && data.type === "blocked" && here) void loadThread(opened.current);
+        if (data.type === "resync" || data.type === "blocked") void loadList();
+        // Staff removed a reported message.
+        if (data.type === "dm_remove" && data.id) {
+          const id = data.id;
+          if (here) setThread(t => t && { ...t, messages: t.messages.filter(m => m.id !== id) });
+          void loadList();
+        }
         if (data.type === "dm" && data.message && data.with) {
           const message = data.message;
+          const theirs = message.sender.toLowerCase() === data.with.toLowerCase();
           if (here) {
             setThread(t => t && !t.messages.some(m => m.id === message.id) ? { ...t, messages: [...t.messages, message] } : t);
-            void send("POST", `/api/dms/${encodeURIComponent(data.with)}/read`);
-          }
-          touch(data.with, message, !here && message.sender.toLowerCase() === data.with.toLowerCase());
+            if (theirs) setSpoken(`${thisThread.current?.with.display_name ?? message.sender}: ${message.private ? "Private message" : message.body ?? ""}`);
+            void send("POST", `/api/dms/${encodeURIComponent(data.with)}/read`).then(() => window.dispatchEvent(new Event("sver:dms-read")));
+          } else if (theirs) window.dispatchEvent(new Event("sver:dms-read"));
+          touch(data.with, message, !here && theirs);
         }
       };
       // 4001: the session ended (signed out everywhere, password changed); don't keep retrying.
@@ -141,9 +195,16 @@ export default function Messages() {
     connect();
     return () => { closed = true; clearInterval(poll); clearTimeout(retry); socket?.close(); };
   }, [loadList, loadThread, touch]);
-  // Follow the newest message; loading older ones above doesn't jump to the bottom.
-  const newest = thread?.messages.at(-1)?.id;
-  useEffect(() => { bottom.current?.scrollIntoView({ block: "nearest" }); }, [newest]);
+  // Follow the newest message while at the bottom (or after you send); loading older ones above
+  // doesn't move. Away from the bottom, a button offers the new ones.
+  const newest = thread?.messages.at(-1);
+  const newestId = newest?.id;
+  const newestMine = !!newest && newest.sender.toLowerCase() === me.toLowerCase();
+  const toNewest = () => { bottom.current?.scrollIntoView({ block: "nearest" }); follow.current = true; setBehind(false); };
+  useEffect(() => {
+    if (!newestId) return;
+    if (follow.current || newestMine) { bottom.current?.scrollIntoView({ block: "nearest" }); follow.current = true; setBehind(false); } else setBehind(true);
+  }, [newestId, newestMine]);
   // Decrypt private messages on this device as they arrive.
   useEffect(() => {
     if (!device || !thread) return;
@@ -156,7 +217,8 @@ export default function Messages() {
   }, [device, thread, plain]);
 
   async function choose(name: string) {
-    setOpen(name); opened.current = name; setError(""); setDraft(""); setSafety(""); setShown(null);
+    setOpen(name); opened.current = name; setError(""); setDraft(""); setSafety(""); setShown(null); setSpoken("");
+    follow.current = true; setBehind(false);
     history.replaceState(null, "", `/messages?with=${encodeURIComponent(name)}`);
     await loadThread(name);
   }
@@ -173,6 +235,7 @@ export default function Messages() {
       if (thread?.private) {
         // Encrypted here for both people's devices; the server never sees the text.
         if (!device) { setError(deviceNote || "This browser can't send private messages."); return; }
+        if (HIDDEN.test(draft) || (draft.trim().match(/\n/g)?.length ?? 0) > 20) { setError("Remove hidden characters and extra line breaks, then try again."); return; }
         const keys = await send<{ mine: Device[]; theirs: Device[] }>("GET", `/api/dms/${encodeURIComponent(open)}/keys`);
         if (!keys.ok) { setError(keys.error); return; }
         payload = await seal(draft.trim(), [...keys.data.mine, ...keys.data.theirs]);
@@ -193,6 +256,7 @@ export default function Messages() {
     const r = await send<Thread>("GET", `/api/dms/${encodeURIComponent(open)}?before=${first.seq}`);
     setLoadingOlder(false);
     if (!r.ok) { setError(r.error); return; }
+    olderLoaded.current = true;
     setMore(r.data.messages.length >= PAGE);
     setThread(t => t ? { ...t, messages: [...r.data.messages.filter(m => !t.messages.some(x => x.id === m.id)), ...t.messages] } : t);
   }
@@ -201,7 +265,7 @@ export default function Messages() {
     const r = await send("PUT", `/api/dms/${encodeURIComponent(open)}/private`, { on: !thread.private });
     if (!r.ok) { setError(r.error); return; }
     setError("");
-    await loadThread(open);
+    await loadThread(open, true);
   }
   async function addThisDevice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -234,7 +298,8 @@ export default function Messages() {
   }
 
   function back() {
-    setOpen(null); opened.current = null; setThread(null); setError("");
+    setOpen(null); opened.current = null; setThread(null); setError(""); setSpoken("");
+    follow.current = true; setBehind(false);
     history.replaceState(null, "", "/messages");
   }
   const mine = (m: Message) => m.sender.toLowerCase() === me.toLowerCase();
@@ -276,6 +341,7 @@ export default function Messages() {
             </span>
             {c.unread > 0 && !c.muted && <span className="messages-unread">{c.unread}<span className="sr-only"> unread</span></span>}
           </button></li>)}</ul>}
+        {nextPage && <button type="button" className="small quiet messages-show-more" onClick={() => void loadMoreList()}>Show more</button>}
       </aside>
       <section className="messages-thread" aria-label="Conversation">
         {!thread ? <div className="messages-empty"><p>Choose a conversation, or start a new one.</p><button type="button" onClick={() => setPanel("new")}>New message</button>{error && <p role="alert" className="form-message error">{error}</p>}</div> : <>
@@ -300,7 +366,7 @@ export default function Messages() {
               <p className="muted">Compare this with @{thread.with.username} in person or over another app. If both of you see the same number, your messages are going only to each other&apos;s devices. It changes when either of you adds or removes a device.</p>
             </details>}
           </div>}
-          <ol className="messages-body" aria-live="polite">
+          <ol className="messages-body" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; if (follow.current) setBehind(false); }}>
             {more && <li className="messages-start"><button type="button" className="small quiet" disabled={loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? "Loading…" : "Load older messages"}</button></li>}
             {thread.messages.length === 0 && <li className="messages-start small-text">This is the start of your conversation with @{thread.with.username}.</li>}
             {thread.messages.map((m, i) => {
@@ -311,12 +377,14 @@ export default function Messages() {
               const reveal = last || shown === m.id;
               const toggle = () => { if (!last) setShown(s => s === m.id ? null : m.id); };
               return <li key={m.id} className={`${mine(m) ? "mine" : "theirs"}${last ? " run-end" : ""}`}>
-                <span className="messages-text" {...(last ? {} : { role: "button", tabIndex: 0, "aria-expanded": shown === m.id, title: "Show the time and Report", onClick: toggle, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } })}>{m.private ? <><span className="messages-lock" title="Private"><LockIcon size={12} /><span className="sr-only">Private: </span></span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
+                <span className="messages-text" {...(last ? {} : { role: "button", tabIndex: 0, "aria-expanded": shown === m.id, title: "Show the time and Report", onClick: toggle, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } })}><span className="sr-only">{mine(m) ? "You" : thread.with.display_name}: </span>{m.private ? <><span className="messages-lock" title="Private"><LockIcon size={12} /><span className="sr-only">Private: </span></span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
                 {reveal && <span className="messages-meta small-text">{time(m.created_at)}{!mine(m) && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>}
               </li>;
             })}
             <li ref={bottom} aria-hidden="true" />
           </ol>
+          <p className="sr-only" aria-live="polite">{spoken}</p>
+          {behind && <button type="button" className="small messages-newest" onClick={toNewest}>New messages below</button>}
           {error && <p role="alert" className="form-message error messages-pad">{error}</p>}
           {thread.can_send ? <form onSubmit={submit} className="messages-composer">
             {LINK.test(draft) && <p className="small-text messages-link-note" role="status">Links can lead anywhere. Only send ones you trust, and be careful opening links you receive.</p>}

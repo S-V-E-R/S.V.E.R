@@ -77,6 +77,16 @@ pub async fn exercise(e: &Env) {
         (&thread["messages"][0]["sender"], &thread["can_send"]),
         (&json!("DmAlpha"), &json!(true))
     );
+    // Unread notices for the conversation: reading it reads the notice too.
+    let unread_notes = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM notifications WHERE user_id='dm-b' AND kind='dm' AND read_at IS NULL",
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(unread_notes().await, 1);
     call(e, "POST", "/api/dms/DmAlpha/read", Some(&b), Value::Null).await;
     assert_eq!(
         call(e, "GET", "/api/dms/unread", Some(&b), Value::Null)
@@ -84,11 +94,41 @@ pub async fn exercise(e: &Env) {
             .1["unread"],
         0
     );
-    // After reading, a new streak of two messages notifies once more.
+    assert_eq!(unread_notes().await, 0, "reading clears the notice");
+    // After reading, a new streak of two messages brings the one notice back, once.
     send(&a, "DmBravo", "new streak").await;
     send(&a, "DmBravo", "same streak").await;
-    assert_eq!(notes().await.len(), 2);
-    call(e, "POST", "/api/dms/DmAlpha/read", Some(&b), Value::Null).await;
+    assert_eq!(notes().await.len(), 1, "one notice per conversation");
+    assert_eq!(unread_notes().await, 1, "re-armed after it was read");
+    // A suspended sender's messages leave the badge along with the list.
+    e.sql("INSERT INTO profiles(user_id,display_name,restricted_until) VALUES('dm-a','DmAlpha',now()+interval '1 day') ON CONFLICT(user_id) DO UPDATE SET restricted_until=EXCLUDED.restricted_until")
+        .await;
+    let badge = || async {
+        call(e, "GET", "/api/dms/unread", Some(&b), Value::Null)
+            .await
+            .1["unread"]
+            .clone()
+    };
+    assert_eq!(
+        badge().await,
+        0,
+        "the list hides them, so the badge does too"
+    );
+    e.sql("UPDATE profiles SET restricted_until=NULL WHERE user_id='dm-a'")
+        .await;
+    assert_eq!(badge().await, 2);
+    // Replying reads the conversation and its notice.
+    send(&b, "DmAlpha", "reply").await;
+    assert_eq!((badge().await, unread_notes().await), (json!(0), 0));
+    // Hidden characters that could disguise a link are refused; so are piles of line breaks.
+    assert_eq!(
+        send(&a, "DmBravo", "see evil.com/\u{202e}gpj.exe").await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        send(&a, "DmBravo", &"a\n".repeat(30)).await.0,
+        StatusCode::BAD_REQUEST
+    );
     assert_eq!(
         send(&a, "DmBravo", &"x".repeat(1001)).await.0,
         StatusCode::BAD_REQUEST
@@ -181,8 +221,8 @@ pub async fn exercise(e: &Env) {
             .as_array()
             .unwrap()
             .len(),
-        3,
-        "the other side still sees all three messages"
+        4,
+        "the other side still sees all four messages"
     );
 
     // A report keeps a sealed excerpt; staff read it only through the audited endpoint.
@@ -280,6 +320,51 @@ pub async fn exercise(e: &Env) {
     socket_ends_with_session(e, &c, &d).await;
     e.sql("DELETE FROM dm_conversations").await;
     private_mode(e).await;
+    list_pages(e).await;
+}
+
+/// The conversation list pages by `before`/`next`, and a conversation deleted for you doesn't
+/// take a slot on a page.
+async fn list_pages(e: &Env) {
+    let me = person(e, "dm-0", "DmPager", true).await;
+    for statement in [
+        "INSERT INTO users(id,email,username,email_verified,date_of_birth) SELECT 'dm-p'||g,'dm-p'||g||'@example.test','DmPage'||g,true,'1990-01-01' FROM generate_series(1,52) g",
+        "INSERT INTO dm_conversations(id,user_a,user_b,last_message_at) SELECT 'dm-c'||g,'dm-0','dm-p'||g,now()-g*interval '1 minute' FROM generate_series(1,52) g",
+        "INSERT INTO dm_state(conversation_id,user_id) SELECT 'dm-c'||g,u FROM generate_series(1,52) g, LATERAL (VALUES('dm-0'),('dm-p'||g)) v(u)",
+        "INSERT INTO dm_messages(id,conversation_id,sender_id,body_sealed) SELECT 'dm-m'||g,'dm-c'||g,'dm-p'||g,'' FROM generate_series(1,52) g",
+        // The newest one is deleted for me.
+        "UPDATE dm_state SET cleared_seq=(SELECT seq FROM dm_messages WHERE id='dm-m1') WHERE conversation_id='dm-c1' AND user_id='dm-0'",
+    ] {
+        e.sql(statement).await;
+    }
+    let names = |page: &Value| -> Vec<String> {
+        page["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["with"]["username"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let (_, first) = call(e, "GET", "/api/dms", Some(&me), Value::Null).await;
+    let listed = names(&first);
+    assert_eq!(listed.len(), 50, "{first}");
+    assert_eq!(
+        listed[0], "DmPage2",
+        "the cleared conversation takes no slot"
+    );
+    let next = first["next"]
+        .as_str()
+        .expect("a full page has a next cursor");
+    let (_, second) = call(
+        e,
+        "GET",
+        &format!("/api/dms?before={next}"),
+        Some(&me),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(names(&second), vec!["DmPage52"], "{second}");
+    assert!(second["next"].is_null());
 }
 
 async fn charlie_to_delta(e: &Env, token: &str, body: &str) {
@@ -314,8 +399,18 @@ async fn notify_after_clear(e: &Env) -> (String, String) {
     call(e, "DELETE", "/api/dms/DmCharlie", Some(&d), Value::Null).await;
     charlie_to_delta(e, &c, "two").await;
     let after = notes().await;
-    assert_eq!(after.len(), 2, "{after:?}");
-    assert!(after[1].contains("/messages?with=DmCharlie"), "{after:?}");
+    assert_eq!(after.len(), 1, "one notice per conversation: {after:?}");
+    assert!(after[0].contains("/messages?with=DmCharlie"), "{after:?}");
+    let unread: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM notifications WHERE user_id='dm-d' AND kind='dm' AND read_at IS NULL",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        unread, 1,
+        "deleting read the notice, and the next message re-armed it"
+    );
     (c, d)
 }
 /// An open DM socket ends with its session: after signing out everywhere, nothing more arrives.

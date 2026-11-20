@@ -4,7 +4,8 @@ import Link from "next/link";
 import SiteShell from "../components/SiteShell";
 import { StaffRemovalAlerts } from "../components/StaffRemovalAlerts";
 import { SiteBanner, type Banner } from "../components/SiteBanner";
-import { BellIcon, MagnetMark, MessageIcon } from "../components/shell/Icons";
+import { MagnetMark } from "../components/shell/Icons";
+import { HeaderAlerts } from "../components/shell/HeaderAlerts";
 import { SideNav } from "../components/shell/SideNav";
 import { PlayerMenu } from "../components/shell/PlayerMenu";
 import { DailyOrders } from "../components/shell/DailyOrders";
@@ -64,8 +65,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const actions = account
     ? <>
       {staff && <StaffRemovalAlerts />}
-      <Link href="/messages" className="icon-button" aria-label={dms ? `Messages, ${dms} unread` : "Messages"}><MessageIcon />{dms > 0 && <span className="alert-badge" aria-hidden="true" />}</Link>
-      <Link href="/notifications" className="icon-button" aria-label={alerts ? "Notifications, new notices" : "Notifications"}><BellIcon />{alerts && <span className="alert-badge" aria-hidden="true" />}</Link>
+      <HeaderAlerts dms={dms} alerts={alerts} />
       <PlayerMenu username={account.username} chip={<>
         <Crest faction={account.faction} initial={initial ?? "?"} size={36} label={faction?.name} />
         <span className="player-chip-text"><span className="player-chip-name">{account.username}</span>{faction && <span className="player-chip-title">{faction.title}</span>}</span>
