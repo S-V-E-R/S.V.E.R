@@ -90,6 +90,8 @@ pub async fn exercise(e: &Env) {
             .fetch_one(&e.app.db).await.unwrap()
     };
     let before = counts().await;
+    // Outside chat shows only while the S.V.E.R broadcast is live.
+    e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('lc-live','stream-owner','lc-live',1,'LIVE','s','v','c',now(),now(),now())").await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let router = sver::router(e.app.clone());
@@ -274,6 +276,11 @@ pub async fn exercise(e: &Env) {
     let mine = e.call("GET", "/api/me/linked-chat", Value::Null).await;
     assert_eq!(mine["accounts"][0]["handle"], "streamer_tw");
     assert_eq!(mine["mutes"][0]["name"], "Name tw-y");
+    // The name is kept with the mute, so it outlives their messages.
+    e.sql("DELETE FROM outside_chat_messages WHERE sender_id='tw-y'")
+        .await;
+    let mine = e.call("GET", "/api/me/linked-chat", Value::Null).await;
+    assert_eq!(mine["mutes"][0]["name"], "Name tw-y");
     assert!(
         !mine.to_string().contains("synthetic-access"),
         "tokens are never returned"
@@ -286,6 +293,18 @@ pub async fn exercise(e: &Env) {
     .await;
     webhook(e, "notification", chat("m6", "tw-y", "back"), true).await;
     assert_eq!(outside(e).await.len(), 1);
+
+    // Nothing shows while the S.V.E.R broadcast is off, even from a subscription Twitch kept.
+    let live: Vec<String> = sqlx::query_scalar("UPDATE broadcasts SET state='STARTING' WHERE owner_id='stream-owner' AND state='LIVE' RETURNING id")
+        .fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(live.len(), 1);
+    webhook(e, "notification", chat("m7a", "tw-v", "offline"), true).await;
+    assert_eq!(outside(e).await.len(), 1, "dropped while offline");
+    sqlx::query("UPDATE broadcasts SET state='LIVE' WHERE id=$1")
+        .bind(&live[0])
+        .execute(&e.app.db)
+        .await
+        .unwrap();
 
     // A ban or timeout on Twitch clears that chatter's messages here too, and /clear clears all.
     webhook(e, "notification", chat("m8", "tw-z", "spam"), true).await;
@@ -309,6 +328,10 @@ pub async fn exercise(e: &Env) {
         .map(|m| m["id"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(left, ["twitch:m6", "twitch:m10"]);
+    // A clear hides everything in the database, however long the stream; only the newest go out
+    // as deletes.
+    e.sql("INSERT INTO outside_chat_messages(id,seq,channel_id,platform,sender_id,sender_name,sender_login,sender_role,body)
+        SELECT 'bulk-'||n,nextval(pg_get_serial_sequence('chat_messages','seq')),'stream-owner','twitch','tw-bulk','Bulk','bulk',NULL,'old' FROM generate_series(1,250) n").await;
     webhook(
         e,
         "notification",
@@ -320,6 +343,9 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert!(outside(e).await.is_empty(), "a clear there clears here");
+    let visible: i64 = sqlx::query_scalar("SELECT count(*) FROM outside_chat_messages WHERE channel_id='stream-owner' AND hidden_at IS NULL")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(visible, 0);
 
     // Viewers report outside messages to staff; the sender isn't a S.V.E.R account, so staff
     // remove the message (or dismiss) but can't strike anyone for it.
@@ -415,6 +441,33 @@ pub async fn exercise(e: &Env) {
         status["accounts"][0],
         json!({"platform":"twitch","enabled":true,"status":"reconnecting","detail":"Twitch chat disconnected, reconnecting."})
     );
+    // It also reports a link Twitch never confirmed, and a platform S.V.E.R switched off.
+    e.sql("UPDATE linked_chat_accounts SET status='connecting',detail=NULL,status_at=now()-interval '2 minutes' WHERE owner_id='stream-owner'").await;
+    let status = e
+        .call("GET", "/api/me/linked-chat/status", Value::Null)
+        .await;
+    assert_eq!(
+        (
+            &status["accounts"][0]["status"],
+            &status["accounts"][0]["detail"]
+        ),
+        (
+            &json!("reconnecting"),
+            &json!("Twitch hasn't confirmed your chat yet.")
+        )
+    );
+    e.sql("INSERT INTO feature_switches(name,off) VALUES('linked_chat_twitch',true)")
+        .await;
+    let mine = e.call("GET", "/api/me/linked-chat", Value::Null).await;
+    assert_eq!(
+        (
+            &mine["accounts"][0]["status"],
+            &mine["accounts"][0]["detail"]
+        ),
+        (&json!("reconnecting"), &json!("Paused by S.V.E.R for now."))
+    );
+    e.sql("DELETE FROM feature_switches WHERE name='linked_chat_twitch'")
+        .await;
     e.sql("UPDATE linked_chat_accounts SET status='connected',subscriptions=ARRAY['sub-new'] WHERE owner_id='stream-owner'").await;
     webhook(
         e,
@@ -436,6 +489,24 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     assert_eq!(account().await, ("revoked".into(), vec![]));
+    // Chat still arriving, or a verification, doesn't undo it: only linking again does.
+    webhook(
+        e,
+        "notification",
+        chat("m7b", "tw-v", "still flowing"),
+        true,
+    )
+    .await;
+    webhook(
+        e,
+        "webhook_callback_verification",
+        json!({"challenge":"c","subscription":{"condition":{"broadcaster_user_id":"tw-owner"}}}),
+        true,
+    )
+    .await;
+    assert_eq!(account().await.0, "revoked");
+    e.sql("DELETE FROM outside_chat_messages WHERE id='twitch:m7b'")
+        .await;
 
     // Unlinking deletes the tokens; messages for an unlinked account are ignored.
     e.call("DELETE", "/api/me/linked-chat/twitch", Value::Null)
@@ -506,4 +577,6 @@ pub async fn exercise(e: &Env) {
         .await;
     e.sql("DELETE FROM outside_chat_messages").await;
     e.sql("DELETE FROM outside_chat_mutes").await;
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now() WHERE id='lc-live'")
+        .await;
 }

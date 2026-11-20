@@ -203,11 +203,12 @@ async fn banned(app: &App, subject: &str, e: &Value) -> Res<()> {
 enum Connect {
     Ok(Vec<String>),
     Revoked,
-    Retry,
+    /// Try again later; any subscriptions that couldn't be removed again, to keep.
+    Retry(Vec<String>),
 }
 async fn subscribe(app: &App, subject: &str) -> Connect {
     let Some(token) = crate::discord::streamers::kick_token(app).await else {
-        return Connect::Retry;
+        return Connect::Retry(Vec::new());
     };
     let Ok(broadcaster) = subject.parse::<u64>() else {
         return Connect::Revoked;
@@ -224,16 +225,16 @@ async fn subscribe(app: &App, subject: &str) -> Connect {
         .send()
         .await;
     let Ok(response) = sent else {
-        return Connect::Retry;
+        return Connect::Retry(Vec::new());
     };
     match response.status().as_u16() {
         200..=299 => {}
         401 => {
             crate::discord::streamers::kick_token_reset();
-            return Connect::Retry;
+            return Connect::Retry(Vec::new());
         }
         403 => return Connect::Revoked,
-        _ => return Connect::Retry,
+        _ => return Connect::Retry(Vec::new()),
     }
     let body: Value = response.json().await.unwrap_or(Value::Null);
     let rows = body["data"].as_array().cloned().unwrap_or_default();
@@ -242,26 +243,32 @@ async fn subscribe(app: &App, subject: &str) -> Connect {
         .filter_map(|r| r["subscription_id"].as_str().map(String::from))
         .collect();
     if ids.len() < EVENTS.len() {
-        unsubscribe(app, &ids).await;
-        return Connect::Retry;
+        return Connect::Retry(unsubscribe(app, &ids).await);
     }
     Connect::Ok(ids)
 }
-async fn unsubscribe(app: &App, ids: &[String]) {
+/// Removes subscriptions at Kick in one call; all of them stay to retry unless Kick confirmed it
+/// (2xx, or 404 for ones already gone).
+async fn unsubscribe(app: &App, ids: &[String]) -> Vec<String> {
     if ids.is_empty() {
-        return;
+        return Vec::new();
     }
     let Some(token) = crate::discord::streamers::kick_token(app).await else {
-        return;
+        return ids.to_vec();
     };
     let query: Vec<(&str, &str)> = ids.iter().map(|id| ("id", id.as_str())).collect();
-    let _ = app
+    let sent = app
         .http
         .delete(format!("{}/public/v1/events/subscriptions", api_base()))
         .query(&query)
         .bearer_auth(&token)
         .send()
         .await;
+    if sent.is_ok_and(|r| r.status().is_success() || r.status() == StatusCode::NOT_FOUND) {
+        Vec::new()
+    } else {
+        ids.to_vec()
+    }
 }
 
 /// Every supervisor pass: subscribe linked Kick chats of channels that went live, and unsubscribe
@@ -270,33 +277,44 @@ pub(super) async fn tick(app: &App) -> Res<()> {
     if kick(app).is_none() {
         return Ok(());
     }
-    let rows: Vec<(String, String, Vec<String>, bool)> = sqlx::query_as("SELECT a.owner_id,a.subject,a.subscriptions,
-            a.enabled AND u.email_verified AND u.mfa_enabled AND u.deleted_at IS NULL AND EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=a.owner_id AND b.state IN ('LIVE','RECONNECTING'))
+    // `retry`: a half-made subscription whose cleanup failed is kept while reconnecting; it is
+    // removed and subscribed again after the same 30 seconds.
+    let rows: Vec<(String, String, Vec<String>, bool, bool)> = sqlx::query_as("SELECT a.owner_id,a.subject,a.subscriptions,
+            a.enabled AND u.email_verified AND u.mfa_enabled AND u.deleted_at IS NULL AND EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=a.owner_id AND b.state IN ('LIVE','RECONNECTING')),
+            a.status='reconnecting' AND a.status_at<now()-interval '30 seconds'
         FROM linked_chat_accounts a JOIN users u ON u.id=a.owner_id
         WHERE a.platform='kick' AND (cardinality(a.subscriptions)>0
             OR (a.enabled AND a.status<>'revoked' AND (a.status<>'reconnecting' OR a.status_at<now()-interval '30 seconds')
                 AND EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=a.owner_id AND b.state='LIVE')))")
         .fetch_all(&app.db)
         .await?;
-    for (owner, subject, subscriptions, live) in rows {
-        if live && subscriptions.is_empty() {
-            match subscribe(app, &subject).await {
+    for (owner, subject, subscriptions, live, retry) in rows {
+        if live && (subscriptions.is_empty() || retry) {
+            let left = unsubscribe(app, &subscriptions).await;
+            let result = if left.is_empty() {
+                subscribe(app, &subject).await
+            } else {
+                Connect::Retry(left)
+            };
+            match result {
                 Connect::Ok(ids) => {
                     sqlx::query("UPDATE linked_chat_accounts SET subscriptions=$2,status='connected',detail=NULL,status_at=now() WHERE owner_id=$1 AND platform='kick'")
                         .bind(&owner).bind(&ids).execute(&app.db).await?;
                 }
                 Connect::Revoked => {
                     let why = "Kick didn't allow reading your chat. Link Kick again.";
-                    set_status(app, &owner, "kick", "revoked", Some(why)).await?
+                    sqlx::query("UPDATE linked_chat_accounts SET subscriptions='{}',status='revoked',detail=$2,status_at=now() WHERE owner_id=$1 AND platform='kick'")
+                        .bind(&owner).bind(why).execute(&app.db).await?;
                 }
-                Connect::Retry => {
-                    set_status(app, &owner, "kick", "reconnecting", Some(DOWN)).await?
+                Connect::Retry(left) => {
+                    sqlx::query("UPDATE linked_chat_accounts SET subscriptions=$2,status='reconnecting',detail=$3,status_at=now() WHERE owner_id=$1 AND platform='kick'")
+                        .bind(&owner).bind(&left).bind(DOWN).execute(&app.db).await?;
                 }
             }
         } else if !live && !subscriptions.is_empty() {
-            unsubscribe(app, &subscriptions).await;
-            sqlx::query("UPDATE linked_chat_accounts SET subscriptions='{}',status=CASE WHEN status='revoked' THEN status ELSE 'idle' END,status_at=now() WHERE owner_id=$1 AND platform='kick'")
-                .bind(&owner).execute(&app.db).await?;
+            // Any Kick didn't confirm removing stay listed, so the next pass tries again.
+            let left = unsubscribe(app, &subscriptions).await;
+            ended(app, &owner, "kick", &left).await?;
         }
     }
     Ok(())
@@ -363,6 +381,7 @@ pub(super) async fn reply(
 /// Unlinking: removes the chat subscriptions and revokes S.V.E.R's access at Kick (best effort;
 /// the tokens are already deleted).
 pub(super) async fn unlink(app: &App, sealed: &str, subscriptions: &[String]) {
+    // Best effort: the account row is already gone.
     unsubscribe(app, subscriptions).await;
     let Ok(token) = sec::unseal(app, "linked-chat", sealed) else {
         return;
