@@ -200,8 +200,39 @@ async fn download(app: &App, url: &str) -> Option<(Vec<u8>, &'static str)> {
 fn key(provider: &str, id: &str, size: u32, ext: &str) -> String {
     format!("outside/{provider}/{}/{size}.{ext}", id.to_lowercase())
 }
-/// Copies one emote's three sizes to S.V.E.R's storage. A size the service doesn't have reuses the
-/// next smaller one.
+/// The first frame as a lossless WebP, for viewers who reduce motion. Emote images are small, so
+/// anything over 1024 px a side is refused rather than decoded.
+fn still(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(1024);
+    limits.max_image_height = Some(1024);
+    reader.limits(limits);
+    let rgba = reader.decode().ok()?.to_rgba8();
+    let mut out = Vec::new();
+    image::codecs::webp::WebPEncoder::new_lossless(&mut out)
+        .encode(
+            rgba.as_raw(),
+            rgba.width(),
+            rgba.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .ok()?;
+    Some(out)
+}
+/// Remembers a failed copy, so it is retried after least(24, 2^attempts) hours instead of every
+/// pass, where it would hold up every emote behind it.
+async fn failed(app: &App, provider: &str, id: &str) -> Res<()> {
+    sqlx::query("INSERT INTO outside_emote_failures(provider,emote_id) VALUES($1,$2)
+        ON CONFLICT(provider,emote_id) DO UPDATE SET attempts=outside_emote_failures.attempts+1,failed_at=now()")
+        .bind(provider).bind(id).execute(&app.db).await?;
+    Ok(())
+}
+/// Copies one emote's three sizes to S.V.E.R's storage, plus first-frame stills when it is
+/// animated. A size the service doesn't have reuses the next smaller one. Returns whether chat
+/// gained something to show.
 async fn mirror(app: &App, provider: &str, id: &str, animated: bool) -> Res<bool> {
     let mut files: Vec<(u32, Vec<u8>, &'static str)> = Vec::new();
     for (size, scale) in SCALES {
@@ -209,14 +240,42 @@ async fn mirror(app: &App, provider: &str, id: &str, animated: bool) -> Res<bool
             Some(got) => got,
             None => match files.last() {
                 Some((_, bytes, ext)) => (bytes.clone(), *ext),
-                None => return Ok(false),
+                None => {
+                    failed(app, provider, id).await?;
+                    return Ok(false);
+                }
             },
         };
         files.push((size, bytes, ext));
     }
     let ext = files[0].2;
     if files.iter().any(|f| f.2 != ext) {
+        failed(app, provider, id).await?;
         return Ok(false);
+    }
+    let stills = if animated {
+        let sources: Vec<Vec<u8>> = files.iter().map(|f| f.1.clone()).collect();
+        tokio::task::spawn_blocking(move || {
+            sources.iter().map(|b| still(b)).collect::<Option<Vec<_>>>()
+        })
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    for (size, bytes) in SCALES.iter().map(|s| s.0).zip(stills.iter().flatten()) {
+        app.config
+            .media
+            .storage
+            .put_typed(
+                &app.http,
+                &key(provider, id, size, "still.webp"),
+                bytes.clone(),
+                "image/webp",
+                "public, max-age=31536000, immutable",
+            )
+            .await?;
     }
     for (size, bytes, _) in files {
         app.config
@@ -231,27 +290,49 @@ async fn mirror(app: &App, provider: &str, id: &str, animated: bool) -> Res<bool
             )
             .await?;
     }
-    sqlx::query("INSERT INTO outside_emote_files(provider,emote_id,ext) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
-        .bind(provider)
-        .bind(id)
-        .bind(ext)
-        .execute(&app.db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO outside_emote_files(provider,emote_id,ext,still) VALUES($1,$2,$3,$4)
+        ON CONFLICT(provider,emote_id) DO UPDATE SET ext=EXCLUDED.ext,still=EXCLUDED.still",
+    )
+    .bind(provider)
+    .bind(id)
+    .bind(ext)
+    .bind(stills.is_some())
+    .execute(&app.db)
+    .await?;
+    if animated && stills.is_none() {
+        // Shown animated for now; the still is tried again after the backoff.
+        failed(app, provider, id).await?;
+    } else {
+        sqlx::query("DELETE FROM outside_emote_failures WHERE provider=$1 AND emote_id=$2")
+            .bind(provider)
+            .bind(id)
+            .execute(&app.db)
+            .await?;
+    }
     Ok(true)
 }
-/// Replaces a channel's (or the global) list for one service.
-async fn replace(app: &App, channel: Option<&str>, provider: &str, found: &[Found]) -> Res<()> {
+/// Replaces a channel's (or the global) list for one service. Returns whether anything changed, so
+/// chats are only told when there is something new.
+async fn replace(app: &App, channel: Option<&str>, provider: &str, found: &[Found]) -> Res<bool> {
     let ids: Vec<&str> = found.iter().map(|f| f.id.as_str()).collect();
     let codes: Vec<&str> = found.iter().map(|f| f.code.as_str()).collect();
     let animated: Vec<bool> = found.iter().map(|f| f.animated).collect();
     let mut tx = app.db.begin().await?;
-    sqlx::query("DELETE FROM outside_emotes WHERE channel_id IS NOT DISTINCT FROM $1 AND provider=$2 AND NOT (emote_id=ANY($3))")
-        .bind(channel).bind(provider).bind(&ids).execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO outside_emotes(channel_id,provider,emote_id,code,animated) SELECT $1,$2,i,c,a FROM unnest($3::text[],$4::text[],$5::bool[]) AS t(i,c,a)
-        ON CONFLICT ((coalesce(channel_id,'')),provider,emote_id) DO UPDATE SET code=EXCLUDED.code,animated=EXCLUDED.animated,seen_at=now()")
-        .bind(channel).bind(provider).bind(&ids).bind(&codes).bind(&animated).execute(&mut *tx).await?;
+    let removed = sqlx::query("DELETE FROM outside_emotes WHERE channel_id IS NOT DISTINCT FROM $1 AND provider=$2 AND NOT (emote_id=ANY($3))")
+        .bind(channel).bind(provider).bind(&ids).execute(&mut *tx).await?.rows_affected();
+    // seen_at is when the emote arrived (or last changed); newer ones are copied first.
+    let upserted = sqlx::query("INSERT INTO outside_emotes(channel_id,provider,emote_id,code,animated) SELECT $1,$2,i,c,a FROM unnest($3::text[],$4::text[],$5::bool[]) AS t(i,c,a)
+        ON CONFLICT ((coalesce(channel_id,'')),provider,emote_id) DO UPDATE SET code=EXCLUDED.code,animated=EXCLUDED.animated,seen_at=now()
+        WHERE (outside_emotes.code,outside_emotes.animated) IS DISTINCT FROM (EXCLUDED.code,EXCLUDED.animated)")
+        .bind(channel).bind(provider).bind(&ids).bind(&codes).bind(&animated).execute(&mut *tx).await?.rows_affected();
     tx.commit().await?;
-    Ok(())
+    Ok(removed + upserted > 0)
+}
+/// Tells open chats their outside emotes changed (`outside: true`), so they reload that list.
+fn announce(app: &App, channel: &str) {
+    app.chat
+        .publish(channel, None, 0, json!({"type": "emotes", "outside": true}));
 }
 
 static GLOBAL_SYNCED: AtomicI64 = AtomicI64::new(0);
@@ -270,31 +351,78 @@ pub async fn sync(app: &App) -> Res<()> {
         .fetch_all(&app.db).await?;
     for (channel, providers, twitch) in due {
         let Some(twitch) = twitch else { continue };
+        let mut changed = false;
         for provider in providers.iter().filter(|p| on.contains(p)) {
             if let Some(found) = fetch(app, provider, Some(&twitch)).await {
-                replace(app, Some(&channel), provider, &found).await?;
+                match replace(app, Some(&channel), provider, &found).await {
+                    Ok(c) => changed |= c,
+                    Err(_) => {
+                        eprintln!("outside_emotes_event=replace outcome=failed provider={provider}")
+                    }
+                }
             }
         }
-        app.chat
-            .publish(&channel, None, 0, json!({"type": "emotes"}));
+        if changed {
+            announce(app, &channel);
+        }
     }
     let now = chrono::Utc::now().timestamp();
     let wanted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_settings WHERE outside_global AND cardinality(outside_emotes)>0)")
         .fetch_one(&app.db).await?;
     if wanted && now - GLOBAL_SYNCED.load(Ordering::Relaxed) >= 600 {
         GLOBAL_SYNCED.store(now, Ordering::Relaxed);
+        let mut changed = false;
         for provider in &on {
             if let Some(found) = fetch(app, provider, None).await {
-                replace(app, None, provider, &found).await?;
+                match replace(app, None, provider, &found).await {
+                    Ok(c) => changed |= c,
+                    Err(_) => eprintln!(
+                        "outside_emotes_event=replace outcome=failed provider={provider} global=true"
+                    ),
+                }
+            }
+        }
+        if changed {
+            let channels: Vec<String> = sqlx::query_scalar("SELECT channel_id FROM chat_settings WHERE outside_global AND cardinality(outside_emotes)>0")
+                .fetch_all(&app.db).await?;
+            for channel in channels {
+                announce(app, &channel);
             }
         }
     }
+    // Images not copied yet (or animated ones without stills), newest first, skipping any still
+    // inside its failure backoff.
     // ponytail: 30 images per pass, one at a time; copy concurrently if new channels wait too long.
-    let missing: Vec<(String, String, bool)> = sqlx::query_as("SELECT DISTINCT ON (e.provider,e.emote_id) e.provider,e.emote_id,e.animated FROM outside_emotes e
-        WHERE NOT EXISTS(SELECT 1 FROM outside_emote_files f WHERE f.provider=e.provider AND f.emote_id=e.emote_id) AND e.provider=ANY($1) LIMIT 30")
+    let missing: Vec<(String, String, bool)> = sqlx::query_as("SELECT provider,emote_id,animated FROM (
+            SELECT DISTINCT ON (e.provider,e.emote_id) e.provider,e.emote_id,e.animated,e.seen_at FROM outside_emotes e
+            LEFT JOIN outside_emote_files f ON f.provider=e.provider AND f.emote_id=e.emote_id
+            WHERE (f.emote_id IS NULL OR (e.animated AND NOT f.still)) AND e.provider=ANY($1)
+            AND NOT EXISTS(SELECT 1 FROM outside_emote_failures x WHERE x.provider=e.provider AND x.emote_id=e.emote_id
+                AND x.failed_at > now() - interval '1 hour' * least(24, power(2, x.attempts)))
+            ORDER BY e.provider,e.emote_id,e.seen_at DESC) m
+        ORDER BY seen_at DESC LIMIT 30")
         .bind(&on).fetch_all(&app.db).await?;
+    let mut stored = Vec::new();
     for (provider, id, animated) in missing {
-        mirror(app, &provider, &id, animated).await?;
+        match mirror(app, &provider, &id, animated).await {
+            Ok(true) => stored.push((provider, id)),
+            Ok(false) => {}
+            // Storage or the database is down: the rest of the pass would fail the same way.
+            Err(_) => {
+                eprintln!("outside_emotes_event=mirror outcome=failed provider={provider}");
+                break;
+            }
+        }
+    }
+    if !stored.is_empty() {
+        let (providers, ids): (Vec<String>, Vec<String>) = stored.into_iter().unzip();
+        let channels: Vec<String> = sqlx::query_scalar("SELECT DISTINCT s.channel_id FROM chat_settings s
+            JOIN outside_emotes e ON e.provider=ANY(s.outside_emotes) AND (e.channel_id=s.channel_id OR (e.channel_id IS NULL AND s.outside_global))
+            JOIN unnest($1::text[],$2::text[]) AS t(p,i) ON e.provider=t.p AND e.emote_id=t.i")
+            .bind(&providers).bind(&ids).fetch_all(&app.db).await?;
+        for channel in channels {
+            announce(app, &channel);
+        }
     }
     Ok(())
 }
@@ -306,10 +434,28 @@ fn image(app: &App, provider: &str, id: &str, ext: &str) -> Value {
         "112": profiles::media_url(app, &key(provider, id, 112, ext)),
     })
 }
-type Row = (String, String, String, bool, bool, String, Option<String>);
-/// Every stored emote a channel's settings show, with any hide reason; channel sets first.
+/// A first-frame still for viewers who reduce motion, when one was made.
+fn still_image(app: &App, provider: &str, id: &str, still: bool) -> Value {
+    if still {
+        image(app, provider, id, "still.webp")
+    } else {
+        Value::Null
+    }
+}
+type Row = (
+    String,
+    String,
+    String,
+    bool,
+    bool,
+    String,
+    bool,
+    Option<String>,
+);
+/// Every stored emote a channel's settings show, with any hide reason ('shown' is the streamer's
+/// review, which keeps it visible); channel sets first.
 async fn rows(app: &App, channel: &str) -> Res<Vec<Row>> {
-    Ok(sqlx::query_as("SELECT e.provider,e.emote_id,e.code,e.animated,e.channel_id IS NULL,f.ext,h.reason
+    Ok(sqlx::query_as("SELECT e.provider,e.emote_id,e.code,e.animated,e.channel_id IS NULL,f.ext,f.still,h.reason
         FROM chat_settings s JOIN outside_emotes e ON e.provider=ANY(s.outside_emotes) AND e.provider=ANY($2) AND (e.channel_id=s.channel_id OR (e.channel_id IS NULL AND s.outside_global))
         JOIN outside_emote_files f ON f.provider=e.provider AND f.emote_id=e.emote_id
         LEFT JOIN outside_emote_hides h ON h.channel_id=s.channel_id AND h.provider=e.provider AND h.emote_id=e.emote_id
@@ -339,8 +485,8 @@ async fn shown(app: &App, channel: &str) -> Res<Vec<Value>> {
     let roots: Vec<String> = all.iter().map(|r| root(&r.0, &r.1)).collect();
     let held = crate::media::removal::held_roots(&mut db, &roots).await?;
     let mut out = Vec::new();
-    for (provider, id, code, animated, _, ext, hidden) in all {
-        if hidden.is_some()
+    for (provider, id, code, animated, _, ext, still, hidden) in all {
+        if hidden.is_some_and(|r| r != "shown")
             || held.contains(&root(&provider, &id))
             || !moderation::code_allowed(&words, links, &code)
             || crate::text::filter(&code, "code").is_err()
@@ -348,7 +494,8 @@ async fn shown(app: &App, channel: &str) -> Res<Vec<Value>> {
         {
             continue;
         }
-        out.push(json!({"code": code, "provider": provider, "id": id, "animated": animated, "image": image(app, &provider, &id, &ext)}));
+        out.push(json!({"code": code, "provider": provider, "id": id, "animated": animated,
+            "image": image(app, &provider, &id, &ext), "still": still_image(app, &provider, &id, still)}));
     }
     Ok(out)
 }
@@ -361,7 +508,7 @@ async fn channel_id(app: &App, name: &str) -> Res<String> {
     )
 }
 /// GET /api/channels/{username}/outside-emotes: the 7TV, BTTV and FFZ emotes chat shows. Chat
-/// reloads it when told the emotes changed.
+/// reloads it when an `emotes` event carries `outside: true`.
 async fn list(State(app): State<App>, Path(name): Path<String>) -> Res<impl IntoResponse> {
     let channel = channel_id(&app, &name).await?;
     Ok((
@@ -369,8 +516,33 @@ async fn list(State(app): State<App>, Path(name): Path<String>) -> Res<impl Into
         Json(json!({"emotes": shown(&app, &channel).await?})),
     ))
 }
+/// Only someone who could chat in the channel can report there: a verified, eligible account with
+/// no block either way and no ban or timeout. The streamer is exempt in their own channel.
+async fn may_report(app: &App, channel: &str, user: &str) -> Res<()> {
+    if user == channel {
+        return Ok(());
+    }
+    let standing: Option<(bool, bool)> =
+        sqlx::query_as("SELECT email_verified, eligible FROM channel_users WHERE id=$1")
+            .bind(user)
+            .fetch_optional(&app.db)
+            .await?;
+    match standing {
+        Some((false, _)) => return Err(Fail::denied("Verify your email address first.")),
+        Some((true, true)) => {}
+        _ => return Err(Fail::denied("Your account can't report emotes right now.")),
+    }
+    let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))")
+        .bind(channel).bind(user).fetch_one(&app.db).await?;
+    if blocked {
+        return Err(Fail::denied("You can't report emotes in this channel."));
+    }
+    // ponytail: min account age and shield mode aren't checked yet; they join when check_send's
+    // standing rules are pulled into one helper.
+    moderation::check_restriction(app, channel, user).await
+}
 /// POST /api/channels/{username}/outside-emotes/{provider}/{id}/report: hides the emote in this
-/// chat until the streamer reviews it.
+/// chat until the streamer reviews it. Once the streamer has shown it, reports no longer hide it.
 async fn report(
     State(app): State<App>,
     jar: CookieJar,
@@ -379,6 +551,7 @@ async fn report(
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::rate(&app, format!("outside-report:{}", user.id), 10, 3600).await?;
     let channel = channel_id(&app, &name).await?;
+    may_report(&app, &channel, &user.id).await?;
     if !rows(&app, &channel)
         .await?
         .iter()
@@ -386,11 +559,12 @@ async fn report(
     {
         return Err(Fail::missing());
     }
-    sqlx::query("INSERT INTO outside_emote_hides(channel_id,provider,emote_id,reason,reported_by) VALUES($1,$2,$3,'report',$4) ON CONFLICT DO NOTHING")
-        .bind(&channel).bind(&provider).bind(&id).bind(&user.id).execute(&app.db).await?;
-    app.chat
-        .publish(&channel, None, 0, json!({"type": "emotes"}));
-    Ok(Json(json!({"hidden": true})))
+    let hidden = sqlx::query("INSERT INTO outside_emote_hides(channel_id,provider,emote_id,reason,reported_by) VALUES($1,$2,$3,'report',$4) ON CONFLICT DO NOTHING")
+        .bind(&channel).bind(&provider).bind(&id).bind(&user.id).execute(&app.db).await?.rows_affected() > 0;
+    if hidden {
+        announce(&app, &channel);
+    }
+    Ok(Json(json!({"hidden": hidden})))
 }
 
 type Saved = (Vec<String>, bool, Option<chrono::DateTime<chrono::Utc>>);
@@ -407,9 +581,10 @@ async fn studio(app: &App, user: &auth::User) -> Res<Json<Value>> {
     let emotes: Vec<Value> = rows(app, &user.id)
         .await?
         .into_iter()
-        .map(|(provider, id, code, animated, global, ext, hidden)| {
+        .map(|(provider, id, code, animated, global, ext, still, hidden)| {
             json!({"provider": provider, "id": id, "code": code, "animated": animated, "global": global,
-                "hidden": hidden, "image": image(app, &provider, &id, &ext)})
+                "hidden": hidden.filter(|r| r != "shown"), "image": image(app, &provider, &id, &ext),
+                "still": still_image(app, &provider, &id, still)})
         })
         .collect();
     Ok(Json(
@@ -443,15 +618,15 @@ async fn save(
     sqlx::query("INSERT INTO chat_settings(channel_id,outside_emotes,outside_global) VALUES($1,$2,$3)
         ON CONFLICT(channel_id) DO UPDATE SET outside_emotes=EXCLUDED.outside_emotes,outside_global=EXCLUDED.outside_global,outside_synced_at=NULL")
         .bind(&user.id).bind(&providers).bind(input.global).execute(&app.db).await?;
-    app.chat
-        .publish(&user.id, None, 0, json!({"type": "emotes"}));
+    announce(&app, &user.id);
     studio(&app, &user).await
 }
 #[derive(Deserialize)]
 pub struct Hide {
     hidden: bool,
 }
-/// PUT /api/me/outside-emotes/{provider}/{id}: hide an emote, or show one (also clears a report).
+/// PUT /api/me/outside-emotes/{provider}/{id}: hide an emote, or show one. Showing one clears a
+/// report and is remembered, so later reports don't hide it again.
 async fn hide(
     State(app): State<App>,
     jar: CookieJar,
@@ -463,17 +638,10 @@ async fn hide(
         sqlx::query("INSERT INTO outside_emote_hides(channel_id,provider,emote_id,reason) VALUES($1,$2,$3,'streamer') ON CONFLICT(channel_id,provider,emote_id) DO UPDATE SET reason='streamer'")
             .bind(&user.id).bind(&provider).bind(&id).execute(&app.db).await?;
     } else {
-        sqlx::query(
-            "DELETE FROM outside_emote_hides WHERE channel_id=$1 AND provider=$2 AND emote_id=$3",
-        )
-        .bind(&user.id)
-        .bind(&provider)
-        .bind(&id)
-        .execute(&app.db)
-        .await?;
+        sqlx::query("INSERT INTO outside_emote_hides(channel_id,provider,emote_id,reason) VALUES($1,$2,$3,'shown') ON CONFLICT(channel_id,provider,emote_id) DO UPDATE SET reason='shown'")
+            .bind(&user.id).bind(&provider).bind(&id).execute(&app.db).await?;
     }
-    app.chat
-        .publish(&user.id, None, 0, json!({"type": "emotes"}));
+    announce(&app, &user.id);
     studio(&app, &user).await
 }
 
