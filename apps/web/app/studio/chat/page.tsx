@@ -41,6 +41,8 @@ export default function ChatStudio() {
   const [state, setState] = useState<SaveState>({});
   const [modState, setModState] = useState<SaveState>({});
   const [sweepState, setSweepState] = useState<SaveState>({});
+  const [restrictState, setRestrictState] = useState<SaveState>({});
+  const [sanction, setSanction] = useState<"timeout" | "ban">("timeout");
   const base = username ? `/api/channels/${encodeURIComponent(username)}` : "";
 
   const load = useCallback(async () => {
@@ -96,8 +98,18 @@ export default function ChatStudio() {
   }
   async function lift(name: string, kind: string) {
     const result = await send("DELETE", `${base}/chat/restrictions/${encodeURIComponent(name)}/${kind}`, {});
-    setModState(result.ok ? { saved: kind === "ban" ? "Ban lifted." : "Timeout lifted." } : result);
+    setRestrictState(result.ok ? { saved: kind === "ban" ? "Ban lifted." : "Timeout lifted." } : result);
     if (result.ok) load();
+  }
+  async function restrict(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const v = new FormData(form);
+    const name = String(v.get("username") ?? "").trim().replace(/^@/, "");
+    if (sanction === "ban" && !window.confirm(`Ban @${name} from this chat? They also can't watch here while signed in.`)) return;
+    const result = await send("POST", `${base}/chat/restrictions`, { username: name, kind: sanction, seconds: sanction === "timeout" ? Number(v.get("minutes")) * 60 : undefined, reason: v.get("reason") });
+    setRestrictState(result.ok ? { saved: sanction === "ban" ? `@${name} is banned.` : `@${name} is timed out.` } : result);
+    if (result.ok) { form.reset(); load(); }
   }
 
   async function review(event: FormEvent<HTMLFormElement>, id: string) {
@@ -173,6 +185,18 @@ export default function ChatStudio() {
         <span><UserChip user={r.user} /> {r.kind === "ban" ? "Banned" : `Timed out until ${when(r.until!)}`}</span>
         {r.user.username && <button type="button" className="small quiet" onClick={() => lift(r.user.username!, r.kind)}>Lift</button>}
       </li>)}</ul>
+      <form onSubmit={restrict} className="stack">
+        <div className="row wrap">
+          <UsernameInput label="Time out or ban by username" required />
+          <label className="field narrow"><span>Action</span><select value={sanction} onChange={e => setSanction(e.target.value === "ban" ? "ban" : "timeout")}>
+            <option value="timeout">Timeout</option><option value="ban">Ban</option>
+          </select></label>
+          {sanction === "timeout" && <label className="field narrow"><span>Minutes (up to 14 days)</span><input name="minutes" type="number" min={1} max={20160} defaultValue={10} required /></label>}
+        </div>
+        <label className="field"><span>Reason (optional; without one it waits for review)</span><input name="reason" maxLength={500} /></label>
+        <button type="submit" className="small">{sanction === "ban" ? "Ban" : "Time out"}</button>
+      </form>
+      <Status state={restrictState} />
     </Section>
     <Section title="Moderation log" intro="The latest 50 actions in your chat.">
       <ul className="list">{view.log.length === 0 ? <li className="muted">Nothing yet.</li> : view.log.map((l, i) => <li key={i}>

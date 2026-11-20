@@ -1,2 +1,3 @@
 # Synthetic test values flagged by generic-api-key (not secrets).
 614bd2d2edb622a50bbf4fa793af60cf6b7b375c:apps/api/crates/sver/tests/streams/restream.rs:generic-api-key:9
+f72033d142aa31219f128eec13543cc0c29bb291:apps/api/crates/sver/src/store/apple.rs:generic-api-key:324

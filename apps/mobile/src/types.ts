@@ -76,7 +76,11 @@ export type ChatAuthor = {
   username: string | null;
   display_name: string;
   faction?: string | null;
+  guild?: { slug: string; name: string; tag: string } | null;
 };
+
+/** A line from the channel's linked Twitch, YouTube or Kick chat, or its bot (docs/LINKED_CHAT.md). Never a S.V.E.R account. */
+export type OutsideSender = { platform: string; name: string; role?: string | null; url?: string | null };
 
 export type ChatMessage = {
   id: string;
@@ -87,9 +91,22 @@ export type ChatMessage = {
   role?: string | null;
   /** A Skill's name when the message played one (bought on the website). */
   skill?: string | null;
+  mentions?: string[];
+  /** The quoted message; body and username are null once it was deleted. */
+  reply?: { id: string; username: string | null; body: string | null } | null;
+  /** In a co-stream's shared chat, `channel` names the member channel the sub is to. */
+  sub?: { tier: number; months: number; channel?: string | null } | null;
+  supporter?: { tier: string; months: number; founder: number | null } | null;
+  creator_tier?: number | null;
+  /** Set when the line was sent from a MAGNet Hype lane. */
+  origin?: string | null;
+  tribute?: number | null;
+  highlighted?: boolean;
+  outside?: OutsideSender | null;
 };
 
-export type ChatRoom = { messages: ChatMessage[] };
+/** The channel's co-stream, as `GET /api/channels/{username}/squad` returns it. */
+export type Squad = { id: string; mode: "SEPARATE" | "MERGED"; ended: boolean; members: { username: string | null; host: boolean }[] };
 
 export type Account = {
   id: string;

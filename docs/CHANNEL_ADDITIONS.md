@@ -79,7 +79,7 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 
 **Done when:** the pop-out, dock and overlay pages work at 280 px and in OBS, moderation actions work in the pop-out, and the overlay removes deleted messages.
 
-**Built October 9, 2026 (migration 0058).** `/{username}/chat` renders only the chat in the channel's faction theme (no site chrome), with `?dock=1` (no header, compact) and `?overlay=1` (read-only, transparent, messages fade after `chat_settings.overlay_fade_seconds`, set under Creator Studio → Chat → Rules). It is the same Chat component, so sign-in, moderation actions and deletions behave as on the channel page. The chat header's **Pop out** opens it at 400 × 700. Studio → Chat explains adding the dock and overlay in OBS. Still to check in OBS itself.
+**Built October 9, 2026 (migration 0058).** `/{username}/chat` renders only the chat in the channel's faction theme (no site chrome), with `?dock=1` (no header, compact) and `?overlay=1` (read-only, transparent, messages fade after `chat_settings.overlay_fade_seconds`, set under Creator Studio → Chat → Rules). It is the same Chat component, so sign-in, moderation actions and deletions behave as on the channel page. The chat header's **Pop out** opens it at 400 × 700 (in shared co-stream chat too). The overlay shows each line with its crest, guild, faction-coloured name and role or Bot badge, and fades lines by when they reached the overlay, not by the PC's clock (November 20, 2026). Studio → Chat explains adding the dock and overlay in OBS. Still to check in OBS itself. **Co-streams (November 19, 2026):** while the channel is in a live merged co-stream, the pop-out, dock and overlay show the shared chat, as the watch page does. The page re-checks `GET /api/channels/{u}/squad` every 15 seconds while visible (and on becoming visible), so an open watch tab, dock or overlay switches to the shared chat when a co-stream starts and back when it ends. The overlay keeps the channel's own fade setting.
 
 ## Channel editors
 
@@ -111,6 +111,7 @@ The Community Guidelines (`/guidelines`) already ban sexual content, graphic rea
 - Each channel can pick one of its open emotes (not a subscriber emote) as its **signature emote**.
 - Once staff approve it in the existing emote review (`/admin/media`), anyone can use it in any channel's chat, written as `username/Code` (for example `kilnworks/Walnut`). It shows the owner's crest on hover.
 - The emote picker has a **Signature** tab listing the signature emotes of channels the viewer follows.
+- The Emotes and Signature tabs each have a search box (exact matches, then prefix, then the channel's own emotes before 7TV, BTTV and FFZ). Subscriber emotes are listed after open ones and marked "Tier N"; they stay pickable because the channel's own team can use every tier. The panel takes focus when it opens and Escape closes it.
 - Channel owners can turn off other channels' signature emotes in their own chat (Studio → Chat; default allowed).
 - Reports, removal, banned words and strikes work as for other emotes. Removing the emote, or rejecting it in review, ends cross-channel use immediately.
 

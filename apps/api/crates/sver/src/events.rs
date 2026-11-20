@@ -354,17 +354,17 @@ async fn reply(ws: &mut WebSocket, value: Value) -> bool {
         .is_ok()
 }
 async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mut ws: WebSocket) {
+    // Chat topics come and go, so this socket reads every event and keeps its own.
     let mut events = app.chat.subscribe();
-    let mut dms = app.dms.subscribe();
+    // The person's own DM room, only while they follow their whispers topic.
+    let mut dms = crate::chat::Rooms::default();
     let mut topics: HashSet<String> = HashSet::new();
     // Chat topics: channel ID -> topic. Messages come straight from the chat hub, not the outbox.
     let mut chats: HashMap<String, String> = HashMap::new();
     // The person's own topics: DM hub channel `dm:{id}` -> whispers topic; notifications are polled.
     let mut own = Own::default();
-    let Ok(mut blocks) = crate::chat::Hidden::load(&app, user.as_ref().map(|u| u.0.as_str())).await
-    else {
-        return;
-    };
+    // Per chat topic's channel: its owner, moderators and staff still see who blocks them.
+    let mut blocks: HashMap<String, crate::chat::Hidden> = HashMap::new();
     // ponytail: one indexed query per socket every 5 s (two with notifications), so a removed
     // grant stops events within 5 s; publish revocations and notifications on the hub if many
     // sockets connect.
@@ -382,6 +382,8 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
                     let _ = reply(&mut ws, json!({"type": "revoked"})).await;
                     return;
                 }
+                blocks.retain(|channel, _| chats.contains_key(channel));
+                blocks.values_mut().for_each(crate::chat::Hidden::recheck);
                 let mut lost = Vec::new();
                 for topic in topics.iter().filter(|t| private(t)) {
                     match allowed(&app, topic, user.as_ref()).await {
@@ -408,6 +410,7 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
                     }
                 }
                 Ok(e) if chats.contains_key(&e.channel) => {
+                    let blocks = blocks.entry(e.channel.clone()).or_insert_with(|| crate::chat::Hidden::new(vec![e.channel.clone()]));
                     let Ok(hidden) = blocks.current(&app, user.as_ref().map(|u| u.0.as_str())).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut data = e.payload.clone();
@@ -461,7 +464,9 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
                         continue;
                     };
                     let mut out = json!({"type": "reply", "id": call["id"]});
-                    match handle(&app, user.as_ref(), &mut topics, &mut chats, &mut own, &call).await {
+                    let handled = handle(&app, user.as_ref(), &mut topics, &mut chats, &mut own, &call).await;
+                    dms.set(&app.dms, own.whispers.as_ref().map(|w| w.0.clone()).as_slice());
+                    match handled {
                         Ok((result, replay)) => {
                             out["result"] = result;
                             if !reply(&mut ws, out).await { return; }
@@ -533,9 +538,13 @@ async fn handle(
                 .await
                 .map_err(retry)?
                 .ok_or("Use a chat:{name} topic you can read.")?;
-            let hidden = crate::chat::hidden(app, user.map(|u| u.0.as_str()))
-                .await
-                .map_err(retry)?;
+            let (hidden, _) = crate::chat::hidden_for(
+                app,
+                user.map(|u| u.0.as_str()),
+                std::slice::from_ref(&channel),
+            )
+            .await
+            .map_err(retry)?;
             let mut messages = crate::chat::history(app, &channel, &hidden, None)
                 .await
                 .map_err(retry)?;

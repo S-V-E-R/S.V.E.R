@@ -55,7 +55,9 @@ Live streams are recorded so people can catch up. Streamers keep their best mome
 
 - VODs replay chat alongside the video, synced to the broadcast time, while the original messages still exist (7 days, matching the longest retention).
 - Highlights and clips carry their own copy of the chat from their time window, so their replay never runs out.
+- A merged co-stream replays its shared chat on every member's recording, for the time that member was in it (migration 0174 records each stay). The host's recording no longer picks up shared lines from outside its own stay. Guests of co-streams that ended before that migration get only their own channel's chat.
 - Deleted and moderated messages never appear in replay. Streamers can turn chat replay off.
+- Replay lines show the author's crest, faction-coloured name and role badge (Broadcaster, Moderator, Staff), as live chat does.
 
 ## MAGNet auto-clips
 

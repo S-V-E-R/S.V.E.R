@@ -10,7 +10,7 @@ Every rule that the review draft marked **Proposed** was approved by the user on
 
 ## Boundaries and legacy carryover
 
-Same stack as Login: the Rust/Axum service, SQLx/Postgres and the Next.js client in this repository. Profiles adds public channel pages, profile editing, follows, the legacy MySpace-style features, user safety tools and a second legacy import. It reuses Login's session cookie, exact-Origin check on JSON mutations, `rate_limits` table, step-up authentication, error shape (`{"error": "..."}` with optional `Retry-After`) and deletion lifecycle.
+Same stack as Login: the Rust/Axum service, SQLx/Postgres and the Next.js client in this repository. Profiles adds public channel pages, profile editing, follows, the legacy MySpace-style features, user safety tools and a second legacy import. It reuses Login's session cookie, exact-Origin check on JSON mutations, `rate_limits` table, step-up authentication, error shape (`{"error": "..."}` with optional `Retry-After`, repeated as `retry` seconds in the body) and deletion lifecycle.
 
 User decisions that supersede `PLATFORM_PLAN.md`:
 - Channel pages live at root `/username` (`sver.tv/JoeTheChode`), not `/s/username`.

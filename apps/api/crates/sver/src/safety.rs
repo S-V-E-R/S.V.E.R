@@ -1413,6 +1413,23 @@ pub async fn admin_action(
             crate::chat::publish_delete(&app, channel.as_deref(), origin.as_deref(), &id);
         }
     }
+    // Both people's open conversations drop a direct message staff just removed.
+    if kind == "dm_message" && removed[0]["previous"] == "VISIBLE" {
+        let people: Option<(String, String, String, String)> = sqlx::query_as("SELECT c.user_a,c.user_b,ua.username,ub.username FROM dm_messages m JOIN dm_conversations c ON c.id=m.conversation_id JOIN users ua ON ua.id=c.user_a JOIN users ub ON ub.id=c.user_b WHERE m.id=$1")
+            .bind(&id)
+            .fetch_optional(&app.db)
+            .await?;
+        if let Some((a, b, a_name, b_name)) = people {
+            for (to, with) in [(a, b_name), (b, a_name)] {
+                app.dms.publish(
+                    &format!("dm:{to}"),
+                    None,
+                    0,
+                    json!({"type": "dm_remove", "with": with, "id": id}),
+                );
+            }
+        }
+    }
     log(&input.action, "ok");
     Ok(Json(
         json!({"closed_reports": report_ids.len(), "strike_id": strike_id}),
@@ -1844,5 +1861,8 @@ pub async fn tick(app: &App) -> Res<()> {
     }
     // Snapshots are purged 90 days after the report closes.
     sqlx::query("UPDATE reports SET snapshot='{\"purged\":true}' WHERE status<>'OPEN' AND closed_at<=now()-interval '90 days' AND NOT snapshot ? 'purged'").execute(&app.db).await?;
+    // Chat evidence on channel timeouts and bans goes after 90 days too, with its clip, a batch
+    // per tick (channel_moderation_log_evidence finds them).
+    sqlx::query("UPDATE channel_moderation_log SET detail=detail-'chat'-'clip' WHERE ctid IN (SELECT ctid FROM channel_moderation_log WHERE detail ? 'chat' AND created_at<=now()-interval '90 days' LIMIT 1000)").execute(&app.db).await?;
     Ok(())
 }

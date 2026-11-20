@@ -706,6 +706,7 @@ pub async fn review(
     tx.commit().await?;
     if action == "block-author" {
         app.chat.blocks_changed();
+        crate::dms::blocked(&app, &user.id, &author).await;
     }
     Ok(Json(json!({"done": true})))
 }

@@ -24,7 +24,7 @@ export function NotificationList({ reports, strikes }: { reports: number; strike
     const result = await send<{ items: Item[] }>("GET", "/api/me/notifications");
     if (!result.ok) { setError(result.error); return; }
     setItems(result.data.items);
-    if (result.data.items.some(item => !item.read)) await send("POST", "/api/me/notifications/read");
+    if (result.data.items.some(item => !item.read)) { await send("POST", "/api/me/notifications/read"); window.dispatchEvent(new Event("sver:alerts-read")); }
   }, []);
   useLoad(load);
   return <>

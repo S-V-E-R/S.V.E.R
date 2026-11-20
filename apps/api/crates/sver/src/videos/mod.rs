@@ -416,6 +416,14 @@ pub async fn redact_messages(db: &mut PgConnection, ids: &[String]) -> Res<()> {
         .await?;
     Ok(())
 }
+/// Which chat rows belong to a recording (`c`, from `replay_source_sql`): its channel's own chat, and
+/// shared co-stream chat while the owner (bind parameter `owner`) was in that co-stream. The `ANY`
+/// lets both chat indexes find the rows; the `EXISTS` keeps each stay's window.
+fn replay_room(owner: &str) -> String {
+    format!(
+        "(c.channel_id={owner} AND c.squad_id IS NULL OR c.squad_id=ANY(ARRAY(SELECT squad_id FROM squad_appearances WHERE user_id={owner})) AND EXISTS(SELECT 1 FROM squad_appearances a WHERE a.user_id={owner} AND a.squad_id=c.squad_id AND c.created_at>=a.joined_at AND (a.left_at IS NULL OR c.created_at<a.left_at)))"
+    )
+}
 pub async fn copy_replay(
     db: &mut PgConnection,
     source: &str,
@@ -427,8 +435,9 @@ pub async fn copy_replay(
 ) -> Res<()> {
     if vod {
         let query = format!(
-            "WITH chat AS ({}) INSERT INTO video_chat(video_id,message_id,author_id,offset_ms,message) SELECT $2,c.id,c.author_id,s.start_ms-$4+(extract(epoch FROM c.created_at-s.wall_start)*1000)::bigint,c.message FROM video_segments s JOIN chat c ON c.channel_id=$3 AND c.created_at>=s.wall_start AND c.created_at<s.wall_start+make_interval(secs=>s.duration_ms::float8/1000) WHERE s.video_id=$1 AND s.start_ms>=$4 AND s.start_ms<$5 ON CONFLICT DO NOTHING",
-            crate::chat::replay_source_sql()
+            "WITH chat AS ({}) INSERT INTO video_chat(video_id,message_id,author_id,offset_ms,message) SELECT $2,c.id,c.author_id,s.start_ms-$4+(extract(epoch FROM c.created_at-s.wall_start)*1000)::bigint,c.message FROM video_segments s JOIN chat c ON {} AND c.created_at>=s.wall_start AND c.created_at<s.wall_start+make_interval(secs=>s.duration_ms::float8/1000) WHERE s.video_id=$1 AND s.start_ms>=$4 AND s.start_ms<$5 ON CONFLICT DO NOTHING",
+            crate::chat::replay_source_sql(),
+            replay_room("$3")
         );
         sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(source)

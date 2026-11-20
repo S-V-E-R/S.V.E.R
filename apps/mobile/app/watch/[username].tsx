@@ -10,7 +10,7 @@ import { useLoad } from "../../src/load";
 import { HlsPlayer } from "../../src/player";
 import { PlaysControls } from "../../src/plays";
 import { SafetySheet, type SafetyTarget } from "../../src/safety";
-import type { Live } from "../../src/types";
+import type { Live, Squad } from "../../src/types";
 import { Button, Frame, Notice, Screen, Tag, inkMuted } from "../../src/ui";
 import { playbackKey } from "../../src/urls";
 
@@ -37,6 +37,18 @@ export default function WatchScreen() {
   }, [username]);
 
   useLoad(load, 15000);
+
+  // A merged co-stream shares one chat across its members; follow it as it starts and ends (the chat
+  // says when, so this re-check is only a slow fallback).
+  const [squad, setSquad] = useState<Squad | null>(null);
+  const loadSquad = useCallback(async () => {
+    if (!username) return;
+    const result = await send<{ squad?: Squad | null }>("GET", `/api/channels/${encodeURIComponent(username)}/squad`);
+    if (result.ok) setSquad(result.data.squad ?? null);
+  }, [username]);
+  useLoad(loadSquad, 60000);
+  const squadHost = squad?.mode === "MERGED" && !squad.ended ? squad.members.find(m => m.host)?.username ?? null : null;
+  const sharedChat = squad && squadHost ? squad.id : null;
 
   // Follow state comes from the channel page's viewer relation; null hides the button (owner, signed out, not loaded).
   const [following, setFollowing] = useState<boolean | null>(null);
@@ -118,7 +130,7 @@ export default function WatchScreen() {
             <PlaysControls username={username} />
             <Crowd username={username} />
             <Board username={username} />
-            <Chat username={username} />
+            <Chat key={sharedChat ?? username} username={username} squad={sharedChat} host={squadHost} onRoomGone={loadSquad} />
           </>
         ) : null}
       </ScrollView>

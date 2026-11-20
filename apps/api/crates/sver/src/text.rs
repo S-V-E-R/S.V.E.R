@@ -35,8 +35,38 @@ fn is_emoji_component(c: char) -> bool {
         || c == '*'
 }
 
+/// Bidi controls, zero-width, Hangul fillers and other invisible format characters: never drawn,
+/// so they can hide a banned word or a link from a filter, or reorder text on screen. ZWJ (U+200D)
+/// is listed too; `clean` still allows it between emoji.
+pub fn invisible(c: char) -> bool {
+    matches!(c as u32, 0x00AD | 0x034F | 0x061C | 0x115F | 0x1160 | 0x17B4 | 0x17B5 | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x206F | 0x3164 | 0xFEFF | 0xFFA0 | 0xFFF0..=0xFFF8 | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A)
+}
+/// Variation selectors and tag characters: invisible too, but part of emoji (a presentation
+/// selector, a subdivision flag's tags), so `clean` allows them only right after an emoji part.
+fn selector(c: char) -> bool {
+    matches!(c as u32, 0xFE00..=0xFE0F | 0xE0000..=0xE0FFF)
+}
+/// `text` as filters compare it: compatibility forms folded (fullwidth, ligatures) and every
+/// default-ignorable character dropped, so neither can split or disguise a banned word or link.
+pub fn unmasked(text: &str) -> String {
+    text.nfkc()
+        .filter(|&c| !invisible(c) && !selector(c) && !matches!(c as u32, 0x180B..=0x180F))
+        .collect()
+}
+
+/// A character carrying more than 8 stacked code points (emoji parts aside), such as piled-up
+/// combining marks that draw over the lines around them.
+pub fn stacked(value: &str) -> bool {
+    value.graphemes(true).any(|g| {
+        g.chars()
+            .filter(|&c| !is_emoji_component(c) && c != '\u{200D}')
+            .count()
+            > 8
+    })
+}
+
 /// NFC-normalizes and trims, then rejects control, bidi-override and zero-width characters.
-/// ZWJ is allowed only between emoji. `allow_newlines` keeps `\n` (after normalizing `\r\n`).
+/// ZWJ is allowed only between emoji, variation selectors and tags only after an emoji part. `allow_newlines` keeps `\n` (after normalizing `\r\n`).
 pub fn clean(value: &str, field: &'static str, allow_newlines: bool) -> Result<String, Fail> {
     let normalized: String = value.replace("\r\n", "\n").nfc().collect();
     let text = normalized.trim().to_string();
@@ -44,7 +74,9 @@ pub fn clean(value: &str, field: &'static str, allow_newlines: bool) -> Result<S
     for (i, &c) in chars.iter().enumerate() {
         let code = c as u32;
         let bad = (c.is_control() && !(allow_newlines && c == '\n'))
-            || matches!(code, 0x200B | 0x200C | 0x200E | 0x200F | 0x2028 | 0x2029 | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF | 0x061C | 0x180E);
+            || matches!(code, 0x2028 | 0x2029)
+            || (invisible(c) && code != 0x200D)
+            || (selector(c) && !(i > 0 && is_emoji_component(chars[i - 1])));
         if bad {
             return Err(Fail::field(
                 field,

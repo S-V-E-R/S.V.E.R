@@ -32,6 +32,8 @@ use sqlx::PgConnection;
 const PURPOSE: &str = "dm";
 const MAX_CHARS: usize = 1000;
 const PAGE: i64 = 50;
+/// Conversations per page of the list.
+const LIST_PAGE: i64 = 50;
 const POLICIES: [&str; 3] = ["mutuals", "following", "nobody"];
 /// Private mode: device keys per person, and the most a private envelope may hold.
 const MAX_DEVICES: i64 = 5;
@@ -116,12 +118,29 @@ fn message(app: &App, (id, seq, sender, sealed, at, envelope, commitment): &Row)
 }
 const BLOCKED: &str = "EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=$2) OR (b.blocker_id=$2 AND b.blocked_id=$1))";
 
-type Listed = (Value, Option<String>, Option<DateTime<Utc>>, i64, bool);
+type Listed = (
+    String,
+    Value,
+    Option<String>,
+    Option<DateTime<Utc>>,
+    i64,
+    bool,
+);
+#[derive(Deserialize)]
+pub struct ListPage {
+    before: Option<String>,
+}
 /// GET /api/dms: conversations, newest first, with the other person, the last message and unread.
-async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
+/// Only conversations with a message you can still see count toward a page; `next` (a conversation
+/// id, passed back as `before`) is there while older ones may follow.
+async fn list(
+    State(app): State<App>,
+    jar: CookieJar,
+    Query(page): Query<ListPage>,
+) -> Res<Json<Value>> {
     let me = profiles::signed_in(&app, &jar).await?;
     let rows: Vec<Listed> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {chip},
+        "SELECT c.id,{chip},
             (SELECT m.body_sealed FROM dm_messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL AND m.seq>s.cleared_seq ORDER BY m.seq DESC LIMIT 1),
             (SELECT m.created_at FROM dm_messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL AND m.seq>s.cleared_seq ORDER BY m.seq DESC LIMIT 1),
             (SELECT count(*) FROM dm_messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL AND m.sender_id<>$1 AND m.seq>greatest(s.read_seq,s.cleared_seq)),
@@ -130,16 +149,23 @@ async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         JOIN channel_users o ON o.id=CASE WHEN c.user_a=$1 THEN c.user_b ELSE c.user_a END AND o.eligible
         WHERE (c.user_a=$1 OR c.user_b=$1)
           AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=o.id) OR (b.blocker_id=o.id AND b.blocked_id=$1))
-        ORDER BY c.last_message_at DESC LIMIT 100",
+          AND EXISTS(SELECT 1 FROM dm_messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL AND m.seq>s.cleared_seq)
+          AND ($2::text IS NULL OR (c.last_message_at,c.id)<(SELECT last_message_at,id FROM dm_conversations WHERE id=$2))
+        ORDER BY c.last_message_at DESC,c.id DESC LIMIT $3",
         chip = profiles::chip_sql("o")
     )))
     .bind(&me.id)
+    .bind(&page.before)
+    .bind(LIST_PAGE)
     .fetch_all(&app.db)
     .await?;
+    let next = rows
+        .last()
+        .filter(|_| rows.len() as i64 == LIST_PAGE)
+        .map(|r| r.0.clone());
     let conversations: Vec<Value> = rows
         .into_iter()
-        .filter(|r| r.1.is_some())
-        .map(|(mut with, last, at, unread, muted)| {
+        .map(|(_, mut with, last, at, unread, muted)| {
             profiles::hydrate(&app, &mut with);
             // A private message's preview is just that: the server can't read it.
             let preview: String = match last.as_deref() {
@@ -150,13 +176,15 @@ async fn list(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
             json!({"with": with, "last": preview, "last_at": at, "unread": unread, "muted": muted})
         })
         .collect();
-    Ok(Json(json!({"conversations": conversations})))
+    Ok(Json(json!({"conversations": conversations, "next": next})))
 }
-/// GET /api/dms/unread: unread messages in conversations that aren't muted (the header badge).
+/// GET /api/dms/unread: unread messages in conversations that aren't muted (the header badge), from
+/// people whose conversations the list shows (not restricted or deleted accounts).
 async fn unread(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let me = profiles::signed_in(&app, &jar).await?;
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM dm_messages m JOIN dm_state s ON s.conversation_id=m.conversation_id AND s.user_id=$1
         WHERE NOT s.muted AND m.deleted_at IS NULL AND m.sender_id<>$1 AND m.seq>greatest(s.read_seq,s.cleared_seq)
+          AND EXISTS(SELECT 1 FROM channel_users o WHERE o.id=m.sender_id AND o.eligible)
           AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=m.sender_id) OR (b.blocker_id=m.sender_id AND b.blocked_id=$1))")
         .bind(&me.id).fetch_one(&app.db).await?;
     Ok(Json(json!({"unread": count})))
@@ -323,29 +351,25 @@ async fn send(
 ) -> Res<Json<Value>> {
     let me = profiles::signed_in(&app, &jar).await?;
     crate::switches::guard(&mut *app.db.acquire().await?, "dms").await?;
-    let body = input.body.trim();
     let private = input.envelope.is_some();
-    if private {
+    // A plain body is checked like other user text: NFC, no bidi-override or zero-width characters
+    // (which can disguise a link), at most 20 line breaks. A private one is checked on the device.
+    let body = if private {
         let ok = input.commitment.as_deref().is_some_and(|c| {
             c.len() == 64
                 && c.bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         });
-        if !ok || !body.is_empty() {
+        if !ok || !input.body.trim().is_empty() {
             return Err(Fail::field(
                 "envelope",
                 "That private message couldn't be sent. Reload and try again.",
             ));
         }
-    } else if body.is_empty()
-        || body.chars().count() > MAX_CHARS
-        || body.chars().any(|c| c.is_control() && c != '\n')
-    {
-        return Err(Fail::field(
-            "body",
-            "Write a message of 1–1,000 characters.",
-        ));
-    }
+        String::new()
+    } else {
+        crate::text::plain(&input.body, "body", 1, MAX_CHARS, 20, false)?
+    };
     profiles::rate(&app, format!("dm:{}", me.id), 30, 60).await?;
     let mut tx = app.db.begin().await?;
     profiles::ensure_unrestricted(&mut tx, &me.id).await?;
@@ -389,20 +413,21 @@ async fn send(
     let sealed = if private {
         String::new()
     } else {
-        sec::seal(&app, PURPOSE, body)?
+        sec::seal(&app, PURPOSE, &body)?
     };
     let row: Row = sqlx::query_as("INSERT INTO dm_messages(id,conversation_id,sender_id,body_sealed,envelope,commitment) VALUES($1,$2,$3,$4,$6,$7) RETURNING id,seq,$5,body_sealed,created_at,envelope,commitment")
         .bind(profiles::new_id()).bind(&id).bind(&me.id).bind(sealed).bind(&me.username).bind(&envelope).bind(commitment)
         .fetch_one(&mut *tx).await?;
     // The recipient hears about the first unread message of a streak (never the text, which is
     // sealed), unless they muted the conversation; their notification settings decide site/push.
+    // One notice per conversation: it comes back (with push) only after they've read it.
     // Unread as the recipient sees it (the list and the badge): after what they've read or
     // deleted for themselves, and not counting messages staff removed.
     let (unread, muted): (i64, bool) = sqlx::query_as("SELECT (SELECT count(*) FROM dm_messages m WHERE m.conversation_id=$1 AND m.sender_id<>$2 AND m.deleted_at IS NULL AND m.seq>greatest(s.read_seq,s.cleared_seq)),s.muted FROM dm_state s WHERE s.conversation_id=$1 AND s.user_id=$2")
         .bind(&id).bind(&other.id).fetch_one(&mut *tx).await?;
     if unread == 1 && !muted {
-        crate::alerts::community(&mut tx, &other.id, &me.id, "dm", &format!("{id}:{}", row.1), None,
-            &json!({"title": "New message", "body": format!("{} sent you a message.", me.username), "url": format!("/messages?with={}", me.username)})).await?;
+        crate::alerts::community(&mut tx, &other.id, &me.id, "dm", &id, None,
+            &json!({"title": "New message", "body": format!("{} sent you a message.", me.username), "url": format!("/messages?with={}", me.username), "seq": row.1})).await?;
     }
     // Sending reads everything before it.
     sqlx::query("UPDATE dm_state SET read_seq=$3 WHERE conversation_id=$1 AND user_id=$2")
@@ -411,6 +436,7 @@ async fn send(
         .bind(row.1)
         .execute(&mut *tx)
         .await?;
+    notice_read(&mut tx, &me.id, &id).await?;
     tx.commit().await?;
     let message = message(&app, &row);
     for (to, with) in [(&other.id, &me.username), (&me.id, &other.username)] {
@@ -422,6 +448,19 @@ async fn send(
         );
     }
     Ok(Json(json!({"message": message})))
+}
+/// Your "New message" notice for a conversation is read, and its queued pushes are dropped. The
+/// LIKE also covers the older per-message notices.
+async fn notice_read(db: &mut PgConnection, me: &str, conversation: &str) -> Res<()> {
+    sqlx::query("WITH n AS (SELECT id FROM notifications WHERE user_id=$1 AND kind='dm' AND (event_key='dm:'||$2 OR event_key LIKE 'dm:'||$2||':%')),
+            r AS (UPDATE notifications SET read_at=now() WHERE id IN (SELECT id FROM n) AND read_at IS NULL),
+            p AS (DELETE FROM push_jobs WHERE notification_id IN (SELECT id FROM n))
+        DELETE FROM expo_push_jobs WHERE notification_id IN (SELECT id FROM n)")
+        .bind(me)
+        .bind(conversation)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 async fn state_for(db: &mut PgConnection, me: &str, name: &str) -> Res<String> {
     let other = person(db, name).await?;
@@ -440,6 +479,7 @@ async fn mark_read(
     let id = state_for(&mut db, &me.id, &name).await?;
     sqlx::query("UPDATE dm_state SET read_seq=greatest(read_seq,coalesce((SELECT max(seq) FROM dm_messages WHERE conversation_id=$1),0)) WHERE conversation_id=$1 AND user_id=$2")
         .bind(&id).bind(&me.id).execute(&mut *db).await?;
+    notice_read(&mut db, &me.id, &id).await?;
     Ok(Json(json!({"read": true})))
 }
 #[derive(Deserialize)]
@@ -475,6 +515,7 @@ async fn clear(
     let id = state_for(&mut db, &me.id, &name).await?;
     sqlx::query("UPDATE dm_state SET cleared_seq=coalesce((SELECT max(seq) FROM dm_messages WHERE conversation_id=$1),0) WHERE conversation_id=$1 AND user_id=$2")
         .bind(&id).bind(&me.id).execute(&mut *db).await?;
+    notice_read(&mut db, &me.id, &id).await?;
     Ok(Json(json!({"cleared": true})))
 }
 #[derive(Deserialize)]
@@ -550,8 +591,7 @@ async fn session(
     _slot: crate::chat::SocketSlot,
     mut ws: WebSocket,
 ) {
-    let mut events = app.dms.subscribe();
-    let room = format!("dm:{me}");
+    let mut events = app.dms.subscribe_room(&format!("dm:{me}"));
     let signed_out = Message::Close(Some(axum::extract::ws::CloseFrame {
         code: 4001,
         reason: "signed out".into(),
@@ -570,14 +610,13 @@ async fn session(
                 if ws.send(Message::Ping(Default::default())).await.is_err() { return; }
             }
             event = events.recv() => match event {
-                Ok(e) if e.channel == room => {
+                Ok(e) => {
                     if !still_signed_in(&app, &jar, &me).await {
                         let _ = ws.send(signed_out).await;
                         return;
                     }
                     if ws.send(Message::Text(e.payload.to_string().into())).await.is_err() { return; }
                 }
-                Ok(_) => {}
                 // Missed events: the client reloads the conversation.
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     if ws.send(Message::Text(json!({"type":"resync"}).to_string().into())).await.is_err() { return; }
@@ -866,6 +905,29 @@ async fn staff_read(
     )
     .await?;
     Ok(Json(excerpt))
+}
+/// After a block commits: both people's open Messages pages reload the conversation, which is now
+/// hidden for both (`{"type":"blocked","with"}`). Best effort; the page also reloads on its own.
+pub async fn blocked(app: &App, blocker: &str, blocked: &str) {
+    let Ok(names) =
+        sqlx::query_as::<_, (String, String)>("SELECT id,username FROM users WHERE id IN ($1,$2)")
+            .bind(blocker)
+            .bind(blocked)
+            .fetch_all(&app.db)
+            .await
+    else {
+        return;
+    };
+    for (to, _) in &names {
+        for (_, with) in names.iter().filter(|(id, _)| id != to) {
+            app.dms.publish(
+                &format!("dm:{to}"),
+                None,
+                0,
+                json!({"type": "blocked", "with": with}),
+            );
+        }
+    }
 }
 /// Hides a reported message (a staff removal); true when it was visible.
 pub async fn remove(db: &mut PgConnection, id: &str) -> Res<bool> {

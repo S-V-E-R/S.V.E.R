@@ -70,13 +70,39 @@ async fn mine(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         json!({"items":rows,"max_emotes":10,"max_tier_emotes":TIER_SLOTS}),
     ))
 }
+/// Refuses a code the channel already has or a full tier. Runs before the image is processed, so a
+/// refused upload costs nothing, and again under the media lock for concurrent uploads.
+async fn check_slot(
+    db: &mut PgConnection,
+    channel: &str,
+    code: &str,
+    tier: Option<i16>,
+) -> Res<()> {
+    let (count, duplicate): (i64, bool) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE tier IS NOT DISTINCT FROM $3),coalesce(bool_or(code=$2),false) FROM channel_emotes WHERE channel_id=$1",
+    )
+    .bind(channel)
+    .bind(code)
+    .bind(tier)
+    .fetch_one(&mut *db)
+    .await?;
+    if duplicate {
+        return Err(Fail::conflict("That code is already in your channel."));
+    }
+    match tier {
+        None if count >= 10 => Err(Fail::conflict("You can add up to 10 open emotes.")),
+        Some(t) if count >= TIER_SLOTS => Err(Fail::conflict(format!(
+            "You can add up to {TIER_SLOTS} Tier {t} emotes."
+        ))),
+        _ => Ok(()),
+    }
+}
 async fn upload(State(app): State<App>, jar: CookieJar, multipart: Multipart) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::ensure_unrestricted(&mut *app.db.acquire().await?, &user.id).await?;
     if !app.config.media.storage.available() {
         return Err(Fail::unavailable("Image uploads aren't available yet."));
     }
-    profiles::rate(&app, format!("image-upload:{}", user.id), 20, 3600).await?;
     let (bytes, _, fields) = media::read_upload(multipart, Kind::Emote).await?;
     let code = code(fields.get("code").and_then(Value::as_str).unwrap_or(""))?;
     let tier: Option<i16> = match fields.get("tier").and_then(Value::as_str).unwrap_or("") {
@@ -86,7 +112,13 @@ async fn upload(State(app): State<App>, jar: CookieJar, multipart: Multipart) ->
         "3" => Some(3),
         _ => return Err(Fail::field("tier", "Choose open, or tier 1, 2 or 3.")),
     };
-    crate::moderation::check_emote_code(&mut *app.db.acquire().await?, &user.id, code).await?;
+    {
+        let mut db = app.db.acquire().await?;
+        crate::moderation::check_emote_code(&mut db, &user.id, code).await?;
+        check_slot(&mut db, &user.id, code, tier).await?;
+    }
+    // After the checks, so a refused code doesn't use upload quota.
+    profiles::rate(&app, format!("image-upload:{}", user.id), 20, 3600).await?;
     let processed = media::process_async(bytes, Kind::Emote, None).await?;
     media::store(&app, &processed).await?;
     let mut tx = app.db.begin().await?;
@@ -94,26 +126,7 @@ async fn upload(State(app): State<App>, jar: CookieJar, multipart: Multipart) ->
     media::record(&mut tx, &user.id, Kind::Emote, &processed).await?;
     profiles::ensure_unrestricted(&mut tx, &user.id).await?;
     crate::moderation::check_emote_code(&mut tx, &user.id, code).await?;
-    let (count, duplicate): (i64, bool) = sqlx::query_as(
-        "SELECT count(*) FILTER (WHERE tier IS NOT DISTINCT FROM $3),coalesce(bool_or(code=$2),false) FROM channel_emotes WHERE channel_id=$1",
-    )
-    .bind(&user.id)
-    .bind(code)
-    .bind(tier)
-    .fetch_one(&mut *tx)
-    .await?;
-    if duplicate {
-        return Err(Fail::conflict("That code is already in your channel."));
-    }
-    match tier {
-        None if count >= 10 => return Err(Fail::conflict("You can add up to 10 open emotes.")),
-        Some(t) if count >= TIER_SLOTS => {
-            return Err(Fail::conflict(format!(
-                "You can add up to {TIER_SLOTS} Tier {t} emotes."
-            )));
-        }
-        _ => {}
-    }
+    check_slot(&mut tx, &user.id, code, tier).await?;
     let id = profiles::new_id();
     sqlx::query(
         "INSERT INTO channel_emotes(id,channel_id,code,image_key,tier) VALUES($1,$2,$3,$4,$5)",

@@ -56,6 +56,16 @@ pub async fn erase(db: &mut PgConnection, user_id: &str) -> Result<()> {
         .bind(&username)
         .execute(&mut *db)
         .await?;
+    // Their lines leave the chat evidence on channel timeouts and bans: by account ID, or for lines
+    // captured before evidence kept it, by any name they had that nobody else holds now.
+    sqlx::query("WITH names AS (SELECT array_agg(n) n FROM (SELECT $2::text n UNION SELECT old_username FROM username_history WHERE user_id=$1) x
+            WHERE NOT EXISTS(SELECT 1 FROM users u WHERE lower(u.username)=lower(x.n) AND u.id<>$1))
+        UPDATE channel_moderation_log l SET detail=jsonb_set(l.detail,'{chat}',(SELECT coalesce(jsonb_agg(e ORDER BY i),'[]'::jsonb) FROM jsonb_array_elements(l.detail->'chat') WITH ORDINALITY t(e,i) WHERE NOT coalesce(e->>'author'=$1 OR (e->>'author' IS NULL AND (e->>'user')=ANY(names.n)),false)))
+        FROM names WHERE l.detail ? 'chat' AND EXISTS(SELECT 1 FROM jsonb_array_elements(l.detail->'chat') e WHERE coalesce(e->>'author'=$1 OR (e->>'author' IS NULL AND (e->>'user')=ANY(names.n)),false))")
+        .bind(user_id)
+        .bind(&username)
+        .execute(&mut *db)
+        .await?;
     sqlx::query("DELETE FROM users WHERE id=$1")
         .bind(user_id)
         .execute(&mut *db)

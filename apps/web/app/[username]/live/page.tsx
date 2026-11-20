@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { SeenCards } from "../../../components/SeenCards";
 import { Board } from "../../../components/Board";
-import { Chat } from "../../../components/Chat";
+import { CoStreamChat } from "../../../components/CoStreamChat";
 import { Crowd } from "../../../components/Crowd";
 import { LivePlayer } from "../../../components/LivePlayer";
 import { WatchLayout } from "../../../components/WatchLayout";
@@ -43,7 +43,6 @@ export default async function Live({ params }: { params: ChannelParams }) {
   const genreId = listing.data?.items.find(s => s.username === c.username)?.genre ?? null;
   const ground = genreId ? war.data?.genres.find(g => g.id === genreId) ?? null : null;
   const squad = costream.data?.squad ?? null;
-  const squadHost = squad?.members.find(m => m.host)?.username;
   const next = suggestions.data?.items.slice(0, 4) ?? [];
   // The streamer's colors frame their stream (player and streamer bar); everything that belongs to
   // the viewer (Up next, rally, chat) stays in the viewer's own colors, so ALLY and "Rally for
@@ -77,6 +76,6 @@ export default async function Live({ params }: { params: ChannelParams }) {
     </div>
     <section className="watch-next" aria-labelledby="up-next"><SectionHead id="up-next" title="Up next" note="Same genre first, then same faction" href="/browse" link="Browse" />{next.length ? <StreamGrid streams={next} viewerFaction={account?.faction ?? null} /> : <p className="shelf-empty panel">{suggestions.data ? "No other streams are live right now." : "Live channels couldn’t be loaded."} <Link href="/">Explore the homepage</Link></p>}</section>
     </div>
-    {squad?.mode === "MERGED" && squadHost ? <Chat key={squad.id} username={squadHost} squad={squad.id} account={account?.username ?? null} /> : <Chat username={c.username} account={account?.username ?? null} top={<EffortLeaders username={c.username} />} />}
+    <CoStreamChat initial={squad} username={c.username} account={account?.username ?? null} top={<EffortLeaders username={c.username} />} />
   </WatchLayout>;
 }

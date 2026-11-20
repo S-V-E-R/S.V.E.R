@@ -86,6 +86,21 @@ pub(super) async fn next_json(
     serde_json::from_str(frame.to_text().unwrap()).unwrap()
 }
 
+/// The next frame of this type, skipping others.
+pub(super) async fn next_of(
+    ws: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    kind: &str,
+) -> Value {
+    loop {
+        let frame = next_json(ws).await;
+        if frame["type"] == kind {
+            return frame;
+        }
+    }
+}
+
 pub async fn exercise(e: &Env) {
     let chatter = person(e, "chat-user", "Chatter", true).await;
     let unverified = person(e, "chat-unverified", "Unverified", false).await;
@@ -136,6 +151,19 @@ pub async fn exercise(e: &Env) {
         say(e, &chatter, "bell\u{7}").await.0,
         StatusCode::BAD_REQUEST
     );
+    // Invisible characters could hide a banned word or reverse the line on screen; piled-up
+    // accent marks draw over the lines around them.
+    for body in [
+        "bad\u{200B}word",
+        "\u{202E}olleh",
+        "z\u{301}\u{301}\u{301}\u{301}\u{301}\u{301}\u{301}\u{301}\u{301}",
+    ] {
+        assert_eq!(
+            say(e, &chatter, body).await.0,
+            StatusCode::BAD_REQUEST,
+            "{body:?}"
+        );
+    }
     assert_eq!(
         call(
             e,
@@ -344,6 +372,184 @@ pub async fn exercise(e: &Env) {
         errored |= next_json(&mut sender).await["type"] == "error";
     }
     assert!(errored, "malformed command is answered with an error");
+
+    // A pin is read once for every socket, then filtered per viewer: the watcher blocks its author.
+    let (status, pinned) = e
+        .request(
+            "PUT",
+            "/api/channels/streamer/chat/pin",
+            json!({"message_id":message_id}),
+            true,
+            true,
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{pinned}");
+    assert_eq!(pinned["pinned"]["id"], message_id.as_str());
+    assert_eq!(
+        next_of(&mut guest, "pin").await["pinned"]["id"],
+        message_id.as_str()
+    );
+    assert!(next_of(&mut blocker, "pin").await["pinned"].is_null());
+    e.request(
+        "PUT",
+        "/api/channels/streamer/chat/pin",
+        json!({"message_id":null}),
+        true,
+        true,
+        false,
+    )
+    .await;
+    assert!(next_of(&mut guest, "pin").await["pinned"].is_null());
+
+    // An emote change reaches every open socket from one shared catalog read.
+    let reads = e.app.chat.rule_reads();
+    e.app
+        .chat
+        .publish("stream-owner", None, 0, json!({"type":"emotes"}));
+    for ws in [&mut guest, &mut blocker, &mut sender] {
+        assert!(next_of(ws, "emotes").await["emotes"].is_array());
+    }
+    assert_eq!(
+        e.app.chat.rule_reads() - reads,
+        1,
+        "three sockets share one read"
+    );
+    // A burst in another channel never wakes this channel's sockets or makes them fall behind.
+    for _ in 0..5_000 {
+        e.app
+            .chat
+            .publish("another-channel", None, 0, json!({"type":"board_input"}));
+    }
+    e.app.chat.publish(
+        "stream-owner",
+        None,
+        0,
+        json!({"type":"counters","counters":[]}),
+    );
+    assert!(next_of(&mut guest, "counters").await["counters"].is_array());
+
+    // Blocking a moderator doesn't hide you from them: they still see the line, live and in
+    // history, while an ordinary chatter you blocked doesn't.
+    let troll = person(e, "chat-troll", "ChatTroll", true).await;
+    let moderator = person(e, "chat-mod", "ChatMod", true).await;
+    let plain = person(e, "chat-plain", "ChatPlain", true).await;
+    e.sql("INSERT INTO channel_moderators(channel_id,user_id) VALUES('stream-owner','chat-mod')")
+        .await;
+    e.sql("INSERT INTO user_blocks(blocker_id,blocked_id) VALUES('chat-troll','chat-mod'),('chat-troll','chat-plain')").await;
+    let origin = e.app.config.origin.clone();
+    let (mut moderating, _) = connect(Some(moderator.clone()), origin.clone())
+        .await
+        .unwrap();
+    next_json(&mut moderating).await;
+    let (mut ordinary, _) = connect(Some(plain.clone()), origin.clone()).await.unwrap();
+    next_json(&mut ordinary).await;
+    assert_eq!(say(e, &troll, "from the troll").await.0, StatusCode::OK);
+    assert_eq!(
+        next_json(&mut moderating).await["message"]["body"],
+        "from the troll"
+    );
+    let read = |token: String| async move {
+        bodies(
+            &call(
+                e,
+                "GET",
+                "/api/channels/streamer/chat",
+                Some(&token),
+                Value::Null,
+            )
+            .await
+            .1,
+        )
+    };
+    assert!(
+        read(moderator.clone())
+            .await
+            .contains(&"from the troll".into())
+    );
+    assert!(!read(plain.clone()).await.contains(&"from the troll".into()));
+    e.sql("DELETE FROM rate_limits WHERE key LIKE 'chat-%'")
+        .await;
+    let posted = e
+        .request(
+            "POST",
+            "/api/channels/streamer/chat",
+            json!({"id":id(),"body":"owner once more"}),
+            true,
+            true,
+            false,
+        )
+        .await;
+    assert_eq!(posted.0, StatusCode::OK, "{}", posted.1);
+    assert_eq!(
+        next_json(&mut ordinary).await["message"]["body"],
+        "owner once more",
+        "the troll's line never reached the ordinary chatter"
+    );
+
+    // Lines say whether their author moderates now, not only the role they sent with.
+    assert_eq!(say(e, &moderator, "mod line").await.0, StatusCode::OK);
+    let line = || async {
+        let (_, history) = call(e, "GET", "/api/channels/streamer/chat", None, Value::Null).await;
+        let line = history["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["body"] == "mod line")
+            .unwrap()
+            .clone();
+        (
+            line["protected"].clone(),
+            line["moderator"].clone(),
+            line["role"].clone(),
+        )
+    };
+    assert_eq!(line().await, (json!(true), json!(true), json!("moderator")));
+    e.sql("DELETE FROM channel_moderators WHERE user_id='chat-mod'")
+        .await;
+    assert_eq!(
+        line().await,
+        (json!(false), json!(false), json!("moderator"))
+    );
+
+    // A slow-mode refusal says when to send again.
+    e.sql("DELETE FROM rate_limits WHERE key LIKE 'chat-%'")
+        .await;
+    e.sql("INSERT INTO chat_settings(channel_id,slow_mode_seconds) VALUES('stream-owner',30) ON CONFLICT(channel_id) DO UPDATE SET slow_mode_seconds=30").await;
+    assert_eq!(say(e, &plain, "slow one").await.0, StatusCode::OK);
+    let (status, slowed) = say(e, &plain, "slow two").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(slowed["retry"].as_u64().is_some_and(|s| s > 0), "{slowed}");
+    e.sql("UPDATE chat_settings SET slow_mode_seconds=0 WHERE channel_id='stream-owner'")
+        .await;
+
+    // MAGNet merged with this channel: its linked-platform lines stay in the channel's own chat.
+    e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,ended_at,confirmed_live_at) VALUES('chat-hype-b','stream-owner','chat-hype-b',1,'ENDED','s','v','c',now(),now(),now(),now(),now())").await;
+    e.sql("INSERT INTO magnet_lanes(id,current_broadcast,current_since) VALUES('chat-test','chat-hype-b',now())").await;
+    let mut request = format!("ws://{address}/api/magnet/chat-test/ws")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", origin.parse().unwrap());
+    let (mut hype, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert!(!next_json(&mut hype).await["merged_with"].is_null());
+    e.app.chat.publish(
+        "stream-owner",
+        None,
+        0,
+        json!({"type":"message","message":{"id":id(),"body":"from twitch","outside":{"platform":"twitch"}}}),
+    );
+    e.app.chat.publish(
+        "stream-owner",
+        None,
+        0,
+        json!({"type":"message","message":{"id":id(),"body":"from here"}}),
+    );
+    assert_eq!(next_json(&mut hype).await["message"]["body"], "from here");
+    drop(hype);
+    e.sql("DELETE FROM magnet_lanes WHERE id='chat-test'").await;
+    e.sql("DELETE FROM broadcasts WHERE id='chat-hype-b'").await;
 
     server.abort();
     e.sql("DELETE FROM user_blocks").await;

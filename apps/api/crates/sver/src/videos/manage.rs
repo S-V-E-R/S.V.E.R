@@ -94,16 +94,10 @@ async fn add_marker(
     Path(name): Path<String>,
     Json(input): Json<Marker>,
 ) -> Res<Json<Value>> {
-    let user = crate::devapps::actor(&app, &headers, &jar, "channel:run").await?;
     let channel = profiles::eligible_by_name(&mut *app.db.acquire().await?, &name)
         .await?
         .ok_or_else(Fail::channel_missing)?;
-    if moderation::role_of(&app, &channel.id, &user)
-        .await?
-        .is_none()
-    {
-        return Err(Fail::denied("Only the streamer and mods can add markers."));
-    }
+    moderation::actor_any(&app, &headers, &jar, &channel.id, "channel:run").await?;
     let mut tx = app.db.begin().await?;
     let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM videos WHERE owner_id=$1 AND kind='VOD' AND status='RECORDING' AND recording AND ended_at IS NULL)").bind(&channel.id).fetch_one(&mut *tx).await?;
     if !active {
@@ -253,8 +247,9 @@ async fn replay(
     let start = (query.at_ms - 30000).max(0);
     let rows: Vec<ReplayMessage> = if video.kind == "VOD" {
         let sql = format!(
-            "WITH chat AS ({}) SELECT c.id AS message_id,c.author_id,s.start_ms+(extract(epoch FROM c.created_at-s.wall_start)*1000)::bigint AS offset_ms,c.message FROM video_segments s JOIN chat c ON c.channel_id=$2 AND c.created_at>=s.wall_start AND c.created_at<s.wall_start+make_interval(secs=>s.duration_ms::float8/1000) WHERE s.video_id=$1 AND s.start_ms<=$4 AND s.start_ms+s.duration_ms>=$3 ORDER BY c.created_at DESC,c.id DESC LIMIT 200",
-            crate::chat::replay_source_sql()
+            "WITH chat AS ({}) SELECT c.id AS message_id,c.author_id,s.start_ms+(extract(epoch FROM c.created_at-s.wall_start)*1000)::bigint AS offset_ms,c.message FROM video_segments s JOIN chat c ON {} AND c.created_at>=s.wall_start AND c.created_at<s.wall_start+make_interval(secs=>s.duration_ms::float8/1000) WHERE s.video_id=$1 AND s.start_ms<=$4 AND s.start_ms+s.duration_ms>=$3 ORDER BY c.created_at DESC,c.id DESC LIMIT 200",
+            crate::chat::replay_source_sql(),
+            replay_room("$2")
         );
         sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(&id)
@@ -296,7 +291,12 @@ async fn replay(
         {
             continue;
         }
+        // Today's name and picture, with the name style stored when it was said.
+        let style = row.message["author"]["name_style"].take();
         row.message["author"] = profiles::chip(&app, &channel);
+        if !style.is_null() {
+            row.message["author"]["name_style"] = style;
+        }
         row.message["offset_ms"] = json!(row.offset_ms);
         messages.push(row.message);
     }

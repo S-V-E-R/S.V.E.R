@@ -635,6 +635,7 @@ pub async fn block(
     }
     tx.commit().await?;
     app.chat.blocks_changed();
+    crate::dms::blocked(&app, &user.id, &target.id).await;
     Ok(Json(json!({"blocked": true})))
 }
 /// DELETE /api/blocks/{username}: restores nothing that was removed.

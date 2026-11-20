@@ -231,6 +231,34 @@ pub async fn exercise(e: &Env, g: Shared) {
         StatusCode::BAD_REQUEST,
         "YouTube's 200-character limit"
     );
+    // Replies spend YouTube's daily quota every streamer shares, so each streamer gets 20 an hour
+    // there: the 21st is refused without reaching Google, whatever the shared reply limit says.
+    for _ in 0..18 {
+        e.call(
+            "POST",
+            "/api/me/linked-chat/reply",
+            json!({"platform":"youtube","body":"ty"}),
+        )
+        .await;
+    }
+    e.sql("DELETE FROM rate_limits WHERE key='linked-reply:stream-owner'")
+        .await;
+    let (status, refused) = e
+        .request(
+            "POST",
+            "/api/me/linked-chat/reply",
+            json!({"platform":"youtube","body":"one more"}),
+            true,
+            true,
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        refused["error"].as_str().unwrap().contains("YouTube"),
+        "{refused}"
+    );
+    assert_eq!(g.lock().unwrap().posted.len(), 19);
 
     // A delete on YouTube hides that message here; a ban hides what that person said.
     pass(e).await;

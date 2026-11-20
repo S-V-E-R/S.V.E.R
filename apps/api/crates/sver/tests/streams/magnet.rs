@@ -3,7 +3,7 @@
 //! force/release/stop with audit and the decision log, Studio settings, flags and history.
 use super::Env;
 use super::bans::staff;
-use super::chat::{call, id, person};
+use super::chat::{call, id, next_json, person};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
@@ -280,6 +280,20 @@ pub async fn exercise(e: &Env) {
         (status, refused["error"].as_str().unwrap_or("")),
         (StatusCode::FORBIDDEN, "Chat resumes when MAGNet moves on.")
     );
+    // While merged, the room renders the featured channel's emotes.
+    e.sql("INSERT INTO channel_emotes(id,channel_id,code,image_key) VALUES('mg-small-emote','mg-small','SmallHype','emotes/mg-small')").await;
+    e.app
+        .chat
+        .publish("mg-small", None, 0, json!({"type":"emotes"}));
+    let (_, room) = get(e, "/api/magnet/global/chat", None).await;
+    assert!(
+        room["emotes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["code"] == "SmallHype"),
+        "{room}"
+    );
     // With chat merging off the room is its own; its messages can be reported and removed by staff.
     e.sql("INSERT INTO magnet_settings(user_id,chat_merge) VALUES('mg-small',false)")
         .await;
@@ -305,6 +319,9 @@ pub async fn exercise(e: &Env) {
     );
     let (_, room) = get(e, "/api/magnet/global/chat", None).await;
     assert_eq!(room["merged_with"], Value::Null);
+    assert_eq!(room["emotes"], json!([]), "MAGNet's own room has none");
+    e.sql("DELETE FROM channel_emotes WHERE id='mg-small-emote'")
+        .await;
     assert!(
         room["messages"]
             .as_array()
@@ -692,6 +709,7 @@ pub async fn exercise(e: &Env) {
 
     hardening(e, &admin).await;
     genre_lane(e).await;
+    follows(e).await;
 
     for statement in [
         "DELETE FROM moderation_actions WHERE actor_id='mg-staff'",
@@ -1005,4 +1023,131 @@ async fn genre_lane(e: &Env) {
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-g-%'").await;
     e.sql("UPDATE magnet_features SET ended_at=now() WHERE ended_at IS NULL")
         .await;
+}
+
+/// Boxed behind a pointer so its socket and server don't widen `exercise`'s stack frame, which
+/// already runs deep handlers.
+fn follows(e: &Env) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+    Box::pin(hype_room_follows(e))
+}
+/// An open Hype socket follows its lane without polling: a co-stream forming mid-feature reaches
+/// it on the next tick, a countdown doesn't resend the room, and deleting an earlier merge's line
+/// after MAGNet moved on still removes it there.
+async fn hype_room_follows(e: &Env) {
+    use futures_util::StreamExt;
+    use std::{net::SocketAddr, time::Duration};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE state<>'ENDED'").await;
+    tick(e, "global").await;
+    let host = person(e, "mg-fa", "MgFollowA", true).await;
+    person(e, "mg-fb", "MgFollowB", true).await;
+    person(e, "mg-fc", "MgFollowC", true).await;
+    let chatter = person(e, "mg-fchat", "MgFollowChat", true).await;
+    e.sql("UPDATE users SET created_at=now()-interval '30 days' WHERE id LIKE 'mg-f%'")
+        .await;
+    live(e, "mg-f-ba", "mg-fa", "art", 30).await;
+    tick(e, "global").await;
+    assert_eq!(current(e, "global").await.0.as_deref(), Some("mg-f-ba"));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = sver::router(e.app.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let mut request = format!("ws://{address}/api/magnet/global/ws")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", e.app.config.origin.parse().unwrap());
+    let (mut hype, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let first = next_json(&mut hype).await;
+    assert_eq!(
+        (&first["merged_with"]["username"], &first["co_stream"]),
+        (&json!("MgFollowA"), &json!(false))
+    );
+
+    // A merged co-stream forms mid-feature: the tick holds the stream and moves the room.
+    live(e, "mg-f-bb", "mg-fb", "art", 30).await;
+    e.sql(
+        "INSERT INTO squads(id,host_id,mode,created_at) VALUES('mg-fsquad','mg-fa','MERGED',now())",
+    )
+    .await;
+    e.sql("INSERT INTO squad_members(squad_id,user_id,broadcast_id) VALUES('mg-fsquad','mg-fa','mg-f-ba'),('mg-fsquad','mg-fb','mg-f-bb')").await;
+    tick(e, "global").await;
+    assert_eq!(current(e, "global").await.0.as_deref(), Some("mg-f-ba"));
+    let moved = next_json(&mut hype).await;
+    assert_eq!(
+        (&moved["type"], &moved["co_stream"]),
+        (&json!("snapshot"), &json!(true))
+    );
+    // The shared chat's lines now reach the socket.
+    let (status, said) = call(
+        e,
+        "POST",
+        "/api/squads/mg-fsquad/chat",
+        Some(&chatter),
+        json!({"id":id(),"body":"shared hello"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{said}");
+    let line = said["message"]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        next_json(&mut hype).await["message"]["body"],
+        "shared hello"
+    );
+
+    // A countdown to another stream changes nothing in the room yet, so nothing is resent.
+    live(e, "mg-f-bc", "mg-fc", "art", 30).await;
+    e.sql("UPDATE magnet_lanes SET current_since=now()-interval '9 minutes' WHERE id='global'")
+        .await;
+    tick(e, "global").await;
+    assert_eq!(current(e, "global").await.2.as_deref(), Some("mg-f-bc"));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), hype.next())
+            .await
+            .is_err(),
+        "a countdown resent the room"
+    );
+    // The switch does, and the earlier merge's line stays in the room's history.
+    e.sql("UPDATE magnet_lanes SET switch_at=now()-interval '1 second' WHERE id='global'")
+        .await;
+    tick(e, "global").await;
+    let switched = next_json(&mut hype).await;
+    assert_eq!(switched["merged_with"]["username"], "MgFollowC");
+    assert!(
+        switched["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == line.as_str()),
+        "{switched}"
+    );
+    // The co-stream's host removes that line now: it leaves the MAGNet room too.
+    let (status, removed) = call(
+        e,
+        "DELETE",
+        &format!("/api/squads/mg-fsquad/chat/messages/{line}"),
+        Some(&host),
+        json!({"reason":"Spam"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{removed}");
+    let gone = next_json(&mut hype).await;
+    assert_eq!(
+        (&gone["type"], &gone["id"]),
+        (&json!("delete"), &json!(line))
+    );
+
+    drop(hype);
+    server.abort();
+    e.sql("DELETE FROM squads WHERE id='mg-fsquad'").await;
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now(),end_reason='test',reconnect_deadline=NULL WHERE id LIKE 'mg-f-%'").await;
+    tick(e, "global").await;
 }
