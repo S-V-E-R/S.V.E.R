@@ -580,6 +580,111 @@ pub async fn exercise(e: &Env) {
         .await
         .unwrap()
     });
+    let open = |token: Option<&str>| {
+        let mut request = format!("ws://{address}/api/chat/ws?squad={squad}")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("origin", e.app.config.origin.parse().unwrap());
+        if let Some(token) = token {
+            request
+                .headers_mut()
+                .insert("cookie", format!("sver_dev={token}").parse().unwrap());
+        }
+        async move { tokio_tungstenite::connect_async(request).await.unwrap().0 }
+    };
+    // Every member's emotes render in shared chat, marked with their channel; the host's wins a
+    // code both have.
+    e.sql("INSERT INTO channel_emotes(id,channel_id,code,image_key) VALUES('sq-host','team-0','SquadClash','emotes/sq-host'),('sq-guest','team-2','GuestHype','emotes/sq-guest'),('sq-clash','team-2','SquadClash','emotes/sq-clash')").await;
+    for member in ["team-0", "team-2"] {
+        e.app
+            .chat
+            .publish(member, None, 0, json!({"type":"emotes"}));
+    }
+    let mut guest = open(None).await;
+    let snapshot = super::chat::next_json(&mut guest).await;
+    let emotes = snapshot["emotes"].as_array().unwrap();
+    let owner = |code: &str| {
+        let found: Vec<_> = emotes.iter().filter(|e| e["code"] == code).collect();
+        assert_eq!(found.len(), 1, "{code} once");
+        found[0]["channel"].as_str().unwrap().to_owned()
+    };
+    assert_eq!(owner("GuestHype"), "TeamPerson2");
+    assert_eq!(owner("SquadClash"), "TeamPerson0");
+    // A member's live panels reach the shared chat, marked with their channel; their own chat's
+    // lines don't.
+    e.app.chat.publish(
+        "team-1",
+        None,
+        0,
+        json!({"type":"message","message":{"id":id(),"body":"own chat"}}),
+    );
+    e.app
+        .chat
+        .publish("team-1", None, 0, json!({"type":"poll","poll":null}));
+    let poll = super::chat::next_json(&mut guest).await;
+    assert_eq!(
+        (poll["type"].as_str(), poll["source"].as_str()),
+        (Some("poll"), Some("TeamPerson1"))
+    );
+    // A channel ban closes the banned viewer's shared chat at once, and only theirs.
+    let mut banned = open(Some(&tokens[4])).await;
+    super::chat::next_json(&mut banned).await;
+    let mut bystander = open(Some(&fan)).await;
+    super::chat::next_json(&mut bystander).await;
+    ok(
+        e,
+        b,
+        "POST",
+        "/api/channels/TeamPerson1/chat/restrictions",
+        json!({"username":"TeamPerson4","kind":"ban","reason":"Synthetic ban"}),
+    )
+    .await;
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(4), async {
+        while let Some(Ok(frame)) = banned.next().await {
+            if frame.is_close() {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "the banned viewer's socket closed");
+    e.app
+        .chat
+        .publish("team-3", None, 0, json!({"type":"rally"}));
+    assert_eq!(
+        super::chat::next_of(&mut bystander, "rally").await["source"],
+        "TeamPerson3"
+    );
+    e.sql("DELETE FROM channel_restrictions WHERE user_id='team-4'")
+        .await;
+    // An under-18 viewer's open shared chat closes for good (4003) once a member is labeled mature.
+    let kid = person(e, "team-kid", "TeamKid", true).await;
+    e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='team-kid'")
+        .await;
+    let mut minor = open(Some(&kid)).await;
+    assert_eq!(super::chat::next_json(&mut minor).await["type"], "snapshot");
+    e.sql("INSERT INTO stream_settings(owner_id,title,mature) VALUES('team-2','Squad',true) ON CONFLICT(owner_id) DO UPDATE SET mature=true").await;
+    let code = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        while let Some(Ok(frame)) = minor.next().await {
+            if let tokio_tungstenite::tungstenite::Message::Close(close) = frame {
+                return close.map(|c| u16::from(c.code));
+            }
+        }
+        None
+    })
+    .await
+    .unwrap();
+    assert_eq!(code, Some(4003));
+    e.sql("UPDATE stream_settings SET mature=false WHERE owner_id='team-2'")
+        .await;
+    e.sql("DELETE FROM channel_emotes WHERE id LIKE 'sq-%'")
+        .await;
+    drop((guest, bystander));
+    // In shared chat a sub badge names its channel: the host's when they sub there, otherwise
+    // the member channel they've subbed to longest.
+    e.sql("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months) VALUES('team-2','team-fan',1,now()+interval '1 month',3),('team-3','team-fan',2,now()+interval '1 month',7)").await;
     let mut request = format!("ws://{address}/api/chat/ws?squad={squad}")
         .into_client_request()
         .unwrap();
@@ -604,10 +709,22 @@ pub async fn exercise(e: &Env) {
     )
     .await;
     ok(e, &fan, "POST", &chat, json!({"id":msgid,"body":"Retry"})).await;
+    let shared = super::chat::next_json(&mut socket).await;
+    assert_eq!(shared["message"]["body"], "Shared room");
     assert_eq!(
-        super::chat::next_json(&mut socket).await["message"]["body"],
-        "Shared room"
+        (
+            &shared["message"]["sub"]["channel"],
+            &shared["message"]["sub"]["months"]
+        ),
+        (&json!("TeamPerson3"), &json!(7))
     );
+    e.sql("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months) VALUES('team-0','team-fan',1,now()+interval '1 month',1)").await;
+    assert_eq!(
+        ok(e, &fan, "GET", &chat, Value::Null).await["messages"][0]["sub"]["channel"],
+        "TeamPerson0"
+    );
+    e.sql("DELETE FROM channel_subs WHERE user_id='team-fan'")
+        .await;
     // A featured merged co-stream: MAGNet chat merges with its shared room (docs/MAGNET.md).
     let room = ok(e, &fan, "GET", "/api/magnet/global/chat", Value::Null).await;
     assert_eq!(room["co_stream"], true);

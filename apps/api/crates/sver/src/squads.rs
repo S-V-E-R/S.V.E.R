@@ -317,6 +317,7 @@ async fn invite(
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        app.chat.squad_changed(&id);
         return Ok(Json(json!({"invited":true,"accepted":true})));
     }
     let invite = profiles::new_id();
@@ -382,6 +383,7 @@ async fn answer(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    app.chat.squad_changed(&id);
     Ok(Json(json!({"accepted":input.accept})))
 }
 async fn leave(State(app): State<App>, jar: CookieJar, Path(id): Path<String>) -> Res<Json<Value>> {
@@ -401,6 +403,7 @@ async fn leave(State(app): State<App>, jar: CookieJar, Path(id): Path<String>) -
         announce(&mut tx, &id, &[&user.id]).await?;
     }
     tx.commit().await?;
+    app.chat.squad_changed(&id);
     Ok(Json(json!({"left":true})))
 }
 async fn cancel(
@@ -559,37 +562,48 @@ pub async fn lock_chat(db: &mut PgConnection, id: &str, expected: &[String]) -> 
     }
     Ok(())
 }
-/// Who may read and post in a shared chat, host first. Chat calls this on every read and send and,
-/// at most once a second, for each open socket, so it takes no lock (see `snapshot`): two queries,
-/// however many members. Channel bans and personal blocks apply across all members at once.
+/// A shared chat's members as readers see them, host first, without any lock (see `snapshot`);
+/// None once it ended or isn't merged. Open chat sockets share one read a second (`Hub::squad`).
+pub async fn open_members(db: &mut PgConnection, id: &str) -> Res<Option<Vec<String>>> {
+    let (s, members, ended) = snapshot(db, id).await?;
+    Ok((!ended && s.mode == "MERGED").then_some(members))
+}
+/// Why a viewer can't read a shared chat with these members, if they can't: a restriction in it,
+/// or a channel ban or personal block, which apply across all members at once. One query.
+pub async fn barred<'e>(
+    db: impl sqlx::PgExecutor<'e>,
+    id: &str,
+    viewer: &str,
+    members: &[String],
+) -> Res<Option<&'static str>> {
+    let barred: i32 = sqlx::query_scalar("SELECT CASE
+            WHEN EXISTS(SELECT 1 FROM squad_restrictions WHERE squad_id=$1 AND user_id=$2 AND (kind='ban' OR until>now())) THEN 1
+            WHEN EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=ANY($3) AND user_id=$2 AND kind='ban')
+              OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=ANY($3) AND blocked_id=$2) OR (blocked_id=ANY($3) AND blocker_id=$2)) THEN 2
+            ELSE 0 END")
+        .bind(id)
+        .bind(viewer)
+        .bind(members)
+        .fetch_one(db)
+        .await?;
+    Ok(match barred {
+        1 => Some("You're restricted from this shared chat."),
+        2 => Some("A member's channel ban or block prevents shared chat access."),
+        _ => None,
+    })
+}
+/// Who may read and post in a shared chat, host first. Chat calls this on every read and send
+/// (open sockets use `open_members` and `barred` on their own schedule), so it takes no lock (see
+/// `snapshot`): three queries, however many members.
 pub async fn chat_context(app: &App, id: &str, viewer: Option<&str>) -> Res<Vec<String>> {
     let mut db = app.db.acquire().await?;
-    let (s, members, ended) = snapshot(&mut db, id).await?;
-    if ended || s.mode != "MERGED" {
-        return Err(Fail::conflict(
-            "This shared chat has ended or is unavailable.",
-        ));
-    }
-    if let Some(v) = viewer {
-        let barred: i32 = sqlx::query_scalar("SELECT CASE
-                WHEN EXISTS(SELECT 1 FROM squad_restrictions WHERE squad_id=$1 AND user_id=$2 AND (kind='ban' OR until>now())) THEN 1
-                WHEN EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=ANY($3) AND user_id=$2 AND kind='ban')
-                  OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=ANY($3) AND blocked_id=$2) OR (blocked_id=ANY($3) AND blocker_id=$2)) THEN 2
-                ELSE 0 END")
-            .bind(id)
-            .bind(v)
-            .bind(&members)
-            .fetch_one(&mut *db)
-            .await?;
-        match barred {
-            1 => return Err(Fail::denied("You're restricted from this shared chat.")),
-            2 => {
-                return Err(Fail::denied(
-                    "A member's channel ban or block prevents shared chat access.",
-                ));
-            }
-            _ => {}
-        }
+    let members = open_members(&mut db, id)
+        .await?
+        .ok_or_else(|| Fail::conflict("This shared chat has ended or is unavailable."))?;
+    if let Some(v) = viewer
+        && let Some(why) = barred(&mut *db, id, v, &members).await?
+    {
+        return Err(Fail::denied(why));
     }
     Ok(members)
 }
@@ -687,6 +701,7 @@ async fn restrict(
     )
     .await?;
     tx.commit().await?;
+    app.chat.access_changed();
     Ok(Json(json!({"saved":true})))
 }
 #[derive(Deserialize)]

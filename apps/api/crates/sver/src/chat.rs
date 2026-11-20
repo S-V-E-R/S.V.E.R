@@ -45,24 +45,91 @@ pub struct Hub {
     tx: broadcast::Sender<Arc<Event>>,
     sockets: Arc<AtomicUsize>,
     addresses: Arc<Mutex<HashMap<IpAddr, usize>>>,
-    /// Emote catalogs by channel, shared by every socket for five seconds.
-    catalogs: Arc<Mutex<Catalogs>>,
+    /// Each channel's chat rules (emotes and banner state), shared by every socket for five seconds.
+    rules: Arc<Shared<Rules>>,
+    /// Database reads behind `rules`, so a test can see a burst of sockets share one.
+    rule_reads: Arc<AtomicUsize>,
+    /// Each shared chat's open roster (None once it ended), shared by its sockets for a second.
+    squads: Arc<Shared<Option<Vec<String>>>>,
     /// Bumped after any block or unblock commits, so sockets re-read their block list only then.
     blocks: Arc<AtomicUsize>,
+    /// Bumped after a ban or a shared-chat restriction commits, so shared-chat sockets re-check
+    /// the viewer's access only then (and on a slow safety tick).
+    access: Arc<AtomicUsize>,
+    /// Each channel's latest pin, read once per change for every socket (`pin_view` filters it).
+    pins: Arc<Mutex<HashMap<String, Pinned>>>,
+    /// Pin reads run one at a time, so the newest read is always the one stored.
+    // ponytail: one lock site-wide; pins are rare moderator actions, per-channel locks if not.
+    pin_reads: Arc<tokio::sync::Mutex<()>>,
     /// Messages deleted in the last minute, so a message event published just after its own
     /// delete (a removal racing the send's fanout) is never delivered. Kept with the last prune,
     /// so a burst of deletes doesn't rescan the map on every one.
     deleted: Arc<Mutex<(Instant, HashMap<String, Instant>)>>,
 }
-type Catalogs = HashMap<String, (Instant, Vec<Value>)>;
+/// A pinned message as everyone sees it (badges hydrated, quote author kept) and its author.
+type Pinned = Option<(String, Value)>;
+/// Values shared by every socket that asks within an age, each read at most once at a time
+/// however many ask together.
+struct Shared<T>(Mutex<HashMap<String, Slot<T>>>);
+/// One key's value and when it was read; held while it is being read.
+type Slot<T> = Arc<tokio::sync::Mutex<Option<(Instant, T)>>>;
+impl<T> Default for Shared<T> {
+    fn default() -> Self {
+        Self(Mutex::default())
+    }
+}
+impl<T: Clone> Shared<T> {
+    async fn get<F: std::future::Future<Output = Res<T>>>(
+        &self,
+        key: &str,
+        age: Duration,
+        read: impl FnOnce() -> F,
+    ) -> Res<T> {
+        let fresh =
+            |slot: &Option<(Instant, T)>| slot.as_ref().is_some_and(|(at, _)| at.elapsed() < age);
+        let slot = {
+            let mut all = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if !all.contains_key(key) {
+                all.retain(|_, slot| slot.try_lock().map_or(true, |s| fresh(&s)));
+            }
+            all.entry(key.into()).or_default().clone()
+        };
+        let mut slot = slot.lock().await;
+        if fresh(&slot)
+            && let Some((_, value)) = slot.as_ref()
+        {
+            return Ok(value.clone());
+        }
+        let value = read().await?;
+        *slot = Some((Instant::now(), value.clone()));
+        Ok(value)
+    }
+    /// The next reader reads again (a read already under way finishes for its own callers only).
+    fn forget(&self, key: &str) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(key);
+    }
+}
+/// What a chat shows besides its messages: its emotes and what its banner says.
+#[derive(Clone, Default, PartialEq)]
+struct Rules {
+    emotes: Vec<Value>,
+    allow_signatures: bool,
+    subs_only: bool,
+    followers_only: Option<DateTime<Utc>>,
+}
 impl Default for Hub {
     fn default() -> Self {
         Self {
             tx: broadcast::channel(4096).0,
             sockets: Arc::default(),
             addresses: Arc::default(),
-            catalogs: Arc::default(),
+            rules: Arc::default(),
+            rule_reads: Arc::default(),
+            squads: Arc::default(),
             blocks: Arc::default(),
+            access: Arc::default(),
+            pins: Arc::default(),
+            pin_reads: Arc::default(),
             deleted: Arc::new(Mutex::new((Instant::now(), HashMap::new()))),
         }
     }
@@ -97,6 +164,13 @@ impl Hub {
             }
             deleted.insert(id.into(), Instant::now());
         }
+        // The next socket to hear it reads the new rules; the rest share that read.
+        if matches!(
+            payload["type"].as_str(),
+            Some("emotes" | "subs_only" | "protect")
+        ) {
+            self.rules.forget(channel);
+        }
         let _ = self.tx.send(Arc::new(Event {
             channel: channel.into(),
             author: author.map(Into::into),
@@ -107,6 +181,24 @@ impl Hub {
     /// Call after a block or unblock commits.
     pub(crate) fn blocks_changed(&self) {
         self.blocks.fetch_add(1, Ordering::Release);
+    }
+    /// Call after a channel ban or a shared-chat restriction commits.
+    pub(crate) fn access_changed(&self) {
+        self.access.fetch_add(1, Ordering::Release);
+    }
+    /// Call after a co-stream's roster changes, so its sockets see it at once.
+    pub(crate) fn squad_changed(&self, id: &str) {
+        self.squads.forget(id);
+    }
+    /// Moves whenever a shared-chat viewer's access could have changed.
+    fn access_generation(&self) -> usize {
+        self.access
+            .load(Ordering::Acquire)
+            .wrapping_add(self.blocks.load(Ordering::Acquire))
+    }
+    /// How many times `rules` has read the database.
+    pub fn rule_reads(&self) -> usize {
+        self.rule_reads.load(Ordering::Relaxed)
     }
     fn deleted(&self, id: &str) -> bool {
         self.deleted
@@ -141,23 +233,51 @@ impl Hub {
         self.sockets.fetch_add(1, Ordering::Relaxed);
         Ok(SocketSlot(self.clone(), ip))
     }
-    /// The channel's emote catalog, read at most once every five seconds however many sockets ask.
-    async fn emotes(&self, app: &App, channel: &str) -> Res<Vec<Value>> {
-        const AGE: Duration = Duration::from_secs(5);
-        let cached = {
-            let all = self.catalogs.lock().unwrap_or_else(|e| e.into_inner());
-            all.get(channel)
-                .filter(|(at, _)| at.elapsed() < AGE)
-                .map(|(_, rows)| rows.clone())
+    /// The channel's rules, read at most once every five seconds however many sockets ask.
+    async fn rules(&self, app: &App, channel: &str) -> Res<Rules> {
+        self.rules
+            .get(channel, Duration::from_secs(5), || async {
+                self.rule_reads.fetch_add(1, Ordering::Relaxed);
+                let (allow_signatures, subs_only, followers_only) = sqlx::query_as("SELECT coalesce(s.allow_signatures,true),coalesce(s.subs_only,false),CASE WHEN s.followers_only_until>now() THEN s.followers_only_until END FROM (SELECT 1) x LEFT JOIN chat_settings s ON s.channel_id=$1")
+                    .bind(channel)
+                    .fetch_one(&app.db)
+                    .await?;
+                Ok(Rules {
+                    emotes: crate::emotes::catalog(app, channel).await?,
+                    allow_signatures,
+                    subs_only,
+                    followers_only,
+                })
+            })
+            .await
+    }
+    /// A shared chat's open roster, host first: read at most once a second however many ask.
+    async fn squad(&self, app: &App, id: &str) -> Res<Option<Vec<String>>> {
+        self.squads
+            .get(id, Duration::from_secs(1), || async {
+                crate::squads::open_members(&mut *app.db.acquire().await?, id).await
+            })
+            .await
+    }
+    /// The channel's pin as of now, stored for every socket to filter. Reads run one at a time
+    /// after the change commits, so the last one stored is the newest.
+    async fn repin(&self, app: &App, channel: &str) -> Res<Pinned> {
+        let _turn = self.pin_reads.lock().await;
+        let pin = pin_row(app, channel).await;
+        let mut pins = self.pins.lock().unwrap_or_else(|e| e.into_inner());
+        match &pin {
+            Ok(pin) => pins.insert(channel.into(), pin.clone()),
+            // Sockets then read it themselves.
+            Err(_) => pins.remove(channel),
         };
-        if let Some(rows) = cached {
-            return Ok(rows);
-        }
-        let rows = crate::emotes::catalog(app, channel).await?;
-        let mut all = self.catalogs.lock().unwrap_or_else(|e| e.into_inner());
-        all.retain(|_, (at, _)| at.elapsed() < AGE);
-        all.insert(channel.into(), (Instant::now(), rows.clone()));
-        Ok(rows)
+        pin
+    }
+    fn pin(&self, channel: &str) -> Option<Pinned> {
+        self.pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(channel)
+            .cloned()
     }
 }
 /// A ping every 30 seconds, the first one 30 seconds after connect.
@@ -243,7 +363,9 @@ pub(crate) struct Row {
     origin: Option<String>,
     /// Valor paid with this message (a tribute, docs/SUPPORT.md).
     tribute: Option<i32>,
-    /// The author's active subscription to this channel: tier and months, for the badge.
+    /// The author's active subscription to this channel, for the badge: tier and months. In
+    /// shared chat also the channel's username: the host's when they sub there, else the member
+    /// channel they've subbed to longest.
     sub: Option<Value>,
     /// Paid for with the channel's "highlight my message" reward.
     highlighted: bool,
@@ -280,7 +402,9 @@ pub(crate) fn select() -> String {
         "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,m.skill,m.gif,
         (SELECT t.tier FROM creator_tiers t WHERE t.user_id=m.author_id AND t.tier>0) AS creator_tier,
         (SELECT e.earned FROM engagement e WHERE e.channel_id=m.channel_id AND e.user_id=m.author_id) AS earned,
-        (SELECT jsonb_build_object('tier',s.tier,'months',s.months) FROM channel_subs s WHERE s.channel_id=m.channel_id AND s.user_id=m.author_id AND s.paid_through>now()) AS sub,
+        (SELECT jsonb_strip_nulls(jsonb_build_object('tier',s.tier,'months',s.months,'channel',CASE WHEN m.squad_id IS NOT NULL THEN su.username END)) FROM channel_subs s JOIN users su ON su.id=s.channel_id WHERE s.user_id=m.author_id AND s.paid_through>now()
+            AND (s.channel_id=m.channel_id OR s.channel_id IN (SELECT q.user_id FROM squad_members q WHERE q.squad_id=m.squad_id))
+            ORDER BY s.channel_id=m.channel_id DESC,s.months DESC,su.username LIMIT 1) AS sub,
         {} AS supporter,
         EXISTS(SELECT 1 FROM channel_moderators d WHERE d.user_id=m.author_id AND (d.channel_id=m.channel_id OR d.channel_id IN (SELECT q.user_id FROM squad_members q WHERE q.squad_id=m.squad_id))) AS moderator,
         (coalesce(m.author_id=m.channel_id,false) OR m.author_id IN (SELECT q.user_id FROM squad_members q WHERE q.squad_id=m.squad_id)
@@ -327,16 +451,30 @@ pub async fn replay_redacted(db: &mut sqlx::PgConnection, ids: &[String]) -> Res
     Ok(sqlx::query_scalar::<_,String>("SELECT m.id FROM chat_messages m LEFT JOIN channel_users u ON u.id=m.author_id WHERE m.id=ANY($1) AND (m.deleted_at IS NOT NULL OR NOT coalesce(u.eligible,false))").bind(ids).fetch_all(db).await?.into_iter().collect())
 }
 
-async fn pinned(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Value> {
+/// The channel's pin for everyone, unfiltered: `pin_view` makes one viewer's copy.
+async fn pin_row(app: &App, channel: &str) -> Res<Pinned> {
     let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{} JOIN chat_pins p ON p.message_id=m.id AND p.channel_id=m.channel_id WHERE m.channel_id=$1 AND m.squad_id IS NULL AND {VISIBLE}", select()
     ))).bind(channel).fetch_optional(&app.db).await?;
-    let mut value = row
-        .filter(|r| !hidden.contains(&r.author_id))
-        .map(|r| visible_message(r.json(app), hidden))
-        .unwrap_or(Value::Null);
-    crate::guilds::hydrate_badges(app, std::slice::from_mut(&mut value)).await?;
-    Ok(value)
+    Ok(match row {
+        Some(r) => Some((r.author_id.clone(), r.hydrated(app).await?)),
+        None => None,
+    })
+}
+/// A pin as one viewer sees it: none when they block its author or it was just deleted, and a
+/// quote of someone they block is blanked.
+fn pin_view(hub: &Hub, pin: &Pinned, hidden: &HashSet<String>) -> Value {
+    match pin {
+        Some((author, message))
+            if !hidden.contains(author) && !hub.deleted(message["id"].as_str().unwrap_or("")) =>
+        {
+            visible_message(message.clone(), hidden)
+        }
+        _ => Value::Null,
+    }
+}
+async fn pinned(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Value> {
+    Ok(pin_view(&app.chat, &pin_row(app, channel).await?, hidden))
 }
 
 /// Tells open chats (and the Hype room a message came from) that it is gone.
@@ -1007,9 +1145,9 @@ pub async fn read(
     .bind(&channel)
     .fetch_one(&app.db)
     .await?;
-    let signatures = allow_signatures(&app, &channel).await?;
+    let rules = app.chat.rules(&app, &channel).await?;
     Ok(Json(
-        json!({"overlay_fade_seconds": fade, "allow_signatures": signatures, "gifs": gifs(&app, &channel).await?, "messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":crate::emotes::catalog(&app, &channel).await?, "followers_only_until":crate::moderation::followers_only(&app, &channel).await?, "subs_only":crate::moderation::subs_only(&app, &channel).await?}),
+        json!({"overlay_fade_seconds": fade, "allow_signatures": rules.allow_signatures, "gifs": gifs(&app, &channel).await?, "messages": history(&app, &channel, &hidden, None).await?, "pinned":pinned(&app, &channel, &hidden).await?, "emotes":rules.emotes, "followers_only_until":rules.followers_only, "subs_only":rules.subs_only}),
     ))
 }
 pub async fn post(
@@ -1024,15 +1162,6 @@ pub async fn post(
     Ok(Json(
         json!({"message": send(&app, &jar, &channel, input, None).await?}),
     ))
-}
-/// Whether other channels' signature emotes render in this chat (docs/CHANNEL_ADDITIONS.md).
-async fn allow_signatures(app: &App, channel: &str) -> Res<bool> {
-    Ok(sqlx::query_scalar(
-        "SELECT coalesce((SELECT allow_signatures FROM chat_settings WHERE channel_id=$1),true)",
-    )
-    .bind(channel)
-    .fetch_one(&app.db)
-    .await?)
 }
 /// Chat is closed to under-18 accounts in a channel labeled mature.
 async fn mature_gate(app: &App, channel: &str, viewer: Option<&str>) -> Res<()> {
@@ -1062,9 +1191,84 @@ pub async fn squad_read(
     let members = squad_members(&app, &id, viewer.as_ref().map(|u| u.id.as_str())).await?;
     let channel = members.first().ok_or_else(Fail::missing)?;
     let (hidden, _) = hidden_for(&app, viewer.as_ref().map(|u| u.id.as_str()), &members).await?;
+    let rules = squad_rules(&app, &member_names(&app, &members).await?).await?;
     Ok(Json(
-        json!({"messages":history(&app,channel,&hidden,Some(&id)).await?,"pinned":null,"emotes":crate::emotes::catalog(&app,channel).await?}),
+        json!({"messages":history(&app,channel,&hidden,Some(&id)).await?,"pinned":null,"emotes":rules.emotes,"allow_signatures":rules.allow_signatures,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only}),
     ))
+}
+/// Members' usernames, in member order.
+async fn member_names(app: &App, members: &[String]) -> Res<Vec<(String, String)>> {
+    let mut names: Vec<(String, String)> =
+        sqlx::query_as("SELECT id,username FROM users WHERE id=ANY($1)")
+            .bind(members)
+            .fetch_all(&app.db)
+            .await?;
+    names.sort_by_key(|(id, _)| members.iter().position(|m| m == id));
+    Ok(names)
+}
+/// A shared chat's rules: every member's emotes (host first, the first of each code wins, each
+/// tagged with its channel), subscribers-only while any member's is, followers-only until the
+/// latest member's ends, and the host's signature setting.
+async fn squad_rules(app: &App, members: &[(String, String)]) -> Res<Rules> {
+    let mut united = Rules::default();
+    let mut codes = HashSet::new();
+    for (n, (id, name)) in members.iter().enumerate() {
+        let rules = app.chat.rules(app, id).await?;
+        if n == 0 {
+            united.allow_signatures = rules.allow_signatures;
+        }
+        united.subs_only |= rules.subs_only;
+        united.followers_only = united.followers_only.max(rules.followers_only);
+        for mut emote in rules.emotes {
+            if codes.insert(emote["code"].as_str().unwrap_or_default().to_owned()) {
+                emote["channel"] = json!(name);
+                united.emotes.push(emote);
+            }
+        }
+    }
+    Ok(united)
+}
+/// Frames for what changed between two readings of a chat's rules. An `emotes` event always gets
+/// its frame (with `outside` passed on), so clients re-resolve signature emotes too.
+fn rule_changes(old: &Rules, new: &Rules, emotes_event: Option<&Value>) -> Vec<Value> {
+    let mut frames = Vec::new();
+    if emotes_event.is_some()
+        || old.emotes != new.emotes
+        || old.allow_signatures != new.allow_signatures
+    {
+        let mut frame =
+            json!({"type":"emotes","emotes":new.emotes,"allow_signatures":new.allow_signatures});
+        if let Some(outside) = emotes_event.and_then(|e| e.get("outside")) {
+            frame["outside"] = outside.clone();
+        }
+        frames.push(frame);
+    }
+    if old.subs_only != new.subs_only {
+        frames.push(json!({"type":"subs_only","on":new.subs_only}));
+    }
+    if old.followers_only != new.followers_only {
+        frames.push(json!({"type":"protect","until":new.followers_only}));
+    }
+    frames
+}
+/// Whether any of these channels other than the viewer's own is labeled mature now.
+async fn mature_any(app: &App, channels: &[String], viewer: &str) -> Res<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM stream_settings WHERE mature AND owner_id=ANY($1) AND owner_id<>$2)")
+        .bind(channels)
+        .bind(viewer)
+        .fetch_one(&app.db)
+        .await?)
+}
+/// A signed-in viewer under 18, who is re-checked against mature labels while connected. Age only
+/// loosens the gate, so it's read once; an unreadable age counts as under 18.
+async fn minor(app: &App, viewer: Option<&str>) -> bool {
+    let Some(viewer) = viewer else { return false };
+    match app.db.acquire().await {
+        Ok(mut db) => !crate::auth::is_adult(&mut db, viewer)
+            .await
+            .unwrap_or(false),
+        Err(_) => true,
+    }
 }
 pub async fn squad_post(
     State(app): State<App>,
@@ -1181,11 +1385,10 @@ pub async fn pin(
     )
     .await?;
     tx.commit().await?;
-    // Read current state at delivery, so concurrent replacements cannot publish stale pins.
+    // One read for every socket, after commit; sockets filter it for their viewer.
+    let pin = app.chat.repin(&app, &channel).await;
     app.chat.publish(&channel, None, 0, json!({"type":"pin"}));
-    Ok(Json(
-        json!({"pinned":pinned(&app, &channel, &hidden).await?}),
-    ))
+    Ok(Json(json!({"pinned":pin_view(&app.chat, &pin?, &hidden)})))
 }
 
 #[derive(Deserialize)]
@@ -1226,11 +1429,31 @@ pub async fn socket(
         .on_upgrade(move |ws| session(app, jar, channel, members, join.squad, slot, ws)))
 }
 
+/// Member-channel events a shared chat passes on, marked with their channel (`source`): live polls,
+/// counters, rally, surge and board updates. Raids aren't: co-stream players don't follow them.
+const SHARED_EVENTS: [&str; 9] = [
+    "board",
+    "board_input",
+    "board_effect",
+    "board_state",
+    "board_result",
+    "poll",
+    "counters",
+    "rally",
+    "surge",
+];
+/// The rules a socket shows: its channel's, or a shared chat's members' united.
+async fn rules_for(app: &App, channel: &str, names: Option<&[(String, String)]>) -> Res<Rules> {
+    match names {
+        Some(names) => squad_rules(app, names).await,
+        None => app.chat.rules(app, channel).await,
+    }
+}
 async fn session(
     app: App,
     jar: CookieJar,
     channel: String,
-    members: Vec<String>,
+    mut members: Vec<String>,
     squad: Option<String>,
     _slot: SocketSlot,
     mut ws: WebSocket,
@@ -1240,15 +1463,28 @@ async fn session(
     let mut events = app.chat.tx.subscribe();
     let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
     let viewer_id = viewer.as_ref().map(|v| v.id.clone());
-    let mut blocks = Hidden::new(members);
+    let minor = minor(&app, viewer_id.as_deref()).await;
+    // A shared chat's members with their usernames, host first; None for a channel's own chat.
+    let mut names = match &squad {
+        Some(_) => match member_names(&app, &members).await {
+            Ok(names) => Some(names),
+            Err(_) => return,
+        },
+        None => None,
+    };
+    let mut blocks = Hidden::new(members.clone());
     let Ok(hidden) = blocks.current(&app, viewer_id.as_deref()).await else {
         return;
     };
     let Ok(snapshot) = history(&app, &channel, hidden, squad.as_deref()).await else {
         return;
     };
-    let Ok(mut pin) = pinned(&app, &channel, hidden).await else {
-        return;
+    let pin = match &squad {
+        Some(_) => Value::Null,
+        None => match pinned(&app, &channel, hidden).await {
+            Ok(pin) => pin,
+            Err(_) => return,
+        },
     };
     // Messages the snapshot already holds aren't sent again. Not a seq cursor: a slow send (a
     // tribute) can commit after a later seq, and must still reach this socket.
@@ -1257,40 +1493,31 @@ async fn session(
         .filter_map(|m| m["id"].as_str().map(String::from))
         .collect();
     let joined = Instant::now();
-    let Ok(mut emotes) = crate::emotes::catalog(&app, &channel).await else {
-        return;
-    };
-    let Ok(followers_only) = crate::moderation::followers_only(&app, &channel).await else {
-        return;
-    };
-    let Ok(subs_only) = crate::moderation::subs_only(&app, &channel).await else {
-        return;
-    };
-    if squad.is_some() {
-        pin = Value::Null;
-    }
-    let Ok(signatures) = allow_signatures(&app, &channel).await else {
+    let Ok(mut rules) = rules_for(&app, &channel, names.as_deref()).await else {
         return;
     };
     let Ok(gifs) = gifs(&app, &channel).await else {
         return;
     };
-    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":emotes,"followers_only_until":followers_only,"subs_only":subs_only,"allow_signatures":signatures,"gifs":gifs}).to_string();
+    let first = json!({"type":"snapshot","messages":snapshot,"pinned":pin,"emotes":rules.emotes,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only,"allow_signatures":rules.allow_signatures,"gifs":gifs}).to_string();
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
     }
-    // Also catches quarantine, appeals and account removals performed by the worker. The catalog
-    // is shared, so this is one query per channel every five seconds, not one per socket.
-    let mut refresh = tokio::time::interval(std::time::Duration::from_secs(5));
+    // Also catches quarantine, appeals and account removals performed by the worker. Rules are
+    // shared, so this is one read per channel every five seconds, not one per socket.
+    let mut refresh = tokio::time::interval(Duration::from_secs(5));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut ping = pings();
     let mut alive = Instant::now();
     // At most 10 frames a second; the per-person send limits sit behind several queries.
     let (mut window, mut frames) = (Instant::now(), 0u32);
-    // A shared chat re-checks the viewer's access before passing events on, at most once a second:
-    // a ban or block still closes the socket within a second, and a busy chat costs one check a
-    // second per viewer rather than one per message.
-    let mut checked = std::time::Instant::now();
+    // A shared chat's roster is shared by its sockets and read at most once a second, so an ended
+    // co-stream closes within a second. The viewer's own access (bans, restrictions, blocks) is
+    // re-checked only when the roster or the access generation moves, or every 30 seconds; the
+    // first check runs a second in, covering anything between connecting and subscribing.
+    let mut access = tokio::time::interval(Duration::from_secs(1));
+    access.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let (mut checked, mut checked_at) = (None, Instant::now());
     loop {
         tokio::select! {
             _ = refresh.tick() => {
@@ -1299,41 +1526,90 @@ async fn session(
                     seen = HashSet::new();
                 }
                 blocks.recheck();
-                if let Some(id) = &squad {
-                    let viewer = match profiles::viewer(&app,&jar).await { Ok(v)=>v, Err(_)=>return };
-                    let Ok(members) = crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await else { return; };
-                    blocks.rescope(members);
-                    checked = std::time::Instant::now();
+                // A chat labeled mature while an under-18 viewer has it open closes for them, for
+                // good: clients don't reconnect on 4003.
+                if minor
+                    && let Some(v) = viewer_id.as_deref()
+                    && mature_any(&app, &members, v).await.unwrap_or(false)
+                {
+                    let _ = ws.send(Message::Close(Some(CloseFrame { code: 4003, reason: "mature".into() }))).await;
+                    return;
                 }
-                let Ok(current) = app.chat.emotes(&app, &channel).await else { return; };
-                if current != emotes {
-                    emotes = current;
-                    if ws.send(Message::Text(json!({"type":"emotes","emotes":emotes}).to_string().into())).await.is_err() { return; }
+                let Ok(next) = rules_for(&app, &channel, names.as_deref()).await else { continue; };
+                for frame in rule_changes(&rules, &next, None) {
+                    if ws.send(Message::Text(frame.to_string().into())).await.is_err() { return; }
+                }
+                rules = next;
+            }
+            _ = access.tick(), if squad.is_some() => {
+                let Some(id) = squad.as_deref() else { continue; };
+                let generation = app.chat.access_generation();
+                // A transient error keeps the socket open; the next tick tries again.
+                let current = match app.chat.squad(&app, id).await {
+                    Ok(Some(current)) => current,
+                    Ok(None) => return,
+                    Err(_) => continue,
+                };
+                if current == members && checked == Some(generation) && checked_at.elapsed() < Duration::from_secs(30) {
+                    continue;
+                }
+                if let Some(v) = viewer_id.as_deref() {
+                    match crate::squads::barred(&app.db, id, v, &current).await {
+                        Ok(None) => {}
+                        Ok(Some(_)) => return,
+                        Err(_) => continue,
+                    }
+                }
+                (checked, checked_at) = (Some(generation), Instant::now());
+                if current != members {
+                    let Ok(next_names) = member_names(&app, &current).await else { continue; };
+                    blocks.rescope(current.clone());
+                    (members, names) = (current, Some(next_names));
+                    // The emotes and the banner follow who's in it.
+                    let Ok(next) = rules_for(&app, &channel, names.as_deref()).await else { continue; };
+                    for frame in rule_changes(&rules, &next, None) {
+                        if ws.send(Message::Text(frame.to_string().into())).await.is_err() { return; }
+                    }
+                    rules = next;
                 }
             }
             _ = ping.tick() => {
                 if alive.elapsed() > SILENT || ws.send(Message::Ping(Default::default())).await.is_err() { return; }
             }
             event = events.recv() => match event {
-                Ok(e) if e.channel == room
-                    && (e.seq == 0 || !e.payload["message"]["id"].as_str().is_some_and(|id| seen.contains(id))) => {
-                    if let Some(id) = &squad
-                        && checked.elapsed() >= std::time::Duration::from_secs(1)
-                    {
-                        if crate::squads::chat_context(&app,id,viewer.as_ref().map(|u|u.id.as_str())).await.is_err() { return; }
-                        checked = std::time::Instant::now();
+                Ok(e) => {
+                    let kind = e.payload["type"].as_str().unwrap_or_default();
+                    // In shared chat, a member channel's own events: its rules and live panels.
+                    let source = names
+                        .as_ref()
+                        .filter(|_| e.channel != room)
+                        .and_then(|names| names.iter().find(|(id, _)| *id == e.channel))
+                        .map(|(_, name)| name.clone());
+                    if e.channel != room && source.is_none() { continue; }
+                    if matches!(kind, "emotes" | "subs_only" | "protect") {
+                        let Ok(next) = rules_for(&app, &channel, names.as_deref()).await else { continue; };
+                        for frame in rule_changes(&rules, &next, (kind == "emotes").then_some(&e.payload)) {
+                            if ws.send(Message::Text(frame.to_string().into())).await.is_err() { return; }
+                        }
+                        rules = next;
+                        continue;
                     }
+                    if source.is_some() && !SHARED_EVENTS.contains(&kind) { continue; }
+                    if e.seq != 0 && e.payload["message"]["id"].as_str().is_some_and(|id| seen.contains(id)) { continue; }
                     let Ok(hidden) = blocks.current(&app, viewer_id.as_deref()).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut payload = e.payload.clone();
-                    if payload["type"] == "emotes" {
-                        let Ok(current) = crate::emotes::catalog(&app, &channel).await else { return; };
-                        emotes = current;
-                        payload["emotes"] = json!(emotes);
-                    } else if payload["type"] == "pin" {
-                        let Ok(pin) = pinned(&app, &channel, hidden).await else { return; };
-                        payload["pinned"] = pin;
-                    } else if payload["type"] == "message" && payload["message"]["outside"].is_null() {
+                    if let Some(source) = source {
+                        payload["source"] = json!(source);
+                    } else if kind == "pin" {
+                        payload["pinned"] = match app.chat.pin(&channel) {
+                            Some(pin) => pin_view(&app.chat, &pin, hidden),
+                            None => match pinned(&app, &channel, hidden).await {
+                                Ok(pin) => pin,
+                                Err(_) => return,
+                            },
+                        };
+                    } else if kind == "message" && payload["message"]["outside"].is_null() {
                         // Outside messages and the bot's lines aren't in chat_messages and have no
                         // S.V.E.R author; they go out as published (a later hide is its own event).
                         let Some(message) = fresh(&app.chat, &payload, hidden) else { continue; };
@@ -1343,7 +1619,6 @@ async fn session(
                         return;
                     }
                 }
-                Ok(_) => {}
                 // A reader that fell behind reconnects and reloads rather than buffering without bound.
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     let _ = ws.send(Message::Close(Some(CloseFrame { code: 4000, reason: "resync".into() }))).await;
@@ -1663,8 +1938,22 @@ async fn hype_session(
     {
         return;
     }
+    // An under-18 viewer's room is re-read every 5 seconds, so a featured channel labeled mature
+    // mid-feature (or a mature guest joining its co-stream) stops flowing to them.
+    let minor = minor(&app, viewer.as_deref()).await;
+    let every = Duration::from_secs(5);
+    let mut recheck = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+    recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
+            _ = recheck.tick(), if minor => {
+                let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks).await else { continue; };
+                let closed = next["holding"] == true && owner.is_none();
+                if owner != merged || closed != gated {
+                    (merged, gated) = (owner, closed);
+                    if ws.send(Message::Text(next.to_string().into())).await.is_err() { return; }
+                }
+            }
             event = events.recv() => match event {
                 // A delete passes from any room: an earlier merge's lines stay in this room's
                 // history after MAGNet moves on, and clients ignore ids they don't hold.

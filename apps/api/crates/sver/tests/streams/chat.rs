@@ -86,6 +86,21 @@ pub(super) async fn next_json(
     serde_json::from_str(frame.to_text().unwrap()).unwrap()
 }
 
+/// The next frame of this type, skipping others.
+pub(super) async fn next_of(
+    ws: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    kind: &str,
+) -> Value {
+    loop {
+        let frame = next_json(ws).await;
+        if frame["type"] == kind {
+            return frame;
+        }
+    }
+}
+
 pub async fn exercise(e: &Env) {
     let chatter = person(e, "chat-user", "Chatter", true).await;
     let unverified = person(e, "chat-unverified", "Unverified", false).await;
@@ -357,6 +372,49 @@ pub async fn exercise(e: &Env) {
         errored |= next_json(&mut sender).await["type"] == "error";
     }
     assert!(errored, "malformed command is answered with an error");
+
+    // A pin is read once for every socket, then filtered per viewer: the watcher blocks its author.
+    let (status, pinned) = e
+        .request(
+            "PUT",
+            "/api/channels/streamer/chat/pin",
+            json!({"message_id":message_id}),
+            true,
+            true,
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{pinned}");
+    assert_eq!(pinned["pinned"]["id"], message_id.as_str());
+    assert_eq!(
+        next_of(&mut guest, "pin").await["pinned"]["id"],
+        message_id.as_str()
+    );
+    assert!(next_of(&mut blocker, "pin").await["pinned"].is_null());
+    e.request(
+        "PUT",
+        "/api/channels/streamer/chat/pin",
+        json!({"message_id":null}),
+        true,
+        true,
+        false,
+    )
+    .await;
+    assert!(next_of(&mut guest, "pin").await["pinned"].is_null());
+
+    // An emote change reaches every open socket from one shared catalog read.
+    let reads = e.app.chat.rule_reads();
+    e.app
+        .chat
+        .publish("stream-owner", None, 0, json!({"type":"emotes"}));
+    for ws in [&mut guest, &mut blocker, &mut sender] {
+        assert!(next_of(ws, "emotes").await["emotes"].is_array());
+    }
+    assert_eq!(
+        e.app.chat.rule_reads() - reads,
+        1,
+        "three sockets share one read"
+    );
 
     // Blocking a moderator doesn't hide you from them: they still see the line, live and in
     // history, while an ordinary chatter you blocked doesn't.
