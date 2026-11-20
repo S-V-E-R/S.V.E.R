@@ -517,8 +517,10 @@ async fn list(State(app): State<App>, Path(name): Path<String>) -> Res<impl Into
     ))
 }
 /// Only someone who could chat in the channel can report there: a verified, eligible account with
-/// no block either way and no ban or timeout. The streamer is exempt in their own channel.
-async fn may_report(app: &App, channel: &str, user: &str) -> Res<()> {
+/// no block either way, in chat standing there (`moderation::check_standing`). The streamer is
+/// exempt in their own channel.
+async fn may_report(app: &App, channel: &str, person: &auth::User) -> Res<()> {
+    let user = person.id.as_str();
     if user == channel {
         return Ok(());
     }
@@ -537,9 +539,7 @@ async fn may_report(app: &App, channel: &str, user: &str) -> Res<()> {
     if blocked {
         return Err(Fail::denied("You can't report emotes in this channel."));
     }
-    // ponytail: min account age and shield mode aren't checked yet; they join when check_send's
-    // standing rules are pulled into one helper.
-    moderation::check_restriction(app, channel, user).await
+    moderation::check_standing(app, channel, person).await
 }
 /// POST /api/channels/{username}/outside-emotes/{provider}/{id}/report: hides the emote in this
 /// chat until the streamer reviews it. Once the streamer has shown it, reports no longer hide it.
@@ -551,7 +551,7 @@ async fn report(
     let user = profiles::signed_in(&app, &jar).await?;
     profiles::rate(&app, format!("outside-report:{}", user.id), 10, 3600).await?;
     let channel = channel_id(&app, &name).await?;
-    may_report(&app, &channel, &user.id).await?;
+    may_report(&app, &channel, &user).await?;
     if !rows(&app, &channel)
         .await?
         .iter()

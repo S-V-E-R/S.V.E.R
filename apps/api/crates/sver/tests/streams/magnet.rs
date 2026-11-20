@@ -280,6 +280,20 @@ pub async fn exercise(e: &Env) {
         (status, refused["error"].as_str().unwrap_or("")),
         (StatusCode::FORBIDDEN, "Chat resumes when MAGNet moves on.")
     );
+    // While merged, the room renders the featured channel's emotes.
+    e.sql("INSERT INTO channel_emotes(id,channel_id,code,image_key) VALUES('mg-small-emote','mg-small','SmallHype','emotes/mg-small')").await;
+    e.app
+        .chat
+        .publish("mg-small", None, 0, json!({"type":"emotes"}));
+    let (_, room) = get(e, "/api/magnet/global/chat", None).await;
+    assert!(
+        room["emotes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["code"] == "SmallHype"),
+        "{room}"
+    );
     // With chat merging off the room is its own; its messages can be reported and removed by staff.
     e.sql("INSERT INTO magnet_settings(user_id,chat_merge) VALUES('mg-small',false)")
         .await;
@@ -305,6 +319,9 @@ pub async fn exercise(e: &Env) {
     );
     let (_, room) = get(e, "/api/magnet/global/chat", None).await;
     assert_eq!(room["merged_with"], Value::Null);
+    assert_eq!(room["emotes"], json!([]), "MAGNet's own room has none");
+    e.sql("DELETE FROM channel_emotes WHERE id='mg-small-emote'")
+        .await;
     assert!(
         room["messages"]
             .as_array()

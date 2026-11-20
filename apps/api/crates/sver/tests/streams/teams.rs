@@ -522,6 +522,19 @@ pub async fn exercise(e: &Env) {
         .is_ok()
     );
     held.rollback().await.unwrap();
+    // While merged, a member's own chat takes no posts; the refusal names the shared chat.
+    let (status, refused) = call(
+        e,
+        "POST",
+        "/api/channels/TeamPerson2/chat",
+        Some(&fan),
+        json!({"id":id(),"body":"Solo"}),
+    )
+    .await;
+    assert_eq!(
+        (status, refused["squad"].as_str()),
+        (StatusCode::CONFLICT, Some(squad.as_str()))
+    );
     // Any member's watch page finds the shared view; a channel outside it does not.
     let found = ok(
         e,
@@ -809,6 +822,98 @@ pub async fn exercise(e: &Env) {
         json!({"reason":"Timeout lifted"}),
     )
     .await;
+    ok(e, &fan, "GET", &chat, Value::Null).await;
+    // Shared-chat deletes mirror channel ones: staff delete a member's moderator's line, and a
+    // member streamer can't delete another member streamer's. Each is logged in every member.
+    let line = id();
+    ok(
+        e,
+        &tokens[5],
+        "POST",
+        &chat,
+        json!({"id":line,"body":"Moderator line"}),
+    )
+    .await;
+    ok(
+        e,
+        &staff,
+        "DELETE",
+        &format!("{chat}/messages/{line}"),
+        json!({}),
+    )
+    .await;
+    let logged: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_moderation_log WHERE action='delete_message' AND message_id=$1 AND detail->>'squad'=$2")
+        .bind(&line).bind(&squad).fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(logged, 4);
+    let host_line = id();
+    ok(
+        e,
+        a,
+        "POST",
+        &chat,
+        json!({"id":host_line,"body":"Host line"}),
+    )
+    .await;
+    assert_eq!(
+        call(
+            e,
+            "DELETE",
+            &format!("{chat}/messages/{host_line}"),
+            Some(b),
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    // A shared-chat timeout without a reason acts now, clears the person's recent lines, and
+    // waits for review in every member's log; undoing it in Studio lifts it.
+    let gone = id();
+    ok(
+        e,
+        &fan,
+        "POST",
+        &chat,
+        json!({"id":gone,"body":"Cleared by the timeout"}),
+    )
+    .await;
+    let timed = ok(
+        e,
+        &tokens[5],
+        "POST",
+        &format!("{chat}/restrictions"),
+        json!({"username":"TeamViewer","kind":"timeout","seconds":60}),
+    )
+    .await;
+    assert_eq!(timed["review"], true);
+    let cleared: bool =
+        sqlx::query_scalar("SELECT deleted_at IS NOT NULL FROM chat_messages WHERE id=$1")
+            .bind(&gone)
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert!(cleared, "the timeout cleared their shared-chat line");
+    let waiting: Vec<(String, String)> = sqlx::query_as("SELECT id,channel_id FROM channel_moderation_log WHERE detail->>'squad'=$1 AND action='timeout' AND target_id='team-fan' AND needs_review AND detail ? 'chat' ORDER BY channel_id")
+        .bind(&squad).fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(
+        waiting.iter().map(|w| w.1.as_str()).collect::<Vec<_>>(),
+        ["team-0", "team-1", "team-2", "team-3"]
+    );
+    assert_eq!(
+        call(e, "GET", &chat, Some(&fan), Value::Null).await.0,
+        StatusCode::FORBIDDEN
+    );
+    ok(
+        e,
+        b,
+        "POST",
+        &format!("/api/channels/TeamPerson1/chat/reviews/{}", waiting[1].0),
+        json!({"keep":false}),
+    )
+    .await;
+    let left: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM squad_restrictions WHERE squad_id=$1 AND user_id='team-fan')+(SELECT count(*) FROM channel_moderation_log WHERE detail->>'squad'=$1 AND needs_review)")
+        .bind(&squad).fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(left, 0, "undone for every member");
     ok(e, &fan, "GET", &chat, Value::Null).await;
     e.sql("INSERT INTO channel_restrictions(channel_id,user_id,kind) VALUES('team-2','team-fan','ban')").await;
     assert_eq!(

@@ -118,23 +118,13 @@ pub(crate) fn delete_reason(text: &str) -> Res<String> {
     optional_reason(text, "Message deleted")
 }
 /// What a timeout or ban given without a reason is logged with until it's reviewed.
-const NO_REASON_YET: &str = "No reason given yet";
+pub(crate) const NO_REASON_YET: &str = "No reason given yet";
 /// When spike protection's followers-only chat ends, if it's on now.
 pub async fn followers_only(app: &App, channel: &str) -> Res<Option<DateTime<Utc>>> {
     Ok(sqlx::query_scalar("SELECT followers_only_until FROM chat_settings WHERE channel_id=$1 AND followers_only_until>now()")
         .bind(channel)
         .fetch_optional(&app.db)
         .await?)
-}
-
-/// Whether chat is limited to subscribers (docs/SUPPORT.md "Subscriptions").
-pub async fn subs_only(app: &App, channel: &str) -> Res<bool> {
-    Ok(sqlx::query_scalar(
-        "SELECT coalesce((SELECT subs_only FROM chat_settings WHERE channel_id=$1),false)",
-    )
-    .bind(channel)
-    .fetch_one(&app.db)
-    .await?)
 }
 
 /// Floors shield mode puts on chat for everyone without a channel role (docs/LIVE_STREAMS.md
@@ -209,9 +199,10 @@ pub(crate) async fn log(
     message: Option<&str>,
     detail: Value,
     reason: &str,
-) -> Res<()> {
+) -> Res<String> {
+    let id = profiles::new_id();
     sqlx::query("INSERT INTO channel_moderation_log(id,channel_id,actor_id,actor_role,action,target_id,message_id,detail,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
-        .bind(profiles::new_id()).bind(channel).bind(actor).bind(role.name()).bind(action).bind(target).bind(message).bind(detail).bind(reason)
+        .bind(&id).bind(channel).bind(actor).bind(role.name()).bind(action).bind(target).bind(message).bind(detail).bind(reason)
         .execute(&mut *db).await?;
     // Live events: the channel's private moderation topic, by username (never internal IDs).
     let (by, user): (Option<String>, Option<String>) = sqlx::query_as(
@@ -228,6 +219,39 @@ pub(crate) async fn log(
         json!({"action": action, "by": by, "role": role.name(), "user": user, "message": message, "reason": reason}),
     )
     .await?;
+    Ok(id)
+}
+/// Logs a timeout or ban with evidence for the team: the chat leading up to it and the stream's
+/// last minute. One given without a reason (`review`) waits for review. Run it before the
+/// person's lines are cleared, so the evidence still shows them.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn log_restriction(
+    db: &mut PgConnection,
+    channel: &str,
+    actor: &str,
+    role: Role,
+    kind: &str,
+    target: &str,
+    detail: Value,
+    reason: &str,
+    review: bool,
+) -> Res<()> {
+    let entry = log(
+        db,
+        channel,
+        actor,
+        role,
+        kind,
+        Some(target),
+        None,
+        detail,
+        reason,
+    )
+    .await?;
+    let chat = evidence(db, channel).await?;
+    let clip = crate::videos::evidence(db, channel, &entry).await?;
+    sqlx::query("UPDATE channel_moderation_log SET needs_review=$2, detail=detail||jsonb_build_object('chat',$3::jsonb,'clip',$4::text) WHERE id=$1")
+        .bind(&entry).bind(review).bind(json!(chat)).bind(&clip).execute(db).await?;
     Ok(())
 }
 
@@ -358,40 +382,89 @@ pub(crate) async fn check_restriction(app: &App, channel: &str, user: &str) -> R
         _ => Ok(()),
     }
 }
-/// Banned words (no role exemption) and the link rule (channel roles exempt); shared by chat and
-/// board text inputs. Returns the slow-mode seconds that apply to `user` (0 when none).
+/// The chat rules one send checks, with what they need to know about the sender: one query, with
+/// defaults when the channel never saved settings.
+#[derive(sqlx::FromRow)]
+struct SendRules {
+    slow: i32,
+    links: bool,
+    words: Vec<String>,
+    min_days: i16,
+    min_loyalty: i16,
+    subs_only: bool,
+    /// Shield mode (followers-only chat) is up.
+    shield: bool,
+    earned: i64,
+    joined: Option<DateTime<Utc>>,
+}
+async fn send_rules(app: &App, channel: &str, user: &str) -> Res<SendRules> {
+    Ok(sqlx::query_as("SELECT coalesce(s.slow_mode_seconds,0) AS slow, coalesce(s.block_links,false) AS links, coalesce(s.banned_words,'{}') AS words,
+        coalesce(s.min_account_days,0::smallint) AS min_days, coalesce(s.min_loyalty,0::smallint) AS min_loyalty, coalesce(s.subs_only,false) AS subs_only,
+        coalesce(s.followers_only_until>now(),false) AS shield,
+        coalesce((SELECT earned FROM engagement WHERE channel_id=$1 AND user_id=$2),0) AS earned, (SELECT created_at FROM users WHERE id=$2) AS joined
+        FROM (SELECT 1) x LEFT JOIN chat_settings s ON s.channel_id=$1")
+        .bind(channel)
+        .bind(user)
+        .fetch_one(&app.db)
+        .await?)
+}
+/// The sender's channel role, read the first time a rule needs it and then reused.
+struct LazyRole<'a> {
+    app: &'a App,
+    channel: &'a str,
+    user: &'a auth::User,
+    role: Option<Option<Role>>,
+}
+impl LazyRole<'_> {
+    async fn get(&mut self) -> Res<Option<Role>> {
+        if let Some(role) = self.role {
+            return Ok(role);
+        }
+        let role = role_of(self.app, self.channel, self.user).await?;
+        self.role = Some(role);
+        Ok(role)
+    }
+}
+/// Banned words (no role exemption) and the link rule (channel roles exempt), then the slow-mode
+/// seconds that apply. Shield mode raises the link block and slow mode to its floors.
+fn words_and_slow(rules: &SendRules, body: &str, exempt: bool) -> Res<i32> {
+    check_content(body, &rules.words, rules.links || rules.shield, exempt)?;
+    Ok(match (exempt, rules.shield) {
+        (true, _) => 0,
+        (false, true) => rules.slow.max(SHIELD_SLOW_SECONDS),
+        (false, false) => rules.slow,
+    })
+}
+/// `words_and_slow` for board text inputs (docs/CROWDSYNC.md).
 pub(crate) async fn check_words(
     app: &App,
     channel: &str,
     user: &auth::User,
     body: &str,
-) -> Res<i32> {
-    let settings: Option<(i32, bool, Vec<String>)> = sqlx::query_as(
-        "SELECT slow_mode_seconds, block_links, banned_words FROM chat_settings WHERE channel_id=$1",
-    )
-    .bind(channel)
-    .fetch_optional(&app.db)
-    .await?;
-    let Some((slow, links, words)) = settings else {
-        return Ok(0);
-    };
+) -> Res<()> {
+    let rules = send_rules(app, channel, &user.id).await?;
     let exempt = role_of(app, channel, user).await?.is_some();
-    // Shield mode raises the link block and slow mode to its floors (roles stay exempt).
-    let shield = followers_only(app, channel).await?.is_some();
-    check_content(body, &words, links || shield, exempt)?;
-    let slow = if shield {
-        slow.max(SHIELD_SLOW_SECONDS)
-    } else {
-        slow
-    };
-    Ok(if exempt { 0 } else { slow })
+    words_and_slow(&rules, body, exempt).map(drop)
 }
-pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<()> {
+/// Whether the person may chat here at all, whatever they say: no ban or timeout, and past shield
+/// mode's followers-only gate, the minimum account age and the chat rank gate (channel roles are
+/// exempt from all but the first). Also gates what else needs chat standing, like emote reports.
+async fn standing<'a>(
+    app: &'a App,
+    channel: &'a str,
+    user: &'a auth::User,
+) -> Res<(SendRules, LazyRole<'a>)> {
     check_restriction(app, channel, &user.id).await?;
+    let rules = send_rules(app, channel, &user.id).await?;
+    let mut role = LazyRole {
+        app,
+        channel,
+        user,
+        role: None,
+    };
     // Shield mode (and the spike prompt): while it is up, only people who followed at least 10
     // minutes ago (and channel roles) can chat, so a burst of new accounts can't flood it.
-    if followers_only(app, channel).await?.is_some() && role_of(app, channel, user).await?.is_none()
-    {
+    if rules.shield && role.get().await?.is_none() {
         let follower: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2 AND created_at<=now()-interval '10 minutes')")
             .bind(&user.id)
             .bind(channel)
@@ -403,50 +476,49 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
             ));
         }
     }
-    // Minimum account age (docs/LIVE_STREAMS.md "Hate-raid defenses"); channel roles are exempt.
-    let min_days: i16 = sqlx::query_scalar(
-        "SELECT coalesce((SELECT min_account_days FROM chat_settings WHERE channel_id=$1),0::smallint)",
-    )
-    .bind(channel)
-    .fetch_one(&app.db)
-    .await?;
-    let min_days = if followers_only(app, channel).await?.is_some() {
-        min_days.max(SHIELD_ACCOUNT_DAYS)
+    // Minimum account age (docs/LIVE_STREAMS.md "Hate-raid defenses").
+    let min_days = if rules.shield {
+        rules.min_days.max(SHIELD_ACCOUNT_DAYS)
     } else {
-        min_days
+        rules.min_days
     };
-    if min_days > 0 && role_of(app, channel, user).await?.is_none() {
-        let new: bool = sqlx::query_scalar(
-            "SELECT created_at>now()-make_interval(days=>$2) FROM users WHERE id=$1",
-        )
-        .bind(&user.id)
-        .bind(i32::from(min_days))
-        .fetch_one(&app.db)
-        .await?;
-        if new {
-            return Err(Fail::denied(format!(
-                "Chat here needs an account at least {min_days} day{} old.",
-                if min_days == 1 { "" } else { "s" }
-            )));
-        }
-    }
-    // The chat rank gate (docs/PROGRESSION.md section 5); channel roles are exempt.
-    let (min, earned): (i16, i64) = sqlx::query_as("SELECT coalesce((SELECT min_loyalty FROM chat_settings WHERE channel_id=$1),0::smallint),coalesce((SELECT earned FROM engagement WHERE channel_id=$1 AND user_id=$2),0)")
-        .bind(channel).bind(&user.id).fetch_one(&app.db).await?;
-    if crate::progression::loyalty(earned) < min && role_of(app, channel, user).await?.is_none() {
+    let new = rules
+        .joined
+        .is_some_and(|at| at > Utc::now() - Duration::days(min_days.into()));
+    if min_days > 0 && new && role.get().await?.is_none() {
         return Err(Fail::denied(format!(
-            "Chat here needs the {} loyalty rank. Watch and chat on this channel to earn it.",
-            crate::progression::LOYALTY[min as usize].0
+            "Chat here needs an account at least {min_days} day{} old.",
+            if min_days == 1 { "" } else { "s" }
         )));
     }
+    // The chat rank gate (docs/PROGRESSION.md section 5).
+    if crate::progression::loyalty(rules.earned) < rules.min_loyalty && role.get().await?.is_none()
+    {
+        return Err(Fail::denied(format!(
+            "Chat here needs the {} loyalty rank. Watch and chat on this channel to earn it.",
+            crate::progression::LOYALTY[rules.min_loyalty as usize].0
+        )));
+    }
+    Ok((rules, role))
+}
+/// `standing` on its own.
+pub(crate) async fn check_standing(app: &App, channel: &str, user: &auth::User) -> Res<()> {
+    standing(app, channel, user).await.map(drop)
+}
+/// What a message that passed `check_send` still needs: the sender's channel role, and the
+/// slow-mode seconds to reserve with `reserve_slow` once every other check has passed.
+pub struct Checked {
+    pub role: Option<Role>,
+    pub slow: i32,
+}
+pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<Checked> {
+    let (rules, mut role) = standing(app, channel, user).await?;
     // Subscriber-only chat and subscriber emotes; channel roles are exempt.
     let tier = crate::subs::active_tier(app, channel, &user.id).await?;
     let tokens: Vec<&str> = body.split_whitespace().collect();
     let locked: Option<i16> = sqlx::query_scalar("SELECT max(tier) FROM channel_emotes WHERE channel_id=$1 AND status='VISIBLE' AND tier>coalesce($2,0::smallint) AND code=ANY($3)")
         .bind(channel).bind(tier).bind(&tokens).fetch_one(&app.db).await?;
-    if (locked.is_some() || (tier.is_none() && subs_only(app, channel).await?))
-        && role_of(app, channel, user).await?.is_none()
-    {
+    if (locked.is_some() || (tier.is_none() && rules.subs_only)) && role.get().await?.is_none() {
         return Err(match locked {
             Some(t) => Fail::bad(format!("That emote is for Tier {t} subscribers.")),
             None => Fail::denied("Chat is subscribers-only right now."),
@@ -454,21 +526,38 @@ pub async fn check_send(app: &App, channel: &str, user: &auth::User, body: &str)
     }
     // AutoMod (caps, repeats, spam) with the channel's warn-and-timeout ladder; roles exempt.
     crate::bot::automod(app, channel, user, body).await?;
-    let slow = check_words(app, channel, user, body).await?;
-    if slow > 0 {
-        sec::reserve(
+    let role = role.get().await?;
+    let slow = words_and_slow(&rules, body, role.is_some())?;
+    Ok(Checked { role, slow })
+}
+/// Takes the sender's slow-mode turn in each channel (`(channel, seconds)`), all or none. Call it
+/// after every other check, and give the turns back with `sec::release` if the send still fails.
+pub(crate) async fn reserve_slow(
+    app: &App,
+    user: &str,
+    slows: &[(&str, i32)],
+) -> Res<Vec<(String, DateTime<Utc>)>> {
+    let mut reserved = Vec::new();
+    for (channel, slow) in slows.iter().filter(|s| s.1 > 0) {
+        match sec::reserve(
             app,
-            vec![format!("chat-slow:{channel}:{}", user.id)],
+            vec![format!("chat-slow:{channel}:{user}")],
             1,
-            slow.into(),
+            (*slow).into(),
         )
         .await
-        .map_err(|e| Fail {
-            message: "Slow mode is on. You can send again shortly.".into(),
-            ..Fail::from(e)
-        })?;
+        {
+            Ok(turn) => reserved.extend(turn),
+            Err(e) => {
+                let _ = sec::release(app, reserved).await;
+                return Err(Fail {
+                    message: "Slow mode is on. You can send again shortly.".into(),
+                    ..Fail::from(e)
+                });
+            }
+        }
     }
-    Ok(())
+    Ok(reserved)
 }
 /// A channel ban refuses signed-in playback as well as chat.
 pub async fn banned(app: &App, channel: &str, user: &str) -> Res<bool> {
@@ -660,25 +749,18 @@ pub async fn restrict(
     let mut tx = app.db.begin().await?;
     sqlx::query("INSERT INTO channel_restrictions(channel_id,user_id,kind,until) VALUES($1,$2,$3,$4) ON CONFLICT(channel_id,user_id,kind) DO UPDATE SET until=EXCLUDED.until, created_at=now()")
         .bind(&channel).bind(&target).bind(&input.kind).bind(until).execute(&mut *tx).await?;
-    log(
+    log_restriction(
         &mut tx,
         &channel,
         &user.id,
         role,
         &input.kind,
-        Some(&target),
-        None,
+        &target,
         json!({"seconds": input.seconds}),
         &reason,
+        review,
     )
     .await?;
-    let entry: String = sqlx::query_scalar("SELECT id FROM channel_moderation_log WHERE channel_id=$1 AND actor_id=$2 AND target_id=$3 AND action=$4 ORDER BY created_at DESC LIMIT 1")
-        .bind(&channel).bind(&user.id).bind(&target).bind(&input.kind).fetch_one(&mut *tx).await?;
-    // Evidence for the team: the chat leading up to it and the stream's last minute.
-    let chat = evidence(&mut tx, &channel).await?;
-    let clip = crate::videos::evidence(&mut tx, &channel, &entry).await?;
-    sqlx::query("UPDATE channel_moderation_log SET needs_review=$2, detail=detail||jsonb_build_object('chat',$3::jsonb,'clip',$4::text) WHERE id=$1")
-        .bind(&entry).bind(review).bind(json!(chat)).bind(&clip).execute(&mut *tx).await?;
     // After the evidence, which still shows them: their recent lines leave every chat.
     let cleared = clear_recent(&mut tx, &channel, &target).await?;
     tx.commit().await?;
@@ -828,28 +910,33 @@ pub async fn review(
         None
     };
     let mut tx = app.db.begin().await?;
-    let (actor_id, target, kind): (String, Option<String>, String) = sqlx::query_as("SELECT actor_id,target_id,action FROM channel_moderation_log WHERE id=$1 AND channel_id=$2 AND needs_review FOR UPDATE")
+    let (actor_id, target, kind, squad): (String, Option<String>, String, Option<String>) = sqlx::query_as("SELECT actor_id,target_id,action,detail->>'squad' FROM channel_moderation_log WHERE id=$1 AND channel_id=$2 AND needs_review FOR UPDATE")
         .bind(&id).bind(&channel).fetch_optional(&mut *tx).await?.ok_or_else(Fail::missing)?;
     if role == Role::Moderator && actor_id != user.id {
         return Err(Fail::denied(
             "Only the moderator who gave it, or the owner, can review this.",
         ));
     }
-    sqlx::query("UPDATE channel_moderation_log SET needs_review=false, reason=coalesce($2,reason) WHERE id=$1")
+    // A co-stream restriction is logged in every member's channel at once; reviewing one reviews all.
+    sqlx::query("UPDATE channel_moderation_log l SET needs_review=false, reason=coalesce($2,l.reason) FROM channel_moderation_log e WHERE e.id=$1 AND (l.id=e.id OR (e.detail->>'squad' IS NOT NULL AND l.detail->>'squad'=e.detail->>'squad' AND l.created_at=e.created_at AND l.target_id=e.target_id AND l.action=e.action))")
         .bind(&id).bind(&reason).execute(&mut *tx).await?;
-    // Undo lifts only this action's restriction, never a newer one someone gave since.
+    // Undo lifts only this action's restriction, never a newer one someone gave since (a shared
+    // chat's has no time of its own, so its end must still match).
     let mut lifted = false;
     if !input.keep {
-        lifted = sqlx::query(
-            "DELETE FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND kind=$3 AND created_at<=(SELECT created_at FROM channel_moderation_log WHERE id=$4)",
-        )
-        .bind(&channel)
-        .bind(&target)
-        .bind(&kind)
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected()
+        let undo = if squad.is_some() {
+            "DELETE FROM squad_restrictions WHERE squad_id=$1 AND user_id=$2 AND kind=$3 AND until IS NOT DISTINCT FROM (SELECT (detail->>'until')::timestamptz FROM channel_moderation_log WHERE id=$4)"
+        } else {
+            "DELETE FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND kind=$3 AND created_at<=(SELECT created_at FROM channel_moderation_log WHERE id=$4)"
+        };
+        lifted = sqlx::query(undo)
+            .bind(squad.as_ref().unwrap_or(&channel))
+            .bind(&target)
+            .bind(&kind)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
             == 1;
         if lifted {
             log(
@@ -860,7 +947,7 @@ pub async fn review(
                 &format!("lift_{kind}"),
                 target.as_deref(),
                 None,
-                json!({}),
+                json!({"squad": squad}),
                 "Undone on review",
             )
             .await?;
@@ -913,7 +1000,8 @@ pub async fn lift(
         )
         .await?;
     }
-    sqlx::query("UPDATE channel_moderation_log SET needs_review=false WHERE channel_id=$1 AND target_id=$2 AND action=$3 AND needs_review")
+    // Co-stream restrictions are lifted from the shared chat, not here.
+    sqlx::query("UPDATE channel_moderation_log SET needs_review=false WHERE channel_id=$1 AND target_id=$2 AND action=$3 AND needs_review AND detail->>'squad' IS NULL")
         .bind(&channel).bind(&target).bind(&kind).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(json!({"lifted": lifted})))

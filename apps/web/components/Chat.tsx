@@ -410,11 +410,10 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
   const toNewest = () => { const el = list.current; if (el) el.scrollTop = el.scrollHeight; atBottom(); };
 
   // Act first, review later: no reason now; the moderator gives one in Studio → Chat after the stream
-  // (shared co-stream chats still take a stock reason). A ban always confirms.
+  // (a shared co-stream chat's shows up in every member's). A ban always confirms.
   async function restrict(kind: "timeout" | "ban", who: string, minutes?: number) {
     if (kind === "ban" && !window.confirm(squad ? `Ban @${who} from this co-stream's shared chat? It ends with the co-stream and doesn't block watching.` : `Ban @${who} from this chat? They also can't watch here while signed in.`)) return false;
-    const reason = squad ? { timeout: "Timeout", ban: "Ban" }[kind] : "";
-    const result = await send("POST", `${path}/restrictions`, { username: who, kind, seconds: minutes === undefined ? undefined : minutes * 60, reason });
+    const result = await send("POST", `${path}/restrictions`, { username: who, kind, seconds: minutes === undefined ? undefined : minutes * 60 });
     if (!result.ok) { setError(result.error); return false; }
     if (squad) await loadRole();
     return true;
@@ -437,12 +436,13 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
     await restrict(action, who, minutes);
   }
 
-  // Mirrors the server's live check: anyone with a role deletes their own lines; moderators can't touch
+  // Mirrors the server's live check: anyone with a role deletes their own lines; staff delete anything;
+  // in a shared chat a member streamer can't delete another member streamer's; moderators can't touch
   // the owner's, other moderators' or staff's; nobody times out or bans someone protected. Falls back to
   // the role stored with the message when the live field is missing.
   const own = (m: Message) => !!account && m.author.username === account;
   const isProtected = (m: Message) => m.protected ?? !!m.role;
-  const canDelete = (m: Message) => !!role && !!m.author.username && (own(m) || role !== "moderator" || !isProtected(m));
+  const canDelete = (m: Message) => !!role && !!m.author.username && (own(m) || role === "staff" || (role === "owner" ? !(squad && m.role === "owner") : !isProtected(m)));
   const canSanction = (m: Message) => !!role && !!m.author.username && !own(m) && !isProtected(m);
 
   /** Owner only: appoint or remove a channel moderator (the same endpoints as Studio → Chat). */
@@ -613,7 +613,7 @@ export function Chat({ username, account, squad, variant = "full", fade = 30, to
       </ChatLine>)}
     </ol>
     {behind && <button type="button" className="small chat-newest" onClick={toNewest}>New messages below</button>}
-    {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt("Reason for lifting this restriction")?.trim(); if (!reason || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, { reason }); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
+    {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt("Reason for lifting this restriction (optional)"); if (reason === null || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, reason.trim() ? { reason: reason.trim() } : {}); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
     {account ? <form onSubmit={submit} className="chat-form">
       {reply && <div className="chat-reply-draft"><span>Replying to @{reply.username}: {reply.body}</span><button type="button" className="small quiet" onClick={() => setReply(null)}>Cancel reply</button></div>}
       {outsideReply && <div className="chat-reply-draft"><span>Replying on {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} to {outsideReply.name}, as your {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} account</span><button type="button" className="small quiet" onClick={() => setOutsideReply(null)}>Cancel reply</button></div>}

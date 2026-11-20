@@ -683,6 +683,25 @@ pub async fn exercise(e: &Env) {
         "no exemption for banned words"
     );
     tokio::time::sleep(Duration::from_millis(1100)).await;
+    // A send refused after the rules passed (here: not enough Valor) leaves the slow-mode turn.
+    e.sql("INSERT INTO payout_accounts(user_id,stripe_account,details_submitted,payouts_enabled) VALUES('stream-owner','acct_mod_tribute',true,true) ON CONFLICT DO NOTHING").await;
+    let (status, poor) = call(
+        e,
+        "POST",
+        &format!("{BASE}/chat"),
+        Some(&outsider),
+        json!({"id":id(),"body":"a tribute","tribute":50}),
+    )
+    .await;
+    assert_eq!(
+        (status, poor["error"].as_str()),
+        (
+            StatusCode::BAD_REQUEST,
+            Some("You don't have enough Valor.")
+        )
+    );
+    e.sql("DELETE FROM payout_accounts WHERE stripe_account='acct_mod_tribute'")
+        .await;
     assert_eq!(say(e, &outsider, "first").await.0, StatusCode::OK);
     tokio::time::sleep(Duration::from_millis(1100)).await;
     let (status, slowed) = say(e, &outsider, "second").await;
