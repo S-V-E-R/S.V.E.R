@@ -591,8 +591,7 @@ async fn session(
     _slot: crate::chat::SocketSlot,
     mut ws: WebSocket,
 ) {
-    let mut events = app.dms.subscribe();
-    let room = format!("dm:{me}");
+    let mut events = app.dms.subscribe_room(&format!("dm:{me}"));
     let signed_out = Message::Close(Some(axum::extract::ws::CloseFrame {
         code: 4001,
         reason: "signed out".into(),
@@ -611,14 +610,13 @@ async fn session(
                 if ws.send(Message::Ping(Default::default())).await.is_err() { return; }
             }
             event = events.recv() => match event {
-                Ok(e) if e.channel == room => {
+                Ok(e) => {
                     if !still_signed_in(&app, &jar, &me).await {
                         let _ = ws.send(signed_out).await;
                         return;
                     }
                     if ws.send(Message::Text(e.payload.to_string().into())).await.is_err() { return; }
                 }
-                Ok(_) => {}
                 // Missed events: the client reloads the conversation.
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     if ws.send(Message::Text(json!({"type":"resync"}).to_string().into())).await.is_err() { return; }

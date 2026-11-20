@@ -38,11 +38,22 @@ const MAX_SOCKETS: usize = 10_000;
 const MAX_PER_ADDRESS: usize = 100;
 /// A socket that hasn't answered a ping (browsers do so on their own) for this long is closed.
 const SILENT: Duration = Duration::from_secs(75);
+/// Events a room holds for a reader that hasn't caught up; one further behind resyncs. Only the
+/// room's own traffic counts.
+const ROOM: usize = 512;
 
 /// Fanout for a single API instance. Running replicas needs a tested cross-instance design first.
 #[derive(Clone)]
 pub struct Hub {
-    tx: broadcast::Sender<Arc<Event>>,
+    /// Every event on this instance, for the app events socket alone (its rooms come and go).
+    firehose: broadcast::Sender<Arc<Event>>,
+    /// One sender per room someone listens to, so a socket only wakes for its own rooms.
+    rooms: Arc<Mutex<HashMap<String, broadcast::Sender<Arc<Event>>>>>,
+    /// Each MAGNet room (`magnet:{lane}`) merged with a chat now: that chat's room and owners.
+    /// The merged room's lines and the owners' emote changes are passed on to the MAGNet room.
+    lanes: Arc<Mutex<HashMap<String, LaneMerge>>>,
+    /// Each MAGNet room as everyone sees it, read once for all its sockets (`hype_snapshot`).
+    hype: Arc<Shared<Arc<HypeRoom>>>,
     sockets: Arc<AtomicUsize>,
     addresses: Arc<Mutex<HashMap<IpAddr, usize>>>,
     /// Each channel's chat rules (emotes and banner state), shared by every socket for five seconds.
@@ -66,6 +77,8 @@ pub struct Hub {
     /// so a burst of deletes doesn't rescan the map on every one.
     deleted: Arc<Mutex<(Instant, HashMap<String, Instant>)>>,
 }
+/// Where a MAGNet room's chat merges: the merged room and its owners; None while it doesn't.
+type LaneMerge = Option<(String, Vec<String>)>;
 /// A pinned message as everyone sees it (badges hydrated, quote author kept) and its author.
 type Pinned = Option<(String, Value)>;
 /// Values shared by every socket that asks within an age, each read at most once at a time
@@ -79,10 +92,13 @@ impl<T> Default for Shared<T> {
     }
 }
 impl<T: Clone> Shared<T> {
+    /// With `after`, only a read that began after it will do (one that sees what was committed
+    /// by then).
     async fn get<F: std::future::Future<Output = Res<T>>>(
         &self,
         key: &str,
         age: Duration,
+        after: Option<Instant>,
         read: impl FnOnce() -> F,
     ) -> Res<T> {
         let fresh =
@@ -96,12 +112,14 @@ impl<T: Clone> Shared<T> {
         };
         let mut slot = slot.lock().await;
         if fresh(&slot)
-            && let Some((_, value)) = slot.as_ref()
+            && let Some((at, value)) = slot.as_ref()
+            && after.is_none_or(|after| *at >= after)
         {
             return Ok(value.clone());
         }
+        let began = Instant::now();
         let value = read().await?;
-        *slot = Some((Instant::now(), value.clone()));
+        *slot = Some((began, value.clone()));
         Ok(value)
     }
     /// The next reader reads again (a read already under way finishes for its own callers only).
@@ -120,7 +138,10 @@ struct Rules {
 impl Default for Hub {
     fn default() -> Self {
         Self {
-            tx: broadcast::channel(4096).0,
+            firehose: broadcast::channel(4096).0,
+            rooms: Arc::default(),
+            lanes: Arc::default(),
+            hype: Arc::default(),
             sockets: Arc::default(),
             addresses: Arc::default(),
             rules: Arc::default(),
@@ -146,11 +167,49 @@ pub struct Event {
     pub(crate) author: Option<String>,
     seq: i64,
     pub(crate) payload: Value,
+    /// When it was published.
+    at: Instant,
+}
+/// A socket's rooms read as one: a receiver per room, so another room's traffic never wakes it
+/// or makes it fall behind.
+#[derive(Default)]
+pub(crate) struct Rooms(Vec<(String, broadcast::Receiver<Arc<Event>>)>);
+impl Rooms {
+    /// Listens to exactly these rooms, keeping the receivers it already holds.
+    pub(crate) fn set(&mut self, hub: &Hub, rooms: &[String]) {
+        self.0.retain(|(room, _)| rooms.contains(room));
+        for room in rooms {
+            if !self.0.iter().any(|(r, _)| r == room) {
+                self.0.push((room.clone(), hub.subscribe_room(room)));
+            }
+        }
+    }
+    /// The next event from any of its rooms (none ever, while it has no rooms).
+    pub(crate) async fn recv(&mut self) -> Result<Arc<Event>, broadcast::error::RecvError> {
+        if self.0.is_empty() {
+            return std::future::pending().await;
+        }
+        futures_util::future::select_all(self.0.iter_mut().map(|(_, rx)| Box::pin(rx.recv())))
+            .await
+            .0
+    }
 }
 impl Hub {
-    /// Every event on this instance; the board overlay socket filters its own channel's.
+    /// Every event on this instance: only the app events socket, whose chat topics come and go.
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<Arc<Event>> {
-        self.tx.subscribe()
+        self.firehose.subscribe()
+    }
+    /// One room's events. Subscribe before reading what the room already holds.
+    pub(crate) fn subscribe_room(&self, room: &str) -> broadcast::Receiver<Arc<Event>> {
+        let mut rooms = self.rooms.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(tx) = rooms.get(room) {
+            return tx.subscribe();
+        }
+        // A quiet room may never be published to again, so empty ones are dropped here too.
+        rooms.retain(|_, tx| tx.receiver_count() > 0);
+        let (tx, rx) = broadcast::channel(ROOM);
+        rooms.insert(room.into(), tx);
+        rx
     }
     pub fn publish(&self, channel: &str, author: Option<&str>, seq: i64, payload: Value) {
         if payload["type"] == "delete"
@@ -171,12 +230,48 @@ impl Hub {
         ) {
             self.rules.forget(channel);
         }
-        let _ = self.tx.send(Arc::new(Event {
+        // MAGNet rooms merged with this chat hear its lines, and its owners' emote changes.
+        let kind = payload["type"].as_str().unwrap_or_default();
+        let lanes: Vec<String> = if matches!(kind, "message" | "delete" | "emotes") {
+            let lanes = self.lanes.lock().unwrap_or_else(|e| e.into_inner());
+            lanes
+                .iter()
+                .filter(|(_, merge)| match (merge, kind) {
+                    (Some((_, owners)), "emotes") => owners.iter().any(|o| o == channel),
+                    (Some((room, _)), _) => room == channel,
+                    (None, _) => false,
+                })
+                .map(|(lane, _)| lane.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // A MAGNet room that hears anything is read again by the next reader.
+        for room in std::iter::once(channel)
+            .filter(|c| c.starts_with("magnet:"))
+            .chain(lanes.iter().map(String::as_str))
+        {
+            self.hype.forget(room);
+        }
+        let event = Arc::new(Event {
             channel: channel.into(),
             author: author.map(Into::into),
             seq,
             payload,
-        }));
+            at: Instant::now(),
+        });
+        let mut rooms = self.rooms.lock().unwrap_or_else(|e| e.into_inner());
+        for room in std::iter::once(channel).chain(lanes.iter().map(String::as_str)) {
+            // Sending fails only once every reader left.
+            if rooms
+                .get(room)
+                .is_some_and(|tx| tx.send(event.clone()).is_err())
+            {
+                rooms.remove(room);
+            }
+        }
+        drop(rooms);
+        let _ = self.firehose.send(event);
     }
     /// Call after a block or unblock commits.
     pub(crate) fn blocks_changed(&self) {
@@ -236,7 +331,7 @@ impl Hub {
     /// The channel's rules, read at most once every five seconds however many sockets ask.
     async fn rules(&self, app: &App, channel: &str) -> Res<Rules> {
         self.rules
-            .get(channel, Duration::from_secs(5), || async {
+            .get(channel, Duration::from_secs(5), None, || async {
                 self.rule_reads.fetch_add(1, Ordering::Relaxed);
                 let (allow_signatures, subs_only, followers_only) = sqlx::query_as("SELECT coalesce(s.allow_signatures,true),coalesce(s.subs_only,false),CASE WHEN s.followers_only_until>now() THEN s.followers_only_until END FROM (SELECT 1) x LEFT JOIN chat_settings s ON s.channel_id=$1")
                     .bind(channel)
@@ -254,7 +349,7 @@ impl Hub {
     /// A shared chat's open roster, host first: read at most once a second however many ask.
     async fn squad(&self, app: &App, id: &str) -> Res<Option<Vec<String>>> {
         self.squads
-            .get(id, Duration::from_secs(1), || async {
+            .get(id, Duration::from_secs(1), None, || async {
                 crate::squads::open_members(&mut *app.db.acquire().await?, id).await
             })
             .await
@@ -385,6 +480,9 @@ pub(crate) struct Row {
     protected: bool,
     /// Live: the author moderates this channel now (in shared chat: any member channel).
     moderator: bool,
+    /// Read only where a query asks for it (a MAGNet room, whose lines come from many channels).
+    #[sqlx(default)]
+    channel_id: Option<String>,
 }
 impl Row {
     async fn hydrated(self, app: &App) -> Res<Value> {
@@ -477,20 +575,38 @@ async fn pinned(app: &App, channel: &str, hidden: &HashSet<String>) -> Res<Value
     Ok(pin_view(&app.chat, &pin_row(app, channel).await?, hidden))
 }
 
-/// Tells open chats (and the Hype room a message came from) that it is gone.
+/// Tells open chats that a message is gone: its room, the Hype room it came from, and every Hype
+/// room that merged with its channel while it was posted (they keep that window's lines after
+/// MAGNet moves on). Those are looked up in the background, so a row already deleted outright
+/// (expiry) reaches only its room and origin.
 pub(crate) fn publish_delete(app: &App, channel: Option<&str>, origin: Option<&str>, id: &str) {
+    let delete = json!({"type":"delete","id":id});
     if let Some(channel) = channel {
-        app.chat
-            .publish(channel, None, 0, json!({"type":"delete","id":id}));
+        app.chat.publish(channel, None, 0, delete.clone());
     }
     if let Some(lane) = origin {
-        app.chat.publish(
-            &format!("magnet:{lane}"),
-            None,
-            0,
-            json!({"type":"delete","id":id}),
-        );
+        app.chat
+            .publish(&format!("magnet:{lane}"), None, 0, delete.clone());
     }
+    if channel.is_none() {
+        return;
+    }
+    let (app, id, origin) = (app.clone(), id.to_string(), origin.map(String::from));
+    tokio::spawn(async move {
+        let Ok(lanes) = sqlx::query_scalar::<_, String>("SELECT DISTINCT f.lane FROM chat_messages m JOIN magnet_features f ON f.owner_id=m.channel_id AND f.merged AND m.created_at>=f.started_at AND (f.ended_at IS NULL OR m.created_at<f.ended_at) WHERE m.id=$1")
+            .bind(&id).fetch_all(&app.db).await
+        else {
+            eprintln!("chat_event=delete_lanes outcome=failed");
+            return;
+        };
+        for lane in lanes
+            .iter()
+            .filter(|l| origin.as_deref() != Some(l.as_str()))
+        {
+            app.chat
+                .publish(&format!("magnet:{lane}"), None, 0, delete.clone());
+        }
+    });
 }
 
 /// An active pin is retained until removed; ordinary chat still expires after seven days.
@@ -1540,8 +1656,17 @@ async fn session(
     mut ws: WebSocket,
 ) {
     let room = squad.as_deref().unwrap_or(&channel);
+    // Its room and, in shared chat, each member channel's own (their rules and live panels).
+    let rooms_of = |members: &[String]| -> Vec<String> {
+        let mut rooms = vec![room.to_string()];
+        if squad.is_some() {
+            rooms.extend(members.iter().cloned());
+        }
+        rooms
+    };
     // Subscribe before reading history so nothing posted in between is missed.
-    let mut events = app.chat.tx.subscribe();
+    let mut events = Rooms::default();
+    events.set(&app.chat, &rooms_of(&members));
     let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
     let viewer_id = viewer.as_ref().map(|v| v.id.clone());
     let minor = minor(&app, viewer_id.as_deref()).await;
@@ -1645,6 +1770,7 @@ async fn session(
                 if current != members {
                     let Ok(next_names) = member_names(&app, &current).await else { continue; };
                     blocks.rescope(current.clone());
+                    events.set(&app.chat, &rooms_of(&current));
                     (members, names) = (current, Some(next_names));
                     // The emotes and the banner follow who's in it.
                     let Ok(next) = rules_for(&app, &channel, names.as_deref()).await else { continue; };
@@ -1666,7 +1792,6 @@ async fn session(
                         .filter(|_| e.channel != room)
                         .and_then(|names| names.iter().find(|(id, _)| *id == e.channel))
                         .map(|(_, name)| name.clone());
-                    if e.channel != room && source.is_none() { continue; }
                     if matches!(kind, "emotes" | "subs_only" | "protect") {
                         let Ok(next) = rules_for(&app, &channel, names.as_deref()).await else { continue; };
                         for frame in rule_changes(&rules, &next, (kind == "emotes").then_some(&e.payload)) {
@@ -1827,17 +1952,44 @@ async fn hype_merge(app: &App, lane: &str) -> Res<Option<Merge>> {
     .bind(&merge.owners)
     .fetch_one(&app.db)
     .await?;
-    if off {
-        return Ok(None);
+    Ok((!off).then_some(merge))
+}
+/// The lane's merge as of now. The Hub keeps it, so the merged chat's lines reach the lane's
+/// sockets; when it changed (or the featured stream `switched`), the feature is remembered as
+/// merged (its window's lines stay in the room's history after the switch) and the lane's sockets
+/// read the room again. MAGNet's tick and Studio's settings call this, so a co-stream forming or
+/// ending, or chat merging turned off, reaches open rooms without each socket polling.
+async fn lane_merge(app: &App, lane: &str, switched: bool) -> Res<Option<Merge>> {
+    let merge = hype_merge(app, lane).await?;
+    let room = format!("magnet:{lane}");
+    let now = merge
+        .as_ref()
+        .map(|m| (m.room().to_string(), m.owners.clone()));
+    // Unknown until now (since this process started): no socket here can hold another view.
+    let before = app
+        .chat
+        .lanes
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(room.clone(), now.clone());
+    let changed = before.as_ref().is_some_and(|before| *before != now);
+    if merge.is_some() && (before.is_none() || changed || switched) {
+        sqlx::query(
+            "UPDATE magnet_features SET merged=true WHERE lane=$1 AND ended_at IS NULL AND NOT merged",
+        )
+        .bind(lane)
+        .execute(&app.db)
+        .await?;
     }
-    // Remember the merge, so this window's messages stay in the room's history after the switch.
-    sqlx::query(
-        "UPDATE magnet_features SET merged=true WHERE lane=$1 AND ended_at IS NULL AND NOT merged",
-    )
-    .bind(lane)
-    .execute(&app.db)
-    .await?;
-    Ok(Some(merge))
+    if changed || switched {
+        app.chat.publish(&room, None, 0, json!({"type":"magnet"}));
+    }
+    Ok(merge)
+}
+/// After MAGNet's tick or a Studio settings change: see `lane_merge`.
+pub(crate) async fn follow_lane(app: &App, lane: &str, switched: bool) -> Res<()> {
+    // Boxed: callers (the MAGNet tick) are deep already.
+    Box::pin(lane_merge(app, lane, switched)).await.map(|_| ())
 }
 async fn hype_lane(app: &App, lane: &str) -> Res<()> {
     let found: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM magnet_lanes WHERE id=$1)")
@@ -1852,81 +2004,145 @@ async fn hype_holding(app: &App, merge: &Merge, viewer: &str) -> Res<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=ANY($1) AND user_id=$2 AND (kind='ban' OR until>now())) OR EXISTS(SELECT 1 FROM user_blocks WHERE (blocker_id=$2 AND blocked_id=ANY($1)) OR (blocker_id=ANY($1) AND blocked_id=$2)) OR EXISTS(SELECT 1 FROM squad_restrictions WHERE squad_id=$3 AND user_id=$2 AND (kind='ban' OR until>now()))")
         .bind(&merge.owners).bind(viewer).bind(&merge.squad).fetch_one(&app.db).await?)
 }
+/// A MAGNet room as everyone sees it, read once for all its sockets; `hype_snapshot` makes one
+/// viewer's copy.
+struct HypeRoom {
+    merge: Option<Merge>,
+    /// Oldest first: each line's author, channel (None in the lane's own room) and message, with
+    /// badges and the quote's author kept for each viewer's block filter.
+    lines: Vec<(String, Option<String>, Value)>,
+    /// Which of these lines' channels and merged owners are labeled mature.
+    mature: Vec<String>,
+    merged_with: Option<Value>,
+    rules: Rules,
+}
 /// The room's latest 100: its own messages, plus the featured channel's chat since the feature
-/// began while merged. Messages from either side stay in both histories after a switch.
+/// began while merged. Messages from either side stay in both histories after a switch. Shared
+/// by everyone asking within a second (a switch makes every socket ask at once) until the room
+/// hears anything; with `after`, read after it.
+async fn hype_room(app: &App, lane: &str, after: Option<Instant>) -> Res<Arc<HypeRoom>> {
+    let room = format!("magnet:{lane}");
+    app.chat.hype.get(&room, Duration::from_secs(1), after, || Box::pin(async {
+        let merge = lane_merge(app, lane, false).await?;
+        // Each branch has its own index: the lane's room, the current merge (a channel or a
+        // co-stream's shared chat), and earlier merged windows still within chat's 7-day expiry.
+        // select() contains only fixed SQL and a literal chip alias; values are bound.
+        let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{} WHERE m.id IN (SELECT id FROM (
+                (SELECT m.id,m.seq FROM chat_messages m WHERE m.channel_id IS NULL AND m.origin=$1 AND m.squad_id IS NULL AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4)
+                UNION (SELECT m.id,m.seq FROM chat_messages m WHERE $5::text IS NULL AND m.channel_id=$2 AND m.squad_id IS NULL AND m.created_at>=$3 AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4)
+                UNION (SELECT m.id,m.seq FROM chat_messages m WHERE m.squad_id=$5 AND m.channel_id=$2 AND m.created_at>=$3 AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4)
+                UNION (SELECT w.id,w.seq FROM magnet_features f CROSS JOIN LATERAL (SELECT m.id,m.seq FROM chat_messages m WHERE m.channel_id=f.owner_id AND m.created_at>=f.started_at AND (f.ended_at IS NULL OR m.created_at<f.ended_at) AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4) w
+                    WHERE f.lane=$1 AND f.merged AND coalesce(f.ended_at,now())>now()-interval '8 days')
+            ) r ORDER BY seq DESC LIMIT $4) ORDER BY m.seq",
+            select().replacen("SELECT ", "SELECT m.channel_id,", 1)
+        )))
+        .bind(lane)
+        .bind(merge.as_ref().map(|m| m.channel.as_str()))
+        .bind(merge.as_ref().map(|m| m.since))
+        .bind(HISTORY)
+        .bind(merge.as_ref().and_then(|m| m.squad.as_deref()))
+        .fetch_all(&app.db)
+        .await?;
+        let mut channels: Vec<String> = merge.as_ref().map(|m| m.owners.clone()).unwrap_or_default();
+        let mut meta = Vec::with_capacity(rows.len());
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            if let Some(c) = row.channel_id.as_ref().filter(|c| !channels.contains(c)) {
+                channels.push(c.clone());
+            }
+            meta.push((row.author_id.clone(), row.channel_id.clone()));
+            messages.push(row.json(app));
+        }
+        crate::guilds::hydrate_badges(app, &mut messages).await?;
+        let mature: Vec<String> =
+            sqlx::query_scalar("SELECT owner_id FROM stream_settings WHERE mature AND owner_id=ANY($1)")
+                .bind(&channels)
+                .fetch_all(&app.db)
+                .await?;
+        let (merged_with, rules) = match &merge {
+            Some(m) => (
+                profiles::channel_user_by_id(&mut *app.db.acquire().await?, &m.channel)
+                    .await?
+                    .map(|u| profiles::chip(app, &u)),
+                hype_rules(app, &m.owners).await?,
+            ),
+            None => (None, Rules::default()),
+        };
+        Ok(Arc::new(HypeRoom {
+            merge,
+            lines: meta
+                .into_iter()
+                .zip(messages)
+                .map(|((author, channel), message)| (author, channel, message))
+                .collect(),
+            mature,
+            merged_with,
+            rules,
+        }))
+    }))
+    .await
+}
+/// One viewer's copy of the room: without people they block (or who block them), without just
+/// deleted lines, and closed to under-18 accounts where a channel is labeled mature.
 async fn hype_snapshot(
     app: &App,
     lane: &str,
     viewer: Option<&str>,
     blocks: &mut Hidden,
+    after: Option<Instant>,
 ) -> Res<(Value, Option<(String, Vec<String>)>)> {
-    let merge = hype_merge(app, lane).await?;
+    let room = hype_room(app, lane, after).await?;
+    let merge = room.merge.as_ref();
     // The featured streamers' owners, moderators and staff still see who blocks them.
-    blocks.rescope(merge.as_ref().map(|m| m.owners.clone()).unwrap_or_default());
+    blocks.rescope(merge.map(|m| m.owners.clone()).unwrap_or_default());
     let hidden = blocks.current(app, viewer).await?;
     // Chat in a channel labeled mature is closed to under-18 accounts (`mature_gate`), and merging
     // must not open it: its messages stay out of their view of the room, from this merge and
     // earlier ones. A merged co-stream with one labeled member is closed as a whole.
-    let mut closed: Vec<String> = match viewer {
-        Some(v) if !crate::auth::is_adult(&mut *app.db.acquire().await?, v).await? => {
-            sqlx::query_scalar("SELECT owner_id FROM stream_settings WHERE mature AND owner_id<>$1")
-                .bind(v)
-                .fetch_all(&app.db)
-                .await?
+    let mut closed: Vec<&str> = match viewer {
+        Some(v)
+            if room.mature.iter().any(|o| o != v)
+                && !crate::auth::is_adult(&mut *app.db.acquire().await?, v).await? =>
+        {
+            room.mature
+                .iter()
+                .map(String::as_str)
+                .filter(|o| *o != v)
+                .collect()
         }
         _ => Vec::new(),
     };
-    let gated = merge
-        .as_ref()
-        .is_some_and(|m| m.owners.iter().any(|o| closed.contains(o)));
-    if let Some(m) = merge.as_ref().filter(|_| gated) {
-        closed.extend(m.owners.iter().cloned());
+    let gated = merge.is_some_and(|m| m.owners.iter().any(|o| closed.contains(&o.as_str())));
+    if let Some(m) = merge.filter(|_| gated) {
+        closed.extend(m.owners.iter().map(String::as_str));
     }
-    // select() contains only fixed SQL and a literal chip alias; values are bound.
-    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "{} WHERE ((m.channel_id IS NULL AND m.origin=$1 AND m.squad_id IS NULL) OR (m.channel_id=$2 AND m.squad_id IS NOT DISTINCT FROM $5 AND m.created_at>=$3) OR EXISTS(SELECT 1 FROM magnet_features f WHERE f.lane=$1 AND f.merged AND f.owner_id=m.channel_id AND m.created_at>=f.started_at AND (f.ended_at IS NULL OR m.created_at<f.ended_at))) AND NOT coalesce(m.channel_id=ANY($6),false) AND {VISIBLE} ORDER BY m.seq DESC LIMIT $4",
-        select()
-    )))
-    .bind(lane)
-    .bind(merge.as_ref().map(|m| m.channel.as_str()))
-    .bind(merge.as_ref().map(|m| m.since))
-    .bind(HISTORY)
-    .bind(merge.as_ref().and_then(|m| m.squad.as_deref()))
-    .bind(&closed)
-    .fetch_all(&app.db)
-    .await?;
-    let mut messages: Vec<Value> = rows
-        .into_iter()
-        .rev()
-        .filter(|r| !hidden.contains(&r.author_id))
-        .map(|r| visible_message(r.json(app), hidden))
+    let messages: Vec<Value> = room
+        .lines
+        .iter()
+        .filter(|(author, channel, message)| {
+            !hidden.contains(author)
+                && !channel.as_deref().is_some_and(|c| closed.contains(&c))
+                && !app.chat.deleted(message["id"].as_str().unwrap_or(""))
+        })
+        .map(|(_, _, message)| visible_message(message.clone(), hidden))
         .collect();
-    crate::guilds::hydrate_badges(app, &mut messages).await?;
     // The merged chat's emotes and signature setting; none in MAGNet's own room or while gated.
-    let rules = match merge.as_ref().filter(|_| !gated) {
-        Some(m) => hype_rules(app, &m.owners).await?,
-        None => Rules::default(),
+    let rules = if gated {
+        &Rules::default()
+    } else {
+        &room.rules
     };
-    let (merged_with, holding) = match &merge {
-        Some(m) => {
-            let mut db = app.db.acquire().await?;
-            let chip = profiles::channel_user_by_id(&mut db, &m.channel)
-                .await?
-                .map(|u| profiles::chip(app, &u));
-            let holding = match viewer {
-                Some(v) => gated || hype_holding(app, m, v).await?,
-                None => false,
-            };
-            (chip, holding)
-        }
-        None => (None, false),
+    let holding = match (merge, viewer) {
+        (Some(m), Some(v)) => gated || hype_holding(app, m, v).await?,
+        _ => false,
     };
     // A gated viewer gets no merged room to listen to (`hype_session` then drops live messages).
     Ok((
-        json!({"type":"snapshot","messages":messages,"merged_with":merged_with,"co_stream":merge.as_ref().is_some_and(|m| m.squad.is_some()),"holding":holding,"can_send":viewer.is_some() && !holding,"emotes":rules.emotes,"allow_signatures":rules.allow_signatures}),
+        json!({"type":"snapshot","messages":messages,"merged_with":room.merged_with,"co_stream":merge.is_some_and(|m| m.squad.is_some()),"holding":holding,"can_send":viewer.is_some() && !holding,"emotes":rules.emotes,"allow_signatures":rules.allow_signatures}),
         merge
             .filter(|_| !gated)
-            .map(|m| (m.room().to_string(), m.owners)),
+            .map(|m| (m.room().to_string(), m.owners.clone())),
     ))
 }
 /// A Hype merge's rules: its channel's, or a merged co-stream's members' united (host first).
@@ -1950,6 +2166,7 @@ async fn hype_read(
             &lane,
             viewer.as_ref().map(|v| v.id.as_str()),
             &mut Hidden::new(Vec::new()),
+            None,
         )
         .await?
         .0,
@@ -1965,7 +2182,7 @@ async fn hype_post(
 ) -> Res<Json<Value>> {
     hype_lane(&app, &lane).await?;
     let user = profiles::signed_in(&app, &jar).await?;
-    let message = match hype_merge(&app, &lane).await? {
+    let message = match lane_merge(&app, &lane, false).await? {
         Some(m) => {
             if hype_holding(&app, &m, &user.id).await? {
                 return Err(Fail::denied("Chat resumes when MAGNet moves on."));
@@ -2014,12 +2231,21 @@ async fn hype_session(
 ) {
     let mut ping = pings();
     let mut alive = Instant::now();
-    let mut events = app.chat.tx.subscribe();
+    let room = format!("magnet:{lane}");
+    // One room: the Hub passes the merged chat's lines and its owners' emote changes on to it.
+    let mut events = app.chat.subscribe_room(&room);
+    let subscribed = Instant::now();
     let viewer = profiles::viewer(&app, &jar).await.ok().flatten();
     let viewer = viewer.as_ref().map(|v| v.id.clone());
-    let room = format!("magnet:{lane}");
     let mut blocks = Hidden::new(Vec::new());
-    let Ok((first, mut merged)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks).await
+    let Ok((first, mut merged)) = hype_snapshot(
+        &app,
+        &lane,
+        viewer.as_deref(),
+        &mut blocks,
+        Some(subscribed),
+    )
+    .await
     else {
         return;
     };
@@ -2042,7 +2268,7 @@ async fn hype_session(
     loop {
         tokio::select! {
             _ = recheck.tick(), if minor => {
-                let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks).await else { continue; };
+                let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks, None).await else { continue; };
                 let closed = next["holding"] == true && owner.is_none();
                 if owner != merged || closed != gated {
                     (merged, gated) = (owner, closed);
@@ -2050,40 +2276,43 @@ async fn hype_session(
                 }
             }
             event = events.recv() => match event {
-                // A delete passes from any room: an earlier merge's lines stay in this room's
-                // history after MAGNet moves on, and clients ignore ids they don't hold.
-                // A merged chat's emotes changed: one of its owners' rooms says so.
-                Ok(e) if e.payload["type"] == "emotes" && merged.as_ref().is_some_and(|m| m.1.contains(&e.channel)) => {
-                    let Some((_, owners)) = &merged else { continue; };
-                    let Ok(rules) = hype_rules(&app, owners).await else { continue; };
-                    let frame = json!({"type":"emotes","emotes":rules.emotes,"allow_signatures":rules.allow_signatures});
-                    if ws.send(Message::Text(frame.to_string().into())).await.is_err() { return; }
-                }
-                Ok(e) if e.channel == room || merged.as_ref().is_some_and(|m| m.0 == e.channel) || e.payload["type"] == "delete" => {
-                    // A switch: merge or detach, and resend the room.
-                    if e.payload["type"] == "magnet" {
-                        let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks).await else { return; };
+                Ok(e) => {
+                    let kind = e.payload["type"].as_str().unwrap_or_default();
+                    if e.channel == room && kind == "magnet" {
+                        // Merged, detached or switched: resend the room, read after this event
+                        // (every socket here shares that one read).
+                        let Ok((next, owner)) = hype_snapshot(&app, &lane, viewer.as_deref(), &mut blocks, Some(e.at)).await else { return; };
                         merged = owner;
                         gated = next["holding"] == true && merged.is_none();
                         if ws.send(Message::Text(next.to_string().into())).await.is_err() { return; }
                         continue;
                     }
-                    if !matches!(e.payload["type"].as_str(), Some("message" | "delete")) { continue; }
-                    if gated && e.payload["type"] == "message" { continue; }
-                    // A merged Hype message arrives on both; forward it once.
-                    if e.channel != room && e.payload["message"]["origin"] == lane.as_str() { continue; }
+                    if e.channel != room {
+                        // Passed on from the merged chat (none reach a gated viewer).
+                        let Some((merged_room, owners)) = &merged else { continue; };
+                        if kind == "emotes" {
+                            if !owners.contains(&e.channel) { continue; }
+                            let Ok(rules) = hype_rules(&app, owners).await else { continue; };
+                            let frame = json!({"type":"emotes","emotes":rules.emotes,"allow_signatures":rules.allow_signatures});
+                            if ws.send(Message::Text(frame.to_string().into())).await.is_err() { return; }
+                            continue;
+                        }
+                        // A merged Hype message arrives on both; forward it once.
+                        if e.channel != *merged_room || e.payload["message"]["origin"] == lane.as_str() { continue; }
+                    }
+                    if !matches!(kind, "message" | "delete") { continue; }
+                    if gated && kind == "message" { continue; }
                     // Linked-platform lines and the channel bot's stay in the channel's own chat.
                     if !e.payload["message"]["outside"].is_null() { continue; }
                     let Ok(hidden) = blocks.current(&app, viewer.as_deref()).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut payload = e.payload.clone();
-                    if payload["type"] == "message" {
+                    if kind == "message" {
                         let Some(message) = fresh(&app.chat, &payload, hidden) else { continue; };
                         payload["message"] = message;
                     }
                     if ws.send(Message::Text(payload.to_string().into())).await.is_err() { return; }
                 }
-                Ok(_) => {}
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     let _ = ws.send(Message::Close(Some(CloseFrame { code: 4000, reason: "resync".into() }))).await;
                     return;
@@ -2148,6 +2377,38 @@ mod tests {
         // A restored message is delivered again.
         hub.restored("m1");
         assert!(super::fresh(&hub, &message("m1"), &hidden).is_some());
+    }
+    #[test]
+    fn a_busy_room_never_lags_another_and_merged_lines_reach_the_lane() {
+        use serde_json::json;
+        use tokio::sync::broadcast::error::TryRecvError;
+        let hub = super::Hub::default();
+        let mut quiet = hub.subscribe_room("b");
+        let _busy = hub.subscribe_room("a");
+        for _ in 0..5_000 {
+            hub.publish("a", None, 0, json!({"type":"board_input"}));
+        }
+        assert!(matches!(quiet.try_recv(), Err(TryRecvError::Empty)));
+        hub.publish("b", None, 0, json!({"type":"message","message":{"id":"m"}}));
+        assert_eq!(quiet.try_recv().unwrap().payload["message"]["id"], "m");
+        // A MAGNet room merged with "b" hears its lines and deletes, not its other events.
+        let mut lane = hub.subscribe_room("magnet:l");
+        hub.lanes
+            .lock()
+            .unwrap()
+            .insert("magnet:l".into(), Some(("b".into(), vec!["b".into()])));
+        hub.publish("b", None, 0, json!({"type":"board_input"}));
+        hub.publish("b", None, 0, json!({"type":"delete","id":"m"}));
+        let heard = lane.try_recv().unwrap();
+        assert_eq!(
+            (heard.channel.as_str(), &heard.payload["type"]),
+            ("b", &json!("delete"))
+        );
+        assert!(matches!(lane.try_recv(), Err(TryRecvError::Empty)));
+        // Rooms nobody listens to anymore are dropped.
+        drop((quiet, lane));
+        hub.publish("b", None, 0, json!({"type":"message","message":{"id":"n"}}));
+        assert!(!hub.rooms.lock().unwrap().contains_key("b"));
     }
     #[test]
     fn mentions_are_whole_usernames_not_email_or_markup() {

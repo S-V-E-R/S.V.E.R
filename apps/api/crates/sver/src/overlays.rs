@@ -584,8 +584,9 @@ async fn session(app: App, channel: String, username: String, digest: String, mu
         .iter()
         .map(|(_, k)| format!("channel:{username}:{k}"))
         .collect();
-    let mut events = app.chat.subscribe();
     let room = format!("alerts:{channel}");
+    let mut events = crate::chat::Rooms::default();
+    events.set(&app.chat, &[room.clone(), crate::events::HUB.to_string()]);
     let Ok(hello) = opening(&app, &channel, &topics).await else {
         return;
     };
