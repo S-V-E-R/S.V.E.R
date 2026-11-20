@@ -462,6 +462,10 @@ a.takedown-link:hover { color: var(--ink); }
 .messages-item-text { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .messages-item-top { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
 .messages-item-top strong, .messages-item-text > .small-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; margin: 0; }
+/* An unbalanced direction override in a message stays inside its own bubble or preview. */
+.messages-item-text > .small-text { unicode-bidi: isolate; }
+.messages-show-more { margin: 4px 16px 12px; }
+.messages-newest { align-self: center; margin: 4px auto; }
 .messages-unread { min-width: 20px; height: 20px; padding: 0 8px; display: inline-grid; place-items: center; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; }
 .messages-muted, .messages-lock { display: inline-flex; vertical-align: -1px; margin-right: 4px; }
 .messages-text[role="button"] { cursor: pointer; }
@@ -479,7 +483,7 @@ a.takedown-link:hover { color: var(--ink); }
 .messages-body li.mine { align-self: flex-end; align-items: flex-end; }
 .messages-body li.run-end { margin-bottom: 12px; }
 .messages-start { align-self: center; max-width: none; margin: auto 0 12px; }
-.messages-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; background: var(--panel-hi, var(--surface)); border: 1px solid var(--line); }
+.messages-text { white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: isolate; padding: 8px 12px; background: var(--panel-hi, var(--surface)); border: 1px solid var(--line); }
 .messages-body li.mine .messages-text { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .messages-body li.mine .messages-text .muted { color: var(--on-accent); opacity: .75; }
 .messages-meta { margin-top: 3px; padding: 0 4px; font-size: 11px; }
