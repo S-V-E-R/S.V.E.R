@@ -1,6 +1,7 @@
 "use client";
-import { useEffect } from "react";
-export type Result<T> = { ok: true; data: T } | { ok: false; status: number; error: string; field?: string };
+import { useEffect, useMemo, useRef } from "react";
+/** `retry`: seconds until the server takes this again (slow mode, a timeout, a rate limit). */
+export type Result<T> = { ok: true; data: T } | { ok: false; status: number; error: string; field?: string; retry?: number };
 
 // Staff pages register a prompt here (components/StepUp.tsx). When a request is refused because the
 // staff window has lapsed, the prompt asks for a code or password and the request retries once.
@@ -19,11 +20,28 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     const form = typeof FormData !== "undefined" && body instanceof FormData;
     const response = await fetch(path, { method, credentials: "same-origin", cache: "no-store", headers: body === undefined || form ? {} : { "Content-Type": "application/json" }, body: body === undefined ? undefined : form ? (body as FormData) : JSON.stringify(body) });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) return { ok: false, status: response.status, error: data.error || (response.status === 413 ? "That file is too large." : "The request could not be completed."), field: data.field };
+    if (!response.ok) return { ok: false, status: response.status, error: data.error || (response.status === 413 ? "That file is too large." : "The request could not be completed."), field: data.field, retry: Number(data.retry ?? response.headers.get("retry-after")) || undefined };
     return { ok: true, data: data as T };
   } catch {
     return { ok: false, status: 0, error: "The service could not be reached. Please try again." };
   }
+}
+
+/** One client id per send (the server treats a repeated id as the same send): the same `key` (the draft
+ *  and its options) reuses the id until the server answers definitively, so a retry after a lost
+ *  response can't post or charge twice. A network failure, 5xx or rate limit keeps it. */
+export function usePendingId() {
+  const pending = useRef<{ id: string; key: string } | null>(null);
+  return useMemo(() => ({
+    id(key: string) {
+      if (pending.current?.key !== key) pending.current = { id: crypto.randomUUID(), key };
+      return pending.current.id;
+    },
+    settle(result: Result<unknown>) {
+      if (result.ok || [400, 403, 422].includes(result.status) || (result.status === 409 && /removed/i.test(result.error))) pending.current = null;
+    },
+    clear() { pending.current = null; },
+  }), []);
 }
 
 /** OBS docks share cookies but never reload, so a signed-out dock checks every 5 seconds whether the

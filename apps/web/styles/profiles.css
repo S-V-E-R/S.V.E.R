@@ -119,9 +119,9 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .chat{display:flex;flex-direction:column;gap:8px;min-width:0}
 .chat h2{margin:0;font-size:16px}
 .chat-messages{list-style:none;margin:0;padding:0;max-height:60vh;min-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
-.chat-body{white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-body{white-space:pre-wrap;overflow-wrap:anywhere;unicode-bidi:isolate}
 .chat-newest{display:block;margin:4px auto 0}
-.chat-quote{margin:4px 0;padding:4px 8px;border-left:2px solid var(--line);color:var(--ink-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.9em}
+.chat-quote{margin:4px 0;padding:4px 8px;border-left:2px solid var(--line);color:var(--ink-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.9em;unicode-bidi:isolate}
 .chat-pin{border:1px solid var(--line);background:var(--tint);padding:12px;overflow-wrap:anywhere}
 .chat-pin-content{margin:8px 0}
 .chat-mention{background:var(--tint);color:var(--accent-light);outline:1px solid var(--line)}
@@ -129,7 +129,7 @@ blockquote{border-left:2px solid var(--line);margin:12px 0;padding:2px 16px}cite
 .chat-reply-draft span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
 .chat-form textarea{resize:vertical;min-width:0;width:100%}
-.chat-form .error{grid-column:1/-1;margin:0}
+.chat-form .error,.chat-form .chat-retry,.chat-post-on{grid-column:1/-1;margin:0}
 /* Chat dock (ChatDock): Emotes, Rewards and Skills under the box; each opens a panel over the
    bottom of the chat with tiles, so the chat column stays messages plus the box. */
 .chat-dock{position:relative;margin-top:8px}
