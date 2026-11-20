@@ -94,16 +94,10 @@ async fn add_marker(
     Path(name): Path<String>,
     Json(input): Json<Marker>,
 ) -> Res<Json<Value>> {
-    let user = crate::devapps::actor(&app, &headers, &jar, "channel:run").await?;
     let channel = profiles::eligible_by_name(&mut *app.db.acquire().await?, &name)
         .await?
         .ok_or_else(Fail::channel_missing)?;
-    if moderation::role_of(&app, &channel.id, &user)
-        .await?
-        .is_none()
-    {
-        return Err(Fail::denied("Only the streamer and mods can add markers."));
-    }
+    moderation::actor_any(&app, &headers, &jar, &channel.id, "channel:run").await?;
     let mut tx = app.db.begin().await?;
     let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM videos WHERE owner_id=$1 AND kind='VOD' AND status='RECORDING' AND recording AND ended_at IS NULL)").bind(&channel.id).fetch_one(&mut *tx).await?;
     if !active {
@@ -296,7 +290,12 @@ async fn replay(
         {
             continue;
         }
+        // Today's name and picture, with the name style stored when it was said.
+        let style = row.message["author"]["name_style"].take();
         row.message["author"] = profiles::chip(&app, &channel);
+        if !style.is_null() {
+            row.message["author"]["name_style"] = style;
+        }
         row.message["offset_ms"] = json!(row.offset_ms);
         messages.push(row.message);
     }

@@ -3,8 +3,11 @@
 use super::Env;
 use super::chat::{call, id, person};
 use axum::http::StatusCode;
+use futures_util::StreamExt;
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
+use sver::security as sec;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 const BASE: &str = "/api/channels/streamer";
 
@@ -37,6 +40,25 @@ async fn restrict(
     )
     .await
     .0
+}
+
+/// An app's call with an access token (no cookie).
+async fn bearer(e: &Env, method: &str, path: &str, token: &str, body: Value) -> StatusCode {
+    let request = axum::http::Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
+        .header("sver-client-id", "mod-app")
+        .extension(axum::extract::ConnectInfo(
+            "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+        ))
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap();
+    tower::ServiceExt::oneshot(sver::router(e.app.clone()), request)
+        .await
+        .unwrap()
+        .status()
 }
 
 pub async fn exercise(e: &Env) {
@@ -177,6 +199,29 @@ pub async fn exercise(e: &Env) {
     assert!(!history.to_string().contains("delete me"));
     // The owner sent two messages at the end of the chat test; stay inside two per second.
     tokio::time::sleep(Duration::from_millis(1100)).await;
+    // An app token acts for the owner or an appointed moderator only; staff moderate other
+    // channels from their own signed-in session.
+    e.sql("INSERT INTO dev_apps(id,owner_id,name,redirect_uris) VALUES('mod-app','mod-staff','Mod app',ARRAY['https://app.example.test/callback'])").await;
+    e.sql("INSERT INTO oauth_grants(id,app_id,user_id,scopes) VALUES('mod-grant','mod-app','mod-staff',ARRAY['channel:moderate'])").await;
+    let token = sec::token();
+    sqlx::query("INSERT INTO oauth_tokens(token_hash,grant_id,kind,expires_at) VALUES($1,'mod-grant','access',now()+interval '1 hour')")
+        .bind(sec::digest(&token))
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    let (_, posted) = say(e, &chatter, "staff token test").await;
+    let path = format!(
+        "{BASE}/chat/messages/{}",
+        posted["message"]["id"].as_str().unwrap()
+    );
+    assert_eq!(
+        bearer(e, "DELETE", &path, &token, json!({})).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(e, "DELETE", &path, Some(&staff), json!({})).await.0,
+        StatusCode::OK
+    );
     let (_, own) = owner(
         e,
         "POST",
@@ -330,6 +375,48 @@ pub async fn exercise(e: &Env) {
     );
     tokio::time::sleep(Duration::from_millis(1100)).await;
     assert_eq!(say(e, &chatter, "back again").await.0, StatusCode::OK);
+    // Undo lifts only that entry's own timeout, never a newer one the owner gave since.
+    quick(moderator.clone()).await;
+    let entry = view(moderator.clone()).await["reviews"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        owner(
+            e,
+            "POST",
+            &format!("{BASE}/chat/restrictions"),
+            json!({"username":"ModChatter","kind":"timeout","seconds":1200,"reason":"owner's call"})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, undone) = call(
+        e,
+        "POST",
+        &format!("{BASE}/chat/reviews/{entry}"),
+        Some(&moderator),
+        json!({"keep":false}),
+    )
+    .await;
+    assert_eq!((status, &undone["lifted"]), (StatusCode::OK, &json!(false)));
+    let kept: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE user_id='mod-chatter' AND kind='timeout' AND until>now()+interval '15 minutes')")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert!(kept, "the owner's timeout stays");
+    assert_eq!(
+        owner(
+            e,
+            "DELETE",
+            &format!("{BASE}/chat/restrictions/ModChatter/timeout"),
+            json!({"reason":"ok"})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
 
     // A ban stops chat and signed-in playback; logged-out viewing still gets playback.
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('mod-b','stream-owner','pub-mod',1,'LIVE','s','v','c',now(),now(),now()+interval '15 seconds')").await;
@@ -367,6 +454,14 @@ pub async fn exercise(e: &Env) {
         restrict(e, &moderator, "ModChatter", "ban", None).await,
         StatusCode::OK
     );
+    // The ban took their lines of the last 10 minutes out of chat; its evidence still has them.
+    let (_, history) = call(e, "GET", &format!("{BASE}/chat"), None, Value::Null).await;
+    assert!(!history.to_string().contains("live now"), "{history}");
+    let evidence: String = sqlx::query_scalar("SELECT detail->>'chat' FROM channel_moderation_log WHERE action='ban' AND target_id='mod-chatter' ORDER BY created_at DESC LIMIT 1")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert!(evidence.contains("live now"), "{evidence}");
     tokio::time::sleep(Duration::from_millis(1100)).await;
     assert!(
         say(e, &chatter, "banned?")
@@ -558,6 +653,26 @@ pub async fn exercise(e: &Env) {
         say(e, &outsider, "see Example.COM").await.0,
         StatusCode::BAD_REQUEST
     );
+    // Invisible characters don't carry a banned word or a link past the rules.
+    let words = ["bad word".to_string()];
+    assert!(!sver::moderation::code_allowed(
+        &words,
+        false,
+        "ba\u{200B}d word"
+    ));
+    assert!(!sver::moderation::code_allowed(
+        &[],
+        true,
+        "evil\u{200B}.com"
+    ));
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    for body in ["a ba\u{200B}d word", "see evil\u{200B}.com"] {
+        assert_eq!(
+            say(e, &outsider, body).await.0,
+            StatusCode::BAD_REQUEST,
+            "{body}"
+        );
+    }
     assert_eq!(
         say(e, &moderator, "official: example.com").await.0,
         StatusCode::OK
@@ -636,13 +751,124 @@ pub async fn exercise(e: &Env) {
     }
     assert_eq!(
         actions.iter().filter(|a| **a == "delete_message").count(),
-        1,
-        "retried delete logged once"
+        2,
+        "the retried delete is logged once, beside staff's"
     );
+
+    shared_chat_and_evidence(e).await;
 
     for table in ["chat_settings", "chat_messages", "channel_moderation_log"] {
         e.sql(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
             .await;
     }
     e.sql("DELETE FROM users WHERE id LIKE 'mod-%'").await;
+}
+
+/// A merged co-stream's shared chat: a raider who only chatted there is swept and the shared room
+/// drops the line, while partners are left alone. Evidence goes after 90 days, and an erased
+/// account's lines leave it at once.
+async fn shared_chat_and_evidence(e: &Env) {
+    person(e, "mod-partner", "ModPartner", true).await;
+    person(e, "mod-raider", "ModRaider", true).await;
+    e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('mod-sq-host','stream-owner','pub-mod-sq-host',1,'LIVE','s','v','c',now(),now(),now()+interval '15 seconds'),('mod-sq-guest','mod-partner','pub-mod-sq-guest',1,'LIVE','s','v','c2',now(),now(),now()+interval '15 seconds')").await;
+    e.sql("INSERT INTO squads(id,host_id,mode) VALUES('mod-sq','stream-owner','MERGED')")
+        .await;
+    e.sql("INSERT INTO squad_members(squad_id,user_id,broadcast_id) VALUES('mod-sq','stream-owner','mod-sq-host'),('mod-sq','mod-partner','mod-sq-guest')").await;
+    e.sql("INSERT INTO chat_messages(id,channel_id,author_id,body,squad_id) VALUES('mod-shared-raid','stream-owner','mod-raider','raid line','mod-sq'),('mod-shared-partner','stream-owner','mod-partner','hi all','mod-sq')").await;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = sver::router(e.app.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let mut request = format!("ws://{address}/api/chat/ws?squad=mod-sq")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", e.app.config.origin.parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert_eq!(
+        super::chat::next_json(&mut socket).await["type"],
+        "snapshot"
+    );
+    let (status, swept) = owner(
+        e,
+        "POST",
+        &format!("{BASE}/chat/sweep"),
+        json!({"minutes":10,"account_days":1,"reason":"raid"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{swept}");
+    let deleted = loop {
+        let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .expect("a delete on the shared room")
+            .unwrap()
+            .unwrap();
+        let event: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+        if event["type"] == "delete" {
+            break event["id"].clone();
+        }
+    };
+    assert_eq!(deleted, "mod-shared-raid");
+    server.abort();
+    let banned = |user: &'static str| async move {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id='stream-owner' AND user_id=$1 AND kind='ban')")
+            .bind(user)
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    assert!(banned("mod-raider").await);
+    assert!(
+        !banned("mod-partner").await,
+        "co-stream partners are left alone"
+    );
+    let gone: bool = sqlx::query_scalar(
+        "SELECT deleted_at IS NOT NULL FROM chat_messages WHERE id='mod-shared-raid'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert!(gone);
+
+    // Evidence older than 90 days loses its chat; newer evidence keeps it.
+    let has_chat = |user: &'static str| async move {
+        sqlx::query_scalar::<_, bool>("SELECT coalesce(bool_or(detail ? 'chat'),false) FROM channel_moderation_log WHERE target_id=$1")
+            .bind(user)
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    e.sql("UPDATE channel_moderation_log SET created_at=now()-interval '91 days' WHERE target_id='mod-raider'").await;
+    assert!(sver::safety::tick(&e.app).await.is_ok());
+    assert!(!has_chat("mod-raider").await);
+    assert!(has_chat("mod-chatter").await);
+
+    // An erased account's lines leave every evidence capture.
+    let quoted = || async {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM channel_moderation_log WHERE detail->'chat' @> '[{\"user\":\"ModOutsider\"}]')")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    assert!(quoted().await);
+    let mut tx = e.app.db.begin().await.unwrap();
+    sver::profile_jobs::erase(&mut tx, "mod-outsider")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(!quoted().await);
+    assert!(has_chat("mod-chatter").await, "other lines stay");
+
+    e.sql("DELETE FROM squads WHERE id='mod-sq'").await;
+    e.sql("DELETE FROM broadcasts WHERE id LIKE 'mod-sq-%'")
+        .await;
 }

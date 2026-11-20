@@ -68,6 +68,11 @@ pub(crate) async fn actor_any(
     let role = role_of(app, channel, &user)
         .await?
         .ok_or_else(|| Fail::denied("You can't moderate this channel."))?;
+    // An app acts for the owner or an appointed moderator only; staff moderate other channels from
+    // their own signed-in session, never through a token they gave an app.
+    if headers.contains_key("authorization") && role == Role::Staff {
+        return Err(Fail::denied("You can't moderate this channel."));
+    }
     Ok((user, role))
 }
 pub(crate) async fn channel(app: &App, name: &str) -> Res<String> {
@@ -226,9 +231,16 @@ pub(crate) async fn log(
     Ok(())
 }
 
+/// `text` without invisible format characters, which could otherwise split a banned word or a link.
+fn visible(text: &str) -> String {
+    text.chars()
+        .filter(|c| !crate::text::invisible(*c))
+        .collect()
+}
 /// Case-folded, whitespace-normalized text for banned-phrase matching.
 fn fold(text: &str) -> String {
-    text.to_lowercase()
+    visible(text)
+        .to_lowercase()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -236,29 +248,44 @@ fn fold(text: &str) -> String {
 /// Plain-text URL/domain detection, including mixed case, `www.` and scheme-less forms. Never
 /// fetches anything and is not a complete obfuscation detector.
 fn has_link(body: &str) -> bool {
-    body.to_lowercase().split_whitespace().any(|token| {
-        let token = token.trim_matches(|c: char| {
-            matches!(
-                c,
-                '(' | ')' | '[' | ']' | '<' | '>' | '"' | '\'' | ',' | '!' | '?' | ':' | ';' | '.'
-            )
-        });
-        if token.contains("://") || token.starts_with("www.") {
-            return true;
-        }
-        let host = token.split(['/', '?', '#']).next().unwrap_or("");
-        match host.rsplit_once('.') {
-            Some((name, tld)) => {
-                !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|c| c.is_alphanumeric() || c == '-' || c == '.')
-                    && (2..=24).contains(&tld.chars().count())
-                    && tld.chars().all(char::is_alphabetic)
+    visible(body)
+        .to_lowercase()
+        .split_whitespace()
+        .any(|token| {
+            let token = token.trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '(' | ')'
+                        | '['
+                        | ']'
+                        | '<'
+                        | '>'
+                        | '"'
+                        | '\''
+                        | ','
+                        | '!'
+                        | '?'
+                        | ':'
+                        | ';'
+                        | '.'
+                )
+            });
+            if token.contains("://") || token.starts_with("www.") {
+                return true;
             }
-            None => false,
-        }
-    })
+            let host = token.split(['/', '?', '#']).next().unwrap_or("");
+            match host.rsplit_once('.') {
+                Some((name, tld)) => {
+                    !name.is_empty()
+                        && name
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || c == '-' || c == '.')
+                        && (2..=24).contains(&tld.chars().count())
+                        && tld.chars().all(char::is_alphabetic)
+                }
+                None => false,
+            }
+        })
 }
 
 /// Upload codes obey the channel's content rules, without consuming chat slow-mode windows.
@@ -549,8 +576,8 @@ pub async fn delete_message(
     let channel = channel(&app, &name).await?;
     let (user, role) = actor_any(&app, &headers, &jar, &channel, "channel:moderate").await?;
     let reason = delete_reason(&input.reason)?;
-    let author: String = sqlx::query_scalar(
-        "SELECT author_id FROM chat_messages WHERE id=$1 AND channel_id=$2 AND squad_id IS NULL",
+    let (author, origin): (String, Option<String>) = sqlx::query_as(
+        "SELECT author_id,origin FROM chat_messages WHERE id=$1 AND channel_id=$2 AND squad_id IS NULL",
     )
     .bind(&id)
     .bind(&channel)
@@ -588,8 +615,7 @@ pub async fn delete_message(
     }
     tx.commit().await?;
     if deleted {
-        app.chat
-            .publish(&channel, None, 0, json!({"type":"delete","id":id}));
+        crate::chat::publish_delete(&app, Some(&channel), origin.as_deref(), &id);
     }
     Ok(Json(json!({"deleted": true})))
 }
@@ -649,15 +675,47 @@ pub async fn restrict(
     let entry: String = sqlx::query_scalar("SELECT id FROM channel_moderation_log WHERE channel_id=$1 AND actor_id=$2 AND target_id=$3 AND action=$4 ORDER BY created_at DESC LIMIT 1")
         .bind(&channel).bind(&user.id).bind(&target).bind(&input.kind).fetch_one(&mut *tx).await?;
     // Evidence for the team: the chat leading up to it and the stream's last minute.
-    let chat: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('user',u.username,'body',m.body,'at',m.created_at,'deleted',m.deleted_at IS NOT NULL) FROM (SELECT * FROM chat_messages WHERE channel_id=$1 AND squad_id IS NULL AND created_at>now()-interval '10 minutes' ORDER BY created_at DESC LIMIT 30) m JOIN users u ON u.id=m.author_id ORDER BY m.created_at")
-        .bind(&channel).fetch_all(&mut *tx).await?;
+    let chat = evidence(&mut tx, &channel).await?;
     let clip = crate::videos::evidence(&mut tx, &channel, &entry).await?;
     sqlx::query("UPDATE channel_moderation_log SET needs_review=$2, detail=detail||jsonb_build_object('chat',$3::jsonb,'clip',$4::text) WHERE id=$1")
         .bind(&entry).bind(review).bind(json!(chat)).bind(&clip).execute(&mut *tx).await?;
+    // After the evidence, which still shows them: their recent lines leave every chat.
+    let cleared = clear_recent(&mut tx, &channel, &target).await?;
     tx.commit().await?;
+    publish_cleared(&app, cleared);
     Ok(Json(
         json!({"kind": input.kind, "until": until, "review": review}),
     ))
+}
+/// The chat a moderation action can see in `$1`'s channel: its own room and, while it's in a
+/// co-stream, the shared room (whose lines carry the host's channel ID). Rows are aliased `m`.
+macro_rules! rooms_of {
+    () => {
+        "((m.channel_id=$1 AND m.squad_id IS NULL) OR m.squad_id IN (SELECT squad_id FROM squad_members WHERE user_id=$1))"
+    };
+}
+/// Evidence for the team: up to 30 lines of the last 10 minutes of the channel's chat.
+async fn evidence(db: &mut PgConnection, channel: &str) -> Res<Vec<Value>> {
+    Ok(sqlx::query_scalar(concat!("SELECT jsonb_build_object('user',u.username,'body',m.body,'at',m.created_at,'deleted',m.deleted_at IS NOT NULL) FROM (SELECT m.* FROM chat_messages m WHERE ", rooms_of!(), " AND m.created_at>now()-interval '10 minutes' ORDER BY m.created_at DESC LIMIT 30) m JOIN users u ON u.id=m.author_id ORDER BY m.created_at"))
+        .bind(channel).fetch_all(db).await?)
+}
+/// Messages to tell open chats about: each one's room, Hype lane and ID.
+pub(crate) type Cleared = Vec<(String, Option<String>, String)>;
+/// A timeout or ban removes the person's lines from the last 10 minutes of the channel's chat
+/// (and its shared co-stream room). Publish the result after commit with `publish_cleared`.
+pub(crate) async fn clear_recent(
+    db: &mut PgConnection,
+    channel: &str,
+    target: &str,
+) -> Res<Cleared> {
+    Ok(sqlx::query_as(concat!("UPDATE chat_messages m SET deleted_at=now() WHERE ", rooms_of!(), " AND m.author_id=$2 AND m.deleted_at IS NULL AND m.created_at>now()-interval '10 minutes' RETURNING coalesce(m.squad_id,m.channel_id),m.origin,m.id"))
+        .bind(channel).bind(target).fetch_all(db).await?)
+}
+/// Chat, pop-outs, docks, the overlay and MAGNet drop each removed line.
+pub(crate) fn publish_cleared(app: &App, cleared: Cleared) {
+    for (room, origin, id) in cleared {
+        crate::chat::publish_delete(app, Some(&room), origin.as_deref(), &id);
+    }
 }
 #[derive(Deserialize)]
 pub struct Sweep {
@@ -692,14 +750,16 @@ pub async fn sweep(
     let review = input.reason.trim().is_empty();
     let reason = optional_reason(&input.reason, NO_REASON_YET)?;
     let mut tx = app.db.begin().await?;
-    let targets: Vec<String> = sqlx::query_scalar("SELECT u.id FROM users u WHERE u.created_at>now()-make_interval(days=>$3)
-        AND (EXISTS(SELECT 1 FROM chat_messages m WHERE m.channel_id=$1 AND m.squad_id IS NULL AND m.author_id=u.id AND m.created_at>now()-make_interval(mins=>$2))
+    // Co-stream partners and their moderators are as protected as this channel's own.
+    let targets: Vec<String> = sqlx::query_scalar(concat!("WITH partners AS (SELECT user_id FROM squad_members WHERE squad_id IN (SELECT squad_id FROM squad_members WHERE user_id=$1))
+        SELECT u.id FROM users u WHERE u.created_at>now()-make_interval(days=>$3)
+        AND (EXISTS(SELECT 1 FROM chat_messages m WHERE ", rooms_of!(), " AND m.author_id=u.id AND m.created_at>now()-make_interval(mins=>$2))
           OR EXISTS(SELECT 1 FROM follows f WHERE f.following_id=$1 AND f.follower_id=u.id AND f.created_at>now()-make_interval(mins=>$2)))
-        AND u.id<>$1 AND u.id<>$4
-        AND NOT EXISTS(SELECT 1 FROM channel_moderators WHERE channel_id=$1 AND user_id=u.id)
+        AND u.id<>$1 AND u.id<>$4 AND u.id NOT IN (SELECT user_id FROM partners)
+        AND NOT EXISTS(SELECT 1 FROM channel_moderators WHERE (channel_id=$1 OR channel_id IN (SELECT user_id FROM partners)) AND user_id=u.id)
         AND NOT EXISTS(SELECT 1 FROM staff_roles WHERE user_id=u.id)
         AND NOT EXISTS(SELECT 1 FROM channel_restrictions WHERE channel_id=$1 AND user_id=u.id AND kind='ban')
-        ORDER BY u.id LIMIT $5")
+        ORDER BY u.id LIMIT $5"))
         .bind(&channel).bind(input.minutes).bind(input.account_days).bind(&user.id).bind(SWEEP_LIMIT)
         .fetch_all(&mut *tx).await?;
     if targets.is_empty() {
@@ -723,12 +783,11 @@ pub async fn sweep(
         .await?;
     }
     // Evidence before the messages go: the chat leading up to it and the stream's last minute.
-    let chat: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('user',u.username,'body',m.body,'at',m.created_at,'deleted',m.deleted_at IS NOT NULL) FROM (SELECT * FROM chat_messages WHERE channel_id=$1 AND squad_id IS NULL AND created_at>now()-interval '10 minutes' ORDER BY created_at DESC LIMIT 30) m JOIN users u ON u.id=m.author_id ORDER BY m.created_at")
-        .bind(&channel).fetch_all(&mut *tx).await?;
+    let chat = evidence(&mut tx, &channel).await?;
     let clip = crate::videos::evidence(&mut tx, &channel, &sweep).await?;
     sqlx::query("UPDATE channel_moderation_log SET needs_review=$2, detail=detail||jsonb_build_object('chat',$3::jsonb,'clip',$4::text) WHERE channel_id=$1 AND detail->>'sweep'=$5")
         .bind(&channel).bind(review).bind(json!(chat)).bind(&clip).bind(&sweep).execute(&mut *tx).await?;
-    let removed: Vec<(Option<String>, String)> = sqlx::query_as("UPDATE chat_messages SET deleted_at=now() WHERE channel_id=$1 AND squad_id IS NULL AND author_id=ANY($2) AND deleted_at IS NULL AND created_at>now()-make_interval(mins=>$3) RETURNING origin,id")
+    let removed: Cleared = sqlx::query_as(concat!("UPDATE chat_messages m SET deleted_at=now() WHERE ", rooms_of!(), " AND m.author_id=ANY($2) AND m.deleted_at IS NULL AND m.created_at>now()-make_interval(mins=>$3) RETURNING coalesce(m.squad_id,m.channel_id),m.origin,m.id"))
         .bind(&channel).bind(&targets).bind(input.minutes).fetch_all(&mut *tx).await?;
     sqlx::query("DELETE FROM follows WHERE following_id=$1 AND follower_id=ANY($2)")
         .bind(&channel)
@@ -739,9 +798,7 @@ pub async fn sweep(
     counted.push(&channel);
     crate::social::refresh_counts(&mut tx, &counted).await?;
     tx.commit().await?;
-    for (origin, id) in removed {
-        crate::chat::publish_delete(&app, Some(&channel), origin.as_deref(), &id);
-    }
+    publish_cleared(&app, removed);
     Ok(Json(json!({"banned": targets.len(), "review": review})))
 }
 #[derive(Deserialize)]
@@ -775,13 +832,16 @@ pub async fn review(
     }
     sqlx::query("UPDATE channel_moderation_log SET needs_review=false, reason=coalesce($2,reason) WHERE id=$1")
         .bind(&id).bind(&reason).execute(&mut *tx).await?;
+    // Undo lifts only this action's restriction, never a newer one someone gave since.
+    let mut lifted = false;
     if !input.keep {
-        let lifted = sqlx::query(
-            "DELETE FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND kind=$3",
+        lifted = sqlx::query(
+            "DELETE FROM channel_restrictions WHERE channel_id=$1 AND user_id=$2 AND kind=$3 AND created_at<=(SELECT created_at FROM channel_moderation_log WHERE id=$4)",
         )
         .bind(&channel)
         .bind(&target)
         .bind(&kind)
+        .bind(&id)
         .execute(&mut *tx)
         .await?
         .rows_affected()
@@ -802,7 +862,9 @@ pub async fn review(
         }
     }
     tx.commit().await?;
-    Ok(Json(json!({"reviewed": true})))
+    Ok(Json(
+        json!({"reviewed": true, "lifted": (!input.keep).then_some(lifted)}),
+    ))
 }
 /// When a stream ends, everyone with timeouts or bans still waiting for a reason gets one
 /// notification pointing at the review list (called by streams in its end transaction).

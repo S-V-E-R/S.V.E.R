@@ -3,6 +3,7 @@ use super::Env;
 use super::chat::{call, id, person};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 async fn report(e: &Env, token: &str, kind: &str, target: &str) -> (StatusCode, Value) {
     call(
@@ -95,6 +96,59 @@ pub async fn exercise(e: &Env) {
     assert_eq!(
         report(e, &reporter, "chat_message", &message).await.0,
         StatusCode::NOT_FOUND
+    );
+
+    // Direct messages: a message staff remove leaves both people's open conversations at once.
+    e.sql("INSERT INTO follows(follower_id,following_id) VALUES('rep-author','rep-reporter'),('rep-reporter','rep-author')").await;
+    let (status, sent) = call(
+        e,
+        "POST",
+        "/api/dms/RepReporter",
+        Some(&author),
+        json!({"body":"a harassing message"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    let dm = sent["message"]["id"].as_str().unwrap().to_string();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = sver::router(e.app.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let mut request = format!("ws://{address}/api/dms/socket")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", e.app.config.origin.parse().unwrap());
+    request
+        .headers_mut()
+        .insert("cookie", format!("sver_dev={reporter}").parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert_eq!(
+        report(e, &reporter, "dm_message", &dm).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        act(e, &staff, "dm_message", &dm, "remove_content").await.0,
+        StatusCode::OK
+    );
+    let removed = super::chat::next_json(&mut socket).await;
+    assert_eq!(
+        (&removed["type"], &removed["with"], &removed["id"]),
+        (&json!("dm_remove"), &json!("RepAuthor"), &json!(dm))
+    );
+    server.abort();
+    let (_, thread) = call(e, "GET", "/api/dms/RepAuthor", Some(&reporter), Value::Null).await;
+    assert!(
+        !thread.to_string().contains("harassing"),
+        "removed DM leaves the thread: {thread}"
     );
 
     // Live streams: only a public broadcast is reportable; removal stops it and queues the disconnect.

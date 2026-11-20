@@ -38,17 +38,34 @@ pub async fn bot(app: &App, channel: &str) -> Res<(&'static str, &'static str)> 
         .find(|b| b.0 == key)
         .unwrap_or(("volk", "VOLK")))
 }
-/// The bot says `text` in the channel's chat, unless the channel's banned words or link rule
-/// would refuse it.
-pub async fn say(app: &App, channel: &str, text: &str) -> Res<()> {
-    let rules: Option<(Vec<String>, bool)> =
+/// The channel's banned words and link rule, which the bot obeys like everyone else.
+async fn rules(app: &App, channel: &str) -> Res<(Vec<String>, bool)> {
+    Ok(
         sqlx::query_as("SELECT banned_words,block_links FROM chat_settings WHERE channel_id=$1")
             .bind(channel)
             .fetch_optional(&app.db)
-            .await?;
-    if let Some((words, links)) = rules
-        && crate::moderation::check_content(text, &words, links, false).is_err()
-    {
+            .await?
+            .unwrap_or_default(),
+    )
+}
+/// Whether the channel's rules would stop the bot saying `text`.
+fn blocked(rules: &(Vec<String>, bool), text: &str) -> bool {
+    crate::moderation::check_content(text, &rules.0, rules.1, false).is_err()
+}
+/// Refuses a command reply or timed message the bot could never say, instead of saving it.
+async fn sayable(app: &App, channel: &str, field: &'static str, text: &str) -> Res<()> {
+    if blocked(&rules(app, channel).await?, text) {
+        return Err(Fail::field(
+            field,
+            "Your chat's link rule or banned words would stop the bot saying this.",
+        ));
+    }
+    Ok(())
+}
+/// The bot says `text` in the channel's chat, unless the channel's banned words or link rule
+/// would refuse it.
+pub async fn say(app: &App, channel: &str, text: &str) -> Res<()> {
+    if blocked(&rules(app, channel).await?, text) {
         return Ok(());
     }
     let (key, name) = bot(app, channel).await?;
@@ -173,6 +190,15 @@ async fn try_respond(app: &App, channel: &str, user: &auth::User, body: &str) ->
 /// Every jobs tick: each live channel's due timed message is posted when chat has been active
 /// since its last one (and at least `every_minutes` after the stream started).
 pub async fn tick(app: &App) -> Res<()> {
+    // AutoMod reads only the last hour of strikes; older ones go in batches. A failure here never
+    // holds up the timers.
+    if sqlx::query("DELETE FROM automod_strikes WHERE ctid IN (SELECT ctid FROM automod_strikes WHERE at<now()-interval '1 hour' LIMIT 1000)")
+        .execute(&app.db)
+        .await
+        .is_err()
+    {
+        eprintln!("commands_event=automod_prune outcome=retry");
+    }
     let due: Vec<(String, String)> = sqlx::query_as("UPDATE chat_timers t SET last_sent_at=now() FROM broadcasts b
         WHERE b.owner_id=t.channel_id AND b.state='LIVE' AND t.enabled
           AND greatest(t.last_sent_at, b.started_at) <= now()-make_interval(mins=>t.every_minutes)
@@ -220,10 +246,19 @@ async fn list(State(app): State<App>, Path(name): Path<String>) -> Res<Json<Valu
 // ---- Creator Studio ----
 
 async fn view(app: &App, owner: &str) -> Res<Json<Value>> {
-    let commands: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('name',name,'reply',reply,'access',access,'cooldown_seconds',cooldown_seconds,'uses',uses) FROM chat_commands WHERE channel_id=$1 ORDER BY name")
+    let mut commands: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('name',name,'reply',reply,'access',access,'cooldown_seconds',cooldown_seconds,'uses',uses) FROM chat_commands WHERE channel_id=$1 ORDER BY name")
         .bind(owner).fetch_all(&app.db).await?;
-    let timers: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'body',body,'every_minutes',every_minutes,'enabled',enabled,'last_sent_at',last_sent_at) FROM chat_timers WHERE channel_id=$1 ORDER BY created_at")
+    let mut timers: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'body',body,'every_minutes',every_minutes,'enabled',enabled,'last_sent_at',last_sent_at) FROM chat_timers WHERE channel_id=$1 ORDER BY created_at")
         .bind(owner).fetch_all(&app.db).await?;
+    // Rules change after saving: flag what the bot would now refuse to say.
+    let rules = rules(app, owner).await?;
+    for (item, field) in commands
+        .iter_mut()
+        .map(|c| (c, "reply"))
+        .chain(timers.iter_mut().map(|t| (t, "body")))
+    {
+        item["blocked"] = blocked(&rules, item[field].as_str().unwrap_or_default()).into();
+    }
     let chosen: Option<(Option<String>, String, bool, bool)> = sqlx::query_as(
         "SELECT bot,bot_personality,bot_rivalry,bot_quips FROM chat_settings WHERE channel_id=$1",
     )
@@ -337,6 +372,7 @@ pub async fn store(
             "Choose who can use it and a cooldown of 0–3600 seconds.",
         ));
     }
+    sayable(app, owner, "reply", reply).await?;
     let count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM chat_commands WHERE channel_id=$1 AND name<>$2")
             .bind(owner)
@@ -407,6 +443,7 @@ async fn add_timer(
     if count >= MAX_TIMERS {
         return Err(Fail::bad("A channel can have up to 5 timed messages."));
     }
+    sayable(&app, &user.id, "body", body).await?;
     sqlx::query("INSERT INTO chat_timers(id,channel_id,body,every_minutes) VALUES($1,$2,$3,$4)")
         .bind(profiles::new_id())
         .bind(&user.id)
@@ -425,6 +462,9 @@ async fn change_timer(
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
     check_timer(&input)?;
+    if let Some(body) = &input.body {
+        sayable(&app, &user.id, "body", body).await?;
+    }
     sqlx::query("UPDATE chat_timers SET body=coalesce($3,body),every_minutes=coalesce($4,every_minutes),enabled=coalesce($5,enabled) WHERE id=$1 AND channel_id=$2")
         .bind(&id).bind(&user.id).bind(input.body.as_deref().map(str::trim)).bind(input.every_minutes).bind(input.enabled)
         .execute(&app.db).await?;
@@ -458,7 +498,8 @@ async fn starter(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
         "Welcome to the {channel} chat! Be kind, keep it on topic, and have fun. Follow so you know when we're live.".to_string(),
         30,
     )];
-    if !links.is_empty() {
+    // With links blocked the bot could never post the links timer.
+    if !links.is_empty() && !rules(&app, &user.id).await?.1 {
         starters.push((
             format!("Find {{channel}} elsewhere: {}", links.join(" · ")),
             45,

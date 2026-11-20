@@ -500,7 +500,7 @@ pub async fn automod(app: &App, channel: &str, user: &auth::User, body: &str) ->
             "The channel bot held your message. {warning}"
         )));
     }
-    sqlx::query("INSERT INTO channel_restrictions(channel_id,user_id,kind,until) VALUES($1,$2,'timeout',now()+make_interval(secs=>$3)) ON CONFLICT(channel_id,user_id,kind) DO UPDATE SET until=greatest(channel_restrictions.until,EXCLUDED.until)")
+    sqlx::query("INSERT INTO channel_restrictions(channel_id,user_id,kind,until) VALUES($1,$2,'timeout',now()+make_interval(secs=>$3)) ON CONFLICT(channel_id,user_id,kind) DO UPDATE SET until=greatest(channel_restrictions.until,EXCLUDED.until), created_at=CASE WHEN EXCLUDED.until>channel_restrictions.until THEN now() ELSE channel_restrictions.created_at END")
         .bind(channel).bind(&user.id).bind(f64::from(seconds)).execute(&mut *tx).await?;
     let detail = json!({"rule": broken, "seconds": seconds, "by": "bot"});
     let reason = format!("AutoMod: {broken}");
@@ -516,7 +516,9 @@ pub async fn automod(app: &App, channel: &str, user: &auth::User, body: &str) ->
         &reason,
     )
     .await?;
+    let cleared = moderation::clear_recent(&mut tx, channel, &user.id).await?;
     tx.commit().await?;
+    moderation::publish_cleared(app, cleared);
     let name: Option<String> =
         sqlx::query_scalar("SELECT display_name FROM channel_users WHERE id=$1")
             .bind(&user.id)

@@ -147,6 +147,68 @@ pub async fn exercise(e: &Env) {
     e.sql("DELETE FROM chat_timers WHERE channel_id='stream-owner'")
         .await;
 
+    // The bot obeys the link rule: Studio flags saved replies and timers it now blocks, and new
+    // ones with a link are refused when links are blocked.
+    e.call(
+        "PUT",
+        "/api/me/commands/discord",
+        json!({"reply":"Join discord.gg/sver","access":"everyone","cooldown_seconds":0}),
+    )
+    .await;
+    e.call(
+        "POST",
+        "/api/me/timers",
+        json!({"body":"See example.com","every_minutes":10}),
+    )
+    .await;
+    let view = e.call("GET", "/api/me/commands", Value::Null).await;
+    assert_eq!(
+        (
+            &view["commands"][0]["blocked"],
+            &view["timers"][0]["blocked"]
+        ),
+        (&json!(false), &json!(false)),
+        "{view}"
+    );
+    e.sql("INSERT INTO chat_settings(channel_id,block_links) VALUES('stream-owner',true) ON CONFLICT(channel_id) DO UPDATE SET block_links=true").await;
+    let view = e.call("GET", "/api/me/commands", Value::Null).await;
+    assert_eq!(
+        (
+            &view["commands"][0]["blocked"],
+            &view["timers"][0]["blocked"]
+        ),
+        (&json!(true), &json!(true)),
+        "{view}"
+    );
+    let timer = view["timers"][0]["id"].as_str().unwrap().to_string();
+    for (method, path, body) in [
+        (
+            "PUT",
+            "/api/me/commands/site".to_string(),
+            json!({"reply":"see example.com","access":"everyone","cooldown_seconds":0}),
+        ),
+        (
+            "POST",
+            "/api/me/timers".to_string(),
+            json!({"body":"Visit example.com","every_minutes":10}),
+        ),
+        (
+            "PATCH",
+            format!("/api/me/timers/{timer}"),
+            json!({"body":"Visit example.com"}),
+        ),
+    ] {
+        let (status, refused) = e.request(method, &path, body, true, true, false).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert!(refused.to_string().contains("link rule"), "{refused}");
+    }
+    e.sql("UPDATE chat_settings SET block_links=false WHERE channel_id='stream-owner'")
+        .await;
+    e.sql("DELETE FROM chat_commands WHERE channel_id='stream-owner'")
+        .await;
+    e.sql("DELETE FROM chat_timers WHERE channel_id='stream-owner'")
+        .await;
+
     e.sql("INSERT INTO users(id,email,username,email_verified,date_of_birth) VALUES('cm-owner','cm@example.test','CmOwner',true,'1990-01-01')").await;
     e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,alert_state) VALUES('cm-b','cm-owner','cm-b',1,'LIVE','s','v','c',now()-interval '20 minutes',now(),now(),'skipped')").await;
     e.sql("INSERT INTO chat_timers(id,channel_id,body,every_minutes) VALUES('cm-t','cm-owner','Follow {channel}! Live for {uptime}.',10)").await;
