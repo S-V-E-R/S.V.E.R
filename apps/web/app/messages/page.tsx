@@ -1,7 +1,11 @@
 "use client";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Avatar } from "../../components/Avatar";
+import { emoteLookup, SIGNATURE, useSignatures } from "../../components/Chat";
+import { ChatDock } from "../../components/ChatDock";
+import type { ChannelEmote } from "../../components/Emote";
+import { SignatureEmote } from "../../components/SignatureEmote";
 import { ReportButton } from "../../components/Report";
 import { ArrowIcon, LockIcon, MoreIcon, MutedIcon } from "../../components/shell/Icons";
 import { PlayerCardButton } from "../../components/UserChip";
@@ -36,6 +40,16 @@ const key = (c: Conversation) => c.with.username?.toLowerCase();
 const time = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 /** A page of a conversation (dms.rs PAGE): a full page means there may be older ones. */
 const PAGE = 50;
+const TOKENS = new RegExp(`(${SIGNATURE.source})`);
+
+/** A DM's text with signature emotes (`username/Code`, docs/CHANNEL_ADDITIONS.md) shown as in chat; an
+ *  unresolved token stays text. Other emotes never render here: DMs belong to no channel. */
+function DmText({ text, signatures }: { text: string; signatures: Map<string, ChannelEmote> }) {
+  return <>{text.split(TOKENS).map((part, i) => {
+    const emote = i % 2 ? signatures.get(part.toLowerCase()) : undefined;
+    return emote?.owner ? <SignatureEmote key={i} emote={emote} owner={emote.owner} /> : part;
+  })}</>;
+}
 
 /** Direct messages (docs/COMMUNITY.md "Direct messages"). `?with=username` opens a conversation. */
 export default function Messages() {
@@ -47,6 +61,7 @@ export default function Messages() {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const bottom = useRef<HTMLLIElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
   // Follow new messages only while the reader is at the bottom; otherwise offer a button.
   const follow = useRef(true);
   const [behind, setBehind] = useState(false);
@@ -205,6 +220,20 @@ export default function Messages() {
     if (!newestId) return;
     if (follow.current || newestMine) { bottom.current?.scrollIntoView({ block: "nearest" }); follow.current = true; setBehind(false); } else setBehind(true);
   }, [newestId, newestMine]);
+  // Signature emotes: plaintext bodies are looked up live, as in chat. Private text never goes to the
+  // server; it resolves only from those lookups and the followed channels' list (the dock's Signature tab).
+  const bodies = useMemo(() => (thread?.messages ?? []).flatMap(m => !m.private && m.body ? [{ body: m.body }] : []), [thread]);
+  const [looked] = useSignatures(bodies, true);
+  const [followed, setFollowed] = useState<ChannelEmote[]>([]);
+  const hasPrivate = !!thread?.messages.some(m => m.private);
+  useEffect(() => {
+    if (!hasPrivate) return;
+    const load = () => void send<{ emotes: ChannelEmote[] }>("GET", "/api/me/signature-emotes").then(r => { if (r.ok) setFollowed(r.data.emotes); });
+    load();
+    const timer = setInterval(() => { if (!document.hidden) load(); }, 90000);
+    return () => clearInterval(timer);
+  }, [hasPrivate]);
+  const signatures = useMemo(() => emoteLookup([...looked, ...(hasPrivate ? followed : [])]).slash, [looked, followed, hasPrivate]);
   // Decrypt private messages on this device as they arrive.
   useEffect(() => {
     if (!device || !thread) return;
@@ -377,7 +406,7 @@ export default function Messages() {
               const reveal = last || shown === m.id;
               const toggle = () => { if (!last) setShown(s => s === m.id ? null : m.id); };
               return <li key={m.id} className={`${mine(m) ? "mine" : "theirs"}${last ? " run-end" : ""}`}>
-                <span className="messages-text" {...(last ? {} : { role: "button", tabIndex: 0, "aria-expanded": shown === m.id, title: "Show the time and Report", onClick: toggle, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } })}><span className="sr-only">{mine(m) ? "You" : thread.with.display_name}: </span>{m.private ? <><span className="messages-lock" title="Private"><LockIcon size={12} /><span className="sr-only">Private: </span></span>{plain[m.id]?.body ?? (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : m.body}</span>
+                <span className="messages-text" {...(last ? {} : { role: "button", tabIndex: 0, "aria-expanded": shown === m.id, title: "Show the time and Report", onClick: toggle, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } })}><span className="sr-only">{mine(m) ? "You" : thread.with.display_name}: </span>{m.private ? <><span className="messages-lock" title="Private"><LockIcon size={12} /><span className="sr-only">Private: </span></span>{plain[m.id] ? <DmText text={plain[m.id]!.body} signatures={signatures} /> : (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : <DmText text={m.body ?? ""} signatures={signatures} />}</span>
                 {reveal && <span className="messages-meta small-text">{time(m.created_at)}{!mine(m) && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>}
               </li>;
             })}
@@ -386,13 +415,18 @@ export default function Messages() {
           <p className="sr-only" aria-live="polite">{spoken}</p>
           {behind && <button type="button" className="small messages-newest" onClick={toNewest}>New messages below</button>}
           {error && <p role="alert" className="form-message error messages-pad">{error}</p>}
-          {thread.can_send ? <form onSubmit={submit} className="messages-composer">
+          {thread.can_send ? <><form onSubmit={submit} className="messages-composer">
             {LINK.test(draft) && <p className="small-text messages-link-note" role="status">Links can lead anywhere. Only send ones you trust, and be careful opening links you receive.</p>}
             <label htmlFor="dm-input" className="sr-only">Message</label>
             {/* Enter sends with a keyboard; touch keyboards have no Shift+Enter, so there Enter is a new line. */}
-            <textarea id="dm-input" value={draft} placeholder={thread.private ? "Private message" : `Message @${thread.with.username}`} onChange={e => setDraft(e.target.value)} maxLength={1000} rows={1} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
+            <textarea ref={input} id="dm-input" value={draft} placeholder={thread.private ? "Private message" : `Message @${thread.with.username}`} onChange={e => setDraft(e.target.value)} maxLength={1000} rows={1} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
             <button type="submit" disabled={!draft.trim() || sending}>{sending ? "Sending…" : "Send"}</button>
-          </form> : <p className="muted messages-composer" role="status">{thread.reason}</p>}
+          </form>
+          {/* Outside the form, so Enter in its search box doesn't send the message. */}
+          <div className="messages-dock">
+            <ChatDock dm username="" account={me} emotes={[]} shared rewardsVersion={0} onHighlight={() => {}}
+              onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 1000)); input.current?.focus(); }} />
+          </div></> : <p className="muted messages-composer" role="status">{thread.reason}</p>}
         </>}
       </section>
     </div>
