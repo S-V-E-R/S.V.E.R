@@ -154,17 +154,12 @@ pub async fn recent(app: &App, channel: &str, limit: i64) -> Res<Vec<Value>> {
     rows.reverse();
     Ok(rows)
 }
-/// Bidi, zero-width and other invisible format characters: the same list as `text::invisible`
-/// (contract C3); switch to that once it lands.
-fn invisible(c: char) -> bool {
-    matches!(c as u32, 0x00AD | 0x034F | 0x061C | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF)
-}
 /// Outside text as one plain line: control characters become spaces and invisible ones are
 /// dropped (they come from other platforms, so they're stripped rather than refused).
 fn clean(text: &str) -> String {
     let text: String = text
         .chars()
-        .filter(|c| !invisible(*c))
+        .filter(|c| !crate::text::invisible(*c))
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     text.trim().chars().take(500).collect()
