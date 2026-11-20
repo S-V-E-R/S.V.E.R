@@ -628,26 +628,31 @@ pub async fn chat_role(
     }
     Ok(None)
 }
-async fn chat_actor(app: &App, jar: &CookieJar, id: &str) -> Res<(auth::User, Vec<String>)> {
+/// A current shared-chat moderator, the members and their role in the shared chat.
+async fn chat_actor(
+    app: &App,
+    jar: &CookieJar,
+    id: &str,
+) -> Res<(auth::User, Vec<String>, moderation::Role)> {
     let user = profiles::signed_in(app, jar).await?;
     let members = chat_context(app, id, Some(&user.id)).await?;
-    if chat_role(app, &members, &user).await?.is_none() {
-        return Err(Fail::denied("You can't moderate this shared chat."));
-    }
-    Ok((user, members))
+    let role = chat_role(app, &members, &user)
+        .await?
+        .ok_or_else(|| Fail::denied("You can't moderate this shared chat."))?;
+    Ok((user, members, role))
 }
 async fn chat_moderation(
     State(app): State<App>,
     jar: CookieJar,
     Path(id): Path<String>,
 ) -> Res<Json<Value>> {
-    let (user, members) = chat_actor(&app, &jar, &id).await?;
+    let (_, _, role) = chat_actor(&app, &jar, &id).await?;
     let mut restrictions:Vec<Value>=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT jsonb_build_object('user',{},'kind',r.kind,'until',r.until) FROM squad_restrictions r JOIN channel_users c ON c.id=r.user_id WHERE r.squad_id=$1 AND (r.kind='ban' OR r.until>now())",profiles::chip_sql("c")))).bind(&id).fetch_all(&app.db).await?;
     for r in &mut restrictions {
         profiles::hydrate(&app, r);
     }
     Ok(Json(
-        json!({"role":chat_role(&app,&members,&user).await?.map(|r|r.name()),"restrictions":restrictions}),
+        json!({"role":role.name(),"restrictions":restrictions}),
     ))
 }
 #[derive(Deserialize)]
@@ -655,16 +660,22 @@ struct Restrict {
     username: String,
     kind: String,
     seconds: Option<i64>,
+    #[serde(default)]
     reason: String,
 }
+/// A shared-chat timeout or ban works like a channel one: it acts now and, given without a
+/// reason, waits for review. It is logged with evidence in every member's channel (Studio → Chat,
+/// where undoing it lifts it here), and the person's lines from the last 10 minutes leave the
+/// shared chat.
 async fn restrict(
     State(app): State<App>,
     jar: CookieJar,
     Path(id): Path<String>,
     Json(input): Json<Restrict>,
 ) -> Res<Json<Value>> {
-    let (user, members) = chat_actor(&app, &jar, &id).await?;
-    let reason = moderation::reason(&input.reason)?;
+    let (user, members, role) = chat_actor(&app, &jar, &id).await?;
+    let review = input.reason.trim().is_empty();
+    let reason = moderation::optional_reason(&input.reason, moderation::NO_REASON_YET)?;
     let until = match (input.kind.as_str(), input.seconds) {
         ("ban", None) => None,
         ("timeout", Some(s)) if (60..=1_209_600).contains(&s) => {
@@ -687,7 +698,25 @@ async fn restrict(
             return Err(Fail::denied("You can't restrict this person here."));
         }
     }
-    sqlx::query("INSERT INTO squad_restrictions(squad_id,user_id,kind,until) VALUES($1,$2,$3,$4) ON CONFLICT(squad_id,user_id,kind) DO UPDATE SET until=$4").bind(&id).bind(&target.id).bind(&input.kind).bind(until).execute(&mut *tx).await?;
+    // The stored end (as Postgres rounds it), so undoing on review lifts only this restriction.
+    let until: Option<DateTime<Utc>> = sqlx::query_scalar("INSERT INTO squad_restrictions(squad_id,user_id,kind,until) VALUES($1,$2,$3,$4) ON CONFLICT(squad_id,user_id,kind) DO UPDATE SET until=$4 RETURNING until").bind(&id).bind(&target.id).bind(&input.kind).bind(until).fetch_one(&mut *tx).await?;
+    for channel in &members {
+        moderation::log_restriction(
+            &mut tx,
+            channel,
+            &user.id,
+            role,
+            &input.kind,
+            &target.id,
+            json!({"squad": id, "seconds": input.seconds, "until": until}),
+            &reason,
+            review,
+        )
+        .await?;
+    }
+    // After the evidence, which still shows them.
+    let cleared: moderation::Cleared = sqlx::query_as("UPDATE chat_messages SET deleted_at=now() WHERE squad_id=$1 AND author_id=$2 AND deleted_at IS NULL AND created_at>now()-interval '10 minutes' RETURNING squad_id,origin,id")
+        .bind(&id).bind(&target.id).fetch_all(&mut *tx).await?;
     crate::safety::audit(
         &mut tx,
         Some(&user.id),
@@ -702,7 +731,8 @@ async fn restrict(
     .await?;
     tx.commit().await?;
     app.chat.access_changed();
-    Ok(Json(json!({"saved":true})))
+    moderation::publish_cleared(&app, cleared);
+    Ok(Json(json!({"saved":true,"review":review})))
 }
 #[derive(Deserialize)]
 struct Reason {
@@ -715,8 +745,8 @@ async fn lift(
     Path((id, name, kind)): Path<(String, String, String)>,
     Json(input): Json<Reason>,
 ) -> Res<Json<Value>> {
-    let (user, members) = chat_actor(&app, &jar, &id).await?;
-    let reason = moderation::reason(&input.reason)?;
+    let (user, members, role) = chat_actor(&app, &jar, &id).await?;
+    let reason = moderation::optional_reason(&input.reason, "Lifted")?;
     if !matches!(kind.as_str(), "ban" | "timeout") {
         return Err(Fail::bad("Choose a ban or timeout."));
     }
@@ -725,12 +755,34 @@ async fn lift(
     let target = profiles::account_by_name(&mut tx, &name)
         .await?
         .ok_or_else(Fail::missing)?;
-    sqlx::query("DELETE FROM squad_restrictions WHERE squad_id=$1 AND user_id=$2 AND kind=$3")
-        .bind(&id)
-        .bind(&target.id)
-        .bind(&kind)
-        .execute(&mut *tx)
-        .await?;
+    let lifted =
+        sqlx::query("DELETE FROM squad_restrictions WHERE squad_id=$1 AND user_id=$2 AND kind=$3")
+            .bind(&id)
+            .bind(&target.id)
+            .bind(&kind)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            == 1;
+    if lifted {
+        for channel in &members {
+            moderation::log(
+                &mut tx,
+                channel,
+                &user.id,
+                role,
+                &format!("lift_{kind}"),
+                Some(&target.id),
+                None,
+                json!({"squad": id}),
+                &reason,
+            )
+            .await?;
+        }
+    }
+    // ponytail: no index on detail->>'squad'; lifts are rare and manual, index it if the log grows huge.
+    sqlx::query("UPDATE channel_moderation_log SET needs_review=false WHERE detail->>'squad'=$1 AND target_id=$2 AND action=$3 AND needs_review")
+        .bind(&id).bind(&target.id).bind(&kind).execute(&mut *tx).await?;
     crate::safety::audit(
         &mut tx,
         Some(&user.id),
@@ -752,8 +804,8 @@ async fn delete_message(
     Path((id, message)): Path<(String, String)>,
     Json(input): Json<Reason>,
 ) -> Res<Json<Value>> {
-    let (user, members) = chat_actor(&app, &jar, &id).await?;
-    crate::chat::remove_shared(&app, &id, &message, &user, &members, &input.reason).await?;
+    let (user, members, role) = chat_actor(&app, &jar, &id).await?;
+    crate::chat::remove_shared(&app, &id, &message, &user, role, &members, &input.reason).await?;
     Ok(Json(json!({"deleted":true})))
 }
 pub fn routes() -> Router<App> {
