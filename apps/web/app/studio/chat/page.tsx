@@ -12,7 +12,7 @@ type View = {
   moderators: Chip[];
   restrictions: { user: Chip; kind: "timeout" | "ban"; until: string | null }[];
   log: { action: string; actor_role: string; actor: string | null; target: string | null; reason: string; created_at: string; detail?: Evidence }[];
-  reviews: ({ id: string; action: "timeout" | "ban"; actor: string | null; target: string | null; created_at: string; theirs: boolean } & Evidence)[];
+  reviews: ({ id: string; action: "timeout" | "ban"; actor: string | null; target: string | null; created_at: string; theirs: boolean; shared?: boolean; channel_ban?: boolean } & Evidence)[];
 };
 type Evidence = { chat?: { user: string; body: string; at: string; deleted: boolean }[]; clip?: string | null };
 
@@ -127,6 +127,7 @@ export default function ChatStudio() {
     {view.reviews.length > 0 && <Section title={`Waiting for review (${view.reviews.length})`} intro="Timeouts and bans take effect right away. Give each one a reason to keep it, or undo it. Unreviewed bans stay in place.">
       <ul className="list">{view.reviews.map(r => <li key={r.id} className="stack">
         <span><strong>{r.action === "ban" ? "Ban" : "Timeout"}</strong> of @{r.target} · <span className="muted">{when(r.created_at)}</span>{r.theirs && <> · by @{r.actor} <span className="badge">No reason given</span></>}</span>
+        {r.shared && <span className="muted small">In a co-stream&apos;s shared chat.{r.channel_ban ? " It also banned them from this channel, after the co-stream too; undo lifts both." : ""}</span>}
         <EvidenceView chat={r.chat} clip={r.clip} target={r.target} />
         <form className="row" onSubmit={e => review(e, r.id)}>
           <label className="field"><span>Reason</span><input name="reason" maxLength={500} /></label>

@@ -221,6 +221,8 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
   const [restrictions, setRestrictions] = useState<{ user: Chip; kind: string; until: string | null }[]>([]);
   // In a shared chat: the member channels whose linked-platform lines this person may hide or mute.
   const [moderates, setModerates] = useState<string[]>([]);
+  // In a shared chat: the member channels a ban here also bans from, after the co-stream too.
+  const [banChannels, setBanChannels] = useState<string[]>([]);
   const [pinned, setPinned] = useState<Message | null>(null);
   const [emotes, setEmotes] = useState<ChannelEmote[]>([]);
   const [emotesVersion, setEmotesVersion] = useState(0);
@@ -307,8 +309,8 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
   // Owner, moderators and staff get per-message actions; the server enforces every permission.
   const loadRole = useCallback(async () => {
     if (!account) return;
-    const r = await send<{ role: string; spike?: boolean; followers_only_until?: string | null; restrictions?: { user: Chip; kind: string; until: string | null }[]; moderates?: string[] }>("GET", `${path}/moderation`);
-    if (r.ok) { setRole(r.data.role); setSpike(!!r.data.spike); setFollowersOnly(r.data.followers_only_until ?? null); setRestrictions(r.data.restrictions ?? []); setModerates(r.data.moderates ?? []); }
+    const r = await send<{ role: string; spike?: boolean; followers_only_until?: string | null; restrictions?: { user: Chip; kind: string; until: string | null }[]; moderates?: string[]; bans?: string[] }>("GET", `${path}/moderation`);
+    if (r.ok) { setRole(r.data.role); setSpike(!!r.data.spike); setFollowersOnly(r.data.followers_only_until ?? null); setRestrictions(r.data.restrictions ?? []); setModerates(r.data.moderates ?? []); setBanChannels(r.data.bans ?? []); }
     else { setRole(null); setModerates([]); }
   }, [account, path]);
   useLoad(loadRole);
@@ -442,7 +444,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
   // Act first, review later: no reason now; the moderator gives one in Studio → Chat after the stream
   // (a shared co-stream chat's shows up in every member's). A ban always confirms.
   async function restrict(kind: "timeout" | "ban", who: string, minutes?: number) {
-    if (kind === "ban" && !window.confirm(squad ? `Ban @${who} from this co-stream's shared chat? It ends with the co-stream and doesn't block watching.` : `Ban @${who} from this chat? They also can't watch here while signed in.`)) return false;
+    if (kind === "ban" && !window.confirm(squad ? `Ban @${who} from this co-stream's shared chat?${banChannels.length ? ` This also bans them from ${banChannels.map(c => `@${c}`).join(", ")}: they can't chat or watch there while signed in, after the co-stream too.` : " It ends with the co-stream and doesn't block watching."}` : `Ban @${who} from this chat? They also can't watch here while signed in.`)) return false;
     const result = await send("POST", `${path}/restrictions`, { username: who, kind, seconds: minutes === undefined ? undefined : minutes * 60 });
     if (!result.ok) { setError(result.error); return false; }
     if (squad) await loadRole();
@@ -647,7 +649,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
       </ChatLine>)}
     </ol>
     {behind && <button type="button" className="small chat-newest" onClick={toNewest}>New messages below</button>}
-    {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt("Reason for lifting this restriction (optional)"); if (reason === null || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, reason.trim() ? { reason: reason.trim() } : {}); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
+    {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt(r.kind === "ban" ? "Reason for lifting this ban (optional). It also lifts the channel bans it added." : "Reason for lifting this restriction (optional)"); if (reason === null || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, reason.trim() ? { reason: reason.trim() } : {}); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
     {account ? <form onSubmit={submit} className="chat-form">
       {reply && <div className="chat-reply-draft"><span>Replying to @{reply.username}: {reply.body}</span><button type="button" className="small quiet" onClick={() => setReply(null)}>Cancel reply</button></div>}
       {outsideReply && <div className="chat-reply-draft"><span>Replying on {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} to {outsideReply.name}, as your {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} account</span><button type="button" className="small quiet" onClick={() => setOutsideReply(null)}>Cancel reply</button></div>}
