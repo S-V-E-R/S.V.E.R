@@ -379,7 +379,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
         const data = JSON.parse(event.data) as Event;
         // A co-stream member's CrowdSync and raid events name their own channel.
         const channel = ("source" in data && data.source ? data.source : username).toLowerCase();
-        if (data.type === "snapshot") { attempt = 0; merge(data.messages, true, data.now); settleIn(data.messages); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); }
+        if (data.type === "snapshot") { attempt = 0; merge(data.messages, true, data.now); settleIn(data.messages); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); setCredit(data.credit ?? null); }
         else if (data.type === "protect") setFollowersOnly(data.until);
         else if (data.type === "subs_only") setSubsOnly(data.on);
         else if (data.type === "emotes") {

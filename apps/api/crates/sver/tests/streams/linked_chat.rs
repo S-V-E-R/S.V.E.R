@@ -665,6 +665,30 @@ async fn co_stream(e: &Env) {
     .await
     .unwrap();
     assert_eq!(stored, 2, "stored once, in the partner's channel");
+    // The host's banned words apply to the partner's lines while merged.
+    e.sql("INSERT INTO chat_settings(channel_id,banned_words) VALUES('stream-owner','{lcforbid}') ON CONFLICT(channel_id) DO UPDATE SET banned_words=array_append(chat_settings.banned_words,'lcforbid')").await;
+    webhook(
+        e,
+        "notification",
+        partner_chat("p-bad", "say lcforbid"),
+        true,
+    )
+    .await;
+    webhook(e, "notification", partner_chat("p-ok", "fine"), true).await;
+    assert_eq!(
+        next_of(&mut shared, "message").await["message"]["id"],
+        "twitch:p-ok",
+        "the refused line never shows"
+    );
+    e.sql("UPDATE chat_settings SET banned_words=array_remove(banned_words,'lcforbid') WHERE channel_id='stream-owner'").await;
+    e.sql("DELETE FROM outside_chat_messages WHERE id='twitch:p-ok'")
+        .await;
+    let refused: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM outside_chat_messages WHERE id='twitch:p-bad'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(refused, 0, "nor is it stored");
 
     // The partner's moderator may hide it; the host and a non-member's moderator may not.
     let (_, view) = call(

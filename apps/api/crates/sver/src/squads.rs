@@ -812,14 +812,16 @@ async fn lift(
             .await?
             .rows_affected()
             == 1;
-    // The channel bans this ban gave go with it, in the channels still in the co-stream.
+    // The channel bans this ban gave go with it, also in channels that have left the co-stream
+    // since (their lift is logged there too).
     let channel_bans = if lifted && kind == "ban" {
-        moderation::lift_squad_channel_bans(&mut tx, &id, &target.id, &members).await?
+        moderation::lift_squad_channel_bans(&mut tx, &id, &target.id, None, None).await?
     } else {
         Vec::new()
     };
     if lifted {
-        for channel in &members {
+        let gone = channel_bans.iter().filter(|c| !members.contains(c));
+        for channel in members.iter().chain(gone) {
             moderation::log(
                 &mut tx,
                 channel,

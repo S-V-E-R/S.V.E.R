@@ -44,10 +44,10 @@ const TOKENS = new RegExp(`(${SIGNATURE.source})`);
 
 /** A DM's text with signature emotes (`username/Code`, docs/CHANNEL_ADDITIONS.md) shown as in chat; an
  *  unresolved token stays text. Other emotes never render here: DMs belong to no channel. */
-function DmText({ text, signatures }: { text: string; signatures: Map<string, ChannelEmote> }) {
+function DmText({ text, signatures, inButton }: { text: string; signatures: Map<string, ChannelEmote>; inButton: boolean }) {
   return <>{text.split(TOKENS).map((part, i) => {
     const emote = i % 2 ? signatures.get(part.toLowerCase()) : undefined;
-    return emote?.owner ? <SignatureEmote key={i} emote={emote} owner={emote.owner} /> : part;
+    return emote?.owner ? <SignatureEmote key={i} emote={emote} owner={emote.owner} focusable={!inButton} /> : part;
   })}</>;
 }
 
@@ -233,6 +233,11 @@ export default function Messages() {
     const timer = setInterval(() => { if (!document.hidden) load(); }, 90000);
     return () => clearInterval(timer);
   }, [hasPrivate]);
+  // Every followed signature's image loads up front, so which ones a private message draws never
+  // shows in image requests (they're cache hits by then).
+  useEffect(() => {
+    for (const e of followed) { const img = new Image(); img.srcset = `${e.image["56"]} 2x, ${e.image["112"]} 4x`; img.src = e.image[28]; }
+  }, [followed]);
   const signatures = useMemo(() => emoteLookup([...looked, ...(hasPrivate ? followed : [])]).slash, [looked, followed, hasPrivate]);
   // Decrypt private messages on this device as they arrive.
   useEffect(() => {
@@ -406,7 +411,7 @@ export default function Messages() {
               const reveal = last || shown === m.id;
               const toggle = () => { if (!last) setShown(s => s === m.id ? null : m.id); };
               return <li key={m.id} className={`${mine(m) ? "mine" : "theirs"}${last ? " run-end" : ""}`}>
-                <span className="messages-text" {...(last ? {} : { role: "button", tabIndex: 0, "aria-expanded": shown === m.id, title: "Show the time and Report", onClick: toggle, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } })}><span className="sr-only">{mine(m) ? "You" : thread.with.display_name}: </span>{m.private ? <><span className="messages-lock" title="Private"><LockIcon size={12} /><span className="sr-only">Private: </span></span>{plain[m.id] ? <DmText text={plain[m.id]!.body} signatures={signatures} /> : (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : <DmText text={m.body ?? ""} signatures={signatures} />}</span>
+                <span className="messages-text" {...(last ? {} : { role: "button", tabIndex: 0, "aria-expanded": shown === m.id, title: "Show the time and Report", onClick: toggle, onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } })}><span className="sr-only">{mine(m) ? "You" : thread.with.display_name}: </span>{m.private ? <><span className="messages-lock" title="Private"><LockIcon size={12} /><span className="sr-only">Private: </span></span>{plain[m.id] ? <DmText text={plain[m.id]!.body} signatures={signatures} inButton={!last} /> : (m.id in plain ? <em className="muted">This message can&apos;t be read on this device.</em> : "…")}</> : <DmText text={m.body ?? ""} signatures={signatures} inButton={!last} />}</span>
                 {reveal && <span className="messages-meta small-text">{time(m.created_at)}{!mine(m) && (!m.private || m.id in plain) && <> · <ReportButton target={{ target_type: "dm_message", target_id: m.id, ...(m.private && plain[m.id] ? { evidence: { body: plain[m.id]!.body, frank: plain[m.id]!.frank } } : {}) }} /></>}</span>}
               </li>;
             })}

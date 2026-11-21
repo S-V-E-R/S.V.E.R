@@ -708,6 +708,40 @@ pub async fn exercise(e: &Env) {
     e.sql("DELETE FROM channel_emotes WHERE id LIKE 'sq-%'")
         .await;
     drop((guest, bystander));
+    // The socket's snapshot names the member channel the viewer's lines credit (the dock's
+    // Rewards), and emote combos count the whole shared room, whichever channel each line
+    // credits, playing on the stream of the channel whose emote it is.
+    e.sql("INSERT INTO engagement(channel_id,user_id,balance,earned) VALUES('team-2','team-fan',1000,1000)").await;
+    let mut credited = open(Some(&fan)).await;
+    assert_eq!(
+        super::chat::next_of(&mut credited, "snapshot").await["credit"],
+        "TeamPerson2"
+    );
+    e.sql("INSERT INTO channel_emotes(id,channel_id,code,image_key) VALUES('sq-combo','team-2','ComboHype','emotes/sq-combo')").await;
+    for token in tokens.iter().take(4).chain([&fan]) {
+        e.sql("DELETE FROM rate_limits WHERE key LIKE 'chat-%'")
+            .await;
+        ok(
+            e,
+            token,
+            "POST",
+            &chat,
+            json!({"id":id(),"body":"ComboHype"}),
+        )
+        .await;
+    }
+    let shower = super::chat::next_of(&mut credited, "board_effect").await;
+    assert_eq!(
+        (&shower["label"], &shower["source"]),
+        (&json!("ComboHype"), &json!("TeamPerson2"))
+    );
+    drop(credited);
+    e.sql("DELETE FROM channel_emotes WHERE id='sq-combo'")
+        .await;
+    e.sql("DELETE FROM chat_messages WHERE body='ComboHype'")
+        .await;
+    e.sql("DELETE FROM engagement WHERE user_id='team-fan'")
+        .await;
     // In shared chat a sub badge names its channel: the host's when they sub there, otherwise
     // the member channel they've subbed to longest.
     e.sql("INSERT INTO channel_subs(channel_id,user_id,tier,paid_through,months) VALUES('team-2','team-fan',1,now()+interval '1 month',3),('team-3','team-fan',2,now()+interval '1 month',7)").await;
@@ -981,6 +1015,58 @@ pub async fn exercise(e: &Env) {
     shared_lift().await;
     assert_eq!(fan_bans().await, ["team-1"], "a ban of its own stays");
     e.sql("DELETE FROM channel_restrictions WHERE user_id='team-fan'")
+        .await;
+    // Undoing one shared ban on review lifts the channel bans it added, never those of a later
+    // shared ban that another channel's owner gave.
+    let restrictions = format!("{chat}/restrictions");
+    ok(
+        e,
+        &tokens[5],
+        "POST",
+        &restrictions,
+        json!({"username":"TeamViewer","kind":"ban"}),
+    )
+    .await;
+    ok(
+        e,
+        c,
+        "POST",
+        &restrictions,
+        json!({"username":"TeamViewer","kind":"ban","reason":"Synthetic ban"}),
+    )
+    .await;
+    assert_eq!(fan_bans().await, ["team-1", "team-2"]);
+    let review: String = sqlx::query_scalar("SELECT id FROM channel_moderation_log WHERE channel_id='team-1' AND detail->>'squad'=$1 AND action='ban' AND needs_review")
+        .bind(&squad).fetch_one(&e.app.db).await.unwrap();
+    ok(
+        e,
+        &tokens[5],
+        "POST",
+        &format!("/api/channels/TeamPerson1/chat/reviews/{review}"),
+        json!({"keep":false}),
+    )
+    .await;
+    assert_eq!(
+        fan_bans().await,
+        ["team-2"],
+        "team-2's own shared ban stays"
+    );
+    // Lifting the shared ban lifts its channel bans in channels that have left since, too
+    // (team-4 stands in for one), and logs the lift there.
+    shared_ban().await;
+    sqlx::query("INSERT INTO channel_moderation_log(id,channel_id,actor_id,actor_role,action,target_id,detail,reason,created_at) SELECT 'gone-'||id,'team-4',actor_id,actor_role,action,target_id,detail,reason,created_at FROM channel_moderation_log WHERE channel_id='team-1' AND detail->>'squad'=$1 AND action='ban' AND detail @> '{\"channel_ban\":true}' ORDER BY created_at DESC LIMIT 1")
+        .bind(&squad).execute(&e.app.db).await.unwrap();
+    e.sql("INSERT INTO channel_restrictions(channel_id,user_id,kind,created_at) SELECT 'team-4',user_id,kind,created_at FROM channel_restrictions WHERE channel_id='team-1' AND user_id='team-fan'").await;
+    assert_eq!(fan_bans().await, ["team-1", "team-2", "team-4"]);
+    shared_lift().await;
+    assert!(
+        fan_bans().await.is_empty(),
+        "every shared ban's channel bans"
+    );
+    let gone: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_moderation_log WHERE channel_id='team-4' AND action='lift_ban' AND detail @> '{\"channel_ban\":true}'")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(gone, 1);
+    e.sql("DELETE FROM channel_moderation_log WHERE channel_id='team-4'")
         .await;
     ok(e, &fan, "GET", &chat, Value::Null).await;
     // Shared chat credits one member channel per line: where the chatter has the most lifetime

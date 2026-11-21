@@ -804,18 +804,21 @@ pub(crate) async fn clear_recent(
         RETURNING coalesce(m.squad_id,m.channel_id),m.origin,m.id"))
         .bind(channel).bind(target).fetch_all(db).await?)
 }
-/// Lifts the channel bans a shared-chat ban on `target` gave in any of `channels` (its log rows
-/// carry `channel_ban`), returning those channels. A ban a channel gave on its own, before or
-/// since, starts at a different time, so it stays.
+/// Lifts the channel bans shared-chat bans on `target` gave (their log rows carry `channel_ban`),
+/// returning those channels: only the one ban logged as `action` (a log ID) when given, and only
+/// in `channels` when given. A ban a channel gave on its own, before or since, starts at a
+/// different time, so it stays.
 pub(crate) async fn lift_squad_channel_bans(
     db: &mut PgConnection,
     squad: &str,
     target: &str,
-    channels: &[String],
+    channels: Option<&[String]>,
+    action: Option<&str>,
 ) -> Res<Vec<String>> {
-    Ok(sqlx::query_scalar("DELETE FROM channel_restrictions r USING channel_moderation_log l WHERE l.detail->>'squad'=$1 AND l.target_id=$2 AND l.action='ban' AND l.detail @> '{\"channel_ban\":true}' AND l.channel_id=ANY($3)
+    Ok(sqlx::query_scalar("DELETE FROM channel_restrictions r USING channel_moderation_log l WHERE l.detail->>'squad'=$1 AND l.target_id=$2 AND l.action='ban' AND l.detail @> '{\"channel_ban\":true}'
+        AND ($3::text[] IS NULL OR l.channel_id=ANY($3)) AND ($4::text IS NULL OR l.created_at=(SELECT created_at FROM channel_moderation_log WHERE id=$4))
         AND r.channel_id=l.channel_id AND r.user_id=$2 AND r.kind='ban' AND r.created_at=l.created_at RETURNING r.channel_id")
-        .bind(squad).bind(target).bind(channels).fetch_all(db).await?)
+        .bind(squad).bind(target).bind(channels).bind(action).fetch_all(db).await?)
 }
 /// Chat, pop-outs, docks, the overlay and MAGNet drop each removed line.
 pub(crate) fn publish_cleared(app: &App, cleared: Cleared) {
@@ -961,23 +964,15 @@ pub async fn review(
             .await?
             .rows_affected()
             == 1;
-        // A shared ban's channel bans go with it: in every member channel when the shared ban
-        // was lifted, otherwise (this channel left the co-stream, or it ended) this channel's own.
+        // This shared ban's channel bans go with it (never those of another shared ban since):
+        // everywhere it gave them when the shared ban was lifted, otherwise (this channel left
+        // the co-stream, or it ended) this channel's own.
         let mut channel_bans = Vec::new();
         if let (Some(squad), Some(target), "ban") = (&squad, &target, kind.as_str()) {
-            let mut channels = vec![channel.clone()];
-            if lifted {
-                channels.extend(
-                    sqlx::query_scalar::<_, String>(
-                        "SELECT user_id FROM squad_members WHERE squad_id=$1 AND user_id<>$2",
-                    )
-                    .bind(squad)
-                    .bind(&channel)
-                    .fetch_all(&mut *tx)
-                    .await?,
-                );
-            }
-            channel_bans = lift_squad_channel_bans(&mut tx, squad, target, &channels).await?;
+            let own = [channel.clone()];
+            let channels = (!lifted).then_some(&own[..]);
+            channel_bans =
+                lift_squad_channel_bans(&mut tx, squad, target, channels, Some(&id)).await?;
         }
         let mut logged: Vec<&String> = channel_bans.iter().collect();
         if lifted && !channel_bans.contains(&channel) {

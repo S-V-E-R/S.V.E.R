@@ -61,7 +61,7 @@ Launch platforms: Twitch, YouTube and Kick, each through its official API. More 
 - Kept like S.V.E.R chat messages (latest 100 on join, 7-day expiry). Only the platform, the outside user's ID and display name, and the text are stored.
 - **They never count toward anything:** not viewer counts, Valor, faction influence, MAGNet chat bursts, viewer integrity, tiers or Plays votes. Outside users aren't S.V.E.R accounts.
 - **MAGNet:** when the channel is featured, outside messages stay in the channel's chat and don't cross into Hype chat.
-- **Merged co-streams (November 20, 2026):** while the channel is in a live merged co-stream, its outside messages (not its bot's lines) also show in the shared chat, live and in its history, from the channel's time in the co-stream. They are stored once, in the channel's own chat, with the same 7-day expiry. There the badge also names the channel, for example "Twitch · @member", and codes use that channel's mirrored 7TV, BTTV and FFZ set.
+- **Merged co-streams (November 20, 2026):** while the channel is in a live merged co-stream, its outside messages (not its bot's lines) also show in the shared chat, live and in its history, from the channel's time in the co-stream. They are stored once, in the channel's own chat, with the same 7-day expiry. There the badge also names the channel, for example "Twitch · @member", and codes use that channel's mirrored 7TV, BTTV and FFZ set. While the co-stream is merged, every member's banned words and link rule apply to these lines, as they do to S.V.E.R lines there; one any member's rules refuse isn't stored or shown.
 
 ### Moderation
 

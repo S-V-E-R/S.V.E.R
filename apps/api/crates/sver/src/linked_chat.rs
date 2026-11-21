@@ -185,7 +185,8 @@ fn clean(text: &str) -> String {
     text.trim().chars().take(500).collect()
 }
 /// One message from a platform: stored and shown unless the sender is muted on S.V.E.R or the
-/// channel's banned words or link rule would refuse it. True when it was shown.
+/// channel's banned words or link rule (in a merged co-stream, any member's) would refuse it. True
+/// when it was shown.
 #[allow(clippy::too_many_arguments)]
 pub async fn receive(
     app: &App,
@@ -234,6 +235,23 @@ pub async fn receive(
         .is_err()
     {
         return Ok(false);
+    }
+    // In a merged co-stream the line shows in the shared chat too, where every member's rules
+    // apply, as they do to S.V.E.R lines and the bot's.
+    if let Some(squad) = app.chat.merged(app, &channel).await? {
+        let members = app.chat.squad(app, &squad).await?.unwrap_or_default();
+        let rules: Vec<(Vec<String>, bool)> = sqlx::query_as(
+            "SELECT banned_words,block_links FROM chat_settings WHERE channel_id=ANY($1)",
+        )
+        .bind(&members)
+        .fetch_all(&app.db)
+        .await?;
+        if rules
+            .iter()
+            .any(|(words, links)| moderation::check_content(&body, words, *links, false).is_err())
+        {
+            return Ok(false);
+        }
     }
     let id = format!("{platform}:{message_id}");
     let login: String = clean(login).chars().take(50).collect();

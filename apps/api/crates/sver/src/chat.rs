@@ -293,7 +293,7 @@ impl Hub {
     pub(crate) fn access_changed(&self) {
         self.access.fetch_add(1, Ordering::Release);
     }
-    async fn merged(&self, app: &App, channel: &str) -> Res<Option<String>> {
+    pub(crate) async fn merged(&self, app: &App, channel: &str) -> Res<Option<String>> {
         self.merged
             .get(channel, Duration::from_secs(5), None, || {
                 merged_squad(app, channel)
@@ -366,7 +366,7 @@ impl Hub {
             .await
     }
     /// A shared chat's open roster, host first: read at most once a second however many ask.
-    async fn squad(&self, app: &App, id: &str) -> Res<Option<Vec<String>>> {
+    pub(crate) async fn squad(&self, app: &App, id: &str) -> Res<Option<Vec<String>>> {
         self.squads
             .get(id, Duration::from_secs(1), None, || async {
                 crate::squads::open_members(&mut *app.db.acquire().await?, id).await
@@ -1292,9 +1292,11 @@ pub(crate) async fn send_from(
         if let Some(skill) = &skill {
             crate::skills::played(app, credit, &user, skill).await?;
         }
-        if origin.is_none() {
-            crate::surge::combo(app, credit, &user.id, body).await?;
-        }
+    }
+    // Combos count the whole room (a shared chat's chatters credit different members) and play
+    // on the member whose emote it is, host first.
+    if let Some(room) = squad.or(channel).filter(|_| origin.is_none()) {
+        crate::surge::combo(app, room, &members, &user.id, body).await?;
     }
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE m.id=$1", select())))
@@ -1394,18 +1396,24 @@ pub async fn squad_read(
     let (hidden, _) = hidden_for(&app, viewer.as_ref().map(|u| u.id.as_str()), &members).await?;
     let names = member_names(&app, &members).await?;
     let rules = squad_rules(&app, &names).await?;
-    // The member channel the viewer's lines credit, whose rewards the dock offers.
     let credit = match &viewer {
-        Some(v) => {
-            let id =
-                crate::engagement::credit(&mut *app.db.acquire().await?, &members, &v.id).await?;
-            names.iter().find(|n| n.0 == id).map(|n| n.1.clone())
-        }
+        Some(v) => credit_name(&app, &members, &names, &v.id).await?,
         None => None,
     };
     Ok(Json(
         json!({"now":Utc::now(),"messages":history(&app,channel,&hidden,Some(&id)).await?,"pinned":null,"emotes":rules.emotes,"allow_signatures":rules.allow_signatures,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only,"credit":credit}),
     ))
+}
+/// The member channel a shared-chat viewer's lines credit, by username: whose rewards the dock
+/// offers.
+async fn credit_name(
+    app: &App,
+    members: &[String],
+    names: &[(String, String)],
+    viewer: &str,
+) -> Res<Option<String>> {
+    let id = crate::engagement::credit(&mut *app.db.acquire().await?, members, viewer).await?;
+    Ok(names.iter().find(|n| n.0 == id).map(|n| n.1.clone()))
 }
 /// Members' usernames, in member order.
 async fn member_names(app: &App, members: &[String]) -> Res<Vec<(String, String)>> {
@@ -1750,7 +1758,15 @@ async fn session(
     let Ok(gifs) = gifs(&app, &channel).await else {
         return;
     };
-    let first = json!({"type":"snapshot","now":Utc::now(),"messages":snapshot,"pinned":pin,"emotes":rules.emotes,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only,"allow_signatures":rules.allow_signatures,"gifs":gifs}).to_string();
+    // Read once per connection, like the rest of the snapshot.
+    let credit = match (&names, &viewer_id) {
+        (Some(names), Some(viewer)) => match credit_name(&app, &members, names, viewer).await {
+            Ok(credit) => credit,
+            Err(_) => return,
+        },
+        _ => None,
+    };
+    let first = json!({"type":"snapshot","now":Utc::now(),"messages":snapshot,"pinned":pin,"emotes":rules.emotes,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only,"allow_signatures":rules.allow_signatures,"gifs":gifs,"credit":credit}).to_string();
     if ws.send(Message::Text(first.into())).await.is_err() {
         return;
     }
