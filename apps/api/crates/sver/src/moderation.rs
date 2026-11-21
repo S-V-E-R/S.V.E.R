@@ -327,10 +327,14 @@ pub async fn check_emote_code(db: &mut sqlx::PgConnection, channel: &str, code: 
     }
     Ok(())
 }
-/// Whether an emote code passes a channel's banned words and link rule.
+/// Whether an emote code or a name passes a channel's banned words and link rule. Codes and names
+/// glue words together ("SlurWordFan"), so a banned word matches inside them, wildcards aside.
 pub fn code_allowed(words: &[String], links: bool, code: &str) -> bool {
     let folded = fold(code);
-    !(words.iter().any(|w| folded.contains(w.as_str())) || (links && has_link(code)))
+    !(words.iter().any(|w| {
+        let w = w.trim_matches('*');
+        !w.is_empty() && folded.contains(w)
+    }) || (links && has_link(code)))
 }
 
 /// Chat rules applied by `chat::send` before a message is stored.
@@ -589,9 +593,99 @@ pub async fn check_clip(app: &App, channel: &str, user: &auth::User, title: &str
     }
     Ok(())
 }
+/// `text` as words for banned-word matching: compatibility forms and leetspeak folded ("a$$" and
+/// "h3ll0" read as "ass" and "hello"), split at anything that isn't a letter or digit (or `*` in a
+/// pattern).
+fn words_of(text: &str, pattern: bool) -> Vec<String> {
+    let folded = crate::text::unmasked(text).to_lowercase();
+    let mut words = Vec::new();
+    for token in folded.split_whitespace() {
+        let token: String = token
+            .chars()
+            .map(|c| match c {
+                '0' => 'o',
+                '1' => 'i',
+                '3' => 'e',
+                '4' | '@' => 'a',
+                '5' | '$' => 's',
+                '7' => 't',
+                c => c,
+            })
+            .collect();
+        words.extend(
+            token
+                .split(|c: char| !(c.is_alphanumeric() || (pattern && c == '*')))
+                .filter(|w| !w.is_empty())
+                .map(str::to_owned),
+        );
+    }
+    words
+}
+/// `words` with each run of 3 or more single letters joined, so "f u c k" and "f.u.c.k" read as
+/// one word.
+fn joined(words: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut run: Vec<&String> = Vec::new();
+    let flush = |run: &mut Vec<&String>, out: &mut Vec<String>| {
+        if run.len() >= 3 {
+            out.push(run.iter().map(|s| s.as_str()).collect());
+        } else {
+            out.extend(run.iter().map(|s| (*s).clone()));
+        }
+        run.clear();
+    };
+    for word in words {
+        if word.chars().count() == 1 {
+            run.push(word);
+        } else {
+            flush(&mut run, &mut out);
+            out.push(word.clone());
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+/// One banned word against one message word: `*` at either end is a wildcard ("ass*" is
+/// "assassin"); otherwise the whole word, also when stretched ("fuuuck"), never shortened.
+fn word_matches(pattern: &str, word: &str) -> bool {
+    let squeeze = |s: &str| {
+        let mut out: Vec<char> = s.chars().collect();
+        out.dedup();
+        out
+    };
+    match (pattern.strip_prefix('*'), pattern.strip_suffix('*')) {
+        (Some(rest), Some(_)) => word.contains(rest.trim_end_matches('*')),
+        (None, Some(stem)) => word.starts_with(stem),
+        (Some(stem), None) => word.ends_with(stem),
+        (None, None) => {
+            pattern == word || (word.len() >= pattern.len() && squeeze(pattern) == squeeze(word))
+        }
+    }
+}
+/// Whether `body` says one of a channel's banned words or phrases, as whole words. A pattern
+/// with no letters or digits (an emoji, "!!!") is matched anywhere in the text.
+pub(crate) fn says_banned(body: &str, banned: &[String]) -> bool {
+    let plain = words_of(body, false);
+    let readings = [joined(&plain), plain];
+    banned.iter().any(|entry| {
+        let pattern: Vec<String> = words_of(entry, true)
+            .into_iter()
+            .filter(|w| w.chars().any(char::is_alphanumeric))
+            .collect();
+        if pattern.is_empty() {
+            return !entry.trim().is_empty() && fold(body).contains(entry.as_str());
+        }
+        readings.iter().any(|words| {
+            words.windows(pattern.len()).any(|at| {
+                at.iter()
+                    .zip(&pattern)
+                    .all(|(word, p)| word_matches(p, word))
+            })
+        })
+    })
+}
 pub(crate) fn check_content(body: &str, words: &[String], links: bool, exempt: bool) -> Res<()> {
-    let folded = fold(body);
-    if words.iter().any(|word| folded.contains(word)) {
+    if says_banned(body, words) {
         return Err(Fail::bad("That message isn't allowed in this chat."));
     }
     if links && !exempt && has_link(body) {
@@ -1294,7 +1388,42 @@ pub fn routes() -> Router<App> {
 
 #[cfg(test)]
 mod tests {
-    use super::{fold, has_link};
+    use super::{fold, has_link, says_banned};
+
+    #[test]
+    fn banned_words_are_whole_words() {
+        let banned = |list: &[&str], text: &str| {
+            says_banned(text, &list.iter().map(|w| fold(w)).collect::<Vec<_>>())
+        };
+        // Whole words: "ass" no longer blocks "class" or "pass", or "as".
+        assert!(banned(&["ass"], "what an ass"));
+        for fine in ["first class", "pass the ball", "as if", "assassin"] {
+            assert!(!banned(&["ass"], fine), "{fine}");
+        }
+        // Disguises: leetspeak, spacing, dots, stretching, fullwidth, mentions.
+        for said in [
+            "a$$",
+            "@ss",
+            "A S S",
+            "a.s.s",
+            "asssss",
+            "ａｓｓ",
+            "you're an a55!",
+        ] {
+            assert!(banned(&["ass"], said), "{said}");
+        }
+        assert!(banned(&["hello"], "h3ll0 there"));
+        // Wildcards at either end, and phrases.
+        assert!(banned(&["ass*"], "assassin"));
+        assert!(!banned(&["ass*"], "ask"));
+        assert!(banned(&["*hole"], "a pothole"));
+        assert!(banned(&["*ss*"], "glasses"));
+        assert!(banned(&["bad word"], "such a BAD   word"));
+        assert!(!banned(&["bad word"], "bad, then a word"));
+        // Patterns with no letters still match anywhere.
+        assert!(banned(&["\u{1F346}"], "look \u{1F346}"));
+        assert!(!banned(&[], "anything"));
+    }
 
     #[test]
     fn links_and_phrases() {
