@@ -579,4 +579,141 @@ pub async fn exercise(e: &Env) {
     e.sql("DELETE FROM outside_chat_mutes").await;
     e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now() WHERE id='lc-live'")
         .await;
+    co_stream(e).await;
+}
+
+/// A merged co-stream's shared chat shows each member's linked-platform lines from their time in
+/// it, named by their channel and stored once; only that channel's owner, moderators and staff
+/// hide them there, and hides (one line or a clear) leave the shared chat too.
+async fn co_stream(e: &Env) {
+    use super::chat::{call, next_of, person};
+    person(e, "lc-partner", "LcPartner", true).await;
+    let partner_mod = person(e, "lc-pmod", "LcPmod", true).await;
+    person(e, "lc-out", "LcOut", true).await;
+    let outsider_mod = person(e, "lc-omod", "LcOmod", true).await;
+    e.sql("INSERT INTO channel_moderators(channel_id,user_id) VALUES('lc-partner','lc-pmod'),('lc-out','lc-omod')").await;
+    let sealed = sver::security::seal(&e.app, "linked-chat", "synthetic-access").unwrap();
+    sqlx::query("INSERT INTO linked_chat_accounts(owner_id,platform,subject,handle,access_sealed) VALUES('lc-partner','twitch','tw-partner','partner_tw',$1)")
+        .bind(sealed).execute(&e.app.db).await.unwrap();
+    e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('lc-sq-host','stream-owner','lc-sq-host',1,'LIVE','s','v','c',now(),now(),now()),('lc-sq-guest','lc-partner','lc-sq-guest',1,'LIVE','s','v','c2',now(),now(),now())").await;
+    // Said before the partner joined: it stays in their own chat only.
+    e.sql("INSERT INTO outside_chat_messages(id,seq,channel_id,platform,sender_id,sender_name,sender_login,body,created_at) VALUES('twitch:early',nextval(pg_get_serial_sequence('chat_messages','seq')),'lc-partner','twitch','tw-a','A','a','before',now()-interval '1 hour')").await;
+    e.sql("INSERT INTO squads(id,host_id,mode) VALUES('lc-sq','stream-owner','MERGED')")
+        .await;
+    e.sql("INSERT INTO squad_members(squad_id,user_id,broadcast_id) VALUES('lc-sq','stream-owner','lc-sq-host'),('lc-sq','lc-partner','lc-sq-guest')").await;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = sver::router(e.app.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let mut request = format!("ws://{address}/api/chat/ws?squad=lc-sq")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("origin", e.app.config.origin.parse().unwrap());
+    let (mut shared, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let snapshot = next_of(&mut shared, "snapshot").await;
+    assert!(!snapshot.to_string().contains("twitch:early"), "{snapshot}");
+
+    let partner_chat = |id: &str, text: &str| {
+        json!({"subscription":{"type":"channel.chat.message","condition":{"broadcaster_user_id":"tw-partner","user_id":"tw-partner"}},
+        "event":{"broadcaster_user_id":"tw-partner","chatter_user_id":"tw-fan","chatter_user_login":"fan","chatter_user_name":"Fan","message_id":id,"message":{"text":text},"badges":[]}})
+    };
+    webhook(e, "notification", partner_chat("p1", "hi both"), true).await;
+    let live = next_of(&mut shared, "message").await;
+    assert_eq!(
+        (
+            &live["message"]["id"],
+            &live["message"]["outside"]["platform"],
+            &live["message"]["outside"]["channel"]
+        ),
+        (&json!("twitch:p1"), &json!("twitch"), &json!("LcPartner")),
+        "{live}"
+    );
+    let read = e.call("GET", "/api/squads/lc-sq/chat", Value::Null).await;
+    let lines: Vec<&Value> = read["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| !m["outside"].is_null())
+        .collect();
+    assert_eq!(lines.len(), 1, "{read}");
+    assert_eq!(
+        (&lines[0]["id"], &lines[0]["outside"]["channel"]),
+        (&json!("twitch:p1"), &json!("LcPartner"))
+    );
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outside_chat_messages WHERE channel_id='lc-partner'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, 2, "stored once, in the partner's channel");
+
+    // The partner's moderator may hide it; the host and a non-member's moderator may not.
+    let (_, view) = call(
+        e,
+        "GET",
+        "/api/squads/lc-sq/chat/moderation",
+        Some(&partner_mod),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(view["moderates"], json!(["LcPartner"]), "{view}");
+    let hide = "/api/channels/LcPartner/chat/outside/twitch:p1/hide";
+    assert_eq!(
+        call(e, "POST", hide, Some(&outsider_mod), Value::Null)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, _) = e
+        .request("POST", hide, Value::Null, true, true, false)
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the host doesn't moderate the partner's channel"
+    );
+    assert_eq!(
+        call(e, "POST", hide, Some(&partner_mod), Value::Null)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        next_of(&mut shared, "delete").await,
+        json!({"type":"delete","id":"twitch:p1"})
+    );
+    // A clear on the partner's Twitch leaves the shared chat too.
+    webhook(e, "notification", partner_chat("p2", "again"), true).await;
+    assert_eq!(
+        next_of(&mut shared, "message").await["message"]["id"],
+        "twitch:p2"
+    );
+    webhook(e, "notification", json!({"subscription":{"type":"channel.chat.clear","condition":{"broadcaster_user_id":"tw-partner","user_id":"tw-partner"}},"event":{"broadcaster_user_id":"tw-partner"}}), true).await;
+    assert_eq!(
+        next_of(&mut shared, "delete").await,
+        json!({"type":"delete","id":"twitch:p2"})
+    );
+    let read = e.call("GET", "/api/squads/lc-sq/chat", Value::Null).await;
+    assert!(!read.to_string().contains("\"outside\":{"), "{read}");
+
+    drop(shared);
+    server.abort();
+    e.sql("DELETE FROM squads WHERE id='lc-sq'").await;
+    e.sql("UPDATE broadcasts SET state='ENDED',ended_at=now() WHERE id LIKE 'lc-sq-%'")
+        .await;
+    e.sql("DELETE FROM linked_chat_accounts").await;
+    e.sql("DELETE FROM outside_chat_messages").await;
+    e.sql("DELETE FROM channel_moderators WHERE user_id IN ('lc-pmod','lc-omod')")
+        .await;
 }

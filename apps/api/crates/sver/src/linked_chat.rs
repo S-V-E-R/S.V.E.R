@@ -154,6 +154,23 @@ pub async fn recent(app: &App, channel: &str, limit: i64) -> Res<Vec<Value>> {
     rows.reverse();
     Ok(rows)
 }
+/// A merged co-stream's shared chat history: each member's outside messages (not their bot's) from
+/// their time in it, named by their channel (`outside.channel`). Stored once, in the member's
+/// channel; open shared chats get new ones from the member's room (`chat::session`).
+pub async fn recent_shared(app: &App, squad: &str, limit: i64) -> Res<Vec<Value>> {
+    let mut rows: Vec<Value> = sqlx::query_scalar(concat!("SELECT x.message FROM squad_members q JOIN users u ON u.id=q.user_id CROSS JOIN LATERAL (
+            SELECT seq,jsonb_set(", outside_json!(), ",'{outside,channel}',to_jsonb(u.username::text)) AS message FROM outside_chat_messages o
+            WHERE o.channel_id=q.user_id AND o.platform<>'bot' AND o.hidden_at IS NULL AND o.expires_at>now()
+                AND EXISTS(SELECT 1 FROM squad_appearances a WHERE a.user_id=q.user_id AND a.squad_id=q.squad_id AND o.created_at>=a.joined_at AND (a.left_at IS NULL OR o.created_at<a.left_at))
+            ORDER BY o.seq DESC LIMIT $2) x
+        WHERE q.squad_id=$1 ORDER BY x.seq DESC LIMIT $2"))
+    .bind(squad)
+    .bind(limit)
+    .fetch_all(&app.db)
+    .await?;
+    rows.reverse();
+    Ok(rows)
+}
 /// Outside text as one plain line: control characters become spaces and invisible ones are
 /// dropped (they come from other platforms, so they're stripped rather than refused).
 fn clean(text: &str) -> String {

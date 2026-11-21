@@ -646,13 +646,25 @@ async fn chat_moderation(
     jar: CookieJar,
     Path(id): Path<String>,
 ) -> Res<Json<Value>> {
-    let (_, _, role) = chat_actor(&app, &jar, &id).await?;
+    let (user, members, role) = chat_actor(&app, &jar, &id).await?;
+    // The member channels whose linked-platform lines this person may hide or mute here: the ones
+    // they own or moderate (staff: all). Those endpoints check again.
+    let mut theirs = Vec::new();
+    for member in members {
+        if moderation::role_of(&app, &member, &user).await?.is_some() {
+            theirs.push(member);
+        }
+    }
+    let moderates: Vec<String> = sqlx::query_scalar("SELECT username FROM users WHERE id=ANY($1)")
+        .bind(&theirs)
+        .fetch_all(&app.db)
+        .await?;
     let mut restrictions:Vec<Value>=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT jsonb_build_object('user',{},'kind',r.kind,'until',r.until) FROM squad_restrictions r JOIN channel_users c ON c.id=r.user_id WHERE r.squad_id=$1 AND (r.kind='ban' OR r.until>now())",profiles::chip_sql("c")))).bind(&id).fetch_all(&app.db).await?;
     for r in &mut restrictions {
         profiles::hydrate(&app, r);
     }
     Ok(Json(
-        json!({"role":role.name(),"restrictions":restrictions}),
+        json!({"role":role.name(),"restrictions":restrictions,"moderates":moderates}),
     ))
 }
 #[derive(Deserialize)]

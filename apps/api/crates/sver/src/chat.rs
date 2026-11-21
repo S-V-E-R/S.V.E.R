@@ -776,13 +776,14 @@ pub(crate) async fn history(
         .collect();
     crate::guilds::hydrate_badges(app, &mut messages).await?;
     // Linked chat (docs/LINKED_CHAT.md): outside messages share the chat sequence; keep the
-    // newest HISTORY of both, in order.
-    if squad.is_none() {
-        messages.extend(crate::linked_chat::recent(app, channel, HISTORY).await?);
-        messages.sort_by_key(|m| m["seq"].as_i64().unwrap_or_default());
-        let extra = messages.len().saturating_sub(HISTORY as usize);
-        messages.drain(..extra);
-    }
+    // newest HISTORY of both, in order. A shared chat shows every member's.
+    messages.extend(match squad {
+        None => crate::linked_chat::recent(app, channel, HISTORY).await?,
+        Some(id) => crate::linked_chat::recent_shared(app, id, HISTORY).await?,
+    });
+    messages.sort_by_key(|m| m["seq"].as_i64().unwrap_or_default());
+    let extra = messages.len().saturating_sub(HISTORY as usize);
+    messages.drain(..extra);
     Ok(messages)
 }
 
@@ -1846,13 +1847,24 @@ async fn session(
                         rules = next;
                         continue;
                     }
-                    if source.is_some() && !SHARED_EVENTS.contains(&kind) { continue; }
+                    // A member's linked-platform lines (not its bot's) and their hides join the
+                    // shared chat (outside IDs are `platform:id`); MAGNet never hears them here.
+                    let outside = source.is_some() && match kind {
+                        "message" => !e.payload["message"]["outside"].is_null() && e.payload["message"]["outside"]["platform"] != "bot",
+                        "delete" => e.payload["id"].as_str().is_some_and(|id| id.contains(':')),
+                        _ => false,
+                    };
+                    if source.is_some() && !outside && !SHARED_EVENTS.contains(&kind) { continue; }
                     if e.seq != 0 && e.payload["message"]["id"].as_str().is_some_and(|id| seen.contains(id)) { continue; }
                     let Ok(hidden) = blocks.current(&app, viewer_id.as_deref()).await else { return; };
                     if e.author.as_ref().is_some_and(|a| hidden.contains(a)) { continue; }
                     let mut payload = e.payload.clone();
                     if let Some(source) = source {
-                        payload["source"] = json!(source);
+                        if !outside {
+                            payload["source"] = json!(source);
+                        } else if kind == "message" {
+                            payload["message"]["outside"]["channel"] = json!(source);
+                        }
                     } else if kind == "pin" {
                         payload["pinned"] = match app.chat.pin(&channel) {
                             Some(pin) => pin_view(&app.chat, &pin, hidden),
