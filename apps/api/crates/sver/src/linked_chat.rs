@@ -145,7 +145,7 @@ const OUTSIDE: &str = concat!("SELECT ", outside_json!(), " FROM outside_chat_me
 /// The latest outside messages for a channel's chat history (merged by `seq`).
 pub async fn recent(app: &App, channel: &str, limit: i64) -> Res<Vec<Value>> {
     let mut rows: Vec<Value> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "{OUTSIDE} WHERE channel_id=$1 AND hidden_at IS NULL AND expires_at>now() ORDER BY seq DESC LIMIT $2"
+        "{OUTSIDE} WHERE channel_id=$1 AND squad_id IS NULL AND hidden_at IS NULL AND expires_at>now() ORDER BY seq DESC LIMIT $2"
     )))
     .bind(channel)
     .bind(limit)
@@ -155,15 +155,18 @@ pub async fn recent(app: &App, channel: &str, limit: i64) -> Res<Vec<Value>> {
     Ok(rows)
 }
 /// A merged co-stream's shared chat history: each member's outside messages (not their bot's) from
-/// their time in it, named by their channel (`outside.channel`). Stored once, in the member's
-/// channel; open shared chats get new ones from the member's room (`chat::session`).
+/// their time in it, named by their channel (`outside.channel`), and the bot replies to commands
+/// sent in it. Stored once, in the member's channel; open shared chats get new ones from the
+/// member's room (`chat::session`).
 pub async fn recent_shared(app: &App, squad: &str, limit: i64) -> Res<Vec<Value>> {
-    let mut rows: Vec<Value> = sqlx::query_scalar(concat!("SELECT x.message FROM squad_members q JOIN users u ON u.id=q.user_id CROSS JOIN LATERAL (
+    let mut rows: Vec<Value> = sqlx::query_scalar(concat!("SELECT y.message FROM (SELECT x.seq,x.message FROM squad_members q JOIN users u ON u.id=q.user_id CROSS JOIN LATERAL (
             SELECT seq,jsonb_set(", outside_json!(), ",'{outside,channel}',to_jsonb(u.username::text)) AS message FROM outside_chat_messages o
             WHERE o.channel_id=q.user_id AND o.platform<>'bot' AND o.hidden_at IS NULL AND o.expires_at>now()
                 AND EXISTS(SELECT 1 FROM squad_appearances a WHERE a.user_id=q.user_id AND a.squad_id=q.squad_id AND o.created_at>=a.joined_at AND (a.left_at IS NULL OR o.created_at<a.left_at))
             ORDER BY o.seq DESC LIMIT $2) x
-        WHERE q.squad_id=$1 ORDER BY x.seq DESC LIMIT $2"))
+        WHERE q.squad_id=$1
+        UNION ALL (SELECT seq,", outside_json!(), " FROM outside_chat_messages WHERE squad_id=$1 AND hidden_at IS NULL AND expires_at>now() ORDER BY seq DESC LIMIT $2)) y
+        ORDER BY y.seq DESC LIMIT $2"))
     .bind(squad)
     .bind(limit)
     .fetch_all(&app.db)
@@ -256,10 +259,12 @@ pub async fn receive(
     Ok(true)
 }
 /// A message from a S.V.E.R system sender, such as the channel bot (platform `bot`): stored and
-/// shown like an outside message, so it keeps its place in history and counts toward nothing.
+/// shown like an outside message, so it keeps its place in history and counts toward nothing. With
+/// `squad`, it belongs to that merged co-stream's shared chat instead of the channel's own.
 pub async fn post_system(
     app: &App,
     channel: &str,
+    squad: Option<&str>,
     platform: &str,
     sender_id: &str,
     name: &str,
@@ -270,11 +275,11 @@ pub async fn post_system(
         return Ok(());
     }
     let id = format!("{platform}:{}", uuid::Uuid::new_v4());
-    let (seq, message): (i64, Value) = sqlx::query_as(concat!("INSERT INTO outside_chat_messages(id,channel_id,platform,sender_id,sender_name,sender_login,body) VALUES($1,$2,$3,$4,$5,$4,$6) RETURNING seq,", outside_json!()))
-        .bind(&id).bind(channel).bind(platform).bind(sender_id).bind(name).bind(&body)
+    let (seq, message): (i64, Value) = sqlx::query_as(concat!("INSERT INTO outside_chat_messages(id,channel_id,platform,sender_id,sender_name,sender_login,body,squad_id) VALUES($1,$2,$3,$4,$5,$4,$6,$7) RETURNING seq,", outside_json!()))
+        .bind(&id).bind(channel).bind(platform).bind(sender_id).bind(name).bind(&body).bind(squad)
         .fetch_one(&app.db).await?;
     app.chat.publish(
-        channel,
+        squad.unwrap_or(channel),
         None,
         seq,
         json!({"type":"message","message":message}),

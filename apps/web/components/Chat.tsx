@@ -31,7 +31,7 @@ export function subBadge(months: number) {
   return `${step} ${step === 1 ? "month" : "months"}`;
 }
 /** `now`: the server's time, so backlog lines keep their real ages (the overlay fade never uses the PC clock). */
-type Snapshot = { now?: string; messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean; allow_signatures?: boolean; gifs?: GifAccess };
+type Snapshot = { now?: string; messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean; allow_signatures?: boolean; gifs?: GifAccess; credit?: string | null };
 /** Another channel's signature emote, written username/Code (docs/CHANNEL_ADDITIONS.md "Signature emote"). */
 const SIGNATURE = /(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)/g;
 const BOARD_EVENTS = new Set(["board_effect", "board_input", "board", "poll", "counters", "rally", "surge", "board_state", "board_result"]);
@@ -228,6 +228,8 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
   const [emotesVersion, setEmotesVersion] = useState(0);
   const [allowSignatures, setAllowSignatures] = useState(true);
   const [gifs, setGifs] = useState<GifAccess>(null);
+  // In shared chat: the member channel the viewer's lines credit, whose rewards the dock offers.
+  const [credit, setCredit] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [reply, setReply] = useState<Reply | null>(null);
   const [outsideReply, setOutsideReply] = useState<{ id: string; platform: string; name: string } | null>(null);
@@ -357,7 +359,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
     let poll: ReturnType<typeof setInterval> | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     const settleIn = (list: Message[]) => { const s = sending.current; if (s && list.some(m => m.id === s.id)) ack(s.id); };
-    const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true, r.data.now); settleIn(r.data.messages); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setFollowersOnly(r.data.followers_only_until ?? null); setSubsOnly(!!r.data.subs_only); setAllowSignatures(r.data.allow_signatures ?? true); setGifs(r.data.gifs ?? null); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
+    const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true, r.data.now); settleIn(r.data.messages); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setFollowersOnly(r.data.followers_only_until ?? null); setSubsOnly(!!r.data.subs_only); setAllowSignatures(r.data.allow_signatures ?? true); setGifs(r.data.gifs ?? null); setCredit(r.data.credit ?? null); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
     // Polling covers only the time the socket is down; the socket's snapshot takes over again.
     const startPoll = () => {
       if (closed || poll) return;
@@ -673,7 +675,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
       <RetryNotice wait={wait} />
       {error && <p role="alert" className="error">{error}</p>}
     </form> : <p className="chat-signin panel"><Link href={variant === "full" ? "/login" : `/login?${new URLSearchParams({ next: `/${username}/chat${variant === "dock" ? "?dock=1" : ""}` })}`}>Log in</Link> or <Link href="/signup">enlist</Link> to chat.</p>}
-    {account && <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
+    {account && <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewards={squad ? credit : username} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
       onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 500)); input.current?.focus(); }} />}
   </section>;
 }

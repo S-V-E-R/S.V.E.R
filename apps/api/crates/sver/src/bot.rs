@@ -3,7 +3,7 @@
 //! ladder, giveaways, and the Nightbot/Fossabot command import (docs/DEVELOPER_PLATFORM.md §7).
 use crate::{
     App, auth,
-    commands::{bot, say},
+    commands::{bot, say, say_in},
     moderation::{self, Role},
     profiles::{self, Fail, Res},
 };
@@ -585,15 +585,29 @@ pub async fn settings(app: &App, owner: &str) -> Res<Value> {
 /// `!giveaway start KEYWORD`, `!giveaway end` and `!giveaway cancel` (owner and moderators), and
 /// entries: a viewer who types the keyword while watching (a Counted session) enters once.
 /// Returns true when the message was a giveaway command.
-pub async fn giveaway(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<bool> {
+pub async fn giveaway(
+    app: &App,
+    members: &[String],
+    shared: Option<(&str, &[String])>,
+    user: &auth::User,
+    body: &str,
+) -> Res<bool> {
     let words: Vec<&str> = body.split_whitespace().collect();
     if words
         .first()
         .is_some_and(|w| w.eq_ignore_ascii_case("!giveaway"))
     {
-        if moderation::role_of(app, channel, user).await?.is_none() {
-            return Ok(true);
+        // In shared chat: the first member (host first) the sender moderates.
+        let mut channel = None;
+        for member in members {
+            if moderation::role_of(app, member, user).await?.is_some() {
+                channel = Some(member.as_str());
+                break;
+            }
         }
+        let Some(channel) = channel else {
+            return Ok(true);
+        };
         let text = match words.get(1).map(|w| w.to_ascii_lowercase()).as_deref() {
             Some("start") => match words
                 .get(2)
@@ -640,17 +654,18 @@ pub async fn giveaway(app: &App, channel: &str, user: &auth::User, body: &str) -
             }
             _ => "Giveaways: !giveaway start KEYWORD, !giveaway end, !giveaway cancel.".into(),
         };
-        say(app, channel, &text).await?;
+        say_in(app, channel, shared, &text).await?;
         return Ok(true);
     }
-    // An entry: the exact keyword, from someone with a Counted session on this live channel.
-    if words.len() == 1 && user.id != channel {
+    // An entry: the exact keyword, from someone with a Counted session on that live channel (in
+    // shared chat, any member's running giveaway).
+    if words.len() == 1 {
         sqlx::query("INSERT INTO giveaway_entries(giveaway_id,user_id)
-            SELECT g.id,$2 FROM giveaways g WHERE g.channel_id=$1 AND g.ended_at IS NULL AND lower(g.keyword)=lower($3)
+            SELECT g.id,$2 FROM giveaways g WHERE g.channel_id=ANY($1) AND g.channel_id<>$2 AND g.ended_at IS NULL AND lower(g.keyword)=lower($3)
               AND EXISTS(SELECT 1 FROM playback_leases l JOIN broadcasts b ON b.id=l.broadcast_id
-                         WHERE b.owner_id=$1 AND b.state IN ('LIVE','RECONNECTING') AND l.viewer_key='u:'||$2 AND l.expires_at>now() AND l.level IN ('counted','trusted'))
+                         WHERE b.owner_id=g.channel_id AND b.state IN ('LIVE','RECONNECTING') AND l.viewer_key='u:'||$2 AND l.expires_at>now() AND l.level IN ('counted','trusted'))
             ON CONFLICT DO NOTHING")
-            .bind(channel).bind(&user.id).bind(words[0]).execute(&app.db).await?;
+            .bind(members).bind(&user.id).bind(words[0]).execute(&app.db).await?;
     }
     Ok(false)
 }

@@ -675,27 +675,34 @@ async fn update(
 /// A chat command from the owner or a moderator, inside the message's transaction:
 /// `!deaths` or `!deaths +` adds one, `!deaths -` takes one away, `!deaths +5`, `!deaths -2` and
 /// `!deaths =10` change it by or set it to a number, `!record win` / `!record loss` count a tally,
-/// and `!shiny phase` starts a new phase. Returns whether a counter changed.
+/// and `!shiny phase` starts a new phase. `channels` is the chat's channel, or a shared chat's
+/// members (host first): the first that has the counter owns it, and the sender must moderate that
+/// one. Returns the channel whose counter changed.
 pub(crate) async fn chat_command(
     app: &App,
     tx: &mut PgConnection,
-    channel: &str,
+    channels: &[String],
     user: &auth::User,
     body: &str,
-) -> Res<bool> {
+) -> Res<Option<String>> {
     let Some((id, Some((extra, set, amount)))) = parse_command(body) else {
-        return Ok(false);
+        return Ok(None);
     };
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM counters WHERE channel_id=$1 AND id=$2)")
-            .bind(channel)
+    let owners: Vec<String> =
+        sqlx::query_scalar("SELECT channel_id FROM counters WHERE channel_id=ANY($1) AND id=$2")
+            .bind(channels)
             .bind(&id)
-            .fetch_one(&mut *tx)
+            .fetch_all(&mut *tx)
             .await?;
-    if !exists || moderation::role_of(app, channel, user).await?.is_none() {
-        return Ok(false);
+    let Some(channel) = channels.iter().find(|c| owners.contains(c)) else {
+        return Ok(None);
+    };
+    if moderation::role_of(app, channel, user).await?.is_none()
+        || !bump(tx, channel, &id, extra, set, amount).await?
+    {
+        return Ok(None);
     }
-    bump(tx, channel, &id, extra, set, amount).await
+    Ok(Some(channel.clone()))
 }
 /// A counter change: (second number instead of the main one, set instead of add, amount).
 pub type Change = (bool, bool, i64);

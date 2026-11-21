@@ -397,9 +397,17 @@ pub async fn exercise(e: &Env) {
     assert_eq!(status, StatusCode::OK, "{done}");
     assert!(outside(e).await.is_empty(), "staff removal hides it here");
     // The bot's lines are the channel's own, not outside messages.
-    sver::linked_chat::post_system(&e.app, "stream-owner", "bot", "bot", "PYRE", "Welcome")
-        .await
-        .unwrap();
+    sver::linked_chat::post_system(
+        &e.app,
+        "stream-owner",
+        None,
+        "bot",
+        "bot",
+        "PYRE",
+        "Welcome",
+    )
+    .await
+    .unwrap();
     let bot: String =
         sqlx::query_scalar("SELECT id FROM outside_chat_messages WHERE platform='bot'")
             .fetch_one(&e.app.db)

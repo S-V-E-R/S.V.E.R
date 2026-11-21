@@ -983,6 +983,120 @@ pub async fn exercise(e: &Env) {
     e.sql("DELETE FROM channel_restrictions WHERE user_id='team-fan'")
         .await;
     ok(e, &fan, "GET", &chat, Value::Null).await;
+    // Shared chat credits one member channel per line: where the chatter has the most lifetime
+    // Engagement Valor (here team-2, not the host), once, and its loyalty badge is that channel's.
+    let room = chat.as_str();
+    let said = |token: String, body: &'static str| async move {
+        e.sql("DELETE FROM rate_limits WHERE key LIKE 'chat-%'")
+            .await;
+        ok(e, &token, "POST", room, json!({"id":id(),"body":body})).await["message"].clone()
+    };
+    e.sql("DELETE FROM engagement WHERE user_id='team-fan'")
+        .await;
+    e.sql("INSERT INTO engagement(channel_id,user_id,balance,earned) VALUES('team-0','team-fan',300,300),('team-2','team-fan',1000,1000)").await;
+    let loyal = said(fan.clone(), "Loyal line").await;
+    let earned: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT channel_id,earned FROM engagement WHERE user_id='team-fan' ORDER BY channel_id",
+    )
+    .fetch_all(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        earned,
+        [("team-0".to_owned(), 300), ("team-2".to_owned(), 1005)]
+    );
+    assert_eq!(
+        loyal["loyalty"], 2,
+        "team-2's Devoted, not the host's Regular"
+    );
+    assert_eq!(
+        ok(e, &fan, "GET", &chat, Value::Null).await["credit"],
+        "TeamPerson2",
+        "the dock offers team-2's rewards"
+    );
+    // The host's !command answers first, in the shared room; a command only a member has runs
+    // when the host lacks it. Neither reaches a member's own chat.
+    e.sql("INSERT INTO chat_commands(channel_id,name,reply,cooldown_seconds) VALUES('team-0','sqcmd','Host reply',0),('team-1','sqcmd','Partner reply',0),('team-2','sqonly','Member reply',0)").await;
+    said(fan.clone(), "!sqcmd").await;
+    said(fan.clone(), "!sqonly").await;
+    let bot: Vec<(String, String)> = sqlx::query_as("SELECT channel_id,body FROM outside_chat_messages WHERE squad_id=$1 AND platform='bot' ORDER BY seq")
+        .bind(&squad).fetch_all(&e.app.db).await.unwrap();
+    assert_eq!(
+        bot,
+        [
+            ("team-0".to_owned(), "Host reply".to_owned()),
+            ("team-2".to_owned(), "Member reply".to_owned())
+        ]
+    );
+    let shown = ok(e, &fan, "GET", &chat, Value::Null).await;
+    assert_eq!(
+        shown["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["outside"]["platform"] == "bot")
+            .count(),
+        2
+    );
+    for member in ["TeamPerson0", "TeamPerson2"] {
+        let own = ok(
+            e,
+            &fan,
+            "GET",
+            &format!("/api/channels/{member}/chat"),
+            Value::Null,
+        )
+        .await;
+        assert!(
+            own["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m["outside"]["platform"] != "bot"),
+            "{member}'s own chat"
+        );
+    }
+    // A counter belongs to the first member that has it; only its owner and moderators change it.
+    e.sql(
+        "INSERT INTO counters(channel_id,id,kind,label) VALUES('team-1','falls','deaths','Falls')",
+    )
+    .await;
+    said(fan.clone(), "!falls").await;
+    said(tokens[5].clone(), "!falls").await;
+    let falls: i32 =
+        sqlx::query_scalar("SELECT value FROM counters WHERE channel_id='team-1' AND id='falls'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(falls, 1, "team-5 moderates team-1; the viewer doesn't");
+    // !rally rallies once, on the credited channel's broadcast, though the fan watches every member.
+    e.sql("INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES('team-fan','glint',now(),now())").await;
+    e.sql("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level) SELECT id,'u:team-fan',now()+interval '1 minute','counted' FROM broadcasts WHERE id IN ('team-0','team-1','team-2','team-3')").await;
+    said(fan.clone(), "!rally").await;
+    let rallies: Vec<String> =
+        sqlx::query_scalar("SELECT broadcast_id FROM rallies WHERE user_id='team-fan'")
+            .fetch_all(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(rallies, ["team-2"]);
+    let surge: Vec<String> =
+        sqlx::query_scalar("SELECT broadcast_id FROM surge_participation WHERE user_id='team-fan'")
+            .fetch_all(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(surge, ["team-2"]);
+    e.sql("DELETE FROM rallies WHERE user_id='team-fan'").await;
+    e.sql("DELETE FROM surge_participation WHERE user_id='team-fan'")
+        .await;
+    e.sql("DELETE FROM playback_leases WHERE viewer_key='u:team-fan'")
+        .await;
+    e.sql("DELETE FROM faction_members WHERE user_id='team-fan'")
+        .await;
+    e.sql("DELETE FROM engagement WHERE user_id='team-fan'")
+        .await;
+    e.sql("DELETE FROM chat_commands WHERE name IN ('sqcmd','sqonly')")
+        .await;
+    e.sql("DELETE FROM counters WHERE id='falls'").await;
     e.sql("INSERT INTO channel_restrictions(channel_id,user_id,kind) VALUES('team-2','team-fan','ban')").await;
     assert_eq!(
         call(

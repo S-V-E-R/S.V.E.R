@@ -518,7 +518,7 @@ pub(crate) fn select() -> String {
     format!(
         "SELECT m.id,m.seq,m.author_id,m.body,m.created_at,{} || jsonb_build_object('guild',{}) AS author,m.role,m.origin,m.tribute,m.highlighted,m.skill,m.gif,
         (SELECT t.tier FROM creator_tiers t WHERE t.user_id=m.author_id AND t.tier>0) AS creator_tier,
-        (SELECT e.earned FROM engagement e WHERE e.channel_id=m.channel_id AND e.user_id=m.author_id) AS earned,
+        (SELECT e.earned FROM engagement e WHERE e.channel_id=coalesce(m.credit_id,m.channel_id) AND e.user_id=m.author_id) AS earned,
         (SELECT jsonb_strip_nulls(jsonb_build_object('tier',s.tier,'months',s.months,'channel',CASE WHEN m.squad_id IS NOT NULL THEN su.username END)) FROM channel_subs s JOIN users su ON su.id=s.channel_id WHERE s.user_id=m.author_id AND s.paid_through>now()
             AND (s.channel_id=m.channel_id OR s.channel_id IN (SELECT q.user_id FROM squad_members q WHERE q.squad_id=m.squad_id))
             ORDER BY s.channel_id=m.channel_id DESC,s.months DESC,su.username LIMIT 1) AS sub,
@@ -1076,7 +1076,7 @@ pub(crate) async fn send_from(
         }
         None => None,
     };
-    if input.highlight && (channel.is_none() || origin.is_some() || squad.is_some()) {
+    if input.highlight && (channel.is_none() || origin.is_some()) {
         return Err(Fail::field(
             "highlight",
             "Highlights work in a channel's own chat.",
@@ -1167,8 +1167,17 @@ pub(crate) async fn send_from(
         .bind(mention_names(body))
         .fetch_all(&mut *tx)
         .await?;
-        let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted,skill,gif) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO NOTHING")
-            .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.as_ref().map(|s| s.shown.as_str())).bind(gif.as_ref().map(|(g, _)| g.clone())).execute(&mut *tx).await?.rows_affected();
+        // A shared chat line credits one member channel, so rewards never multiply across members;
+        // MAGNet's merged sends earn nothing there, as before.
+        let credit = match (channel, squad) {
+            (Some(_), Some(_)) if origin.is_none() => {
+                Some(crate::engagement::credit(&mut tx, &members, &user.id).await?)
+            }
+            (Some(channel), None) => Some(channel.to_owned()),
+            _ => None,
+        };
+        let inserted = sqlx::query("INSERT INTO chat_messages(id,channel_id,author_id,body,reply_to,mention_ids,role,origin,squad_id,tribute,highlighted,skill,gif,credit_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(id) DO NOTHING")
+            .bind(&input.id).bind(channel).bind(&user.id).bind(body).bind(&input.reply_to).bind(mentions).bind(role).bind(origin).bind(squad).bind(tribute.map(|v| v as i32)).bind(input.highlight).bind(skill.as_ref().map(|s| s.shown.as_str())).bind(gif.as_ref().map(|(g, _)| g.clone())).bind(credit.as_deref().filter(|_| squad.is_some())).execute(&mut *tx).await?.rows_affected();
         if inserted == 0 {
             // A retry of the author's own message that was removed meanwhile.
             let mine: bool = sqlx::query_scalar(
@@ -1235,58 +1244,56 @@ pub(crate) async fn send_from(
             }
         }
         // A moderator's counter command (`!deaths`) changed a counter; viewers are told after commit.
-        let mut counters = false;
+        let mut counters = None;
         let mut rallied = false;
-        if let Some(channel) = channel
-            && squad.is_none()
-        {
+        if let Some(credit) = &credit {
             if input.highlight {
-                crate::engagement::highlight(&mut tx, channel, &user.id, &input.id).await?;
+                crate::engagement::highlight(&mut tx, credit, &user.id, &input.id).await?;
             }
-            crate::engagement::chatted(&mut tx, &app.config.engagement, channel, &user.id).await?;
-            crate::factions::chat(app, &mut tx, channel, &user.id, &input.id).await?;
-            crate::plays::chat_vote(&mut tx, channel, &user, body).await?;
-            if role.is_some() && origin.is_none() {
-                let mut command = body.splitn(2, char::is_whitespace);
-                if command.next() == Some("!marker") {
-                    crate::videos::marker(
-                        &mut tx,
-                        channel,
-                        command.next().unwrap_or(""),
-                        Some(&input.id),
-                    )
-                    .await?;
+            crate::engagement::chatted(&mut tx, &app.config.engagement, credit, &user.id).await?;
+            crate::factions::chat(app, &mut tx, credit, &user.id, &input.id).await?;
+            // Every member's Plays vote: only a Plays channel counts it.
+            for member in &members {
+                crate::plays::chat_vote(&mut tx, member, &user, body).await?;
+            }
+            let mut command = body.splitn(2, char::is_whitespace);
+            if origin.is_none() && command.next() == Some("!marker") {
+                let note = command.next().unwrap_or("");
+                for member in &members {
+                    if moderation::role_of(app, member, &user).await?.is_some() {
+                        crate::videos::marker(&mut tx, member, note, Some(&input.id)).await?;
+                    }
                 }
             }
-            counters = crate::crowd::chat_command(app, &mut tx, channel, &user, body).await?;
+            counters = crate::crowd::chat_command(app, &mut tx, &members, &user, body).await?;
             // Surge counts each real viewer once a minute; "!rally" also rallies for their faction.
-            crate::surge::participated(&mut tx, channel, &user.id).await?;
+            crate::surge::participated(&mut tx, credit, &user.id).await?;
             rallied = body.eq_ignore_ascii_case("!rally")
-                && crate::surge::rally_in(&mut tx, channel, &user.id).await?;
+                && crate::surge::rally_in(&mut tx, credit, &user.id).await?;
         }
         tx.commit().await?;
-        Ok::<_, Fail>((counters, rallied))
+        Ok::<_, Fail>((credit, counters, rallied))
     }
     .await;
-    let (counters, rallied) = match stored {
+    let (credit, counters, rallied) = match stored {
         Ok(done) => done,
         Err(e) => {
             let _ = sec::release(app, reserved).await;
             return Err(e);
         }
     };
-    if counters && let Some(channel) = channel {
-        crate::crowd::publish_counters(app, channel).await?;
+    if let Some(owner) = &counters {
+        crate::crowd::publish_counters(app, owner).await?;
     }
-    if let Some(channel) = channel.filter(|_| squad.is_none()) {
+    if let Some(credit) = &credit {
         if rallied {
-            crate::surge::publish_rally(app, channel).await?;
+            crate::surge::publish_rally(app, credit).await?;
         }
         if let Some(skill) = &skill {
-            crate::skills::played(app, channel, &user, skill).await?;
+            crate::skills::played(app, credit, &user, skill).await?;
         }
         if origin.is_none() {
-            crate::surge::combo(app, channel, &user.id, body).await?;
+            crate::surge::combo(app, credit, &user.id, body).await?;
         }
     }
     // select() contains only fixed SQL and a literal chip alias; message values are bound.
@@ -1304,9 +1311,10 @@ pub(crate) async fn send_from(
         app.chat
             .publish(&format!("magnet:{lane}"), Some(&author), 0, event);
     }
-    // Custom !commands get the channel bot's reply after the message itself (docs/COMMUNITY.md).
-    if let Some(channel) = channel.filter(|_| squad.is_none() && origin.is_none()) {
-        crate::commands::respond(app, channel, &user, body).await;
+    // Custom !commands get the channel bot's reply after the message itself (docs/COMMUNITY.md);
+    // in shared chat, from the host's commands first, into the shared room.
+    if channel.is_some() && origin.is_none() {
+        crate::commands::respond(app, &members, squad, &user, body).await;
     }
     Ok(visible_message(message, &hidden))
 }
@@ -1384,9 +1392,19 @@ pub async fn squad_read(
     let members = squad_members(&app, &id, viewer.as_ref().map(|u| u.id.as_str())).await?;
     let channel = members.first().ok_or_else(Fail::missing)?;
     let (hidden, _) = hidden_for(&app, viewer.as_ref().map(|u| u.id.as_str()), &members).await?;
-    let rules = squad_rules(&app, &member_names(&app, &members).await?).await?;
+    let names = member_names(&app, &members).await?;
+    let rules = squad_rules(&app, &names).await?;
+    // The member channel the viewer's lines credit, whose rewards the dock offers.
+    let credit = match &viewer {
+        Some(v) => {
+            let id =
+                crate::engagement::credit(&mut *app.db.acquire().await?, &members, &v.id).await?;
+            names.iter().find(|n| n.0 == id).map(|n| n.1.clone())
+        }
+        None => None,
+    };
     Ok(Json(
-        json!({"now":Utc::now(),"messages":history(&app,channel,&hidden,Some(&id)).await?,"pinned":null,"emotes":rules.emotes,"allow_signatures":rules.allow_signatures,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only}),
+        json!({"now":Utc::now(),"messages":history(&app,channel,&hidden,Some(&id)).await?,"pinned":null,"emotes":rules.emotes,"allow_signatures":rules.allow_signatures,"followers_only_until":rules.followers_only,"subs_only":rules.subs_only,"credit":credit}),
     ))
 }
 /// Members' usernames, in member order.
