@@ -33,7 +33,7 @@ export function subBadge(months: number) {
 /** `now`: the server's time, so backlog lines keep their real ages (the overlay fade never uses the PC clock). */
 type Snapshot = { now?: string; messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean; allow_signatures?: boolean; gifs?: GifAccess; credit?: string | null };
 /** Another channel's signature emote, written username/Code (docs/CHANNEL_ADDITIONS.md "Signature emote"). */
-const SIGNATURE = /(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)/g;
+export const SIGNATURE = /(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)/g;
 const BOARD_EVENTS = new Set(["board_effect", "board_input", "board", "poll", "counters", "rally", "surge", "board_state", "board_result"]);
 type BoardEvent = { type: "board_effect" | "board_input" | "board" | "poll" | "counters" | "rally" | "surge" | "board_state" | "board_result"; source?: string };
 // `outside`: the channel's 7TV/BTTV/FFZ set changed too. `source`: a co-stream member's own event, named by its channel.
@@ -60,8 +60,8 @@ export function emoteLookup(emotes: ChannelEmote[]): EmoteLookup {
 }
 
 /** Signature emotes in these messages, looked up as they appear and again every 90 seconds (and on
- *  `refresh`), so a removed or rejected one stops showing in open chats, pop-outs and overlays. */
-export function useSignatures(messages: Message[], allow: boolean) {
+ *  `refresh`), so a removed or rejected one stops showing in open chats, pop-outs, overlays and DMs. */
+export function useSignatures(messages: { body: string }[], allow: boolean) {
   const [signatures, setSignatures] = useState<ChannelEmote[]>([]);
   // Lowercase code → the code as written (emote codes are case-sensitive).
   const asked = useRef(new Map<string, string>());

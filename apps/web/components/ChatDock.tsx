@@ -39,12 +39,13 @@ function EmoteSearch({ query, onQuery }: { query: string; onQuery: (query: strin
 /**
  * Everything a viewer can add to chat, in one row under the message box (Mixer's chat bar):
  * Emotes, Signature, Rewards (Engagement Valor) and Skills (Valor). Each opens a panel over the
- * bottom of the chat with a fixed grid of tiles, paged instead of scrolled.
+ * bottom of the chat with a fixed grid of tiles, paged instead of scrolled. `dm`: direct messages
+ * show only the Signature tab (no channel, so no channel emotes, rewards or skills).
  */
-export function ChatDock({ username, account, emotes, outside = [], onOutsideReported, onEmote, rewards = username, rewardsVersion, onHighlight, shared }: {
+export function ChatDock({ username, account, emotes, outside = [], onOutsideReported, onEmote, rewards = username, rewardsVersion, onHighlight, shared, dm }: {
   username: string; account: string | null; emotes: ChannelEmote[]; outside?: ChannelEmote[]; onOutsideReported?: () => void; onEmote: (code: string) => void;
   /** The channel whose rewards to offer: in shared chat, the member channel the viewer's lines credit. */
-  rewards?: string | null; rewardsVersion: number; onHighlight: (cost: number) => void; shared: boolean;
+  rewards?: string | null; rewardsVersion: number; onHighlight: (cost: number) => void; shared: boolean; dm?: boolean;
 }) {
   const [tab, setTab] = useState<Tab | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
@@ -54,7 +55,7 @@ export function ChatDock({ username, account, emotes, outside = [], onOutsideRep
   useEffect(() => { if (tab && !panel.current?.contains(document.activeElement)) head.current?.focus(); }, [tab]);
   const close = () => { setTab(null); opener.current?.focus(); };
   const base: [Tab, string][] = account ? [["emotes", "Emotes"], ["signature", "Signature"]] : [["emotes", "Emotes"]];
-  const tabs: [Tab, string][] = shared ? (rewards ? [...base, ["rewards", "Rewards"]] : base) : [...base, ["rewards", "Rewards"], ["skills", "Skills"]];
+  const tabs: [Tab, string][] = dm ? [["signature", "Signature"]] : shared ? (rewards ? [...base, ["rewards", "Rewards"]] : base) : [...base, ["rewards", "Rewards"], ["skills", "Skills"]];
   const insert = (code: string) => { onEmote(code); setTab(null); };
   return <div className="chat-dock">
     {tab && <div ref={panel} className="chat-dock-panel panel" role="dialog" aria-label={tabs.find(t => t[0] === tab)?.[1]} onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); close(); } }}>
