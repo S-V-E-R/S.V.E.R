@@ -20,7 +20,8 @@ type Reply = { id: string; username: string | null; body: string | null };
 /** `protected` and `moderator` are live (the stored `role` is from send time); `arrived` is stamped here for the overlay fade. */
 export type Message = { id: string; seq: number; author: Chip; body: string; created_at: string; role: "owner" | "moderator" | "staff" | null; mentions: string[]; reply: Reply | null; origin?: string | null; tribute?: number | null; sub?: { tier: number; months: number; channel?: string } | null; highlighted?: boolean; creator_tier?: number | null; skill?: string | null; loyalty?: number; outside?: Outside | null; gif?: Gif | null; supporter?: { tier: SupporterTier; months: number; founder: number | null } | null; protected?: boolean; moderator?: boolean; arrived?: number };
 /** A message from a linked platform (docs/LINKED_CHAT.md): always badged, never a S.V.E.R account. */
-type Outside = { platform: string; sender_id: string; name: string; login: string; role: string | null; url: string | null };
+// `channel`: in a co-stream's shared chat, the member channel the line came in on.
+type Outside = { platform: string; sender_id: string; name: string; login: string; role: string | null; url: string | null; channel?: string };
 const PLATFORM_NAMES: Record<string, string> = { twitch: "Twitch", youtube: "YouTube", kick: "Kick" };
 /** Subscriber badge milestones: 1, 3, 6, 9 and 12 months, then each further year (docs/SUPPORT.md). */
 export function subBadge(months: number) {
@@ -30,9 +31,9 @@ export function subBadge(months: number) {
   return `${step} ${step === 1 ? "month" : "months"}`;
 }
 /** `now`: the server's time, so backlog lines keep their real ages (the overlay fade never uses the PC clock). */
-type Snapshot = { now?: string; messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean; allow_signatures?: boolean; gifs?: GifAccess };
+type Snapshot = { now?: string; messages: Message[]; pinned: Message | null; emotes: ChannelEmote[]; followers_only_until?: string | null; subs_only?: boolean; allow_signatures?: boolean; gifs?: GifAccess; credit?: string | null };
 /** Another channel's signature emote, written username/Code (docs/CHANNEL_ADDITIONS.md "Signature emote"). */
-const SIGNATURE = /(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)/g;
+export const SIGNATURE = /(?<!\S)[A-Za-z0-9_]{3,25}\/[A-Za-z0-9]{3,20}(?!\S)/g;
 const BOARD_EVENTS = new Set(["board_effect", "board_input", "board", "poll", "counters", "rally", "surge", "board_state", "board_result"]);
 type BoardEvent = { type: "board_effect" | "board_input" | "board" | "poll" | "counters" | "rally" | "surge" | "board_state" | "board_result"; source?: string };
 // `outside`: the channel's 7TV/BTTV/FFZ set changed too. `source`: a co-stream member's own event, named by its channel.
@@ -59,8 +60,8 @@ export function emoteLookup(emotes: ChannelEmote[]): EmoteLookup {
 }
 
 /** Signature emotes in these messages, looked up as they appear and again every 90 seconds (and on
- *  `refresh`), so a removed or rejected one stops showing in open chats, pop-outs and overlays. */
-export function useSignatures(messages: Message[], allow: boolean) {
+ *  `refresh`), so a removed or rejected one stops showing in open chats, pop-outs, overlays and DMs. */
+export function useSignatures(messages: { body: string }[], allow: boolean) {
   const [signatures, setSignatures] = useState<ChannelEmote[]>([]);
   // Lowercase code → the code as written (emote codes are case-sensitive).
   const asked = useRef(new Map<string, string>());
@@ -101,6 +102,16 @@ export function useOutsideEmotes(username: string | null, version = 0) {
     return () => { live = false; };
   }, [username, version]);
   return got && got.username === username ? got.emotes : NONE;
+}
+/** A shared chat's outside emote sets, by member channel (comma-separated `usernames`), as lookups. */
+function useOutsideLookups(usernames: string, version: number) {
+  const [sets, setSets] = useState<Record<string, ChannelEmote[]>>({});
+  useEffect(() => {
+    let live = true;
+    for (const username of usernames ? usernames.split(",") : []) void send<{ emotes: ChannelEmote[] }>("GET", `/api/channels/${encodeURIComponent(username)}/outside-emotes`).then(r => { if (live && r.ok) setSets(s => ({ ...s, [username]: r.data.emotes ?? [] })); });
+    return () => { live = false; };
+  }, [usernames, version]);
+  return useMemo(() => Object.fromEntries(Object.entries(sets).map(([k, v]) => [k, emoteLookup(v)])), [sets]);
 }
 
 /** Slow mode and timeouts: the server's `retry` seconds, counted down; Send stays off until zero. */
@@ -208,11 +219,17 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
   const [mode, setMode] = useState<"connecting" | "live" | "polling">("connecting");
   const [role, setRole] = useState<string | null>(null);
   const [restrictions, setRestrictions] = useState<{ user: Chip; kind: string; until: string | null }[]>([]);
+  // In a shared chat: the member channels whose linked-platform lines this person may hide or mute.
+  const [moderates, setModerates] = useState<string[]>([]);
+  // In a shared chat: the member channels a ban here also bans from, after the co-stream too.
+  const [banChannels, setBanChannels] = useState<string[]>([]);
   const [pinned, setPinned] = useState<Message | null>(null);
   const [emotes, setEmotes] = useState<ChannelEmote[]>([]);
   const [emotesVersion, setEmotesVersion] = useState(0);
   const [allowSignatures, setAllowSignatures] = useState(true);
   const [gifs, setGifs] = useState<GifAccess>(null);
+  // In shared chat: the member channel the viewer's lines credit, whose rewards the dock offers.
+  const [credit, setCredit] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [reply, setReply] = useState<Reply | null>(null);
   const [outsideReply, setOutsideReply] = useState<{ id: string; platform: string; name: string } | null>(null);
@@ -284,13 +301,19 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
   const shown = useMemo(() => emoteLookup([...emotes, ...(allowSignatures ? signatures : []), ...outside]), [emotes, signatures, outside, allowSignatures]);
   // Twitch/Kick/YouTube lines render only the channel's mirrored 7TV/BTTV/FFZ set (docs/LINKED_CHAT.md).
   const outsideShown = useMemo(() => emoteLookup(outside), [outside]);
+  // A shared chat's lines each use their member channel's set.
+  const outsideChannels = useMemo(() => [...new Set(messages.flatMap(m => m.outside?.channel ? [m.outside.channel] : []))].sort().join(","), [messages]);
+  const memberOutside = useOutsideLookups(squad ? outsideChannels : "", emotesVersion);
+  const outsideLookup = (o: Outside) => (o.channel && memberOutside[o.channel]) || outsideShown;
+  // A linked-platform line is moderated by its own channel's owner, moderators and staff.
+  const canHideOutside = (o: Outside) => squad ? !!o.channel && moderates.includes(o.channel) : canPin;
 
   // Owner, moderators and staff get per-message actions; the server enforces every permission.
   const loadRole = useCallback(async () => {
     if (!account) return;
-    const r = await send<{ role: string; spike?: boolean; followers_only_until?: string | null; restrictions?: { user: Chip; kind: string; until: string | null }[] }>("GET", `${path}/moderation`);
-    if (r.ok) { setRole(r.data.role); setSpike(!!r.data.spike); setFollowersOnly(r.data.followers_only_until ?? null); setRestrictions(r.data.restrictions ?? []); }
-    else setRole(null);
+    const r = await send<{ role: string; spike?: boolean; followers_only_until?: string | null; restrictions?: { user: Chip; kind: string; until: string | null }[]; moderates?: string[]; bans?: string[] }>("GET", `${path}/moderation`);
+    if (r.ok) { setRole(r.data.role); setSpike(!!r.data.spike); setFollowersOnly(r.data.followers_only_until ?? null); setRestrictions(r.data.restrictions ?? []); setModerates(r.data.moderates ?? []); setBanChannels(r.data.bans ?? []); }
+    else { setRole(null); setModerates([]); }
   }, [account, path]);
   useLoad(loadRole);
   useEffect(() => {
@@ -336,7 +359,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
     let poll: ReturnType<typeof setInterval> | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     const settleIn = (list: Message[]) => { const s = sending.current; if (s && list.some(m => m.id === s.id)) ack(s.id); };
-    const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true, r.data.now); settleIn(r.data.messages); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setFollowersOnly(r.data.followers_only_until ?? null); setSubsOnly(!!r.data.subs_only); setAllowSignatures(r.data.allow_signatures ?? true); setGifs(r.data.gifs ?? null); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
+    const load = async () => { const r = await send<Snapshot>("GET", path); if (!closed && r.ok) { merge(r.data.messages, true, r.data.now); settleIn(r.data.messages); setPinned(r.data.pinned); setEmotes(r.data.emotes ?? []); setFollowersOnly(r.data.followers_only_until ?? null); setSubsOnly(!!r.data.subs_only); setAllowSignatures(r.data.allow_signatures ?? true); setGifs(r.data.gifs ?? null); setCredit(r.data.credit ?? null); setError(""); } else if (!closed && !r.ok) { setError(r.error); if (squad) merge([], true); } };
     // Polling covers only the time the socket is down; the socket's snapshot takes over again.
     const startPoll = () => {
       if (closed || poll) return;
@@ -356,7 +379,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
         const data = JSON.parse(event.data) as Event;
         // A co-stream member's CrowdSync and raid events name their own channel.
         const channel = ("source" in data && data.source ? data.source : username).toLowerCase();
-        if (data.type === "snapshot") { attempt = 0; merge(data.messages, true, data.now); settleIn(data.messages); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); }
+        if (data.type === "snapshot") { attempt = 0; merge(data.messages, true, data.now); settleIn(data.messages); setPinned(data.pinned); setEmotes(data.emotes ?? []); setFollowersOnly(data.followers_only_until ?? null); setSubsOnly(!!data.subs_only); setAllowSignatures(data.allow_signatures ?? true); setGifs(data.gifs ?? null); setCredit(data.credit ?? null); }
         else if (data.type === "protect") setFollowersOnly(data.until);
         else if (data.type === "subs_only") setSubsOnly(data.on);
         else if (data.type === "emotes") {
@@ -423,7 +446,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
   // Act first, review later: no reason now; the moderator gives one in Studio → Chat after the stream
   // (a shared co-stream chat's shows up in every member's). A ban always confirms.
   async function restrict(kind: "timeout" | "ban", who: string, minutes?: number) {
-    if (kind === "ban" && !window.confirm(squad ? `Ban @${who} from this co-stream's shared chat? It ends with the co-stream and doesn't block watching.` : `Ban @${who} from this chat? They also can't watch here while signed in.`)) return false;
+    if (kind === "ban" && !window.confirm(squad ? `Ban @${who} from this co-stream's shared chat?${banChannels.length ? ` This also bans them from ${banChannels.map(c => `@${c}`).join(", ")}: they can't chat or watch there while signed in, after the co-stream too.` : " It ends with the co-stream and doesn't block watching."}` : `Ban @${who} from this chat? They also can't watch here while signed in.`)) return false;
     const result = await send("POST", `${path}/restrictions`, { username: who, kind, seconds: minutes === undefined ? undefined : minutes * 60 });
     if (!result.ok) { setError(result.error); return false; }
     if (squad) await loadRole();
@@ -469,9 +492,11 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
   async function outsideAction(m: Message, action: "hide" | "mute" | "mute-forever") {
     const o = m.outside;
     if (!o) return;
+    // In a shared chat, through the line's own channel.
+    const base = squad && o.channel ? `/api/channels/${encodeURIComponent(o.channel)}/chat` : path;
     const result = action === "hide"
-      ? await send("POST", `${path}/outside/${encodeURIComponent(m.id)}/hide`)
-      : await send("POST", `${path}/outside-mutes`, { platform: o.platform, sender_id: o.sender_id, permanent: action === "mute-forever" });
+      ? await send("POST", `${base}/outside/${encodeURIComponent(m.id)}/hide`)
+      : await send("POST", `${base}/outside-mutes`, { platform: o.platform, sender_id: o.sender_id, permanent: action === "mute-forever" });
     if (!result.ok) setError(result.error);
   }
 
@@ -594,11 +619,11 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
         </div></details>}
       </li> : m.outside ? <li key={m.id} className="chat-outside">
         <span className="muted">{time(m.created_at)}</span>{" "}
-        <span className={`badge platform-badge ${m.outside.platform}`} title={`From ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}>{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}<span className="sr-only"> message</span></span>{" "}
+        <span className={`badge platform-badge ${m.outside.platform}`} title={`From ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}${m.outside.channel ? ` chat on @${m.outside.channel}'s stream` : ""}`}>{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}{m.outside.channel && ` · @${m.outside.channel}`}<span className="sr-only"> message</span></span>{" "}
         {m.outside.url ? <a href={m.outside.url} target="_blank" rel="noopener noreferrer nofollow" title={`${m.outside.name} on ${PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}`}><strong>{m.outside.name}</strong></a> : <strong>{m.outside.name}</strong>}
-        {m.outside.role && <span className="badge">{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform} {m.outside.role === "moderator" ? "mod" : m.outside.role === "subscriber" ? (m.outside.platform === "youtube" ? "member" : "sub") : "broadcaster"}</span>}: <MessageBody message={m} account={null} lookup={outsideShown} />
-        {canPin && <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.outside.name}`}>Actions</summary><div className="chat-message-controls">
-          {role === "owner" && <button type="button" className="small quiet" onClick={() => { setOutsideReply({ id: m.id, platform: m.outside!.platform, name: m.outside!.name }); setReply(null); input.current?.focus(); }}>Reply on {PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}</button>}
+        {m.outside.role && <span className="badge">{PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform} {m.outside.role === "moderator" ? "mod" : m.outside.role === "subscriber" ? (m.outside.platform === "youtube" ? "member" : "sub") : "broadcaster"}</span>}: <MessageBody message={m} account={null} lookup={outsideLookup(m.outside)} />
+        {canHideOutside(m.outside) && <details className="chat-message-actions"><summary aria-label={`Actions for message from ${m.outside.name}`}>Actions</summary><div className="chat-message-controls">
+          {role === "owner" && !squad && <button type="button" className="small quiet" onClick={() => { setOutsideReply({ id: m.id, platform: m.outside!.platform, name: m.outside!.name }); setReply(null); input.current?.focus(); }}>Reply on {PLATFORM_NAMES[m.outside.platform] ?? m.outside.platform}</button>}
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "hide")}>Hide here</button>
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute")}>Mute here for this stream</button>
           <button type="button" className="small quiet" onClick={() => outsideAction(m, "mute-forever")}>Mute here permanently</button>
@@ -626,7 +651,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
       </ChatLine>)}
     </ol>
     {behind && <button type="button" className="small chat-newest" onClick={toNewest}>New messages below</button>}
-    {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt("Reason for lifting this restriction (optional)"); if (reason === null || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, reason.trim() ? { reason: reason.trim() } : {}); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
+    {squad && role && <details><summary>Shared-chat restrictions ({restrictions.length})</summary><ul className="list">{restrictions.map(r => <li key={`${r.user.username}:${r.kind}`}>{r.user.display_name} · {r.kind}{r.until && ` until ${time(r.until)}`}<button className="small quiet" onClick={async () => { const reason = window.prompt(r.kind === "ban" ? "Reason for lifting this ban (optional). It also lifts the channel bans it added." : "Reason for lifting this restriction (optional)"); if (reason === null || !r.user.username) return; const result = await send("DELETE", `${path}/restrictions/${encodeURIComponent(r.user.username)}/${r.kind}`, reason.trim() ? { reason: reason.trim() } : {}); if (!result.ok) setError(result.error); else await loadRole(); }}>Lift</button></li>)}</ul></details>}
     {account ? <form onSubmit={submit} className="chat-form">
       {reply && <div className="chat-reply-draft"><span>Replying to @{reply.username}: {reply.body}</span><button type="button" className="small quiet" onClick={() => setReply(null)}>Cancel reply</button></div>}
       {outsideReply && <div className="chat-reply-draft"><span>Replying on {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} to {outsideReply.name}, as your {PLATFORM_NAMES[outsideReply.platform] ?? outsideReply.platform} account</span><button type="button" className="small quiet" onClick={() => setOutsideReply(null)}>Cancel reply</button></div>}
@@ -650,7 +675,7 @@ export function Chat({ username, account, squad, channel = username, onRoom, var
       <RetryNotice wait={wait} />
       {error && <p role="alert" className="error">{error}</p>}
     </form> : <p className="chat-signin panel"><Link href={variant === "full" ? "/login" : `/login?${new URLSearchParams({ next: `/${username}/chat${variant === "dock" ? "?dock=1" : ""}` })}`}>Log in</Link> or <Link href="/signup">enlist</Link> to chat.</p>}
-    {account && <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
+    {account && <ChatDock username={username} account={account} emotes={emotes} outside={outside} onOutsideReported={() => setEmotesVersion(v => v + 1)} shared={!!squad} rewards={squad ? credit : username} rewardsVersion={rewardsVersion} onHighlight={setHighlight}
       onEmote={code => { setDraft(value => `${value}${value && !/\s$/.test(value) ? " " : ""}${code} `.slice(0, 500)); input.current?.focus(); }} />}
   </section>;
 }

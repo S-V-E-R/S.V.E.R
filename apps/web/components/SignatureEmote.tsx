@@ -10,9 +10,10 @@ const CARD_WIDTH = 220;
 /**
  * Another channel's signature emote in chat: hovering or focusing it shows the owner's crest and
  * name (docs/CHANNEL_ADDITIONS.md "Signature emote"). The card is fixed to the viewport, so the
- * chat's scrolling list can't clip it; it sits above the emote, or below it near the top.
+ * chat's scrolling list can't clip it; it sits above the emote, or below it near the top. Inside
+ * a control (`focusable={false}`) it takes no focus of its own; its alt text still names it.
  */
-export function SignatureEmote({ emote, owner }: { emote: ChannelEmote; owner: string }) {
+export function SignatureEmote({ emote, owner, focusable = true }: { emote: ChannelEmote; owner: string; focusable?: boolean }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [at, setAt] = useState<{ left: number; top: number; below: boolean } | null>(null);
   const faction = factionOf(emote.faction ?? null);
@@ -23,7 +24,7 @@ export function SignatureEmote({ emote, owner }: { emote: ChannelEmote; owner: s
     const below = r.top < 64;
     setAt({ left: Math.max(8, Math.min(r.left, window.innerWidth - CARD_WIDTH - 8)), top: below ? r.bottom + 6 : r.top - 6, below });
   };
-  return <span ref={ref} className="signature-emote" tabIndex={0} onMouseEnter={show} onMouseLeave={() => setAt(null)} onFocus={show} onBlur={() => setAt(null)}>
+  return <span ref={ref} className="signature-emote" tabIndex={focusable ? 0 : undefined} onMouseEnter={show} onMouseLeave={() => setAt(null)} onFocus={show} onBlur={() => setAt(null)}>
     <img className="chat-emote" src={emote.image[28]} srcSet={`${emote.image["56"]} 2x, ${emote.image["112"]} 4x`} width={28} height={28} alt={label} loading="lazy" />
     {at && <span className="signature-card" data-below={at.below || undefined} style={{ left: at.left, top: at.top, maxWidth: CARD_WIDTH }} aria-hidden="true">
       <Crest faction={emote.faction ?? null} initial={owner.slice(0, 1).toUpperCase()} size={24} />

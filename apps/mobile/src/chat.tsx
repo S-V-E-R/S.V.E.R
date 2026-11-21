@@ -288,7 +288,7 @@ function Message({ message, host, mentioned, highlight, onReport }: { message: C
       <Text style={styles.meta}>
         {message.tribute ? <Text style={styles.dim}>{message.tribute.toLocaleString()} Valor · </Text> : null}
         {outside?.platform === "bot" ? <Text style={styles.dim} accessibilityLabel="This channel's bot">Bot </Text>
-          : platform ? <Text style={styles.dim} accessibilityLabel={`From ${platform}`}>{platform} </Text> : null}
+          : platform ? <Text style={styles.dim} accessibilityLabel={`From ${platform}${outside?.channel ? ` on @${outside.channel}'s stream` : ""}`}>{platform}{outside?.channel ? ` · @${outside.channel}` : ""} </Text> : null}
         {!outside && message.author.guild ? <Text style={styles.dim} accessibilityLabel={`Guild ${message.author.guild.name}`}>[{message.author.guild.tag}] </Text> : null}
         <Text style={{ color }}>{outside ? outside.name : message.author.display_name}</Text>
         {outside ? (outsideRole(outside) ? <Text style={styles.dim}> · {outsideRole(outside)}</Text> : null) : (

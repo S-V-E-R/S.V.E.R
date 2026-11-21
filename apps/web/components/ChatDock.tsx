@@ -39,11 +39,13 @@ function EmoteSearch({ query, onQuery }: { query: string; onQuery: (query: strin
 /**
  * Everything a viewer can add to chat, in one row under the message box (Mixer's chat bar):
  * Emotes, Signature, Rewards (Engagement Valor) and Skills (Valor). Each opens a panel over the
- * bottom of the chat with a fixed grid of tiles, paged instead of scrolled.
+ * bottom of the chat with a fixed grid of tiles, paged instead of scrolled. `dm`: direct messages
+ * show only the Signature tab (no channel, so no channel emotes, rewards or skills).
  */
-export function ChatDock({ username, account, emotes, outside = [], onOutsideReported, onEmote, rewardsVersion, onHighlight, shared }: {
+export function ChatDock({ username, account, emotes, outside = [], onOutsideReported, onEmote, rewards = username, rewardsVersion, onHighlight, shared, dm }: {
   username: string; account: string | null; emotes: ChannelEmote[]; outside?: ChannelEmote[]; onOutsideReported?: () => void; onEmote: (code: string) => void;
-  rewardsVersion: number; onHighlight: (cost: number) => void; shared: boolean;
+  /** The channel whose rewards to offer: in shared chat, the member channel the viewer's lines credit. */
+  rewards?: string | null; rewardsVersion: number; onHighlight: (cost: number) => void; shared: boolean; dm?: boolean;
 }) {
   const [tab, setTab] = useState<Tab | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
@@ -53,7 +55,7 @@ export function ChatDock({ username, account, emotes, outside = [], onOutsideRep
   useEffect(() => { if (tab && !panel.current?.contains(document.activeElement)) head.current?.focus(); }, [tab]);
   const close = () => { setTab(null); opener.current?.focus(); };
   const base: [Tab, string][] = account ? [["emotes", "Emotes"], ["signature", "Signature"]] : [["emotes", "Emotes"]];
-  const tabs: [Tab, string][] = shared ? base : [...base, ["rewards", "Rewards"], ["skills", "Skills"]];
+  const tabs: [Tab, string][] = dm ? [["signature", "Signature"]] : shared ? (rewards ? [...base, ["rewards", "Rewards"]] : base) : [...base, ["rewards", "Rewards"], ["skills", "Skills"]];
   const insert = (code: string) => { onEmote(code); setTab(null); };
   return <div className="chat-dock">
     {tab && <div ref={panel} className="chat-dock-panel panel" role="dialog" aria-label={tabs.find(t => t[0] === tab)?.[1]} onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); close(); } }}>
@@ -61,7 +63,7 @@ export function ChatDock({ username, account, emotes, outside = [], onOutsideRep
         <button type="button" className="small quiet chat-dock-close" aria-label="Close" onClick={close}>×</button></div>
       {tab === "emotes" && <EmotesTab key="emotes" username={username} account={account} emotes={[...[...emotes].sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0)), ...outside]} onEmote={insert} onOutsideReported={onOutsideReported} />}
       {tab === "signature" && <SignatureTab key="signature" onEmote={insert} />}
-      {tab === "rewards" && <RewardsTab key="rewards" username={username} account={account} version={rewardsVersion} onHighlight={cost => { onHighlight(cost); close(); }} />}
+      {tab === "rewards" && rewards && <RewardsTab key="rewards" username={rewards} account={account} shared={shared} version={rewardsVersion} onHighlight={cost => { onHighlight(cost); close(); }} />}
       {tab === "skills" && <SkillsTab key="skills" username={username} account={account} />}
     </div>}
     <div className="chat-dock-bar" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>{tabs.map(([id, label]) => <button key={id} type="button" className="small quiet" aria-expanded={tab === id} onClick={e => { opener.current = e.currentTarget; setTab(tab === id ? null : id); }}>{label}</button>)}</div>
@@ -130,7 +132,7 @@ function EmotesTab({ username, account, emotes, onEmote, onOutsideReported }: { 
 }
 
 /** Channel rewards bought with Engagement Valor (docs/SUPPORT.md). Highlight arms the chat box. */
-function RewardsTab({ username, account, version, onHighlight }: { username: string; account: string | null; version: number; onHighlight: (cost: number) => void }) {
+function RewardsTab({ username, account, shared, version, onHighlight }: { username: string; account: string | null; shared: boolean; version: number; onHighlight: (cost: number) => void }) {
   const path = `/api/channels/${encodeURIComponent(username)}`;
   const [data, setData] = useState<{ rewards: Reward[]; balance: number | null } | null>(null);
   const [active, setActive] = useState<Reward | null>(null);
@@ -155,6 +157,7 @@ function RewardsTab({ username, account, version, onHighlight }: { username: str
     await load();
   }
   return <>
+    {shared && <p className="small-text">Your lines in this shared chat count toward @{username}, so these are its rewards.</p>}
     <p className="small-text">{data.balance !== null ? <><strong>{data.balance.toLocaleString()}</strong> Engagement Valor, earned here by watching, chatting and following. No cash value.</> : account ? null : <><Link href="/login">Sign in</Link> to earn and spend Engagement Valor.</>}</p>
     {data.rewards.length === 0 ? <p className="muted">This channel has no rewards yet.</p> : <Tiles items={data.rewards}>{reward => {
       const affordable = data.balance !== null && data.balance >= reward.cost;

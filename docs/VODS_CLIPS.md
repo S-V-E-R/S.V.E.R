@@ -27,7 +27,7 @@ Live streams are recorded so people can catch up. Streamers keep their best mome
 ## Chapters and markers
 
 - **Automatic chapters** start at every category change and every MAGNet spotlight moment.
-- **Markers:** the streamer and their mods add one with the `!marker` chat command (an optional label) or a dashboard button. Markers become chapters the streamer can rename, merge or remove.
+- **Markers:** the streamer and their mods add one with the `!marker` chat command (an optional label) or a dashboard button. In merged co-stream shared chat, `!marker` marks every member stream the sender owns or moderates. Markers become chapters the streamer can rename, merge or remove.
 - Chapters show on the VOD's scrub bar and in a list under the player.
 
 ## Highlights (kept permanently)

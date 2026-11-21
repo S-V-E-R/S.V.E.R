@@ -633,7 +633,7 @@ pub async fn view(
         .for_each(|v| profiles::hydrate(&app, v));
     // Timeouts and bans waiting for a reason: a moderator sees their own, the owner and staff all
     // (`theirs` flags the ones another moderator left).
-    let reviews: Vec<Value> = sqlx::query_scalar(concat!("SELECT jsonb_build_object('id',l.id,'action',l.action,'actor',a.username,'target',t.username,'created_at',l.created_at,'chat',", evidence_shown!(), ",'clip',l.detail->>'clip','theirs',l.actor_id<>$2) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 AND l.needs_review AND ($3 OR l.actor_id=$2) ORDER BY l.created_at"))
+    let reviews: Vec<Value> = sqlx::query_scalar(concat!("SELECT jsonb_build_object('id',l.id,'action',l.action,'actor',a.username,'target',t.username,'created_at',l.created_at,'chat',", evidence_shown!(), ",'clip',l.detail->>'clip','theirs',l.actor_id<>$2,'shared',l.detail->>'squad' IS NOT NULL,'channel_ban',l.detail @> '{\"channel_ban\":true}') FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 AND l.needs_review AND ($3 OR l.actor_id=$2) ORDER BY l.created_at"))
         .bind(&channel).bind(&me.id).bind(role != Role::Moderator).fetch_all(&app.db).await?;
     let log: Vec<Value> = sqlx::query_scalar(concat!("SELECT jsonb_build_object('id',l.id,'action',l.action,'actor_role',l.actor_role,'actor',a.username,'target',t.username,'reason',l.reason,'detail',CASE WHEN l.detail ? 'chat' THEN jsonb_set(l.detail,'{chat}',", evidence_shown!(), ") ELSE l.detail END,'created_at',l.created_at) FROM channel_moderation_log l LEFT JOIN users a ON a.id=l.actor_id LEFT JOIN users t ON t.id=l.target_id WHERE l.channel_id=$1 ORDER BY l.created_at DESC LIMIT 50"))
         .bind(&channel).fetch_all(&app.db).await?;
@@ -804,6 +804,22 @@ pub(crate) async fn clear_recent(
         RETURNING coalesce(m.squad_id,m.channel_id),m.origin,m.id"))
         .bind(channel).bind(target).fetch_all(db).await?)
 }
+/// Lifts the channel bans shared-chat bans on `target` gave (their log rows carry `channel_ban`),
+/// returning those channels: only the one ban logged as `action` (a log ID) when given, and only
+/// in `channels` when given. A ban a channel gave on its own, before or since, starts at a
+/// different time, so it stays.
+pub(crate) async fn lift_squad_channel_bans(
+    db: &mut PgConnection,
+    squad: &str,
+    target: &str,
+    channels: Option<&[String]>,
+    action: Option<&str>,
+) -> Res<Vec<String>> {
+    Ok(sqlx::query_scalar("DELETE FROM channel_restrictions r USING channel_moderation_log l WHERE l.detail->>'squad'=$1 AND l.target_id=$2 AND l.action='ban' AND l.detail @> '{\"channel_ban\":true}'
+        AND ($3::text[] IS NULL OR l.channel_id=ANY($3)) AND ($4::text IS NULL OR l.created_at=(SELECT created_at FROM channel_moderation_log WHERE id=$4))
+        AND r.channel_id=l.channel_id AND r.user_id=$2 AND r.kind='ban' AND r.created_at=l.created_at RETURNING r.channel_id")
+        .bind(squad).bind(target).bind(channels).bind(action).fetch_all(db).await?)
+}
 /// Chat, pop-outs, docks, the overlay and MAGNet drop each removed line.
 pub(crate) fn publish_cleared(app: &App, cleared: Cleared) {
     for (room, origin, id) in cleared {
@@ -948,20 +964,35 @@ pub async fn review(
             .await?
             .rows_affected()
             == 1;
-        if lifted {
+        // This shared ban's channel bans go with it (never those of another shared ban since):
+        // everywhere it gave them when the shared ban was lifted, otherwise (this channel left
+        // the co-stream, or it ended) this channel's own.
+        let mut channel_bans = Vec::new();
+        if let (Some(squad), Some(target), "ban") = (&squad, &target, kind.as_str()) {
+            let own = [channel.clone()];
+            let channels = (!lifted).then_some(&own[..]);
+            channel_bans =
+                lift_squad_channel_bans(&mut tx, squad, target, channels, Some(&id)).await?;
+        }
+        let mut logged: Vec<&String> = channel_bans.iter().collect();
+        if lifted && !channel_bans.contains(&channel) {
+            logged.push(&channel);
+        }
+        for c in &logged {
             log(
                 &mut tx,
-                &channel,
+                c,
                 &user.id,
                 role,
                 &format!("lift_{kind}"),
                 target.as_deref(),
                 None,
-                json!({"squad": squad}),
+                json!({"squad": squad, "channel_ban": channel_bans.contains(c)}),
                 "Undone on review",
             )
             .await?;
         }
+        lifted = !logged.is_empty();
     }
     tx.commit().await?;
     Ok(Json(
