@@ -1,5 +1,6 @@
 //! Chat commands and the channel bot (docs/COMMUNITY.md): custom commands, timed messages, /help.
 use super::*;
+use sver::bot::Event;
 
 async fn bot_lines(e: &Env, channel: &str) -> Vec<String> {
     sqlx::query_scalar("SELECT body FROM outside_chat_messages WHERE channel_id=$1 AND platform='bot' ORDER BY seq")
@@ -110,6 +111,58 @@ pub async fn exercise(e: &Env) {
         e.call("GET", "/api/me/commands", Value::Null).await["bot"]["name"],
         "VOLK"
     );
+    // Announcements: each event can be turned off or given the streamer's own line; a save that
+    // leaves them out keeps them.
+    let saved = e
+        .call(
+            "PUT",
+            "/api/me/commands/bot",
+            json!({"bot":"volk","personality":"battle","off":["follow"],"lines":{"sub":"  Thanks {user}!  ","raid":""}}),
+        )
+        .await;
+    let events = &saved["bot"]["events"];
+    assert_eq!(
+        (&events[0]["kind"], &events[0]["on"]),
+        (&json!("follow"), &json!(false))
+    );
+    assert_eq!(
+        (&events[1]["line"], &events[1]["on"]),
+        (&json!("Thanks {user}!"), &json!(true))
+    );
+    assert_eq!(
+        events[2]["line"],
+        Value::Null,
+        "a blank line uses the bot's"
+    );
+    assert_eq!(events[2]["defaults"].as_array().unwrap().len(), 3);
+    let kept = e
+        .call(
+            "PUT",
+            "/api/me/commands/bot",
+            json!({"bot":"volk","personality":"battle"}),
+        )
+        .await;
+    assert_eq!(kept["bot"]["events"], *events);
+    for (input, why) in [
+        (json!({"off":["nope"]}), "unknown event"),
+        (json!({"lines":{"nope":"x"}}), "unknown event"),
+        (json!({"lines":{"sub":"x".repeat(201)}}), "too long"),
+    ] {
+        let mut body = json!({"bot":"volk","personality":"battle"});
+        body.as_object_mut()
+            .unwrap()
+            .extend(input.as_object().unwrap().clone());
+        let (status, _) = e
+            .request("PUT", "/api/me/commands/bot", body, true, true, false)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}");
+    }
+    e.call(
+        "PUT",
+        "/api/me/commands/bot",
+        json!({"bot":"volk","personality":"battle","off":[],"lines":{}}),
+    )
+    .await;
     e.call("DELETE", "/api/me/commands/hello", Value::Null)
         .await;
 
@@ -236,15 +289,22 @@ pub async fn exercise(e: &Env) {
         "{}",
         lines[0]
     );
+    // One of the bot's three lines for this event, filled in.
+    let one_of = |bot: &str, event: Event, user: &str, count: i64| -> Vec<String> {
+        sver::bot::lines(bot, "chill", event)
+            .iter()
+            .map(|l| sver::bot::fill(l, user, count))
+            .collect()
+    };
     // A counted raid on a live channel gets the bot's line (VOLK, Chill, for a faction-less channel).
     sver::bot::record_raid(&e.app, "cm-owner", "Raider", Some("glint"), 7)
         .await
         .unwrap();
     sver::bot::drain(&e.app).await.unwrap();
-    assert_eq!(
-        bot_lines(e, "cm-owner").await.last().unwrap(),
-        "Welcome, Raider and company (7).",
-        "VOLK speaks for no faction, so no jab"
+    let said = bot_lines(e, "cm-owner").await.last().unwrap().clone();
+    assert!(
+        one_of("volk", Event::Raid, "Raider", 7).contains(&said),
+        "VOLK speaks for no faction, so no jab: {said}"
     );
     // Cross-faction greetings (off by default): PYRE adds Myria's line about a rival's raid.
     let raid = |faction: &'static str| async move {
@@ -254,23 +314,46 @@ pub async fn exercise(e: &Env) {
         sver::bot::drain(&e.app).await.unwrap();
         bot_lines(e, "cm-owner").await.last().unwrap().clone()
     };
+    let pyre = one_of("pyre", Event::Raid, "Rival", 3);
     e.sql("INSERT INTO chat_settings(channel_id,bot) VALUES('cm-owner','pyre') ON CONFLICT(channel_id) DO UPDATE SET bot='pyre'").await;
-    assert_eq!(
-        raid("aetheron").await,
-        "Rival is raiding with 3. Welcome, everyone."
-    );
+    assert!(pyre.contains(&raid("aetheron").await));
     e.sql("UPDATE chat_settings SET bot_rivalry=true WHERE channel_id='cm-owner'")
         .await;
-    assert_eq!(
-        raid("aetheron").await,
-        "Rival is raiding with 3. Welcome, everyone. They study the fire. We walk through it."
-    );
-    assert_eq!(
-        raid("myria").await,
-        "Rival is raiding with 3. Welcome, everyone.",
+    let jabbed = raid("aetheron").await;
+    let (line, jab) = jabbed.split_once(" They ").expect("a jab follows the line");
+    assert!(pyre.contains(&line.to_string()), "{jabbed}");
+    assert_eq!(jab, "study the fire. We walk through it.");
+    assert!(
+        pyre.contains(&raid("myria").await),
         "no jab for its own side"
     );
     e.sql("UPDATE chat_settings SET bot=NULL,bot_rivalry=false WHERE channel_id='cm-owner'")
+        .await;
+    // A burst of follows is one line, and a name the channel's banned words refuse is left out.
+    e.sql("UPDATE chat_settings SET banned_words='{badname}' WHERE channel_id='cm-owner'")
+        .await;
+    e.sql("INSERT INTO bot_events(channel_id,kind,name,count) SELECT 'cm-owner','follow',n,0 FROM unnest(ARRAY['Ana','Bo','BADNAME','Cy','Di']) WITH ORDINALITY AS t(n,i) ORDER BY i").await;
+    let before = bot_lines(e, "cm-owner").await.len();
+    sver::bot::drain(&e.app).await.unwrap();
+    let lines = bot_lines(e, "cm-owner").await;
+    assert_eq!(lines.len(), before + 1, "{lines:?}");
+    assert!(
+        one_of("volk", Event::Follow, "Ana, Bo, Cy and 1 other", 0).contains(lines.last().unwrap()),
+        "{lines:?}"
+    );
+    // The streamer's own line for an event, and an event turned off.
+    e.sql(r#"UPDATE chat_settings SET banned_words='{}',bot_lines='{"raid":"Thanks {user} for the {count}!"}' WHERE channel_id='cm-owner'"#).await;
+    assert_eq!(raid("glint").await, "Thanks Rival for the 3!");
+    e.sql("UPDATE chat_settings SET bot_off='{raid}' WHERE channel_id='cm-owner'")
+        .await;
+    let before = bot_lines(e, "cm-owner").await.len();
+    raid("glint").await;
+    assert_eq!(
+        bot_lines(e, "cm-owner").await.len(),
+        before,
+        "raids are off"
+    );
+    e.sql(r#"UPDATE chat_settings SET bot_off='{}',bot_lines='{}' WHERE channel_id='cm-owner'"#)
         .await;
     // Quips (off by default): while live, at most every 30 minutes, only after chat since the last.
     e.sql("UPDATE broadcasts SET started_at=now()-interval '40 minutes' WHERE id='cm-b'")
@@ -320,7 +403,7 @@ async fn part_two(e: &Env) {
     e.call(
         "PUT",
         "/api/me/automod",
-        json!({"caps":true,"repeats":true,"spam":false,"ladder":[0,60]}),
+        json!({"caps":2,"repeats":2,"spam":2,"ladder":[0,60]}),
     )
     .await;
     let (status, held) = say("THIS IS SO LOUD RIGHT NOW").await;
@@ -347,35 +430,49 @@ async fn part_two(e: &Env) {
         .await;
     assert_eq!(say("gg").await.0, StatusCode::OK);
     assert_eq!(say("gg").await.0, StatusCode::OK, "short lines may repeat");
+    assert_eq!(
+        say("love this \u{2764}\u{FE0F}\u{2764}\u{FE0F}\u{2764}\u{FE0F}\u{2764}\u{FE0F}\u{2764}\u{FE0F}\u{2764}\u{FE0F}\u{2764}\u{FE0F}\u{2764}\u{FE0F}").await.0,
+        StatusCode::OK,
+        "eight hearts aren't spam"
+    );
+    assert_eq!(
+        say("@STREAMER hi").await.0,
+        StatusCode::OK,
+        "a mention isn't shouting"
+    );
     assert_eq!(say("a calm message").await.0, StatusCode::OK);
     assert_eq!(
-        say("a calm message").await.0,
+        say("A calm   message!!").await.0,
         StatusCode::FORBIDDEN,
-        "the same message again is a repeat (second strike)"
+        "the same message again, dressed up, is a repeat (second strike)"
     );
     e.sql("DELETE FROM channel_restrictions WHERE user_id='cb-viewer'")
         .await;
     e.call(
         "PUT",
         "/api/me/automod",
-        json!({"caps":false,"repeats":false,"spam":false,"ladder":[0]}),
+        json!({"caps":0,"repeats":0,"spam":0,"ladder":[0]}),
     )
     .await;
-    let (status, _) = e
-        .request(
-            "PUT",
-            "/api/me/automod",
-            json!({"caps":true,"repeats":false,"spam":false,"ladder":[5]}),
-            true,
-            true,
-            false,
-        )
-        .await;
-    assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "a timeout under 10 seconds"
-    );
+    for (body, why) in [
+        (
+            json!({"caps":2,"repeats":0,"spam":0,"ladder":[5]}),
+            "a timeout under 10 seconds",
+        ),
+        (
+            json!({"caps":4,"repeats":0,"spam":0,"ladder":[0]}),
+            "no level 4",
+        ),
+        (
+            json!({"caps":true,"repeats":0,"spam":0,"ladder":[0]}),
+            "a level, not on/off",
+        ),
+    ] {
+        let (status, _) = e
+            .request("PUT", "/api/me/automod", body, true, true, false)
+            .await;
+        assert!(status.is_client_error(), "{why}");
+    }
 
     // A follow is recorded for the bot to greet.
     e.watched_all().await;

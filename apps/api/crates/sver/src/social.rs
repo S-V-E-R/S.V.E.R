@@ -46,7 +46,7 @@ async fn announce_follow(app: &App, tx: &mut PgConnection, channel: &str, user: 
         .await?;
     // A name with one of the channel's banned words never goes on stream (the bot's line is
     // refused the same way); the follow still counts.
-    if crate::moderation::check_content(&username, &words, false, true).is_err() {
+    if !crate::moderation::code_allowed(&words, false, &username) {
         return Ok(());
     }
     crate::events::emit(

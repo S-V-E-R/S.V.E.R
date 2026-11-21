@@ -4,6 +4,7 @@
 //! `bot`), so they keep their place in history and count toward nothing.
 use crate::{
     App, auth,
+    bot::Event,
     profiles::{self, Fail, Res},
 };
 use axum::{
@@ -39,7 +40,7 @@ pub async fn bot(app: &App, channel: &str) -> Res<(&'static str, &'static str)> 
         .unwrap_or(("volk", "VOLK")))
 }
 /// The channel's banned words and link rule, which the bot obeys like everyone else.
-async fn rules(app: &App, channel: &str) -> Res<(Vec<String>, bool)> {
+pub(crate) async fn rules(app: &App, channel: &str) -> Res<(Vec<String>, bool)> {
     Ok(
         sqlx::query_as("SELECT banned_words,block_links FROM chat_settings WHERE channel_id=$1")
             .bind(channel)
@@ -49,7 +50,7 @@ async fn rules(app: &App, channel: &str) -> Res<(Vec<String>, bool)> {
     )
 }
 /// Whether the channel's rules would stop the bot saying `text`.
-fn blocked(rules: &(Vec<String>, bool), text: &str) -> bool {
+pub(crate) fn blocked(rules: &(Vec<String>, bool), text: &str) -> bool {
     crate::moderation::check_content(text, &rules.0, rules.1, false).is_err()
 }
 /// Refuses a command reply or timed message the bot could never say, instead of saving it.
@@ -259,17 +260,36 @@ async fn view(app: &App, owner: &str) -> Res<Json<Value>> {
     {
         item["blocked"] = blocked(&rules, item[field].as_str().unwrap_or_default()).into();
     }
-    let chosen: Option<(Option<String>, String, bool, bool)> = sqlx::query_as(
-        "SELECT bot,bot_personality,bot_rivalry,bot_quips FROM chat_settings WHERE channel_id=$1",
+    type Chosen = (Option<String>, String, bool, bool, Vec<String>, Value);
+    let chosen: Option<Chosen> = sqlx::query_as(
+        "SELECT bot,bot_personality,bot_rivalry,bot_quips,bot_off,bot_lines FROM chat_settings WHERE channel_id=$1",
     )
     .bind(owner)
     .fetch_optional(&app.db)
     .await?;
-    let (chosen, personality, rivalry, quips) =
-        chosen.unwrap_or((None, "chill".into(), false, false));
+    let (chosen, personality, rivalry, quips, off, lines) =
+        chosen.unwrap_or((None, "chill".into(), false, false, Vec::new(), json!({})));
     let (key, name) = bot(app, owner).await?;
+    // Each event: whether it's on, the streamer's own line, and the bot's lines as examples.
+    let events: Vec<Value> = crate::bot::EVENTS
+        .iter()
+        .zip([
+            Event::Follow,
+            Event::Sub,
+            Event::Raid,
+            Event::Timeout,
+            Event::Surge,
+            Event::Milestone,
+        ])
+        .map(|(kind, event)| {
+            let own = lines[kind].as_str();
+            json!({"kind": kind, "on": !off.iter().any(|o| o == kind), "line": own,
+                "blocked": own.is_some_and(|l| blocked(&rules, l)),
+                "defaults": crate::bot::lines(key, &personality, event)})
+        })
+        .collect();
     Ok(Json(
-        json!({"commands": commands, "timers": timers, "bot": {"key": key, "name": name, "chosen": chosen, "personality": personality, "rivalry": rivalry, "quips": quips}, "max_timers": MAX_TIMERS, "automod": crate::bot::settings(app, owner).await?}),
+        json!({"commands": commands, "timers": timers, "bot": {"key": key, "name": name, "chosen": chosen, "personality": personality, "rivalry": rivalry, "quips": quips, "events": events}, "max_timers": MAX_TIMERS, "automod": crate::bot::settings(app, owner).await?}),
     ))
 }
 /// GET /api/me/commands
@@ -288,6 +308,11 @@ pub struct BotSettings {
     /// Occasional quips while live (off by default).
     #[serde(default)]
     quips: bool,
+    /// The events the bot stays quiet about (`bot::EVENTS`); left out keeps the saved ones.
+    off: Option<Vec<String>>,
+    /// The streamer's own line per event, `{user}` and `{count}` filled in; blank uses the bot's.
+    /// Left out keeps the saved ones.
+    lines: Option<std::collections::HashMap<String, String>>,
 }
 /// PUT /api/me/commands/bot: which bot speaks, and its personality.
 async fn set_bot(
@@ -304,8 +329,32 @@ async fn set_bot(
     {
         return Err(Fail::bad("Choose a bot and a personality."));
     }
-    sqlx::query("INSERT INTO chat_settings(channel_id,bot,bot_personality,bot_rivalry,bot_quips) VALUES($1,$2,$3,$4,$5) ON CONFLICT(channel_id) DO UPDATE SET bot=EXCLUDED.bot,bot_personality=EXCLUDED.bot_personality,bot_rivalry=EXCLUDED.bot_rivalry,bot_quips=EXCLUDED.bot_quips")
-        .bind(&user.id).bind(&input.bot).bind(&input.personality).bind(input.rivalry).bind(input.quips).execute(&app.db).await?;
+    let known = |e: &String| crate::bot::EVENTS.contains(&e.as_str());
+    if let Some(off) = &input.off
+        && !off.iter().all(known)
+    {
+        return Err(Fail::field("off", "Choose events the bot announces."));
+    }
+    let mut lines = serde_json::Map::new();
+    for (kind, text) in input.lines.iter().flatten() {
+        if !known(kind) {
+            return Err(Fail::field("lines", "Choose events the bot announces."));
+        }
+        let text = crate::text::clean(text, "lines", false)?;
+        if text.is_empty() {
+            continue;
+        }
+        if text.chars().count() > 200 {
+            return Err(Fail::field("lines", "Keep each line to 200 characters."));
+        }
+        sayable(&app, &user.id, "lines", &text).await?;
+        lines.insert(kind.clone(), json!(text));
+    }
+    let lines = input.lines.is_some().then_some(Value::Object(lines));
+    sqlx::query("INSERT INTO chat_settings(channel_id,bot,bot_personality,bot_rivalry,bot_quips,bot_off,bot_lines) VALUES($1,$2,$3,$4,$5,coalesce($6,'{}'),coalesce($7,'{}'))
+        ON CONFLICT(channel_id) DO UPDATE SET bot=EXCLUDED.bot,bot_personality=EXCLUDED.bot_personality,bot_rivalry=EXCLUDED.bot_rivalry,bot_quips=EXCLUDED.bot_quips,
+            bot_off=coalesce($6,chat_settings.bot_off),bot_lines=coalesce($7,chat_settings.bot_lines)")
+        .bind(&user.id).bind(&input.bot).bind(&input.personality).bind(input.rivalry).bind(input.quips).bind(&input.off).bind(&lines).execute(&app.db).await?;
     view(&app, &user.id).await
 }
 #[derive(Deserialize)]
