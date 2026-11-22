@@ -725,6 +725,9 @@ async fn factions(e: &Env) {
     e.sql("INSERT INTO faction_seasons(number,starts_at,ends_at,next_starts_at) VALUES(1,now()-interval '1 hour',now()+interval '30 days',now()+interval '37 days')").await;
     e.sql("INSERT INTO faction_weeks(season_id,starts_at,ends_at) SELECT id,now()-interval '1 hour',now()+interval '6 days' FROM faction_seasons").await;
     e.sql("INSERT INTO faction_territories(season_id,genre,holder) SELECT s.id,g.id,g.home FROM faction_seasons s,faction_genres g").await;
+    // The day's Territory Spotlight is picked by date and doubles its genre; keep it off the
+    // mapped genre so the points below don't depend on the calendar.
+    e.sql("INSERT INTO faction_spotlights(day,genre) SELECT d::date,(SELECT id FROM faction_genres WHERE id<>'fighting' ORDER BY id LIMIT 1) FROM generate_series((now() AT TIME ZONE 'utc')::date,(now() AT TIME ZONE 'utc')::date+1,interval '1 day') d").await;
     linked(e, "910", "fx-linked", "glint").await;
     linked(e, "911", "fx-away", "myria").await;
     linked(e, "912", "fx-unverified", "myria").await;
