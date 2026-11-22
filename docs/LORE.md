@@ -133,7 +133,7 @@ Sample lines in the Battle personality:
 | Timeout (AutoMod) | Cool off. Come back sharper. | Pattern flagged. Ten minutes. | Easy, friend. Take a breather. | The Accord holds. Take a breath. |
 | Season won | From ashes, we rise. | Knowledge ascends. | One open seat became a kingdom. | The map is redrawn. |
 
-Every event line, three per bot, personality and event; the bot picks one at random each time. *Draft for Joe's approval, November 20, 2026* (the Battle lines above are kept as the first of each). `{user}` is the person, or a list of names when several follow or subscribe at once ("Ana, Bo and 3 others"), so follow and subscription lines never put a verb right after it; `{count}` is a month, raid size, Surge level or follower count. A streamer can turn any event off or write their own line instead (Studio → Commands & bot → Announcements).
+Every event line, three per bot, personality and event; the bot picks one at random each time. *Approved by Joe on November 21, 2026* (the Battle lines above are kept as the first of each). `{user}` is the person, or a list of names when several follow or subscribe at once ("Ana, Bo and 3 others"), so follow and subscription lines never put a verb right after it; `{count}` is a month, raid size, Surge level or follower count. A streamer can turn any event off or write their own line instead (Studio → Commands & bot → Announcements).
 
 **Chill**
 
@@ -168,7 +168,7 @@ Every event line, three per bot, personality and event; the bot picks one at ran
 | Surge level | SURGE LEVEL {count}! THE FORGE ROARS! · SURGE {count}! FEED THE FIRE! · SURGE {count}! FROM ASHES, WE RISE! | SURGE {count}! THE SIGNAL SURGES! · SURGE {count}! OFF THE CHARTS! · SURGE {count}! KNOWLEDGE ASCENDS! | SURGE LEVEL {count}! JACKPOT ENERGY! · SURGE {count}! THE BELL WON'T STOP! · SURGE {count}! FORTUNE FAVORS THE BOLD! | SURGE {count}! THE WATCH RISES! · SURGE {count}! THE WATCH IS AWAKE! · SURGE {count}! EVERY LIGHT BURNS BRIGHT! |
 | Follower milestone | {count} FOLLOWERS! THE FIRE SPREADS! · {count} STRONG! THE FORGE BLAZES! · {count} EMBERS! NONE BURN ALONE! | {count} SIGNALS IN THE ARCHIVE! · {count} FOLLOWERS! THE PATTERN PERSISTS! · {count}! THE ARCHIVE OVERFLOWS! | {count} AT THE TABLE! FORTUNE SMILES! · {count} FOLLOWERS! RING EVERY BELL! · {count}! THE TABLE KEEPS GROWING! | {count} STAND THE WATCH! · {count} UNDER THE ACCORD! · {count}! THE GREY WOLF HOWLS! |
 
-Quips: short lines a bot says now and then while the channel is live, when the streamer turns them on. *Draft for Joe's approval, October 11, 2026.* Original lines; the Battle ones reuse approved phrases (battle cries, the Accord).
+Quips: short lines a bot says now and then while the channel is live, when the streamer turns them on. *Approved by Joe on November 21, 2026.* Original lines; the Battle ones reuse approved phrases (battle cries, the Accord).
 
 | Bot | Chill | Battle | Event |
 | --- | --- | --- | --- |
