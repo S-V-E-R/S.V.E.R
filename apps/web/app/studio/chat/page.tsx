@@ -151,7 +151,7 @@ export default function ChatStudio() {
         <label className="field narrow"><span>Who can send GIFs (slow mode and timeouts apply)</span><select name="gifs" defaultValue={s.gifs ?? "everyone"}>
           <option value="everyone">Everyone</option><option value="followers">Followers</option><option value="subscribers">Subscribers</option><option value="off">Nobody (GIFs off)</option>
         </select></label>
-        <label className="field"><span>Banned words or phrases (one per line, up to 200)</span><textarea value={words} onChange={e => setWords(e.target.value)} rows={5} /></label>
+        <label className="field"><span>Banned words or phrases (one per line, up to 200)</span><textarea value={words} onChange={e => setWords(e.target.value)} rows={5} /><small>Whole words only; add * to match more (ass* also blocks assassin). Spaced-out letters, stretched letters and swaps like a$$ are caught.</small></label>
         <label className="field narrow"><span>OBS chat overlay: seconds each message stays (10–120)</span><input name="fade" type="number" min={10} max={120} defaultValue={s.overlay_fade_seconds ?? 30} /></label>
         <button type="submit" className="small">Save rules</button>
         <Status state={state} />

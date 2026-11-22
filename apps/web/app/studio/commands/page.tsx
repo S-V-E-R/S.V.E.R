@@ -7,14 +7,25 @@ import { send, useLoad, type Result } from "../../../lib/client-api";
 /** `blocked`: your chat's banned words or link rule would stop the bot saying it. */
 type Command = { name: string; reply: string; access: string; cooldown_seconds: number; uses: number; blocked?: boolean };
 type Timer = { id: string; body: string; every_minutes: number; enabled: boolean; last_sent_at: string | null; blocked?: boolean };
-type Data = { commands: Command[]; timers: Timer[]; bot: { key: string; name: string; chosen: string | null; personality: string; rivalry: boolean; quips: boolean }; max_timers: number; automod: AutoMod };
-type AutoMod = { caps: boolean; repeats: boolean; spam: boolean; ladder: number[] };
+/** One announcement: on or off, the streamer's own line (null uses the bot's), the bot's three lines. */
+type BotEvent = { kind: string; on: boolean; line: string | null; blocked: boolean; defaults: string[] };
+type Bot = { key: string; name: string; chosen: string | null; personality: string; rivalry: boolean; quips: boolean; events: BotEvent[] };
+type Data = { commands: Command[]; timers: Timer[]; bot: Bot; max_timers: number; automod: AutoMod };
+/** Each rule's strictness: 0 off, 1 relaxed, 2 standard, 3 strict. */
+type AutoMod = { caps: number; repeats: number; spam: number; ladder: number[] };
 type ImportReport = { imported: string[]; skipped: { line: string; why: string }[]; flagged: { name: string; variables: string[] }[] };
 const Blocked = () => <><br /><small className="danger-text">Won&apos;t post: blocked by your <Link href="/studio/chat">chat rules</Link>.</small></>;
 const step = (s: number) => s === 0 ? "Warn" : s < 120 ? `${s}s` : s < 7200 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`;
 
 const BOTS: Record<string, string> = { pyre: "PYRE (Myria)", echo: "ECHO (Aetheron)", favor: "FAVOR (Glint)", volk: "VOLK (neutral)" };
 const ACCESS: Record<string, string> = { everyone: "Everyone", followers: "Followers", subscribers: "Subscribers", moderators: "Moderators" };
+const LEVELS = ["Off", "Relaxed", "Standard", "Strict"];
+const RULES: { key: "caps" | "repeats" | "spam"; label: string; help: string }[] = [
+  { key: "caps", label: "Excessive caps", help: "Relaxed: over 85% capitals in 15+ letters. Standard: over 70% in 10+. Strict: over 55% in 8+. Mentions and emotes don't count." },
+  { key: "repeats", label: "Repeated messages and stretched letters", help: "The same message again within 15, 30 or 60 seconds (case and punctuation ignored), or a run of 15, 10 or 7 of one character. Numbers don't count." },
+  { key: "spam", label: "Symbol and emoji spam", help: "More than 25, 15 or 8 symbols or emoji making up much of the message. Each emoji counts once." },
+];
+const EVENT_NAMES: Record<string, string> = { follow: "New followers", sub: "Subscriptions", raid: "Raids", timeout: "AutoMod timeouts", surge: "Surge levels", milestone: "Follower milestones" };
 
 /** Creator Studio → Commands & bot (docs/COMMUNITY.md "Chat commands and the channel bot"). */
 export default function CommandsPage() {
@@ -46,6 +57,22 @@ export default function CommandsPage() {
     apply(result, "Timed message added.");
     if (result.ok) form.reset();
   }
+  /** Saves the bot settings with `change` applied, announcements included. */
+  async function saveBot(change: Partial<Bot>, saved: string) {
+    if (!data) return;
+    const next = { ...data.bot, ...change };
+    apply(await send<Data>("PUT", "/api/me/commands/bot", {
+      bot: next.chosen, personality: next.personality, rivalry: next.rivalry, quips: next.quips,
+      off: next.events.filter(e => !e.on).map(e => e.kind),
+      lines: Object.fromEntries(next.events.map(e => [e.kind, e.line ?? ""])),
+    }), saved);
+  }
+  const setEvent = (kind: string, change: Partial<BotEvent>) => (data?.bot.events ?? []).map(e => e.kind === kind ? { ...e, ...change } : e);
+  async function saveLine(event: FormEvent<HTMLFormElement>, kind: string) {
+    event.preventDefault();
+    const line = String(new FormData(event.currentTarget).get("line") ?? "").trim();
+    await saveBot({ events: setEvent(kind, { line: line || null }) }, line ? "Line saved." : "Back to your bot's lines.");
+  }
   async function saveAutoMod(change: Partial<AutoMod>, ladderText?: string) {
     if (!data) return;
     const next = { ...data.automod, ...change };
@@ -64,16 +91,27 @@ export default function CommandsPage() {
     {message && <p role="status" className="form-message">{message}</p>}
     <Section title="Your channel's bot" intro="Command replies and timed messages come from your bot, shown in chat with a Bot badge. By default it's your faction's bot; VOLK is the neutral one.">
       <div className="row wrap">
-        <label className="field narrow"><span>Bot</span><select value={data.bot.chosen ?? ""} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: e.target.value || null, personality: data.bot.personality, rivalry: data.bot.rivalry, quips: data.bot.quips }), "Bot saved.")}>
+        <label className="field narrow"><span>Bot</span><select value={data.bot.chosen ?? ""} onChange={e => void saveBot({ chosen: e.target.value || null }, "Bot saved.")}>
           <option value="">My faction&apos;s bot{data.bot.chosen ? "" : ` (${data.bot.name})`}</option>
           {Object.entries(BOTS).map(([k, n]) => <option key={k} value={k}>{n}</option>)}
         </select></label>
-        <label className="field narrow"><span>Personality</span><select value={data.bot.personality} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: data.bot.chosen, personality: e.target.value, rivalry: data.bot.rivalry, quips: data.bot.quips }), "Personality saved.")}>
+        <label className="field narrow"><span>Personality</span><select value={data.bot.personality} onChange={e => void saveBot({ personality: e.target.value }, "Personality saved.")}>
           <option value="chill">Chill (warm, little faction flavor)</option><option value="battle">Battle (full faction personality)</option><option value="event">Event (maximum hype)</option>
         </select></label>
       </div>
-      <label className="row"><input type="checkbox" checked={data.bot.rivalry} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: data.bot.chosen, personality: data.bot.personality, rivalry: e.target.checked, quips: data.bot.quips }), "Saved.")} /> Cross-faction greetings: when a rival faction&apos;s streamer raids, your faction&apos;s bot adds a friendly jab (VOLK stays neutral)</label>
-      <label className="row"><input type="checkbox" checked={data.bot.quips} onChange={async e => apply(await send<Data>("PUT", "/api/me/commands/bot", { bot: data.bot.chosen, personality: data.bot.personality, rivalry: data.bot.rivalry, quips: e.target.checked }), "Saved.")} /> Quips: while you&apos;re live, your bot says a short line in its personality now and then (at most every 30 minutes, and only when chat has been active)</label>
+      <label className="row"><input type="checkbox" checked={data.bot.rivalry} onChange={e => void saveBot({ rivalry: e.target.checked }, "Saved.")} /> Cross-faction greetings: when a rival faction&apos;s streamer raids, your faction&apos;s bot adds a friendly jab (VOLK stays neutral)</label>
+      <label className="row"><input type="checkbox" checked={data.bot.quips} onChange={e => void saveBot({ quips: e.target.checked }, "Saved.")} /> Quips: while you&apos;re live, your bot says a short line in its personality now and then (at most every 30 minutes, and only when chat has been active)</label>
+    </Section>
+    <Section title="Announcements" intro="What your bot says when something happens while you're live. Turn any of them off, or write your own line: {user} is the person (or a list of names when several follow or subscribe at once) and {count} the month, raid size, Surge level or follower count. Leave it blank to use your bot's lines.">
+      <ul className="list">{data.bot.events.map(ev => <li key={ev.kind}>
+        <label className="row"><input type="checkbox" checked={ev.on} onChange={e => void saveBot({ events: setEvent(ev.kind, { on: e.target.checked }) }, `${EVENT_NAMES[ev.kind]} ${e.target.checked ? "on" : "off"}.`)} /> {EVENT_NAMES[ev.kind]}</label>
+        {ev.on && <form onSubmit={e => void saveLine(e, ev.kind)}>
+          <label className="field"><span>Your line (optional, up to 200 characters)</span><input name="line" key={ev.line ?? ""} defaultValue={ev.line ?? ""} maxLength={200} placeholder={ev.defaults[0]} autoComplete="off" /></label>
+          <button type="submit" className="small">Save line</button>
+        </form>}
+        {ev.on && !ev.line && <small className="muted">Your bot says one of: {ev.defaults.join(" · ")}</small>}
+        {ev.blocked && <Blocked />}
+      </li>)}</ul>
     </Section>
     <Section title="Custom commands" intro="Viewers type !name and your bot replies. Variables: {user}, {channel}, {uptime}, {game}, {followers}. Replies follow your chat's banned words and link rule. Viewers can type /help to see them.">
       {data.commands.length > 0 && <ul className="list">{data.commands.map(c => <li key={c.name} className="row between wrap">
@@ -91,11 +129,14 @@ export default function CommandsPage() {
         <small className="muted">Saving an existing name changes it.</small>
       </form>
     </Section>
-    <Section title="AutoMod" intro="Your bot holds messages that break these rules. You and your moderators are exempt. A first strike in an hour is a warning; later ones follow the ladder below. Every timeout is announced by your bot, logged in your moderation log, and can be lifted there.">
+    <Section title="AutoMod" intro="Your bot holds messages that break these rules, as strictly as you choose for each. You and your moderators are exempt. A first strike in an hour is a warning; later ones follow the ladder below. Every timeout is announced by your bot (unless you turn that announcement off), logged in your moderation log, and can be lifted there.">
       <div className="stack">
-        <label className="row"><input type="checkbox" checked={data.automod.caps} onChange={e => saveAutoMod({ caps: e.target.checked })} /> Excessive caps</label>
-        <label className="row"><input type="checkbox" checked={data.automod.repeats} onChange={e => saveAutoMod({ repeats: e.target.checked })} /> Repeated messages and stretched letters</label>
-        <label className="row"><input type="checkbox" checked={data.automod.spam} onChange={e => saveAutoMod({ spam: e.target.checked })} /> Symbol and emoji spam</label>
+        <div className="row wrap">{RULES.map(r => <label key={r.key} className="field narrow"><span>{r.label}</span>
+          <select value={data.automod[r.key]} aria-describedby={`automod-${r.key}`} onChange={e => void saveAutoMod({ [r.key]: Number(e.target.value) })}>
+            {LEVELS.map((name, n) => <option key={n} value={n}>{name}</option>)}
+          </select>
+        </label>)}</div>
+        {RULES.map(r => <small key={r.key} id={`automod-${r.key}`} className="muted small"><strong>{r.label}.</strong> {r.help}</small>)}
         <form className="row wrap" onSubmit={e => { e.preventDefault(); void saveAutoMod({}, String(new FormData(e.currentTarget).get("ladder") ?? "")); }}>
           <label className="field"><span>Ladder in seconds, one step per strike (0 is a warning): now {data.automod.ladder.map(step).join(" → ")}</span><input name="ladder" defaultValue={data.automod.ladder.join(", ")} /></label>
           <button type="submit" className="small">Save ladder</button>

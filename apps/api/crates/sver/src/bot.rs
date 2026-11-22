@@ -12,6 +12,7 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Event {
@@ -23,111 +24,401 @@ pub enum Event {
     Milestone,
 }
 /// Lines per bot (PYRE, ECHO, FAVOR, VOLK), personality (chill, battle, event) and event (follow,
-/// sub, raid, timeout, Surge level, follower milestone). `{user}` is the person, `{count}` a month,
-/// raid size, Surge level or follower count.
-const LINES: [[[&str; 6]; 3]; 4] = [
+/// sub, raid, timeout, Surge level, follower milestone), three of each (docs/LORE.md "The faction
+/// bots"). `{user}` is the person, or a list of names for a burst of follows or subs (so those
+/// lines never make a verb agree with it); `{count}` a month, raid size, Surge level or follower
+/// count.
+const LINES: [[[[&str; 3]; 6]; 3]; 4] = [
     [
         [
-            "Welcome, {user}.",
-            "Thanks for subscribing, {user}.",
-            "{user} is raiding with {count}. Welcome, everyone.",
-            "{user}, take a short break.",
-            "Surge level {count}. Keep it burning.",
-            "{count} followers. Thank you, all of you.",
+            [
+                "Welcome, {user}.",
+                "Glad you're here, {user}.",
+                "Pull up a seat by the fire, {user}.",
+            ],
+            [
+                "Thanks for subscribing, {user}.",
+                "Thank you, {user}. Month {count}.",
+                "Month {count} for {user}. Thank you.",
+            ],
+            [
+                "{user} is raiding with {count}. Welcome, everyone.",
+                "{count} friends from {user}'s stream. Make them welcome.",
+                "Welcome, raiders. Thanks for bringing {count}, {user}.",
+            ],
+            [
+                "{user}, take a short break.",
+                "{user}, a short pause. See you soon.",
+                "Easy, {user}. Back in a bit.",
+            ],
+            [
+                "Surge level {count}. Keep it burning.",
+                "Surge level {count}. Nicely done.",
+                "Surge level {count}. The fire's warm.",
+            ],
+            [
+                "{count} followers. Thank you, all of you.",
+                "{count} followers. Grateful for every one.",
+                "We just reached {count} followers. Thank you.",
+            ],
         ],
         [
-            "Another one walks into the fire. Welcome, {user}.",
-            "Oath sworn, {user}. The forge remembers. Month {count}.",
-            "Warband at the gate: {user} with {count}. Stand and greet them.",
-            "Cool off, {user}. Come back sharper.",
-            "Surge {count}! The fire climbs.",
-            "{count} sworn to the flame. Onward.",
+            [
+                "Another one walks into the fire. Welcome, {user}.",
+                "The flame takes in {user}. Stand with us.",
+                "Ash to ember: welcome, {user}.",
+            ],
+            [
+                "Oath sworn, {user}. The forge remembers. Month {count}.",
+                "Month {count}. The forge holds your name, {user}.",
+                "Steel and oath, {user}. Month {count}.",
+            ],
+            [
+                "Warband at the gate: {user} with {count}. Stand and greet them.",
+                "{user} brings {count} through the smoke. Make room.",
+                "{count} blades with {user}. The fire grows.",
+            ],
+            [
+                "Cool off, {user}. Come back sharper.",
+                "Discipline, {user}. Sit this one out.",
+                "The flame cools you, {user}. Return sharper.",
+            ],
+            [
+                "Surge {count}! The fire climbs.",
+                "Surge {count}. Feed the forge.",
+                "Surge {count}. Discipline holds the flame.",
+            ],
+            [
+                "{count} sworn to the flame. Onward.",
+                "{count} in the flame. None turned back.",
+                "{count} followers. From ashes, we rise.",
+            ],
         ],
         [
-            "{user} STEPS INTO THE FIRE!",
-            "{user} SWEARS THE OATH! Month {count}! The forge roars!",
-            "WARBAND OF {count} AT THE GATE, LED BY {user}!",
-            "{user}, cool off. The fire waits.",
-            "SURGE LEVEL {count}! THE FORGE ROARS!",
-            "{count} FOLLOWERS! THE FIRE SPREADS!",
+            [
+                "INTO THE FIRE: {user}!",
+                "THE FORGE WELCOMES {user}!",
+                "NEW EMBERS: {user}!",
+            ],
+            [
+                "OATH SWORN: {user}! Month {count}! The forge roars!",
+                "MONTH {count}! THE FORGE ROARS FOR {user}!",
+                "STEEL AND OATH! {user}, MONTH {count}!",
+            ],
+            [
+                "WARBAND OF {count} AT THE GATE, LED BY {user}!",
+                "{user} BRINGS {count} BLADES! OPEN THE GATE!",
+                "RAID! {count} STRONG WITH {user}! THE FIRE ROARS!",
+            ],
+            [
+                "{user}, cool off. The fire waits.",
+                "{user}, step back from the flame a moment.",
+                "{user}, cool your steel. Back soon.",
+            ],
+            [
+                "SURGE LEVEL {count}! THE FORGE ROARS!",
+                "SURGE {count}! FEED THE FIRE!",
+                "SURGE {count}! FROM ASHES, WE RISE!",
+            ],
+            [
+                "{count} FOLLOWERS! THE FIRE SPREADS!",
+                "{count} STRONG! THE FORGE BLAZES!",
+                "{count} EMBERS! NONE BURN ALONE!",
+            ],
         ],
     ],
     [
         [
-            "Welcome, {user}. Glad you found us.",
-            "Thanks for subscribing, {user}. Month {count}.",
-            "{user} brought {count} friends. Welcome.",
-            "{user}, paused for a bit.",
-            "Surge level {count} reached.",
-            "{count} followers. Thank you.",
+            [
+                "Welcome, {user}. Glad you found us.",
+                "Hello, {user}. Make yourself at home.",
+                "Welcome aboard, {user}.",
+            ],
+            [
+                "Thanks for subscribing, {user}. Month {count}.",
+                "Month {count}, {user}. Much appreciated.",
+                "Thank you for the support, {user}. Month {count}.",
+            ],
+            [
+                "{user} brought {count} friends. Welcome.",
+                "Hello to {user} and {count} visitors.",
+                "{count} new faces from {user}. Welcome in.",
+            ],
+            [
+                "{user}, paused for a bit.",
+                "{user}, a short timeout. See you soon.",
+                "{user}, taking a short pause.",
+            ],
+            [
+                "Surge level {count} reached.",
+                "Surge level {count}. Well done, everyone.",
+                "Surge level {count}, logged with thanks.",
+            ],
+            [
+                "{count} followers. Thank you.",
+                "{count} followers now. Thank you, all.",
+                "Milestone reached: {count} followers.",
+            ],
         ],
         [
-            "New signal detected: {user}. Logging it.",
-            "A pattern begins: {user}, month {count}.",
-            "Arrivals inbound: {user} with {count}. Adjusting the model.",
-            "Pattern flagged, {user}. Take a pause.",
-            "Surge level {count}: the signal strengthens.",
-            "Signal count: {count} followers.",
+            [
+                "New signal detected: {user}. Logging it.",
+                "Archived: {user}. Welcome to the pattern.",
+                "Entry recorded: {user}. Knowledge grows.",
+            ],
+            [
+                "A pattern begins: {user}, month {count}.",
+                "Month {count} recorded for {user}. The pattern persists.",
+                "{user}, month {count}. Filed, with thanks.",
+            ],
+            [
+                "Arrivals inbound: {user} with {count}. Adjusting the model.",
+                "{count} new signals from {user}. Recalculating.",
+                "Raid detected: {user}, {count} strong. Welcome to the archive.",
+            ],
+            [
+                "Pattern flagged, {user}. Take a pause.",
+                "Anomaly logged, {user}. Recalibrate.",
+                "{user}, outside parameters. Brief pause.",
+            ],
+            [
+                "Surge level {count}: the signal strengthens.",
+                "Surge {count}. The model predicted this.",
+                "Surge level {count}. Knowledge ascends.",
+            ],
+            [
+                "Signal count: {count} followers.",
+                "{count} entries in the archive. Power follows.",
+                "{count} followers. The pattern persists.",
+            ],
         ],
         [
-            "SIGNAL LOCKED: {user}!",
-            "{user}: month {count} added to the archive!",
-            "{count} ARRIVALS FROM {user}! THE PATTERN GROWS!",
-            "{user}, pattern flagged. Back soon.",
-            "SURGE {count}! THE SIGNAL SURGES!",
-            "{count} SIGNALS IN THE ARCHIVE!",
+            [
+                "SIGNAL LOCKED: {user}!",
+                "NEW ENTRY IN THE ARCHIVE: {user}!",
+                "SIGNAL RECEIVED: {user}!",
+            ],
+            [
+                "{user}: month {count} added to the archive!",
+                "MONTH {count}! {user}, THE ARCHIVE REMEMBERS!",
+                "PATTERN CONFIRMED: {user}, MONTH {count}!",
+            ],
+            [
+                "{count} ARRIVALS FROM {user}! THE PATTERN GROWS!",
+                "RAID INBOUND! {user} WITH {count}!",
+                "{user} BRINGS {count} SIGNALS! THE ARCHIVE EXPANDS!",
+            ],
+            [
+                "{user}, pattern flagged. Back soon.",
+                "{user}, anomaly logged. Short pause.",
+                "{user}, recalibrating you. Back soon.",
+            ],
+            [
+                "SURGE {count}! THE SIGNAL SURGES!",
+                "SURGE {count}! OFF THE CHARTS!",
+                "SURGE {count}! KNOWLEDGE ASCENDS!",
+            ],
+            [
+                "{count} SIGNALS IN THE ARCHIVE!",
+                "{count} FOLLOWERS! THE PATTERN PERSISTS!",
+                "{count}! THE ARCHIVE OVERFLOWS!",
+            ],
         ],
     ],
     [
         [
-            "Welcome in, {user}!",
-            "{user} subscribed. Thank you!",
-            "{user} and {count} friends just arrived. Say hi!",
-            "{user}, a quick breather, okay?",
-            "Surge level {count}! Nice.",
-            "{count} followers! Thank you!",
+            [
+                "Welcome in, {user}!",
+                "Hey {user}, welcome! Grab a seat.",
+                "Glad you made it, {user}!",
+            ],
+            [
+                "{user} subscribed. Thank you!",
+                "Thank you, {user}! Month {count}!",
+                "Month {count} for {user}. You're the best.",
+            ],
+            [
+                "{user} and {count} friends just arrived. Say hi!",
+                "{count} friends from {user}! Everybody say hi!",
+                "Look who's here: {user} with {count} friends!",
+            ],
+            [
+                "{user}, a quick breather, okay?",
+                "{user}, short break. Snack time?",
+                "{user}, take five. We'll save your seat.",
+            ],
+            [
+                "Surge level {count}! Nice.",
+                "Surge level {count}! Look at us go.",
+                "Surge level {count}! Lucky chat.",
+            ],
+            [
+                "{count} followers! Thank you!",
+                "{count} followers! You all rock.",
+                "{count} followers! Best table in town.",
+            ],
         ],
         [
-            "There's a seat for you, {user}. There always was.",
-            "{user}, your fortune's in the hall now. Month {count}.",
-            "Open the doors, {user} brought {count}!",
-            "Easy, {user}. Take a breather.",
-            "Fortune climbs: Surge level {count}.",
-            "{count} seats at the table now.",
+            [
+                "There's a seat for you, {user}. There always was.",
+                "Ring the bell: a seat for {user}.",
+                "Pull up a chair, {user}. Fortune's warm tonight.",
+            ],
+            [
+                "{user}, your fortune's in the hall now. Month {count}.",
+                "Month {count}, {user}. The bell rings for you.",
+                "Generous and bold, {user}. Month {count}.",
+            ],
+            [
+                "Open the doors, {user} brought {count}!",
+                "{user} rolls in with {count}. More chairs!",
+                "The bell rings: {user} and {count} at the crossroads!",
+            ],
+            [
+                "Easy, {user}. Take a breather.",
+                "Your seat's saved, {user}. Take a breather.",
+                "Sit one out, {user}. The table will wait.",
+            ],
+            [
+                "Fortune climbs: Surge level {count}.",
+                "Surge {count}. The table's hot.",
+                "Surge {count}. Fortune favors the bold.",
+            ],
+            [
+                "{count} seats at the table now.",
+                "{count} at the crossroads. Ring the bell.",
+                "{count} followers. One open seat became a crowd.",
+            ],
         ],
         [
-            "{user} TAKES A SEAT AT THE TABLE!",
-            "{user} rolls the dice: month {count}! Fortune smiles!",
-            "{user} BRINGS {count} TO THE PARTY!",
-            "Easy, {user}! Catch your breath.",
-            "SURGE LEVEL {count}! JACKPOT ENERGY!",
-            "{count} AT THE TABLE! FORTUNE SMILES!",
+            [
+                "A SEAT AT THE TABLE FOR {user}!",
+                "RING THE BELL FOR {user}!",
+                "WELCOME TO THE TABLE, {user}!",
+            ],
+            [
+                "Dice rolled for {user}: month {count}! Fortune smiles!",
+                "MONTH {count}! THE BELL RINGS FOR {user}!",
+                "JACKPOT! {user}, MONTH {count}!",
+            ],
+            [
+                "{user} BRINGS {count} TO THE PARTY!",
+                "{count} AT THE DOOR WITH {user}! LET THEM IN!",
+                "THE BELL IS RINGING! {user} AND {count} FRIENDS!",
+            ],
+            [
+                "Easy, {user}! Catch your breath.",
+                "Whoa, {user}! Quick breather!",
+                "{user}, sit tight! Back in a flash!",
+            ],
+            [
+                "SURGE LEVEL {count}! JACKPOT ENERGY!",
+                "SURGE {count}! THE BELL WON'T STOP!",
+                "SURGE {count}! FORTUNE FAVORS THE BOLD!",
+            ],
+            [
+                "{count} AT THE TABLE! FORTUNE SMILES!",
+                "{count} FOLLOWERS! RING EVERY BELL!",
+                "{count}! THE TABLE KEEPS GROWING!",
+            ],
         ],
     ],
     [
         [
-            "Welcome, {user}.",
-            "Thanks for the support, {user}.",
-            "Welcome, {user} and company ({count}).",
-            "{user}, a short pause.",
-            "Surge level {count}.",
-            "{count} followers.",
+            [
+                "Welcome, {user}.",
+                "Welcome in, {user}. Enjoy the stream.",
+                "Good to have you, {user}.",
+            ],
+            [
+                "Thanks for the support, {user}.",
+                "Thank you, {user}. Month {count}.",
+                "Month {count}, {user}. Appreciated.",
+            ],
+            [
+                "Welcome, {user} and company ({count}).",
+                "{user} arrives with {count}. Welcome.",
+                "Welcome, everyone from {user}'s stream ({count}).",
+            ],
+            [
+                "{user}, a short pause.",
+                "{user}, a brief timeout.",
+                "{user}, back shortly.",
+            ],
+            [
+                "Surge level {count}.",
+                "Surge level {count}. Well played.",
+                "Surge level {count} reached.",
+            ],
+            [
+                "{count} followers.",
+                "{count} followers. Thank you.",
+                "{count} followers now. Steady.",
+            ],
         ],
         [
-            "Noted. Welcome under the Accord, {user}.",
-            "The Accord thanks you, {user}. Month {count}.",
-            "{user} and a company of {count} cross under the Accord.",
-            "The Accord holds, {user}. Take a breath.",
-            "The Accord notes Surge level {count}.",
-            "{count} now keep the watch.",
+            [
+                "Noted. Welcome under the Accord, {user}.",
+                "The watch grows: {user}.",
+                "Under the Accord, all are welcome. Even {user}.",
+            ],
+            [
+                "The Accord thanks you, {user}. Month {count}.",
+                "Month {count}. The watch notes it, {user}.",
+                "Steady support, {user}. Month {count}.",
+            ],
+            [
+                "{user} and a company of {count} cross under the Accord.",
+                "{count} cross the border with {user}. The Accord holds.",
+                "A company of {count} under {user}'s banner. Welcome.",
+            ],
+            [
+                "The Accord holds, {user}. Take a breath.",
+                "The watch sees all, {user}. A short pause.",
+                "Even-handed, {user}. A short pause.",
+            ],
+            [
+                "The Accord notes Surge level {count}.",
+                "Surge level {count}. The watch approves.",
+                "Surge {count}. Every light gets its turn.",
+            ],
+            [
+                "{count} now keep the watch.",
+                "{count} under the Accord.",
+                "{count} followers. The grey wolf watches.",
+            ],
         ],
         [
-            "{user} JOINS THE WATCH!",
-            "{user} pledges to the Accord! Month {count}!",
-            "{user} CROSSES WITH {count}! THE ACCORD HOLDS!",
-            "{user}, the Accord pauses you.",
-            "SURGE {count}! THE WATCH RISES!",
-            "{count} STAND THE WATCH!",
+            [
+                "TO THE WATCH: {user}!",
+                "THE WATCH WELCOMES {user}!",
+                "UNDER THE ACCORD: {user}!",
+            ],
+            [
+                "Pledged to the Accord: {user}! Month {count}!",
+                "MONTH {count}! THE WATCH SALUTES {user}!",
+                "THE GREY WOLF HOWLS FOR {user}! MONTH {count}!",
+            ],
+            [
+                "{user} CROSSES WITH {count}! THE ACCORD HOLDS!",
+                "{count} CROSS UNDER THE ACCORD WITH {user}!",
+                "THE WATCH OPENS THE GATE FOR {user} AND {count}!",
+            ],
+            [
+                "{user}, the Accord pauses you.",
+                "{user}, the watch calls a pause.",
+                "{user}, the Accord asks a short pause.",
+            ],
+            [
+                "SURGE {count}! THE WATCH RISES!",
+                "SURGE {count}! THE WATCH IS AWAKE!",
+                "SURGE {count}! EVERY LIGHT BURNS BRIGHT!",
+            ],
+            [
+                "{count} STAND THE WATCH!",
+                "{count} UNDER THE ACCORD!",
+                "{count}! THE GREY WOLF HOWLS!",
+            ],
         ],
     ],
 ];
@@ -215,16 +506,24 @@ pub const QUIPS: [[[&str; 4]; 3]; 4] = [
         ],
     ],
 ];
+/// The events a streamer can turn off or give their own line, in `Event` order.
+pub const EVENTS: [&str; 6] = ["follow", "sub", "raid", "timeout", "surge", "milestone"];
+/// (bot, personality) as table indexes; anything unknown is VOLK, chill.
+fn voice(bot: &str, personality: &str) -> (usize, usize) {
+    (
+        ["pyre", "echo", "favor", "volk"]
+            .iter()
+            .position(|k| *k == bot)
+            .unwrap_or(3),
+        ["chill", "battle", "event"]
+            .iter()
+            .position(|k| *k == personality)
+            .unwrap_or(0),
+    )
+}
 /// A quip for this bot and personality; `turn` picks which one (the caller passes the time).
 pub fn quip_line(bot: &str, personality: &str, turn: i64) -> &'static str {
-    let b = ["pyre", "echo", "favor", "volk"]
-        .iter()
-        .position(|k| *k == bot)
-        .unwrap_or(3);
-    let p = ["chill", "battle", "event"]
-        .iter()
-        .position(|k| *k == personality)
-        .unwrap_or(0);
+    let (b, p) = voice(bot, personality);
     QUIPS[b][p][turn.rem_euclid(4) as usize]
 }
 /// Says a quip in the channel's bot voice (commands::tick decides when).
@@ -232,31 +531,75 @@ pub async fn quip(app: &App, channel: &str) -> Res<()> {
     let (key, _) = bot(app, channel).await?;
     let text = quip_line(
         key,
-        &personality(app, channel).await?,
+        &voice_settings(app, channel).await?.personality,
         chrono::Utc::now().timestamp() / 60,
     );
     say(app, channel, text).await
 }
-pub fn line(bot: &str, personality: &str, event: Event, user: &str, count: i64) -> String {
-    let b = ["pyre", "echo", "favor", "volk"]
-        .iter()
-        .position(|k| *k == bot)
-        .unwrap_or(3);
-    let p = ["chill", "battle", "event"]
-        .iter()
-        .position(|k| *k == personality)
-        .unwrap_or(0);
+/// The bot's own lines for an event, in this personality.
+pub fn lines(bot: &str, personality: &str, event: Event) -> [&'static str; 3] {
+    let (b, p) = voice(bot, personality);
     LINES[b][p][event as usize]
+}
+/// `template` (one of `lines`, or the streamer's own) filled in.
+pub fn fill(template: &str, user: &str, count: i64) -> String {
+    template
         .replace("{user}", user)
         .replace("{count}", &count.to_string())
 }
-async fn personality(app: &App, channel: &str) -> Res<String> {
-    Ok(sqlx::query_scalar(
-        "SELECT coalesce((SELECT bot_personality FROM chat_settings WHERE channel_id=$1),'chill')",
+/// One of the bot's lines for an event; `turn` picks which.
+pub fn line(
+    bot: &str,
+    personality: &str,
+    event: Event,
+    user: &str,
+    count: i64,
+    turn: usize,
+) -> String {
+    fill(lines(bot, personality, event)[turn % 3], user, count)
+}
+/// A burst of names as one: "Ana", "Ana and Bo", "Ana, Bo and Cy", "Ana, Bo, Cy and 4 others".
+pub fn names(all: &[&str]) -> String {
+    match all {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [first @ .., last] if all.len() <= 3 => format!("{} and {last}", first.join(", ")),
+        _ => {
+            let rest = all.len() - 3;
+            let others = if rest == 1 { "other" } else { "others" };
+            format!("{} and {rest} {others}", all[..3].join(", "))
+        }
+    }
+}
+/// How the channel's bot speaks: personality, cross-faction greetings, the events turned off and
+/// the streamer's own lines.
+struct Voice {
+    personality: String,
+    rivalry: bool,
+    off: Vec<String>,
+    lines: sqlx::types::Json<std::collections::HashMap<String, String>>,
+}
+async fn voice_settings(app: &App, channel: &str) -> Res<Voice> {
+    let row: Option<(String, bool, Vec<String>, sqlx::types::Json<_>)> = sqlx::query_as(
+        "SELECT bot_personality,bot_rivalry,bot_off,bot_lines FROM chat_settings WHERE channel_id=$1",
     )
     .bind(channel)
-    .fetch_one(&app.db)
-    .await?)
+    .fetch_optional(&app.db)
+    .await?;
+    let (personality, rivalry, off, lines) = row.unwrap_or_else(|| {
+        (
+            "chill".into(),
+            false,
+            Vec::new(),
+            sqlx::types::Json(Default::default()),
+        )
+    });
+    Ok(Voice {
+        personality,
+        rivalry,
+        off,
+        lines,
+    })
 }
 /// The bots' factions: PYRE speaks for Myria, ECHO for Aetheron, FAVOR for Glint; VOLK for none.
 fn bot_faction(bot: &str) -> Option<&'static str> {
@@ -279,25 +622,42 @@ pub fn rivalry(speaker: &str, about: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
+/// The bot's line for an event (unless the streamer turned that event off): their own line when
+/// set, else one of the personality's. `users` is one person, or a burst of follows or subs; a
+/// name the channel's banned words or link rule refuses is left out, not the whole line.
 async fn announce(
     app: &App,
     channel: &str,
     event: Event,
-    user: &str,
+    users: &[String],
     count: i64,
     raider_faction: Option<&str>,
 ) -> Res<()> {
+    let voice = voice_settings(app, channel).await?;
+    let kind = EVENTS[event as usize];
+    if voice.off.iter().any(|e| e == kind) {
+        return Ok(());
+    }
+    let rules = crate::commands::rules(app, channel).await?;
+    let shown: Vec<&str> = users
+        .iter()
+        .map(String::as_str)
+        .filter(|n| moderation::code_allowed(&rules.0, rules.1, n))
+        .collect();
+    if shown.is_empty() && users.iter().any(|n| !n.is_empty()) {
+        return Ok(());
+    }
     let (key, _) = bot(app, channel).await?;
-    let mut text = line(key, &personality(app, channel).await?, event, user, count);
+    let template = match voice.lines.get(kind) {
+        Some(own) => own.as_str(),
+        None => lines(key, &voice.personality, event)
+            [chrono::Utc::now().timestamp_subsec_nanos() as usize % 3],
+    };
+    let mut text = fill(template, &names(&shown), count);
     // Cross-faction greetings, when the streamer turned them on: a rival's raid gets a jab.
     if let (Some(speaker), Some(about)) = (bot_faction(key), raider_faction)
         && let Some(jab) = rivalry(speaker, about)
-        && sqlx::query_scalar::<_, bool>(
-            "SELECT coalesce((SELECT bot_rivalry FROM chat_settings WHERE channel_id=$1),false)",
-        )
-        .bind(channel)
-        .fetch_one(&app.db)
-        .await?
+        && voice.rivalry
     {
         text = format!("{text} {jab}");
     }
@@ -389,10 +749,24 @@ pub async fn drain(app: &App) -> Res<()> {
         SELECT channel_id,kind,name,count,faction,live FROM batch ORDER BY id")
         .fetch_all(&app.db)
         .await?;
+    // A burst of follows, or of subs at the same month (a gift bomb), becomes one line.
+    type Group = (String, String, i32, Option<String>, Vec<String>);
+    let mut groups: Vec<Group> = Vec::new();
     for (channel, kind, name, count, faction, live) in events {
         if !live {
             continue;
         }
+        if matches!(kind.as_str(), "follow" | "sub")
+            && let Some(group) = groups
+                .iter_mut()
+                .find(|g| g.0 == channel && g.1 == kind && g.2 == count)
+        {
+            group.4.push(name);
+            continue;
+        }
+        groups.push((channel, kind, count, faction, vec![name]));
+    }
+    for (channel, kind, count, faction, names) in groups {
         let event = match kind.as_str() {
             "follow" => Event::Follow,
             "sub" => Event::Sub,
@@ -405,7 +779,7 @@ pub async fn drain(app: &App) -> Res<()> {
             app,
             &channel,
             event,
-            &name,
+            &names,
             count.into(),
             faction.as_deref(),
         )
@@ -420,33 +794,98 @@ pub async fn drain(app: &App) -> Res<()> {
 
 // ---- AutoMod ----
 
-/// Which AutoMod rule a message breaks, if any (caps, repeats, spam), before the database check
-/// for a repeated message.
-pub fn rule(body: &str, caps: bool, repeats: bool, spam: bool) -> Option<&'static str> {
-    let letters: Vec<char> = body.chars().filter(|c| c.is_alphabetic()).collect();
-    if caps
-        && letters.len() >= 10
-        && letters.iter().filter(|c| c.is_uppercase()).count() * 10 > letters.len() * 7
-    {
-        return Some("caps");
+/// What one AutoMod strictness level allows. Each rule (caps, repeats, spam) is off (0) or one
+/// of three levels: relaxed (1), standard (2, the original rules) and strict (3).
+pub struct Level {
+    /// Caps: at least this many letters (mentions and emote codes aside), over this percent capitals.
+    caps_letters: usize,
+    caps_percent: usize,
+    /// Repeats: a run of this many of the same character (digits aside, so numbers pass), or the
+    /// same message again (ignoring case, spacing and punctuation) within `repeat_seconds`, when
+    /// it's at least `repeat_min` characters (short lines like "gg" are often said twice).
+    run: usize,
+    repeat_min: usize,
+    repeat_seconds: i32,
+    /// Spam: over this many symbols or emoji (each emoji counts once, however it's built),
+    /// making up over this percent of the message.
+    symbols: usize,
+    symbol_percent: usize,
+}
+pub const LEVELS: [Level; 3] = [
+    Level {
+        caps_letters: 15,
+        caps_percent: 85,
+        run: 15,
+        repeat_min: 15,
+        repeat_seconds: 15,
+        symbols: 25,
+        symbol_percent: 50,
+    },
+    Level {
+        caps_letters: 10,
+        caps_percent: 70,
+        run: 10,
+        repeat_min: 10,
+        repeat_seconds: 30,
+        symbols: 15,
+        symbol_percent: 30,
+    },
+    Level {
+        caps_letters: 8,
+        caps_percent: 55,
+        run: 7,
+        repeat_min: 6,
+        repeat_seconds: 60,
+        symbols: 8,
+        symbol_percent: 20,
+    },
+];
+fn level(n: i16) -> Option<&'static Level> {
+    LEVELS.get(usize::try_from(n).ok()?.checked_sub(1)?)
+}
+/// Which AutoMod rule a message breaks at these levels, if any, before the database check for a
+/// repeated message. `emotes` are the message's words that are emote codes, which caps ignores.
+pub fn rule(
+    body: &str,
+    caps: i16,
+    repeats: i16,
+    spam: i16,
+    emotes: &[String],
+) -> Option<&'static str> {
+    if let Some(l) = level(caps) {
+        let letters: Vec<char> = body
+            .split_whitespace()
+            .filter(|w| !w.starts_with('@') && !emotes.iter().any(|e| e == w))
+            .flat_map(str::chars)
+            .filter(|c| c.is_alphabetic())
+            .collect();
+        let upper = letters.iter().filter(|c| c.is_uppercase()).count();
+        if letters.len() >= l.caps_letters && upper * 100 > letters.len() * l.caps_percent {
+            return Some("caps");
+        }
     }
-    if repeats {
+    if let Some(l) = level(repeats) {
         let chars: Vec<char> = body.chars().collect();
-        if chars
-            .windows(10)
-            .any(|w| w.iter().all(|c| *c == w[0] && !c.is_whitespace()))
-        {
+        if chars.windows(l.run).any(|w| {
+            !w[0].is_whitespace() && !w[0].is_ascii_digit() && w.iter().all(|c| *c == w[0])
+        }) {
             return Some("repeats");
         }
     }
-    if spam {
-        let symbols = body
-            .chars()
-            .filter(|c| {
-                !c.is_alphanumeric() && !c.is_whitespace() && !".,!?'\"()-:;@#".contains(*c)
+    if let Some(l) = level(spam) {
+        let marks: Vec<&str> = body
+            .graphemes(true)
+            .filter(|g| !g.trim().is_empty())
+            .collect();
+        let symbols = marks
+            .iter()
+            .filter(|g| {
+                g.chars()
+                    .next()
+                    .is_some_and(|c| !c.is_alphanumeric() && !".,!?'\"()-:;@#".contains(c))
             })
             .count();
-        if symbols > 15 {
+        if symbols > l.symbols && symbols * 100 > marks.len() * l.symbol_percent {
             return Some("spam");
         }
     }
@@ -461,16 +900,31 @@ const WARNINGS: [(&str, &str); 3] = [
 /// strike in an hour warns (the message is refused); later ones time out per the channel's ladder,
 /// announced by the bot and logged for moderators, who can lift it.
 pub async fn automod(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<()> {
-    let settings: Option<(bool, bool, bool, Vec<i32>)> = sqlx::query_as("SELECT automod_caps,automod_repeats,automod_spam,automod_ladder FROM chat_settings WHERE channel_id=$1")
+    let settings: Option<(i16, i16, i16, Vec<i32>)> = sqlx::query_as("SELECT automod_caps,automod_repeats,automod_spam,automod_ladder FROM chat_settings WHERE channel_id=$1")
         .bind(channel).fetch_optional(&app.db).await?;
-    let Some((caps, repeats, spam, ladder)) = settings.filter(|s| s.0 || s.1 || s.2) else {
+    let Some((caps, repeats, spam, ladder)) = settings.filter(|s| s.0 > 0 || s.1 > 0 || s.2 > 0)
+    else {
         return Ok(());
     };
-    let mut broken = rule(body, caps, repeats, spam);
-    // Short lines (gg, F, an emote) are often said twice on purpose; only longer ones are repeats.
-    if broken.is_none() && repeats && body.trim().chars().count() >= 10 {
-        let same: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_messages WHERE channel_id=$1 AND author_id=$2 AND squad_id IS NULL AND created_at>now()-interval '30 seconds' AND lower(body)=lower($3))")
-            .bind(channel).bind(&user.id).bind(body.trim()).fetch_one(&app.db).await?;
+    let mut broken = rule(body, caps, repeats, spam, &[]);
+    // All-caps emote codes aren't shouting: looked up only when caps would hold the message.
+    if broken == Some("caps") {
+        let words: Vec<&str> = body.split_whitespace().collect();
+        let emotes: Vec<String> = sqlx::query_scalar("SELECT code FROM channel_emotes WHERE status='VISIBLE' AND code=ANY($1)
+            UNION SELECT code FROM outside_emotes WHERE (channel_id=$2 OR channel_id IS NULL) AND code=ANY($1)")
+            .bind(&words).bind(channel).fetch_all(&app.db).await?;
+        broken = rule(body, caps, repeats, spam, &emotes);
+    }
+    if broken.is_none()
+        && let Some(l) = level(repeats)
+        && body.trim().chars().count() >= l.repeat_min
+    {
+        // Messages are stored under the chat's first channel, so this covers shared co-stream chat
+        // there too. Letters and numbers only: "buy now" and "BUY NOW!!" are the same message.
+        let same: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_messages WHERE channel_id=$1 AND author_id=$2 AND deleted_at IS NULL
+                AND created_at>now()-make_interval(secs=>$4)
+                AND coalesce(nullif(regexp_replace(lower(body),'[^[:alnum:]]+','','g'),''),lower(body))=coalesce(nullif(regexp_replace(lower($3),'[^[:alnum:]]+','','g'),''),lower($3)))")
+            .bind(channel).bind(&user.id).bind(body.trim()).bind(f64::from(l.repeat_seconds)).fetch_one(&app.db).await?;
         broken = same.then_some("repeats");
     }
     let Some(broken) = broken else {
@@ -528,7 +982,7 @@ pub async fn automod(app: &App, channel: &str, user: &auth::User, body: &str) ->
         app,
         channel,
         Event::Timeout,
-        name.as_deref().unwrap_or(&user.username),
+        &[name.unwrap_or_else(|| user.username.clone())],
         0,
         None,
     )
@@ -544,9 +998,9 @@ pub async fn automod(app: &App, channel: &str, user: &auth::User, body: &str) ->
 }
 #[derive(Deserialize)]
 pub struct AutoMod {
-    caps: bool,
-    repeats: bool,
-    spam: bool,
+    caps: i16,
+    repeats: i16,
+    spam: i16,
     ladder: Vec<i32>,
 }
 /// PUT /api/me/automod
@@ -556,6 +1010,18 @@ async fn set_automod(
     Json(input): Json<AutoMod>,
 ) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
+    for (field, n) in [
+        ("caps", input.caps),
+        ("repeats", input.repeats),
+        ("spam", input.spam),
+    ] {
+        if !(0..=3).contains(&n) {
+            return Err(Fail::field(
+                field,
+                "Choose off, relaxed, standard or strict.",
+            ));
+        }
+    }
     if input.ladder.is_empty()
         || input.ladder.len() > 5
         || input
@@ -572,11 +1038,11 @@ async fn set_automod(
         .bind(&user.id).bind(input.caps).bind(input.repeats).bind(input.spam).bind(&input.ladder).execute(&app.db).await?;
     Ok(Json(json!({"automod": settings(&app, &user.id).await?})))
 }
-/// The AutoMod settings for Creator Studio.
+/// The AutoMod settings for Creator Studio: each rule's level (0 off to 3 strict) and the ladder.
 pub async fn settings(app: &App, owner: &str) -> Res<Value> {
-    let row: Option<(bool, bool, bool, Vec<i32>)> = sqlx::query_as("SELECT automod_caps,automod_repeats,automod_spam,automod_ladder FROM chat_settings WHERE channel_id=$1")
+    let row: Option<(i16, i16, i16, Vec<i32>)> = sqlx::query_as("SELECT automod_caps,automod_repeats,automod_spam,automod_ladder FROM chat_settings WHERE channel_id=$1")
         .bind(owner).fetch_optional(&app.db).await?;
-    let (caps, repeats, spam, ladder) = row.unwrap_or((false, false, false, vec![0, 60, 600]));
+    let (caps, repeats, spam, ladder) = row.unwrap_or((0, 0, 0, vec![0, 60, 600]));
     Ok(json!({"caps": caps, "repeats": repeats, "spam": spam, "ladder": ladder}))
 }
 
@@ -765,36 +1231,103 @@ mod tests {
     #[test]
     fn surge_and_milestone_lines() {
         assert_eq!(
-            line("pyre", "chill", Event::Surge, "x", 3),
+            line("pyre", "chill", Event::Surge, "x", 3, 0),
             "Surge level 3. Keep it burning."
         );
         assert_eq!(
-            line("volk", "event", Event::Milestone, "x", 100),
+            line("volk", "event", Event::Milestone, "x", 100, 0),
             "100 STAND THE WATCH!"
         );
         assert_eq!(
-            line("favor", "battle", Event::Timeout, "Ana", 0),
+            line("favor", "battle", Event::Timeout, "Ana", 0, 0),
             "Easy, Ana. Take a breather."
+        );
+        assert_eq!(
+            line("echo", "battle", Event::Follow, "Ana", 0, 4),
+            "Archived: Ana. Welcome to the pattern.",
+            "the turn picks one of three"
         );
     }
     #[test]
     fn rules_and_lines() {
+        let none: &[String] = &[];
         assert_eq!(
-            rule("THIS IS ALL CAPS YELLING", true, false, false),
+            rule("THIS IS ALL CAPS YELLING", 2, 0, 0, none),
             Some("caps")
         );
-        assert_eq!(rule("Hello THERE friend of mine", true, false, false), None);
-        assert_eq!(rule("noooooooooooooo", false, true, false), Some("repeats"));
-        assert_eq!(rule("$$$%%%^^^&&&***~~~", false, false, true), Some("spam"));
-        assert_eq!(rule("normal message", true, true, true), None);
+        assert_eq!(rule("Hello THERE friend of mine", 2, 0, 0, none), None);
+        assert_eq!(rule("noooooooooooooo", 0, 2, 0, none), Some("repeats"));
+        assert_eq!(rule("$$$%%%^^^&&&***~~~", 0, 0, 2, none), Some("spam"));
+        assert_eq!(rule("normal message", 3, 3, 3, none), None);
         assert_eq!(
-            line("volk", "battle", Event::Raid, "Ana", 12),
+            line("volk", "battle", Event::Raid, "Ana", 12, 0),
             "Ana and a company of 12 cross under the Accord."
         );
         assert_eq!(
-            line("nope", "nope", Event::Follow, "Ana", 0),
+            line("nope", "nope", Event::Follow, "Ana", 0, 0),
             "Welcome, Ana."
         );
+    }
+    #[test]
+    fn levels_and_false_positives() {
+        let none: &[String] = &[];
+        // Mentions and emote codes aren't shouting.
+        assert_eq!(rule("@BIGSTREAMER welcome back", 2, 0, 0, none), None);
+        let hype = vec!["SVERHYPE".to_string()];
+        assert_eq!(rule("SVERHYPE SVERHYPE yes", 2, 0, 0, &hype), None);
+        // Each level is its own threshold: 10 of 14 letters capitals is 71%.
+        let loud = "WHAT A GREAT play";
+        assert_eq!(rule(loud, 1, 0, 0, none), None, "relaxed needs 85%");
+        assert_eq!(rule(loud, 2, 0, 0, none), Some("caps"), "standard over 70%");
+        // Numbers aren't stretched letters; a strict channel catches shorter runs.
+        assert_eq!(rule("that's 10000000000 views", 0, 3, 0, none), None);
+        assert_eq!(rule("nooooooo", 0, 2, 0, none), None);
+        assert_eq!(rule("nooooooo", 0, 3, 0, none), Some("repeats"));
+        // An emoji counts once, however many code points draw it.
+        assert_eq!(rule(&"\u{2764}\u{FE0F}".repeat(8), 0, 0, 2, none), None);
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+        assert_eq!(rule(&family.repeat(3), 0, 0, 2, none), None);
+        assert_eq!(rule(&"\u{1F602}".repeat(16), 0, 0, 2, none), Some("spam"));
+        // A long message with some symbols in it isn't spam.
+        let long = format!(
+            "{} ** // <3 ~~ ^^ && %% $$",
+            "a normal sentence about the run".repeat(5)
+        );
+        assert_eq!(rule(&long, 0, 0, 2, none), None);
+        assert_eq!(rule("!!!", 0, 0, 0, none), None, "off is off");
+    }
+    #[test]
+    fn bursts_read_as_one() {
+        assert_eq!(names(&["Ana"]), "Ana");
+        assert_eq!(names(&["Ana", "Bo"]), "Ana and Bo");
+        assert_eq!(names(&["Ana", "Bo", "Cy"]), "Ana, Bo and Cy");
+        assert_eq!(names(&["Ana", "Bo", "Cy", "Di"]), "Ana, Bo, Cy and 1 other");
+        assert_eq!(
+            names(&["Ana", "Bo", "Cy", "Di", "Ed"]),
+            "Ana, Bo, Cy and 2 others"
+        );
+        assert_eq!(
+            fill("Hi {user}, month {count}", "Ana and Bo", 3),
+            "Hi Ana and Bo, month 3"
+        );
+        // Every line has its three, and burst lines never put a verb right after {user}.
+        for b in ["pyre", "echo", "favor", "volk"] {
+            for p in ["chill", "battle", "event"] {
+                for e in [Event::Follow, Event::Sub] {
+                    for l in lines(b, p, e) {
+                        assert!(l.contains("{user}"), "{l}");
+                        let after = l.split("{user}").nth(1).unwrap_or("");
+                        let next = after.split_whitespace().next().unwrap_or("");
+                        // Past tense ("subscribed") agrees with any number of names.
+                        let word = next.trim_end_matches(|c: char| !c.is_alphabetic());
+                        assert!(
+                            !next.starts_with(char::is_alphabetic) || word.ends_with("ed"),
+                            "{b} {p}: {l}"
+                        );
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn imports_translate_and_flag() {
