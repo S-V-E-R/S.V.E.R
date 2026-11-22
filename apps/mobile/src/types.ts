@@ -80,7 +80,8 @@ export type ChatAuthor = {
 };
 
 /** A line from the channel's linked Twitch, YouTube or Kick chat, or its bot (docs/LINKED_CHAT.md). Never a S.V.E.R account. */
-export type OutsideSender = { platform: string; name: string; role?: string | null; url?: string | null };
+// `channel`: in a co-stream's shared chat, the member channel the line came in on.
+export type OutsideSender = { platform: string; name: string; role?: string | null; url?: string | null; channel?: string };
 
 export type ChatMessage = {
   id: string;

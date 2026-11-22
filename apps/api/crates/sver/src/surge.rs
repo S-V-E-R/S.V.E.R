@@ -145,10 +145,17 @@ const COMBO_WINDOW: Duration = Duration::from_secs(5);
 const COMBO_COOLDOWN: Duration = Duration::from_secs(10);
 const COMBO_PEOPLE: usize = 5;
 
-/// Notes the emote-like words of a chat message; when 5 distinct accounts sent the same channel
-/// emote within 5 seconds (and none played in the last 10), an emote shower plays on stream.
-/// Chat already requires a verified account.
-pub(crate) async fn combo(app: &App, channel: &str, user: &str, body: &str) -> Res<()> {
+/// Notes the emote-like words of a chat message in `room` (a channel's chat, or a merged
+/// co-stream's shared chat); when 5 distinct accounts sent the same emote of one of `owners` (the
+/// channel, or the members, host first) within 5 seconds (and none played in the last 10), an
+/// emote shower plays on that owner's stream. Chat already requires a verified account.
+pub(crate) async fn combo(
+    app: &App,
+    room: &str,
+    owners: &[String],
+    user: &str,
+    body: &str,
+) -> Res<()> {
     let mut words: Vec<&str> = body
         .split_whitespace()
         .filter(|w| (3..=20).contains(&w.len()) && w.bytes().all(|b| b.is_ascii_alphanumeric()))
@@ -162,7 +169,7 @@ pub(crate) async fn combo(app: &App, channel: &str, user: &str, body: &str) -> R
     let ready = {
         let mut all = COMBOS.lock().unwrap_or_else(|p| p.into_inner());
         let now = Instant::now();
-        let combos = all.entry(channel.to_string()).or_default();
+        let combos = all.entry(room.to_string()).or_default();
         combos.hits.retain(|h| now - h.2 < COMBO_WINDOW);
         for word in &words {
             combos.hits.push((word.to_string(), user.to_string(), now));
@@ -185,16 +192,23 @@ pub(crate) async fn combo(app: &App, channel: &str, user: &str, body: &str) -> R
     let Some(code) = ready else {
         return Ok(());
     };
-    let emote = crate::emotes::catalog(app, channel)
-        .await?
-        .into_iter()
-        .find(|e| e["code"] == code);
-    let Some(emote) = emote else {
+    let mut found = None;
+    for owner in owners {
+        let emote = crate::emotes::catalog(app, owner)
+            .await?
+            .into_iter()
+            .find(|e| e["code"] == code);
+        if let Some(emote) = emote {
+            found = Some((owner, emote));
+            break;
+        }
+    }
+    let Some((channel, emote)) = found else {
         return Ok(());
     };
     {
         let mut all = COMBOS.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(c) = all.get_mut(channel) {
+        if let Some(c) = all.get_mut(room) {
             if c.last.is_some_and(|t| t.elapsed() < COMBO_COOLDOWN) {
                 return Ok(());
             }

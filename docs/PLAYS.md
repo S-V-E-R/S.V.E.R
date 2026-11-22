@@ -96,7 +96,7 @@ Status, October 7, 2026: crash restart, Postgres vote state, the channel setting
 - Smoother picture (more frequent input steps) and game audio, once their timing is verified.
 - The username `sverplays` is no longer hardcoded; the Plays channel is a setting.
 - Recording: the 24/7 Plays channel is never recorded or clipped (Module 8). Its segments are acknowledged and discarded, whatever its channel settings say, so it cannot fill recording storage.
-- Co-streams: nobody signs in as the Plays channel, so it joins a co-stream as soon as it's invited, but only by the one streamer set in `plays_runtime.costream_host_id` (a user ID, set by an operator; migration `0041`). Invitations from anyone else stay pending and expire. Use separate chat: in a shared chat, game votes from chat don't count.
+- Co-streams: nobody signs in as the Plays channel, so it joins a co-stream as soon as it's invited, but only by the one streamer set in `plays_runtime.costream_host_id` (a user ID, set by an operator; migration `0041`). Invitations from anyone else stay pending and expire. In a merged co-stream's shared chat, game votes from chat count for the Plays channel (November 20, 2026), under the usual watching rule.
 
 ## Done when (step 1)
 

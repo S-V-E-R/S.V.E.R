@@ -61,17 +61,18 @@ Launch platforms: Twitch, YouTube and Kick, each through its official API. More 
 - Kept like S.V.E.R chat messages (latest 100 on join, 7-day expiry). Only the platform, the outside user's ID and display name, and the text are stored.
 - **They never count toward anything:** not viewer counts, Valor, faction influence, MAGNet chat bursts, viewer integrity, tiers or Plays votes. Outside users aren't S.V.E.R accounts.
 - **MAGNet:** when the channel is featured, outside messages stay in the channel's chat and don't cross into Hype chat.
+- **Merged co-streams (November 20, 2026):** while the channel is in a live merged co-stream, its outside messages (not its bot's lines) also show in the shared chat, live and in its history, from the channel's time in the co-stream. They are stored once, in the channel's own chat, with the same 7-day expiry. There the badge also names the channel, for example "Twitch · @member", and codes use that channel's mirrored 7TV, BTTV and FFZ set. While the co-stream is merged, every member's banned words and link rule apply to these lines, as they do to S.V.E.R lines there; one any member's rules refuse isn't stored or shown.
 
 ### Moderation
 
 - The channel's banned words and link blocking apply to how outside messages are shown on S.V.E.R.
-- S.V.E.R channel moderators can hide an outside message on S.V.E.R and mute an outside user on S.V.E.R for the rest of the broadcast or permanently.
+- S.V.E.R channel moderators can hide an outside message on S.V.E.R and mute an outside user on S.V.E.R for the rest of the broadcast or permanently. In a merged co-stream's shared chat, only the owner and moderators of the channel the message came in on (and staff) can, through that channel's own hide and mute; their hides, the platform's deletions and clears (the newest 200) and expiries leave the shared chat too. `GET /api/squads/{id}/chat/moderation` lists the member channels (`moderates`) whose outside messages the caller can moderate there.
 - These actions only affect S.V.E.R. Moderation on the other platform stays with that platform's tools. A message deleted on its platform is removed from S.V.E.R when the platform reports the deletion.
 - Outside messages can be reported to S.V.E.R staff like any chat message.
 
 ### Replies
 
-- Only the streamer can reply out, using a "Reply on Twitch / YouTube / Kick" action on an outside message, or by choosing a platform when sending. The reply is posted from the streamer's linked account and also shows in S.V.E.R chat.
+- Only the streamer can reply out, using a "Reply on Twitch / YouTube / Kick" action on an outside message, or by choosing a platform when sending. The reply is posted from the streamer's linked account and also shows in S.V.E.R chat. Posting out stays in the streamer's own channel chat: shared co-stream chat offers no reply action or "Also post on" choice.
 - Moderators and viewers can't post to other platforms.
 - If posting fails (permission revoked, rate limit), the streamer sees why.
 
