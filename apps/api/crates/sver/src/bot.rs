@@ -423,7 +423,7 @@ const LINES: [[[[&str; 3]; 6]; 3]; 4] = [
     ],
 ];
 /// Occasional quips per bot (PYRE, ECHO, FAVOR, VOLK) and personality (chill, battle, event),
-/// docs/LORE.md "Quips" (a draft for Joe's approval; the feature is off by default).
+/// docs/LORE.md "Quips" (approved by Joe on November 21, 2026; the feature is off by default).
 pub const QUIPS: [[[&str; 4]; 3]; 4] = [
     [
         [

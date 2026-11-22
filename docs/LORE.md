@@ -168,7 +168,7 @@ Every event line, three per bot, personality and event; the bot picks one at ran
 | Surge level | SURGE LEVEL {count}! THE FORGE ROARS! · SURGE {count}! FEED THE FIRE! · SURGE {count}! FROM ASHES, WE RISE! | SURGE {count}! THE SIGNAL SURGES! · SURGE {count}! OFF THE CHARTS! · SURGE {count}! KNOWLEDGE ASCENDS! | SURGE LEVEL {count}! JACKPOT ENERGY! · SURGE {count}! THE BELL WON'T STOP! · SURGE {count}! FORTUNE FAVORS THE BOLD! | SURGE {count}! THE WATCH RISES! · SURGE {count}! THE WATCH IS AWAKE! · SURGE {count}! EVERY LIGHT BURNS BRIGHT! |
 | Follower milestone | {count} FOLLOWERS! THE FIRE SPREADS! · {count} STRONG! THE FORGE BLAZES! · {count} EMBERS! NONE BURN ALONE! | {count} SIGNALS IN THE ARCHIVE! · {count} FOLLOWERS! THE PATTERN PERSISTS! · {count}! THE ARCHIVE OVERFLOWS! | {count} AT THE TABLE! FORTUNE SMILES! · {count} FOLLOWERS! RING EVERY BELL! · {count}! THE TABLE KEEPS GROWING! | {count} STAND THE WATCH! · {count} UNDER THE ACCORD! · {count}! THE GREY WOLF HOWLS! |
 
-Quips: short lines a bot says now and then while the channel is live, when the streamer turns them on. *Draft for Joe's approval, October 11, 2026.* Original lines; the Battle ones reuse approved phrases (battle cries, the Accord).
+Quips: short lines a bot says now and then while the channel is live, when the streamer turns them on. *Approved by Joe on November 21, 2026.* Original lines; the Battle ones reuse approved phrases (battle cries, the Accord).
 
 | Bot | Chill | Battle | Event |
 | --- | --- | --- | --- |
