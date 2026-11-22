@@ -490,6 +490,8 @@ a.takedown-link:hover { color: var(--ink); }
 .messages-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin: 0; padding: 12px 16px; border-top: 1px solid var(--line); }
 .messages-composer textarea { resize: none; min-height: 42px; max-height: 160px; field-sizing: content; width: 100%; }
 .messages-link-note { grid-column: 1 / -1; margin: 0; }
+.messages-dock { padding: 0 16px 12px; }
+.messages-dock .chat-dock { margin-top: 0; }
 .messages-empty { margin: auto; display: grid; gap: 12px; justify-items: center; text-align: center; padding: 24px; }
 @media (max-width: 760px) {
   .messages-page { padding: 0; }

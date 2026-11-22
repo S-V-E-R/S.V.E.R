@@ -114,6 +114,21 @@ pub(crate) async fn chatted(
         .execute(tx).await?;
     Ok(())
 }
+/// The one member channel a merged co-stream's shared chat line credits (docs/SUPPORT.md
+/// "Co-streams"): where the chatter has the most lifetime Engagement Valor; a tie at the top, or
+/// none anywhere, goes to the host (`members[0]`).
+pub(crate) async fn credit(db: &mut PgConnection, members: &[String], user: &str) -> Res<String> {
+    let top: Vec<(String, i64)> = sqlx::query_as("SELECT channel_id,earned FROM engagement WHERE user_id=$1 AND channel_id=ANY($2) AND earned>0 ORDER BY earned DESC LIMIT 2")
+        .bind(user)
+        .bind(members)
+        .fetch_all(db)
+        .await?;
+    Ok(match top.as_slice() {
+        [(channel, _)] => channel.clone(),
+        [(channel, a), (_, b)] if a > b => channel.clone(),
+        _ => members.first().cloned().unwrap_or_default(),
+    })
+}
 /// The one-time follow bonus (inside the transaction that makes the follow count); refollowing
 /// never pays again.
 pub(crate) async fn followed(

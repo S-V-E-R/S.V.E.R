@@ -646,14 +646,43 @@ async fn chat_moderation(
     jar: CookieJar,
     Path(id): Path<String>,
 ) -> Res<Json<Value>> {
-    let (_, _, role) = chat_actor(&app, &jar, &id).await?;
+    let (user, members, role) = chat_actor(&app, &jar, &id).await?;
+    // `moderates`: the member channels whose linked-platform lines this person may hide or mute
+    // here (those endpoints check again). `bans`: the channels a ban here also bans from.
+    let (theirs, bans) = moderated(&app, &members, &user).await?;
+    let db = &app.db;
+    let names = |ids: Vec<String>| {
+        sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id=ANY($1)")
+            .bind(ids)
+            .fetch_all(db)
+    };
+    let moderates = names(theirs).await?;
+    let bans = names(bans).await?;
     let mut restrictions:Vec<Value>=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT jsonb_build_object('user',{},'kind',r.kind,'until',r.until) FROM squad_restrictions r JOIN channel_users c ON c.id=r.user_id WHERE r.squad_id=$1 AND (r.kind='ban' OR r.until>now())",profiles::chip_sql("c")))).bind(&id).fetch_all(&app.db).await?;
     for r in &mut restrictions {
         profiles::hydrate(&app, r);
     }
     Ok(Json(
-        json!({"role":role.name(),"restrictions":restrictions}),
+        json!({"role":role.name(),"restrictions":restrictions,"moderates":moderates,"bans":bans}),
     ))
+}
+/// The member channels this person owns or moderates (staff: all), and those of them a
+/// shared-chat ban also bans from (staff: only the host's, which comes first).
+async fn moderated(
+    app: &App,
+    members: &[String],
+    user: &auth::User,
+) -> Res<(Vec<String>, Vec<String>)> {
+    let (mut theirs, mut bans) = (Vec::new(), Vec::new());
+    for (i, member) in members.iter().enumerate() {
+        if let Some(role) = moderation::role_of(app, member, user).await? {
+            theirs.push(member.clone());
+            if role != moderation::Role::Staff || i == 0 {
+                bans.push(member.clone());
+            }
+        }
+    }
+    Ok((theirs, bans))
 }
 #[derive(Deserialize)]
 struct Restrict {
@@ -666,7 +695,9 @@ struct Restrict {
 /// A shared-chat timeout or ban works like a channel one: it acts now and, given without a
 /// reason, waits for review. It is logged with evidence in every member's channel (Studio → Chat,
 /// where undoing it lifts it here), and the person's lines from the last 10 minutes leave the
-/// shared chat.
+/// shared chat. A ban is also a channel ban, outliving the co-stream, in each member channel the
+/// actor moderates (`moderated`) that hasn't banned them already; its log row there carries
+/// `channel_ban`, so lifting the shared ban lifts exactly those.
 async fn restrict(
     State(app): State<App>,
     jar: CookieJar,
@@ -674,6 +705,11 @@ async fn restrict(
     Json(input): Json<Restrict>,
 ) -> Res<Json<Value>> {
     let (user, members, role) = chat_actor(&app, &jar, &id).await?;
+    let bans = if input.kind == "ban" {
+        moderated(&app, &members, &user).await?.1
+    } else {
+        Vec::new()
+    };
     let review = input.reason.trim().is_empty();
     let reason = moderation::optional_reason(&input.reason, moderation::NO_REASON_YET)?;
     let until = match (input.kind.as_str(), input.seconds) {
@@ -700,6 +736,15 @@ async fn restrict(
     }
     // The stored end (as Postgres rounds it), so undoing on review lifts only this restriction.
     let until: Option<DateTime<Utc>> = sqlx::query_scalar("INSERT INTO squad_restrictions(squad_id,user_id,kind,until) VALUES($1,$2,$3,$4) ON CONFLICT(squad_id,user_id,kind) DO UPDATE SET until=$4 RETURNING until").bind(&id).bind(&target.id).bind(&input.kind).bind(until).fetch_one(&mut *tx).await?;
+    let mut channel_bans = Vec::new();
+    for channel in &bans {
+        // Starts with its log row (one `now()`), which is how a lift tells it from a later one.
+        let added = sqlx::query("INSERT INTO channel_restrictions(channel_id,user_id,kind) VALUES($1,$2,'ban') ON CONFLICT DO NOTHING")
+            .bind(channel).bind(&target.id).execute(&mut *tx).await?.rows_affected() == 1;
+        if added {
+            channel_bans.push(channel);
+        }
+    }
     for channel in &members {
         moderation::log_restriction(
             &mut tx,
@@ -708,15 +753,18 @@ async fn restrict(
             role,
             &input.kind,
             &target.id,
-            json!({"squad": id, "seconds": input.seconds, "until": until}),
+            json!({"squad": id, "seconds": input.seconds, "until": until, "channel_ban": channel_bans.contains(&channel)}),
             &reason,
             review,
         )
         .await?;
     }
     // After the evidence, which still shows them.
-    let cleared: moderation::Cleared = sqlx::query_as("UPDATE chat_messages SET deleted_at=now() WHERE squad_id=$1 AND author_id=$2 AND deleted_at IS NULL AND created_at>now()-interval '10 minutes' RETURNING squad_id,origin,id")
+    let mut cleared: moderation::Cleared = sqlx::query_as("UPDATE chat_messages SET deleted_at=now() WHERE squad_id=$1 AND author_id=$2 AND deleted_at IS NULL AND created_at>now()-interval '10 minutes' RETURNING squad_id,origin,id")
         .bind(&id).bind(&target.id).fetch_all(&mut *tx).await?;
+    for channel in &channel_bans {
+        cleared.extend(moderation::clear_recent(&mut tx, channel, &target.id).await?);
+    }
     crate::safety::audit(
         &mut tx,
         Some(&user.id),
@@ -764,8 +812,16 @@ async fn lift(
             .await?
             .rows_affected()
             == 1;
+    // The channel bans this ban gave go with it, also in channels that have left the co-stream
+    // since (their lift is logged there too).
+    let channel_bans = if lifted && kind == "ban" {
+        moderation::lift_squad_channel_bans(&mut tx, &id, &target.id, None, None).await?
+    } else {
+        Vec::new()
+    };
     if lifted {
-        for channel in &members {
+        let gone = channel_bans.iter().filter(|c| !members.contains(c));
+        for channel in members.iter().chain(gone) {
             moderation::log(
                 &mut tx,
                 channel,
@@ -774,7 +830,7 @@ async fn lift(
                 &format!("lift_{kind}"),
                 Some(&target.id),
                 None,
-                json!({"squad": id}),
+                json!({"squad": id, "channel_ban": channel_bans.contains(channel)}),
                 &reason,
             )
             .await?;

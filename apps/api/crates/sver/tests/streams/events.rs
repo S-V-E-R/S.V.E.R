@@ -161,6 +161,7 @@ pub async fn exercise(e: &Env) {
     sver::linked_chat::post_system(
         &e.app,
         "stream-owner",
+        None,
         "bot",
         "bot",
         "Channel bot",

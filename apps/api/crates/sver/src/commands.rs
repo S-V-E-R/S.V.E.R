@@ -66,11 +66,26 @@ async fn sayable(app: &App, channel: &str, field: &'static str, text: &str) -> R
 /// The bot says `text` in the channel's chat, unless the channel's banned words or link rule
 /// would refuse it.
 pub async fn say(app: &App, channel: &str, text: &str) -> Res<()> {
-    if blocked(&rules(app, channel).await?, text) {
-        return Ok(());
+    say_in(app, channel, None, text).await
+}
+/// `say`, or in a merged co-stream's shared chat (`shared`: the squad and its members, whose
+/// rules all apply) into that room instead of the channel's own.
+pub async fn say_in(
+    app: &App,
+    channel: &str,
+    shared: Option<(&str, &[String])>,
+    text: &str,
+) -> Res<()> {
+    let owners = shared.map_or(vec![channel], |(_, m)| {
+        m.iter().map(String::as_str).collect()
+    });
+    for owner in owners {
+        if blocked(&rules(app, owner).await?, text) {
+            return Ok(());
+        }
     }
     let (key, name) = bot(app, channel).await?;
-    crate::linked_chat::post_system(app, channel, "bot", key, name, text).await
+    crate::linked_chat::post_system(app, channel, shared.map(|s| s.0), "bot", key, name, text).await
 }
 
 /// `{user}`, `{channel}`, `{uptime}`, `{game}` and `{followers}`, filled in.
@@ -103,17 +118,32 @@ async fn fill(app: &App, channel: &str, user: Option<&str>, text: &str) -> Res<S
 }
 
 /// After a chat message is published: a `!name` matching a custom command gets the bot's reply,
-/// within the command's permission and cooldown. Never fails the sender's message.
-pub async fn respond(app: &App, channel: &str, user: &auth::User, body: &str) {
-    if let Err(error) = try_respond(app, channel, user, body).await {
+/// within the command's permission and cooldown. `members` is the chat's channel, or a merged
+/// co-stream's members (host first) with `squad` set: the host's command runs, else the first
+/// member's that has it, and the reply goes into the shared chat. Never fails the sender's message.
+pub async fn respond(
+    app: &App,
+    members: &[String],
+    squad: Option<&str>,
+    user: &auth::User,
+    body: &str,
+) {
+    if let Err(error) = try_respond(app, members, squad, user, body).await {
         eprintln!(
             "commands_event=respond outcome=error status={}",
             error.status.as_u16()
         );
     }
 }
-async fn try_respond(app: &App, channel: &str, user: &auth::User, body: &str) -> Res<()> {
-    if crate::bot::giveaway(app, channel, user, body).await? {
+async fn try_respond(
+    app: &App,
+    members: &[String],
+    squad: Option<&str>,
+    user: &auth::User,
+    body: &str,
+) -> Res<()> {
+    let shared = squad.map(|s| (s, members));
+    if crate::bot::giveaway(app, members, shared, user, body).await? {
         return Ok(());
     }
     let Some(name) = body
@@ -124,16 +154,18 @@ async fn try_respond(app: &App, channel: &str, user: &auth::User, body: &str) ->
     else {
         return Ok(());
     };
-    let command: Option<(String, String, i32)> = sqlx::query_as(
-        "SELECT reply,access,cooldown_seconds FROM chat_commands WHERE channel_id=$1 AND name=$2",
+    let mut found: Vec<(String, String, String, i32)> = sqlx::query_as(
+        "SELECT channel_id,reply,access,cooldown_seconds FROM chat_commands WHERE channel_id=ANY($1) AND name=$2",
     )
-    .bind(channel)
+    .bind(members)
     .bind(&name)
-    .fetch_optional(&app.db)
+    .fetch_all(&app.db)
     .await?;
-    let Some((reply, access, cooldown)) = command else {
+    found.sort_by_key(|c| members.iter().position(|m| *m == c.0));
+    let Some((channel, reply, access, cooldown)) = found.into_iter().next() else {
         return Ok(());
     };
+    let channel = channel.as_str();
     let staff = crate::moderation::role_of(app, channel, user)
         .await?
         .is_some();
@@ -185,7 +217,7 @@ async fn try_respond(app: &App, channel: &str, user: &auth::User, body: &str) ->
         &reply,
     )
     .await?;
-    say(app, channel, &text).await
+    say_in(app, channel, shared, &text).await
 }
 
 /// Every jobs tick: each live channel's due timed message is posted when chat has been active
