@@ -721,6 +721,38 @@ async fn guilds_and_squads() {
     std::fs::remove_dir_all(media_dir).unwrap();
     result.unwrap();
 }
+/// Paid support earning faction influence (tests/streams/subs.rs), against the synthetic Stripe.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn support_influence() {
+    let (admin, db, schema) = isolated_database().await;
+    let fake: Fake = Arc::new(Mutex::new(Media::default()));
+    let api = Router::new()
+        .route("/v1/checkout/sessions", post(stripe))
+        .route("/v1/invoice_payments", get(stripe))
+        .route("/v1/subscriptions/{id}", get(stripe).post(stripe))
+        .with_state(fake.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
+    let mut config = Config::from_env().unwrap();
+    config.resend_key.clear();
+    config.stripe = sver::stripe::Config {
+        secret_key: "sk_test_synthetic".into(),
+        webhook_secret: "whsec_synthetic".into(),
+        api_url: format!("http://{address}"),
+    };
+    let app = App::new(db.clone(), config).await.unwrap();
+    let env = synthetic_owner(app, fake).await;
+    let result = tokio::spawn(async move { subs::influence(&env).await }).await;
+    upstream.abort();
+    db.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+    result.unwrap();
+}
 async fn exercise(e: &Env) {
     playback::exercise(e).await;
     chat::exercise(e).await;

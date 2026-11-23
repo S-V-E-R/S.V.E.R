@@ -807,41 +807,33 @@ async fn exercise(app: App) {
         .unwrap(),
         0
     );
+    // Support counts where the supporter watches as a Trusted viewer, never a Counted one.
+    let channel = ["faction-user-0".to_string()];
+    let watched = watching(&mut tx, &channel, "faction-user-2").await.unwrap();
+    assert_eq!(watched, ["faction-live"]);
+    assert!(
+        watching(&mut tx, &channel, "faction-user-1")
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
-        support(
-            &app,
-            &mut tx,
-            "faction-live",
-            "faction-user-2",
-            "settled-one"
-        )
-        .await
-        .unwrap(),
+        support(&app, &mut tx, &watched, "faction-user-2", "settled-one")
+            .await
+            .unwrap(),
         2
     );
     assert_eq!(
-        support(
-            &app,
-            &mut tx,
-            "faction-live",
-            "faction-user-2",
-            "settled-two"
-        )
-        .await
-        .unwrap(),
+        support(&app, &mut tx, &watched, "faction-user-2", "settled-two")
+            .await
+            .unwrap(),
         0,
         "One distinct supporter per UTC day"
     );
     assert_eq!(
-        support(
-            &app,
-            &mut tx,
-            "faction-live",
-            "faction-user-2",
-            "settled-one"
-        )
-        .await
-        .unwrap(),
+        support(&app, &mut tx, &watched, "faction-user-2", "settled-one")
+            .await
+            .unwrap(),
         0,
         "Payment replay"
     );

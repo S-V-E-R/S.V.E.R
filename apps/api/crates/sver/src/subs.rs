@@ -341,17 +341,20 @@ async fn subscribe(
     match input.pay.as_str() {
         "valor" => {
             let id = request_id(&input.id)?;
+            let reference = format!("valor-sub:{id}");
             if spend(
                 &mut tx,
                 &user.id,
                 &pool,
                 price(tier),
                 "valor_sub",
-                &format!("valor-sub:{id}"),
+                &reference,
             )
             .await?
             {
                 grant(&mut tx, &channel, &user.id, tier, false).await?;
+                let watched = crate::factions::watching(&mut tx, &pool, &user.id).await?;
+                crate::factions::support(&app, &mut tx, &watched, &user.id, &reference).await?;
             }
             tx.commit().await?;
             Ok(Json(json!({"subscribed": true})))
@@ -403,6 +406,8 @@ async fn subscribe(
                 .await?;
             }
             support::card_gate(&mut tx, &user.id, cents, input.guardian_consent).await?;
+            // Faction influence counts a viewer watching as Checkout opens (docs/FACTIONS.md).
+            let watched = crate::factions::watching(&mut tx, &pool, &user.id).await?;
             let origin = &app.config.origin;
             // Keep a gifted subscription (docs/CHANNEL_ADDITIONS.md): a gifted or Valor month that
             // is still running becomes a free trial, so the first card charge is when it ends.
@@ -451,6 +456,12 @@ async fn subscribe(
             }
             if pool.len() > 1 {
                 form.push(("subscription_data[metadata][sver_pool]", pool.join(",")));
+            }
+            if !watched.is_empty() {
+                form.push((
+                    "subscription_data[metadata][sver_watched]",
+                    watched.join(","),
+                ));
             }
             let url = start_checkout(
                 &app,
@@ -652,19 +663,22 @@ async fn gift(
     match input.pay.as_str() {
         "valor" => {
             let id = request_id(&input.id)?;
+            let reference = format!("valor-gift:{id}");
             if spend(
                 &mut tx,
                 &user.id,
                 &pool,
                 count * price(tier),
                 "valor_gift",
-                &format!("valor-gift:{id}"),
+                &reference,
             )
             .await?
             {
                 for recipient in &recipients {
                     grant(&mut tx, &channel, recipient, tier, true).await?;
                 }
+                let watched = crate::factions::watching(&mut tx, &pool, &user.id).await?;
+                crate::factions::support(&app, &mut tx, &watched, &user.id, &reference).await?;
             }
             tx.commit().await?;
             Ok(Json(json!({"gifted": count})))
@@ -673,6 +687,8 @@ async fn gift(
             let cents = count * price(tier);
             support::card_gate(&mut tx, &user.id, cents, input.guardian_consent).await?;
             let shares = card_shares(&mut tx, &pool, cents).await?;
+            // Faction influence counts a viewer watching as Checkout opens (docs/FACTIONS.md).
+            let watched = crate::factions::watching(&mut tx, &pool, &user.id).await?;
             let origin = &app.config.origin;
             let what = if count == 1 {
                 "1 gift subscription".to_string()
@@ -699,7 +715,7 @@ async fn gift(
                     ("success_url", format!("{origin}/{username}?gifted=1")),
                     ("cancel_url", format!("{origin}/{username}")),
                 ],
-                json!({"channel": channel, "tier": tier, "recipients": recipients,
+                json!({"channel": channel, "tier": tier, "recipients": recipients, "watched": watched,
                     "shares": shares_json(&shares), "share_tenths": shares.iter().map(|s| s.1).sum::<i64>()}),
             )
             .await?;
@@ -814,6 +830,20 @@ pub(crate) async fn invoice_paid(app: &App, tx: &mut PgConnection, invoice: &Val
             |amount| amount,
         )
         .await?;
+        // Faction influence counts a subscriber watching as they paid: a new subscription when its
+        // Checkout opened, a renewal or upgrade when Stripe charges (docs/FACTIONS.md "Influence").
+        let watched = if reason == "subscription_create" {
+            meta["sver_watched"]
+                .as_str()
+                .unwrap_or_default()
+                .split(',')
+                .filter(|b| !b.is_empty())
+                .map(str::to_owned)
+                .collect()
+        } else {
+            crate::factions::watching(tx, &pooled, user).await?
+        };
+        crate::factions::support(app, tx, &watched, user, &format!("invoice:{id}")).await?;
     }
     Ok(())
 }
