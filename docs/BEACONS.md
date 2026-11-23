@@ -22,9 +22,9 @@ Beacons are short vertical videos that lead people to creators and their live st
 - **Title:** up to 120 characters, and goes through automod.
 - **Category:** chosen from the same list as streams. A Beacon from a clip inherits the clip's category.
 
-## Processing (the one re-encode)
+## Processing (a re-encode)
 
-- Beacons are S.V.E.R's only re-encode ([AGENTS.md](../AGENTS.md)). It's cheap at 60 seconds or less.
+- Beacons and advertiser videos ([ADVERTISERS.md](ADVERTISERS.md)) are S.V.E.R's only re-encodes; streams, recordings and clips are transmuxed. A Beacon is cheap to encode at 60 seconds or less.
 - **One job per Beacon** in the Postgres job queue, with a processing lease, so it runs exactly once and recovers after a crash.
 - **Output:** 9:16 H.264 and AAC MP4s at 1080×1920 and 720×1280, each set up for fast playback start, plus a thumbnail.
   - If the source isn't 9:16, it's framed by the creator's crop.
@@ -140,7 +140,7 @@ Built October 10, 2026 by Joe's decision (`beacons/comments.rs`, migration 0097)
 
 ## Implementation and activation
 
-Module 9 is in development (started October 7, 2026). The backend lives in `apps/api/crates/sver/src/beacons/` with migration `0045_beacons`, and the web pages are `/beacons`, `/beacons/{id}`, `/{username}/beacons` and `/studio/beacons`. Production activation and the full acceptance run remain open.
+Module 9 started October 7, 2026 and closed October 15 for Beacons made from clips (see the top of this spec). The backend lives in `apps/api/crates/sver/src/beacons/` with migration `0045_beacons`, and the web pages are `/beacons`, `/beacons/{id}`, `/{username}/beacons` and `/studio/beacons`. Video uploads stay off in production (see Uploads below).
 
 - **Storage.** Beacons share the private recording store from [VODS_CLIPS.md](VODS_CLIPS.md) (`VOD_STORAGE`), under the `beacons/` key prefix. Every file plays through a five-minute ticket and `no-store`; link-preview tags (`/share`) get a 7-day ticket because Discord, X and Reddit cache them, which still stops working the moment the Beacon is hidden, removed or changed. The clean copy is served only on a `clean` ticket issued to its creator.
 - **Processing.** One `PROCESS` job per Beacon in `beacon_jobs`, with a 90-second renewed lease and a token fence before anything is published. Attempts back off, and after six the Beacon fails with a reason the creator can retry. A single FFmpeg pass crops or pads to 9:16 and writes the 1080×1920 and 720×1280 watermarked H.264/AAC renditions plus the clean 1080×1920 copy. Every output is fast-start, with global, stream and chapter metadata and the encoder's SEI units removed. A WebP thumbnail is taken from the watermarked copy. FFprobe reads every source; the container, codec, length, size and rotation come from the probe.

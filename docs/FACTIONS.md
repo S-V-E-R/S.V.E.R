@@ -111,11 +111,11 @@ Built October 11, 2026 by Joe's decision (migration 0099); the numbers are **Pro
 
 ## Not in this module
 
-Other faction events (Skirmish Hour, Territory Spotlight, Raid Night and King of the Hill are built above), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (dropped), faction chat rooms (the faction board covers it).
+Other faction events (Skirmish Hour, Territory Spotlight, Raid Night and King of the Hill are built above), faction ranks and titles (Progression, Phase 2), faction prediction markets (dropped), Discord-sourced influence (built later with the [Discord bot](DISCORD_BOT.md)), faction chat rooms (the faction board covers it).
 
 ## Legacy notes
 
-Reviewed October 4, 2026. Kept: faction copy and colors, the append-only ledger with idempotency keys, durable season rollover, an underdog balance (now by active members), the war council and members-only board, the paged directory. Fixed: factions were creator-only; control flipped on every write; season winner was raw influence (favoring the biggest faction); chat and poll influence were never produced; support counted by amount; no session-trust checks; caps checked outside the transaction; the council strategy tally and voter IDs were readable by anyone logged in; guilds required one faction. Dropped: capitals, fortification, sieges, adjacency bonuses, fog of war, Discord-sourced influence, faction prediction markets, wall-post rank requirements, the "Tricolor" event name.
+Reviewed October 4, 2026. Kept: faction copy and colors, the append-only ledger with idempotency keys, durable season rollover, an underdog balance (now by active members), the war council and members-only board, the paged directory. Fixed: factions were creator-only; control flipped on every write; season winner was raw influence (favoring the biggest faction); chat and poll influence were never produced; support counted by amount; no session-trust checks; caps checked outside the transaction; the council strategy tally and voter IDs were readable by anyone logged in; guilds required one faction. Dropped: capitals, fortification, sieges, adjacency bonuses, fog of war, Discord-sourced influence (since rebuilt by the Discord bot), faction prediction markets, wall-post rank requirements, the "Tricolor" event name.
 
 ## Done when
 
