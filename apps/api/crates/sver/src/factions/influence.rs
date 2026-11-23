@@ -308,72 +308,95 @@ pub(crate) async fn discord(
     )
     .await
 }
-/// Module 6 calls this inside its settled support transaction. There is intentionally no HTTP
-/// award endpoint. Distinct supporters, not transaction amounts, contribute to the creator's side.
+/// The live broadcasts, among the channels a payment pays, that `supporter` is watching now as a
+/// Trusted viewer: where paying counts as support (docs/FACTIONS.md "Influence"). A card payment
+/// takes this when its Stripe Checkout opens, since the viewer has left the stream by settlement.
+pub async fn watching(
+    db: &mut PgConnection,
+    channels: &[String],
+    supporter: &str,
+) -> Res<Vec<String>> {
+    let mut watched = Vec::new();
+    for channel in channels {
+        if let Some(broadcast) = crate::streams::live_broadcast(db, channel).await?
+            && crate::integrity::trusted(db, &broadcast, Some(supporter)).await?
+        {
+            watched.push(broadcast);
+        }
+    }
+    Ok(watched)
+}
+/// Module 6 calls this inside its settled support transaction, with what `watching` returned when
+/// the supporter paid. There is intentionally no HTTP award endpoint. Distinct supporters, not
+/// transaction amounts, contribute to each paid creator's side while that broadcast is still live.
 pub async fn support(
     app: &App,
     db: &mut PgConnection,
-    broadcast: &str,
+    watched: &[String],
     supporter: &str,
     settled_event: &str,
 ) -> Res<i64> {
+    if watched.is_empty() {
+        return Ok(0);
+    }
     engine::lock(db).await?;
     let at = engine::now(db).await?;
-    let event = security::digest(&format!("support:{settled_event}"));
-    if sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM faction_support_events WHERE event_key=$1)",
-    )
-    .bind(&event)
-    .fetch_one(&mut *db)
-    .await?
-    {
-        return Ok(0);
-    }
-    let Some((owner, genre)) = crate::streams::influence_context(db, broadcast).await? else {
-        // Remember even an ineligible settled event; replay cannot move it to a later season.
-        sqlx::query("INSERT INTO faction_support_events(event_key,pair_key) VALUES($1,$1)")
-            .bind(&event)
-            .execute(db)
-            .await?;
-        return Ok(0);
-    };
-    let pair = security::digest(&format!("{owner}:{supporter}:{}", at.date_naive()));
-    let counted: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM faction_support_events WHERE pair_key=$1)")
-            .bind(&pair)
-            .fetch_one(&mut *db)
-            .await?;
-    sqlx::query("INSERT INTO faction_support_events(event_key,pair_key) VALUES($1,$2)")
+    let mut points = 0;
+    for broadcast in watched {
+        let event = security::digest(&format!("support:{broadcast}:{settled_event}"));
+        if sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM faction_support_events WHERE event_key=$1)",
+        )
         .bind(&event)
-        .bind(pair)
-        .execute(&mut *db)
-        .await?;
-    if counted {
-        return Ok(0);
-    }
-    if owner == supporter || !crate::integrity::trusted(db, broadcast, Some(supporter)).await? {
-        return Ok(0);
-    }
-    if !profiles::channel_user_by_id(db, supporter)
+        .fetch_one(&mut *db)
         .await?
-        .is_some_and(|u| u.eligible && u.email_verified)
-    {
-        return Ok(0);
+        {
+            continue;
+        }
+        let Some((owner, genre)) = crate::streams::influence_context(db, broadcast).await? else {
+            // Remember even an ineligible settled event; replay cannot move it to a later season.
+            sqlx::query("INSERT INTO faction_support_events(event_key,pair_key) VALUES($1,$1)")
+                .bind(&event)
+                .execute(&mut *db)
+                .await?;
+            continue;
+        };
+        let pair = security::digest(&format!("{owner}:{supporter}:{}", at.date_naive()));
+        let counted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM faction_support_events WHERE pair_key=$1)",
+        )
+        .bind(&pair)
+        .fetch_one(&mut *db)
+        .await?;
+        sqlx::query("INSERT INTO faction_support_events(event_key,pair_key) VALUES($1,$2)")
+            .bind(&event)
+            .bind(pair)
+            .execute(&mut *db)
+            .await?;
+        if counted
+            || owner == supporter
+            || !profiles::channel_user_by_id(db, supporter)
+                .await?
+                .is_some_and(|u| u.eligible && u.email_verified)
+        {
+            continue;
+        }
+        points += award(
+            db,
+            &app.config.factions,
+            Award {
+                user: &owner,
+                genre: &genre,
+                source: Source::Support,
+                event: &event,
+                elapsed_ms: 0,
+                raided: false,
+            },
+            at,
+        )
+        .await?;
     }
-    award(
-        db,
-        &app.config.factions,
-        Award {
-            user: &owner,
-            genre: &genre,
-            source: Source::Support,
-            event: &event,
-            elapsed_ms: 0,
-            raided: false,
-        },
-        at,
-    )
-    .await
+    Ok(points)
 }
 
 /// Public, account-scoped answer for "does this live activity qualify?" No points, remaining

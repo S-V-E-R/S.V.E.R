@@ -90,6 +90,135 @@ async fn months(e: &Env, user: &str) -> i32 {
     sqlx::query_scalar("SELECT coalesce((SELECT months FROM channel_subs WHERE channel_id='stream-owner' AND user_id=$1),0)")
         .bind(user).fetch_one(&e.app.db).await.unwrap()
 }
+/// Support influence so far: (rows, points).
+async fn supporters(e: &Env) -> (i64, i64) {
+    sqlx::query_as(
+        "SELECT count(*),coalesce(sum(points),0)::bigint FROM faction_influence WHERE source='support'",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap()
+}
+
+/// Paid support counts toward the streamer's faction influence (docs/FACTIONS.md "Influence"):
+/// each supporter once a day, never by amount, while watching live as a Trusted viewer. A card
+/// gift or subscription counts if they were watching as Checkout opened; a refund adds nothing.
+/// Runs in its own database (`support_influence`), so its war season and append-only influence
+/// never reach the other tests.
+pub async fn influence(e: &Env) {
+    for statement in [
+        // The streamer can earn and is live in Art for Aetheron while a war week runs.
+        "INSERT INTO payout_accounts(user_id,stripe_account,details_submitted,payouts_enabled) VALUES('stream-owner','acct_test_owner',true,true)",
+        "INSERT INTO faction_members(user_id,faction,chosen_at,joined_at) VALUES('stream-owner','aetheron',now(),now())",
+        "INSERT INTO stream_settings(owner_id,title,category_id) VALUES('stream-owner','Painting','art')",
+        "INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline,alert_state,observed_at) VALUES('sb-live','stream-owner','sb-live',1,'LIVE','s','v','c',now(),now(),now(),'skipped',now()+interval '1 hour')",
+        "INSERT INTO faction_seasons(number,starts_at,ends_at,next_starts_at) VALUES(1,now()-interval '1 hour',now()+interval '30 days',now()+interval '37 days')",
+        "INSERT INTO faction_weeks(season_id,starts_at,ends_at) SELECT id,now()-interval '1 hour',now()+interval '6 days' FROM faction_seasons",
+        "INSERT INTO faction_territories(season_id,genre,holder) SELECT s.id,g.id,g.home FROM faction_seasons s,faction_genres g",
+        // The day's Territory Spotlight doubles its genre; keep it off Art.
+        "INSERT INTO faction_spotlights(day,genre) SELECT d::date,'music' FROM generate_series((now() AT TIME ZONE 'utc')::date,(now() AT TIME ZONE 'utc')::date+1,interval '1 day') d",
+    ] {
+        e.sql(statement).await;
+    }
+    let ally = person(e, "sb-ally", "SbAlly", true).await;
+    let away = person(e, "sb-away", "SbAway", true).await;
+    let card = person(e, "sb-card", "SbCard", true).await;
+    let subber = person(e, "sb-subber", "SbSubber", true).await;
+    fund(e, "sb-ally", 1_000).await;
+    fund(e, "sb-away", 1_000).await;
+    e.sql("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,level,signed_in,verified) SELECT 'sb-live','u:'||id,now()+interval '10 minutes','trusted',true,true FROM users WHERE id IN ('sb-ally','sb-card','sb-subber')").await;
+
+    // A Valor month while watching counts the subscriber once (the demo tuning's 2 points).
+    let month = || json!({"tier": 1, "pay": "valor", "id": id()});
+    let (status, body) = post(e, &ally, "/subscription", month()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(supporters(e).await, (1, 2));
+    // Their tribute the same day adds nothing; nor does paying without watching.
+    let (status, body) = post(
+        e,
+        &ally,
+        "/chat",
+        json!({"id": id(), "body": "For the stream!", "tribute": 50}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = post(e, &away, "/subscription", month()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(supporters(e).await, (1, 2), "once a day, and only watching");
+
+    // A card gift counts a gifter watching as Checkout opened, though their playback has lapsed by
+    // the time Stripe confirms. A replayed or refunded payment adds nothing.
+    let (status, body) = post(
+        e,
+        &card,
+        "/gifts",
+        json!({"tier": 1, "count": 1, "recipient": "SbAway", "pay": "card"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let session = format!("cs_test_{}", e.fake.lock().unwrap().stripe.len());
+    e.sql("UPDATE playback_leases SET expires_at=now()-interval '1 second' WHERE broadcast_id='sb-live'").await;
+    let paid = json!({"id": "evt_sb_watch_gift", "type": "checkout.session.completed", "data": {"object": {
+        "id": session, "payment_status": "paid", "amount_total": 499, "payment_intent": "pi_sb_watch_gift"}}});
+    assert_eq!(event(e, paid.clone()).await, StatusCode::OK);
+    let again = json!({"id": "evt_sb_watch_gift_again", "type": "checkout.session.completed", "data": paid["data"]});
+    assert_eq!(event(e, again).await, StatusCode::OK);
+    assert_eq!(supporters(e).await, (2, 4));
+    let refund = json!({"id": "evt_sb_watch_refund", "type": "charge.refunded", "data": {"object": {
+        "payment_intent": "pi_sb_watch_gift", "amount": 499, "amount_refunded": 499}}});
+    assert_eq!(event(e, refund).await, StatusCode::OK);
+    assert_eq!(
+        supporters(e).await,
+        (2, 4),
+        "a refund neither adds nor takes back"
+    );
+
+    // A card subscription's first invoice carries what Checkout saw; a renewal counts only a
+    // subscriber watching when Stripe charges.
+    e.sql("UPDATE playback_leases SET expires_at=now()+interval '10 minutes' WHERE viewer_key='u:sb-subber'").await;
+    let (status, body) = post(
+        e,
+        &subber,
+        "/subscription",
+        json!({"tier": 1, "pay": "card"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let form = e.fake.lock().unwrap().stripe.last().unwrap().1.clone();
+    assert!(form.contains("sver_watched%5D=sb-live"), "{form}");
+    e.sql("UPDATE playback_leases SET expires_at=now()-interval '1 second' WHERE broadcast_id='sb-live'").await;
+    let mut first = invoice(
+        "in_sb_watch",
+        "sb-subber",
+        1,
+        499,
+        "subscription_create",
+        30,
+    );
+    let details = &mut first["data"]["object"]["parent"]["subscription_details"];
+    details["subscription"] = json!("sub_sb_watch");
+    details["metadata"]["sver_watched"] = json!("sb-live");
+    assert_eq!(event(e, first).await, StatusCode::OK);
+    assert_eq!(supporters(e).await, (3, 6));
+    let mut renewal = invoice("in_sb_away", "sb-away", 1, 499, "subscription_cycle", 30);
+    renewal["data"]["object"]["parent"]["subscription_details"]["subscription"] =
+        json!("sub_sb_away");
+    assert_eq!(event(e, renewal).await, StatusCode::OK);
+    assert_eq!(supporters(e).await, (3, 6), "nobody watched the renewal");
+    let elsewhere: i64 = sqlx::query_scalar("SELECT count(*) FROM faction_influence WHERE source='support' AND (user_id<>'stream-owner' OR faction<>'aetheron' OR genre<>'art')")
+        .fetch_one(&e.app.db).await.unwrap();
+    assert_eq!(
+        elsewhere, 0,
+        "the streamer's side, in the genre they stream"
+    );
+    let unbalanced: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT unit FROM ledger_entries GROUP BY unit HAVING sum(amount)<>0) u",
+    )
+    .fetch_one(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(unbalanced, 0);
+}
 
 pub async fn exercise(e: &Env) {
     let fan = person(e, "sb-fan", "SbFan", true).await;

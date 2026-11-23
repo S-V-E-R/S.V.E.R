@@ -1226,6 +1226,13 @@ pub(crate) async fn send_from(
                 &entries,
             )
             .await?;
+            // The sender counts toward each paid channel's faction they're watching, once a day;
+            // a Skill never does (docs/FACTIONS.md "Influence", docs/CROWDSYNC.md "Skills").
+            if skill.is_none() {
+                let watched = crate::factions::watching(&mut tx, &earners, &user.id).await?;
+                let settled = format!("tribute:{}", input.id);
+                crate::factions::support(app, &mut tx, &watched, &user.id, &settled).await?;
+            }
             crate::events::emit(
                 &mut tx,
                 channel,

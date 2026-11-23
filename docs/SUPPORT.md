@@ -28,6 +28,7 @@ Any account that is verified, has authenticator 2FA, and has finished Stripe Con
 - Stripe webhooks are signature-checked, stored, and processed idempotently by event ID; a replayed or out-of-order event never double-credits.
 - Refunds and chargebacks post reversing entries. A chargeback on a Valor purchase can push the buyer's Purchased Valor balance negative, which locks spending until settled.
 - Amounts are integer cents in USD, the only currency at launch; Stripe converts foreign cards. Valor earnings accrue in tenths of a cent and round down only at payout.
+- Paying a creator counts toward their faction's influence by distinct supporters, never by amount, and only for a supporter watching the stream live (card payments: when Checkout opened; Joe, November 22, 2026). Refunds and disputes don't change it ([FACTIONS.md](FACTIONS.md) "Influence").
 
 ## Creator tiers
 

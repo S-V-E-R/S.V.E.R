@@ -85,7 +85,7 @@ async fn reconcile(app: &App, user: &str) -> Res<()> {
             session["status"].as_str(),
             session["payment_status"].as_str(),
         ) {
-            (_, Some("paid" | "no_payment_required")) => paid(&mut tx, &session).await?,
+            (_, Some("paid" | "no_payment_required")) => paid(app, &mut tx, &session).await?,
             (Some("expired"), _) => {
                 process(app, &mut tx, "checkout.session.expired", &session).await?
             }
@@ -448,7 +448,7 @@ async fn process(app: &App, tx: &mut PgConnection, kind: &str, object: &Value) -
                 Some("paid" | "no_payment_required")
             ) =>
         {
-            paid(tx, object).await
+            paid(app, tx, object).await
         }
         "checkout.session.expired" => {
             sqlx::query(
@@ -604,7 +604,7 @@ type CheckoutRow = (Option<String>, i32, Option<i32>, String, Value, String);
 
 /// A paid checkout: a Valor pack credits the buyer and a gift grants its recipients. A card
 /// subscription is credited by its invoices instead (subs::invoice_paid).
-async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
+async fn paid(app: &App, tx: &mut PgConnection, object: &Value) -> Res<()> {
     let id = object["id"].as_str().unwrap_or_default();
     let row: Option<CheckoutRow> = sqlx::query_as(
         "SELECT user_id,amount_cents,valor,kind,detail,status FROM checkout_sessions WHERE id=$1 FOR UPDATE",
@@ -638,6 +638,13 @@ async fn paid(tx: &mut PgConnection, object: &Value) -> Res<()> {
     }
     if kind == "gift" {
         crate::subs::grant_gifts(tx, &detail).await?;
+        // Faction influence counts a gifter watching as Checkout opened (docs/FACTIONS.md).
+        if let Some(gifter) = &user {
+            let watched: Vec<String> =
+                serde_json::from_value(detail["watched"].clone()).unwrap_or_default();
+            let settled = format!("checkout:{id}");
+            crate::factions::support(app, tx, &watched, gifter, &settled).await?;
+        }
     }
     if kind == "wall" {
         crate::seats::paid(tx, id, &detail, intent).await?;
