@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "./auth";
 import { bg, ink, inkDim, inkMuted, live, palette, surface } from "./theme";
@@ -47,6 +47,15 @@ export function Button({ label, onPress, disabled, kind = "primary" }: { label: 
       ) : (
         <View style={[styles.button, styles.quiet, { borderColor: colors.accent }]}>{text}</View>
       )}
+    </Pressable>
+  );
+}
+
+/** Small dim link to a website page, styled like the website's Take It Down links (docs/DESIGN.md "Take It Down"). */
+export function TextLink({ label, url }: { label: string; url: string }) {
+  return (
+    <Pressable accessibilityRole="link" onPress={() => { void Linking.openURL(url); }} style={({ pressed }) => [styles.link, pressed && styles.pressed]}>
+      <Text style={styles.linkText}>{label}</Text>
     </Pressable>
   );
 }
@@ -115,6 +124,8 @@ const styles = StyleSheet.create({
   buttonText: { fontFamily: "Cinzel_700Bold", fontSize: 16, letterSpacing: 1.2, color: "#0A0A0C" },
   pressed: { opacity: 0.85 },
   disabled: { opacity: 0.5 },
+  link: { minHeight: 44, justifyContent: "center", alignSelf: "flex-start" },
+  linkText: { color: inkDim, fontFamily: "Barlow_400Regular", fontSize: 13, lineHeight: 17, textDecorationLine: "underline" },
   field: { gap: 8 },
   label: { fontFamily: "BarlowCondensed_700Bold", color: inkDim, letterSpacing: 1.4, textTransform: "uppercase", fontSize: 13 },
   input: { minHeight: 44, borderWidth: 1, color: ink, backgroundColor: "rgba(0,0,0,0.35)", paddingHorizontal: 12, fontFamily: "Barlow_400Regular", fontSize: 16 },

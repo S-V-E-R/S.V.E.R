@@ -9,8 +9,8 @@ import { isFaction } from "../../../web/lib/factions";
 import { useLoad } from "../../src/load";
 import { rotationOrder } from "../../src/streams";
 import { isStreamCard, type MagnetLane, type RecentChannel, type SearchResult, type StreamCard } from "../../src/types";
-import { Field, Frame, MagnetMark, Notice, Screen, Tag, ink, inkDim, inkMuted } from "../../src/ui";
-import { absolute, crestUrl } from "../../src/urls";
+import { Field, Frame, MagnetMark, Notice, Screen, Tag, TextLink, ink, inkDim, inkMuted } from "../../src/ui";
+import { absolute, crestUrl, takeItDownUrl } from "../../src/urls";
 
 export default function MagnetScreen() {
   const insets = useSafeAreaInsets();
@@ -125,6 +125,8 @@ export default function MagnetScreen() {
             ))}
           </View>
         )}
+        {/* The website keeps this link in every page's footer, homepage included (docs/DESIGN.md "Footer"). */}
+        <TextLink label="Take It Down requests" url={takeItDownUrl()} />
       </ScrollView>
     </Screen>
   );

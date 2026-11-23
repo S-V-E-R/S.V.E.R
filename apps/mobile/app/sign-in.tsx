@@ -4,8 +4,8 @@ import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../src/auth";
 import { factionLabel } from "../src/brand";
-import { Button, Field, Frame, Notice, Screen, inkMuted } from "../src/ui";
-import { webOrigin } from "../src/urls";
+import { Button, Field, Frame, Notice, Screen, TextLink, inkMuted } from "../src/ui";
+import { takeItDownUrl, webOrigin } from "../src/urls";
 
 // Signup (Turnstile), password recovery and account deletion stay on the website (docs/MOBILE.md).
 const openSite = (path: string) => { void Linking.openURL(`${webOrigin}${path}`); };
@@ -86,6 +86,7 @@ export function Account({ tab = false }: { tab?: boolean }) {
             </View>
           )}
         </Frame>
+        <TextLink label="Take It Down requests" url={takeItDownUrl()} />
       </ScrollView>
     </Screen>
   );

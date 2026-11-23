@@ -3,7 +3,8 @@ import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "rea
 import { router } from "expo-router";
 import { send } from "./api";
 import { useAuth } from "./auth";
-import { Button, Frame, Notice, bg, ink, inkMuted } from "./ui";
+import { Button, Frame, Notice, TextLink, bg, ink, inkMuted } from "./ui";
+import { takeItDownUrl } from "./urls";
 
 /** The website's report reasons (apps/web/lib/types.ts), checked again by the API (safety.rs REASONS). */
 export const REASONS: [string, string][] = [
@@ -17,7 +18,8 @@ export type SafetyTarget = { type: "chat_message" | "outside_message" | "beacon"
 
 /**
  * Report and block, required by both app stores for chat and videos. Reports go to the same staff
- * queue as the website's; blocking hides the person everywhere on S.V.E.R.
+ * queue as the website's; blocking hides the person everywhere on S.V.E.R. "Report an intimate image"
+ * opens the Take It Down form with this item filled in; it needs no account, so it shows signed out too.
  */
 export function SafetySheet({ target, onClose, onBlocked }: { target: SafetyTarget | null; onClose: () => void; onBlocked?: (username: string) => void }) {
   const { account, colors } = useAuth();
@@ -62,6 +64,7 @@ export function SafetySheet({ target, onClose, onBlocked }: { target: SafetyTarg
           <Frame>
             <ScrollView contentContainerStyle={{ gap: 12 }}>
               <Text style={[styles.title, { color: colors.accentLight }]}>{target ? `Report ${target.label}` : ""}</Text>
+              {target && !done ? <TextLink label="Report an intimate image" url={takeItDownUrl(target)} /> : null}
               {!account ? (
                 <>
                   <Text style={styles.body}>Log in to report or block.</Text>
