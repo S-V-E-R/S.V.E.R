@@ -5,7 +5,7 @@ The S.V.E.R app for iOS and Android (`apps/mobile`): a viewer app on the same Ru
 Decided by Joe on October 21, 2026:
 
 - **Expo (React Native, TypeScript)**, one codebase for iOS and Android, built with EAS. Bundle ID `tv.sver.app`. This is the only addition to the locked stack.
-- **Viewer app first.** Going live from a phone waits for WHIP/SRT ingest (`docs/DEVELOPER_PLATFORM.md`).
+- **Viewer app first.** Going live from a phone isn't built yet; the WHIP and SRT ingest it would use already exist (`docs/DEVELOPER_PLATFORM.md`).
 - **No purchases in the app.** Subscriptions, Valor, tributes, supporters and Wall seats may be shown if the viewer already has them, but there are no buy buttons and no links to buy. Buying stays on sver.tv, which keeps the app clear of store billing and out of the money ledgers.
 
 ## How it talks to the API

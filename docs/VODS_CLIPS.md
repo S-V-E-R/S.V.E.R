@@ -8,7 +8,7 @@ Live streams are recorded so people can catch up. Streamers keep their best mome
 
 ## Principles
 
-- **Transmux only.** Recordings, Highlights and clips reuse the stream's own video segments, the same ones SRS already produces for HLS. Nothing is re-encoded; Beacons (Module 9) are the platform's only re-encode. This keeps CPU near zero and quality identical to the live stream.
+- **Transmux only.** Recordings, Highlights and clips reuse the stream's own video segments, the same ones SRS already produces for HLS. Nothing is re-encoded; the platform's only re-encodes are Beacons (Module 9) and advertiser videos ([ADVERTISERS.md](ADVERTISERS.md)). This keeps CPU near zero and quality identical to the live stream.
 - **Private storage.** All media sits in private storage and plays through short-lived signed URLs. A file key is never guessable, and a URL is never public by itself. This fixes legacy's public bucket, where hidden and deleted media stayed reachable.
 - **Every setting is enforced.** Visibility, chat replay and clip permissions are checked on the server for every request. Legacy saved several of these settings but never enforced them.
 - **Deleting removes everything.** Deleting a recording or clip removes every file it owns (segments, thumbnail, playlist) and purges the CDN cache.
@@ -126,7 +126,7 @@ The Videos tab placeholder from [PROFILES.md](PROFILES.md) becomes a real tab wi
 
 ## Implementation and activation
 
-Module 8 is in development. The implementation uses a separate private object store, Postgres jobs, short-lived playback tickets and FFmpeg codec copy. Highlight limits are the approved 10/25/50/100 hours. Production activation and the complete acceptance run remain open.
+Module 8 runs in production and closed October 15, 2026 (see the top of this spec). The implementation uses a separate private object store, Postgres jobs, short-lived playback tickets and FFmpeg codec copy. Highlight limits are the approved 10/25/50/100 hours.
 
 `VOD_STORAGE` defaults to `disabled`. For production, configure `VOD_STORAGE=s3`, `VOD_SEGMENT_BASE` (the trusted private SRS HTTP origin), `VOD_S3_ENDPOINT`, `VOD_S3_BUCKET`, `VOD_S3_REGION`, `VOD_S3_ACCESS_KEY_ID`, `VOD_S3_SECRET_ACCESS_KEY`, and `VOD_TUNING_FILE` outside the repository. The bucket must have public access disabled and must differ from public profile storage. Its credentials need object read, write, delete and multipart permissions. Configure automatic abortion of incomplete multipart uploads after one day; that covers a process dying between S3 initiation and saving the upload ID.
 

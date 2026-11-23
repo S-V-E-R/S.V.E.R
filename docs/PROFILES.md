@@ -603,7 +603,7 @@ One short intro video per channel, so visitors get a feel for the streamer befor
 - **Queue tabs:** Reports (`/admin/reports`) and Appeals (`/admin/appeals`). An admin user page, `/admin/users/{username}`, shows that user's standing, strikes, restrictions and moderation history, and lets staff issue a strike directly (optionally converting an open interim restriction) or set or lift an interim restriction.
 
 ## Visual direction
-- The game-client look from the homepage concept PDFs (see `AGENTS.md`): framed panels with code-drawn corner brackets, beveled buttons, Cinzel headings (self-hosted, no third-party font requests) and steel neutrals. **No glows, no gradients, no image frames.**
+- The game-client look from the homepage concept PDFs (see [DESIGN.md](DESIGN.md)): framed panels with code-drawn corner brackets, beveled buttons, Cinzel headings (self-hosted, no third-party font requests) and steel neutrals. **No glows, no gradient washes (only the tint, bevel and progress-bar gradients DESIGN.md defines), no image frames.**
 - **The channel area wears the owner's faction colors** (decided October 3, 2026), within the variant the owner picks (see "Persona pass"). Neutral steel when the owner has no faction. The rest of the site keeps the viewer's colors.
 - Theme tokens are CSS variables (`data-theme` on the channel wrapper), so profile components never hard-code faction colors.
 - Legacy elements are restyled, not copied. The War Council grid, wall cards, the song card and the sponsor and setup lists all use the frame style. The legacy `ProfileFrame` tier rings, animated borders and radial glows are ARCHIVE.

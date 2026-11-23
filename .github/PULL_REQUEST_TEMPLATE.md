@@ -9,7 +9,8 @@
 ## Checklist
 
 - [ ] One change per pull request
-- [ ] `cargo fmt`, `cargo clippy`, `cargo test` pass (API changes)
-- [ ] `pnpm typecheck`, `pnpm lint`, `pnpm build` pass (web changes)
+- [ ] `cargo fmt --check`, `cargo clippy`, `./scripts/dev.ps1 test` pass (API changes)
+- [ ] `pnpm typecheck`, `pnpm test`, `pnpm lint`, `pnpm build` pass in `apps/web` (web changes)
+- [ ] `pnpm typecheck`, `pnpm test`, `pnpm lint`, `pnpm bundle` pass in `apps/mobile` (mobile changes)
 - [ ] Tests added or updated for changed behavior
 - [ ] No secrets, real user data, or private tuning values
