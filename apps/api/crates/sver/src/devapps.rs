@@ -840,6 +840,15 @@ pub async fn identify(
 pub async fn revoke_all(db: &mut sqlx::PgConnection, user: &str) -> Res<()> {
     sqlx::query("UPDATE oauth_grants SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL")
         .bind(user)
+        .execute(&mut *db)
+        .await?;
+    // Approvals not yet exchanged would otherwise make a fresh grant afterwards.
+    sqlx::query("DELETE FROM oauth_codes WHERE user_id=$1")
+        .bind(user)
+        .execute(&mut *db)
+        .await?;
+    sqlx::query("DELETE FROM oauth_devices WHERE user_id=$1")
+        .bind(user)
         .execute(db)
         .await?;
     Ok(())

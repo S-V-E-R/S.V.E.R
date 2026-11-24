@@ -113,6 +113,17 @@ async fn create(
         json!({"tokens": list_json(&app, &user.id).await?, "gateway": gateway_url(&app), "token": token}),
     ))
 }
+/// Revokes every integration token of a channel (a password reset); open connections close at
+/// their next recheck.
+pub(crate) async fn revoke_all(db: &mut sqlx::PgConnection, channel: &str) -> Res<()> {
+    sqlx::query(
+        "UPDATE integration_tokens SET revoked_at=now() WHERE channel_id=$1 AND revoked_at IS NULL",
+    )
+    .bind(channel)
+    .execute(db)
+    .await?;
+    Ok(())
+}
 /// DELETE /api/me/integrations/{id}: revoked at once; an open connection closes within 30 seconds.
 async fn revoke(
     State(app): State<App>,

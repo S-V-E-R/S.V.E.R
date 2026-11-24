@@ -107,6 +107,12 @@ pub async fn exercise(e: &Env) {
     let share = |cents: i64| cents * 10 * 65 / 100;
     let start = balance(e, "usd:earnings:stream-owner").await;
 
+    // An invoice from a creator's connected account grants nothing, whatever its metadata names.
+    let mut forged = invoice("in_connect", "sb-out", 3, 0, "subscription_create", 300);
+    forged["account"] = json!("acct_creator");
+    assert_eq!(event(e, forged).await, StatusCode::OK);
+    assert_eq!(months(e, "sb-out").await, 0);
+
     // Prices and status; the owner can't subscribe to themself.
     let status = mine(e, &fan).await;
     assert_eq!(status["can_subscribe"], true);

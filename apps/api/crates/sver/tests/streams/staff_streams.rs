@@ -196,6 +196,13 @@ pub async fn exercise(e: &Env) {
     e.sql("INSERT INTO game_catalog(source_id,category_id,name,mature) VALUES('Q990001','fortnite','Fortnite',true)").await;
     let (_, choices) = call(e, "GET", "/api/categories?q=fortnite", None, Value::Null).await;
     assert_eq!(choices["categories"][0]["mature"], true, "{choices}");
+    // A clip cut before the label goes on, and one cut after from an unlabeled copy, both inherit it.
+    let clip = "INSERT INTO videos(id,owner_id,clipper_id,broadcast_id,kind,status,approval,visibility,mature,title,category,genre,started_at,duration_ms) VALUES($1,'so-owner','so-owner','so-b','CLIP','READY','APPROVED','PUBLIC',false,'Clip','Minecraft','sandbox',now(),8000)";
+    sqlx::query(clip)
+        .bind("so-clip-before")
+        .execute(&e.app.db)
+        .await
+        .unwrap();
     assert_eq!(
         call(
             e,
@@ -240,6 +247,17 @@ pub async fn exercise(e: &Env) {
     .await
     .unwrap();
     assert_eq!(audited, 1);
+    sqlx::query(clip)
+        .bind("so-clip-after")
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    let unlabeled: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM videos WHERE broadcast_id='so-b' AND NOT mature")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(unlabeled, 0);
 
     // Stop: a reason is required; the broadcast ends as revoked and the action is audited.
     assert_eq!(

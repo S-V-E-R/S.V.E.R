@@ -758,6 +758,20 @@ pub async fn reset(
     crate::devapps::revoke_all(&mut tx, &user.id)
         .await
         .map_err(|_| Error::internal())?;
+    // So do the channel's own bearer links: Studio integrations and the overlay links, which
+    // whoever held the account before the reset may have kept.
+    crate::gateway::revoke_all(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
+    crate::overlays::unlink(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
+    crate::boards::unlink_overlay(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
+    crate::events::drop_own_hooks(&mut tx, &user.id)
+        .await
+        .map_err(|_| Error::internal())?;
     // A reset link proves who owns the address. On an account that never verified it, whoever
     // signed up may be someone else: the sign-in providers they added go too.
     if !user.email_verified {

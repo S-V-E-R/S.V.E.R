@@ -167,6 +167,22 @@ pub async fn exercise(e: &Env) {
     assert_eq!(sent["message"]["tribute"], 100);
     assert_eq!(tribute(e, &buyer, &message, 100).await.0, StatusCode::OK);
     assert_eq!(valor(e, &buyer).await, 425);
+    // Once chat expires the message, its id can't be sent again for free. (The per-second chat
+    // limit is cleared so these back-to-back sends aren't refused for speed.)
+    e.sql("DELETE FROM rate_limits WHERE key='chat-second:sp-buyer'")
+        .await;
+    sqlx::query("DELETE FROM chat_messages WHERE id=$1")
+        .bind(&message)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        tribute(e, &buyer, &message, 200).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(valor(e, &buyer).await, 425);
+    e.sql("DELETE FROM rate_limits WHERE key='chat-second:sp-buyer'")
+        .await;
     let payouts = e.call("GET", "/api/me/payouts", Value::Null).await;
     assert_eq!(payouts["earnings_tenths"], 800);
     assert_eq!(

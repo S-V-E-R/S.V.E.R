@@ -70,11 +70,12 @@ async fn held(db: &mut PgConnection, user: &str) -> Res<bool> {
     .fetch_one(db)
     .await?)
 }
-/// Whole cents payable now: earnings (rounded down only here) less payouts still pending.
+/// Whole cents payable now: earnings (rounded down only here) less payouts still pending. One
+/// statement, so one snapshot: finish() moves a run from pending to the ledger without the payout
+/// lock, and two reads could see it in neither place and pay it again.
 async fn available(db: &mut PgConnection, user: &str) -> Res<i64> {
-    let balance = ledger::balance(db, &earnings(user), "usd").await?;
-    let pending: i64 = sqlx::query_scalar("SELECT coalesce(sum(amount_cents+fee_cents),0)::bigint FROM payout_runs WHERE user_id=$1 AND status='pending'")
-        .bind(user).fetch_one(db).await?;
+    let (balance, pending): (i64, i64) = sqlx::query_as("SELECT (SELECT coalesce(sum(amount),0) FROM ledger_entries WHERE account=$1 AND unit='usd')::bigint, (SELECT coalesce(sum(amount_cents+fee_cents),0) FROM payout_runs WHERE user_id=$2 AND status='pending')::bigint")
+        .bind(earnings(user)).bind(user).fetch_one(db).await?;
     Ok((balance.div_euclid(10) - pending).max(0))
 }
 /// (Early Pay limit in cents, whether today's Early Pay is used).

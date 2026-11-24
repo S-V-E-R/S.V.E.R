@@ -140,13 +140,14 @@ impl MediaConfig {
 
 /// An empty prefix, or a lowercase key prefix ending in '/' (for example `v2/`).
 fn valid_prefix(prefix: &str) -> bool {
-    prefix.is_empty() || (prefix.ends_with('/') && valid_key(prefix))
+    prefix.is_empty() || prefix.strip_suffix('/').is_some_and(valid_key)
 }
+/// One spelling per object: no empty segments and none ending in `.` (so no `.` or `..`, and no
+/// `h.` that Windows reads as `h`), so a key can't name a held file in a way the removal checks
+/// (which compare strings) don't recognize.
 fn valid_key(key: &str) -> bool {
-    !key.is_empty()
-        && key.len() < 200
-        && !key.contains("..")
-        && !key.starts_with('/')
+    key.len() < 200
+        && key.split('/').all(|s| !s.is_empty() && !s.ends_with('.'))
         && key
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"/._@-".contains(&b))
@@ -1312,6 +1313,29 @@ pub async fn cleanup(app: &App) -> Res<usize> {
 #[cfg(test)]
 mod storage_tests {
     use super::*;
+
+    #[test]
+    fn keys_have_one_spelling_and_sounds_are_their_own_root() {
+        assert!(valid_key("avatars/h/64.webp") && valid_key("alerts/sounds/ab.wav"));
+        for bad in [
+            "avatars/./h/64.webp",
+            "avatars//h/64.webp",
+            "avatars/h/../64.webp",
+            "avatars/h./64.webp",
+            "/avatars/h/64.webp",
+            "avatars/h/",
+            "",
+        ] {
+            assert!(!valid_key(bad), "{bad}");
+        }
+        assert!(valid_prefix("") && valid_prefix("v2/") && !valid_prefix("v2//"));
+        assert_eq!(removal::root_of_key("avatars/h/64.webp"), "avatars/h");
+        assert_eq!(removal::root_of_key("sponsors/h.webp"), "sponsors/h.webp");
+        assert_eq!(
+            removal::root_of_key("alerts/sounds/ab.wav"),
+            "alerts/sounds/ab.wav"
+        );
+    }
 
     #[test]
     fn emotes_are_static_sized_webp_with_transparency() {

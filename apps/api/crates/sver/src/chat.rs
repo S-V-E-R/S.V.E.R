@@ -1218,7 +1218,9 @@ pub(crate) async fn send_from(
                 ("usd:platform", "usd", -earned),
             ];
             entries.extend(shares.iter().map(|(a, s)| (a.as_str(), "usd", *s)));
-            crate::ledger::post(
+            // The ledger keeps every tribute id forever, but chat expires the message after a
+            // week: an old id would pass the message insert and then move no Valor.
+            let posted = crate::ledger::post(
                 &mut tx,
                 "tribute",
                 &format!("tribute:{}", input.id),
@@ -1226,6 +1228,9 @@ pub(crate) async fn send_from(
                 &entries,
             )
             .await?;
+            if !posted {
+                return Err(Fail::conflict("Send that again as a new message."));
+            }
             crate::events::emit(
                 &mut tx,
                 channel,

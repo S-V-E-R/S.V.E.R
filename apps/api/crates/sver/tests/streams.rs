@@ -1439,6 +1439,22 @@ async fn exercise(e: &Env) {
         .await
         .unwrap();
     let reset = e.key("create").await;
+    // Channel bearer links made before the reset (by whoever held the account) end with it.
+    e.call(
+        "POST",
+        "/api/me/integrations",
+        json!({"kind":"game","name":"Before reset"}),
+    )
+    .await;
+    e.call("POST", "/api/me/overlays/link", Value::Null).await;
+    e.call("POST", "/api/me/board/overlay", Value::Null).await;
+    let hook = format!("{}/hook", e.app.config.stripe.api_url);
+    e.call(
+        "POST",
+        "/api/hooks",
+        json!({"topics":["channel:streamer:subs"],"url":hook}),
+    )
+    .await;
     let token = sec::token();
     sqlx::query("INSERT INTO challenges(token_hash,user_id,kind,auth_version,expires_at) SELECT $1,id,'reset',auth_version,now()+interval '1 hour' FROM users WHERE id='stream-owner'")
         .bind(sec::digest(&token)).execute(&e.app.db).await.unwrap();
@@ -1457,6 +1473,11 @@ async fn exercise(e: &Env) {
         .await
         .unwrap();
     assert!(revoked);
+    let live_links: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM integration_tokens WHERE channel_id='stream-owner' AND revoked_at IS NULL)+(SELECT count(*) FROM overlay_settings WHERE channel_id='stream-owner' AND token_hash IS NOT NULL)+(SELECT count(*) FROM boards WHERE channel_id='stream-owner' AND overlay_token_hash IS NOT NULL)+(SELECT count(*) FROM event_hooks WHERE user_id='stream-owner' AND app_id IS NULL)")
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap();
+    assert_eq!(live_links, 0);
     assert_eq!(
         e.request("GET", "/api/me/stream", Value::Null, true, true, false)
             .await

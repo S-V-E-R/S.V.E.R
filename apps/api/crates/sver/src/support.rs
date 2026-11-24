@@ -417,7 +417,14 @@ pub async fn webhook(State(app): State<App>, headers: HeaderMap, body: Bytes) ->
     if done != Some(false) {
         return Ok(Json(json!({"received": true})));
     }
-    match process(&app, &mut tx, kind, &event["data"]["object"]).await {
+    // An event from a creator's connected account may only report that account's status: its
+    // invoices, charges and subscriptions are not the platform's, whatever their metadata says.
+    let outcome = if event["account"].is_string() && kind != "account.updated" {
+        Ok(())
+    } else {
+        process(&app, &mut tx, kind, &event["data"]["object"]).await
+    };
+    match outcome {
         Ok(()) => {
             sqlx::query("UPDATE stripe_events SET processed_at=now(),error=NULL WHERE id=$1")
                 .bind(id)

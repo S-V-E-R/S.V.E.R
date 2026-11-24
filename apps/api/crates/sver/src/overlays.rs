@@ -244,11 +244,16 @@ async fn link(State(app): State<App>, headers: HeaderMap, jar: CookieJar) -> Res
 /// DELETE /api/me/overlays/link
 async fn revoke(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let me = profiles::signed_in(&app, &jar).await?;
-    sqlx::query("UPDATE overlay_settings SET token_hash=NULL,seen_at=NULL WHERE channel_id=$1")
-        .bind(&me.id)
-        .execute(&app.db)
-        .await?;
+    unlink(&mut *app.db.acquire().await?, &me.id).await?;
     overview(&app, &me.id).await
+}
+/// Ends the alerts overlay link (also at a password reset).
+pub(crate) async fn unlink(db: &mut sqlx::PgConnection, channel: &str) -> Res<()> {
+    sqlx::query("UPDATE overlay_settings SET token_hash=NULL,seen_at=NULL WHERE channel_id=$1")
+        .bind(channel)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 #[derive(Deserialize)]
 pub struct Test {
