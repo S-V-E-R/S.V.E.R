@@ -111,7 +111,13 @@ pub async fn exercise(e: &Env) {
     let mut forged = invoice("in_connect", "sb-out", 3, 0, "subscription_create", 300);
     forged["account"] = json!("acct_creator");
     assert_eq!(event(e, forged).await, StatusCode::OK);
-    assert_eq!(months(e, "sb-out").await, 0);
+    // A $0 invoice adds no month, so check for any subscription row, not the month count.
+    let granted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM channel_subs WHERE user_id='sb-out'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap();
+    assert_eq!(granted, 0);
 
     // Prices and status; the owner can't subscribe to themself.
     let status = mine(e, &fan).await;
