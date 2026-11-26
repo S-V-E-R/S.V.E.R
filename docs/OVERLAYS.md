@@ -4,7 +4,7 @@ Phase 3, after the developer platform ([DEVELOPER_PLATFORM.md](DEVELOPER_PLATFOR
 
 ## What a streamer gets
 
-- **Creator Studio → Alerts & overlays.** One private link per channel, made and revoked in Studio. Pasted into OBS (or any broadcast app) as a browser source. Like the board overlay's link, it's the only credential, it reaches the channel's alerts and nothing else, and making a new one stops the old one at once.
+- **Creator Studio → Alerts & overlays.** One private link per channel, made and revoked in Studio. Pasted into OBS (or any broadcast app) as a browser source. Like the board overlay's link, it's the only credential, it reaches the channel's alerts and nothing else, and making a new one stops the old one at once. A password reset ends it too.
 - **Three widgets on the same link:**
   - **Alert box** (`/overlay/alerts/{token}`): one alert at a time, in order, for follows, subscriptions, tributes, Skills and incoming raids.
   - **Goal bar** (`?widget=goal`): followers or active subscribers toward a target, with a label.

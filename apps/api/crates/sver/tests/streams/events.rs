@@ -220,6 +220,27 @@ pub async fn exercise(e: &Env) {
         "blocked you anyway"
     );
     drop(moderating);
+    // A moderator's private feeds last only while they're in good standing: a restricted (banned)
+    // moderator's token is refused the channel's private topics.
+    e.sql("UPDATE oauth_grants SET scopes=scopes||ARRAY['events:private'] WHERE id='ev-mod-grant'")
+        .await;
+    let subs = json!({"type":"method","id":"p","method":"subscribe","params":{"topics":["channel:streamer:subs"]}});
+    for (restricted, expected) in [(false, json!(["channel:streamer:subs"])), (true, json!([]))] {
+        if restricted {
+            e.sql("INSERT INTO profiles(user_id,display_name,restricted_until) VALUES('ev-mod','EvMod',now()+interval '1 day') ON CONFLICT(user_id) DO UPDATE SET restricted_until=EXCLUDED.restricted_until")
+                .await;
+        }
+        let (mut socket, _) = connect(format!("client_id={client}&access_token=ev-mod-token"))
+            .await
+            .unwrap();
+        socket.send(send(subs.clone())).await.unwrap();
+        assert_eq!(
+            next_json(&mut socket).await["result"]["subscribed"],
+            expected
+        );
+    }
+    e.sql("UPDATE profiles SET restricted_until=NULL WHERE user_id='ev-mod'")
+        .await;
     for statement in [
         "DELETE FROM chat_messages WHERE author_id='ev-troll'",
         "DELETE FROM user_blocks WHERE blocker_id='ev-troll'",

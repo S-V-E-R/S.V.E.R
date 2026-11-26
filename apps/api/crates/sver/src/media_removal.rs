@@ -68,8 +68,11 @@ pub async fn index_existing(app: &App) -> Res<usize> {
     Ok(count)
 }
 
+/// A stored value's directory (`avatars/<hash>/<size>.webp`), or the key itself for a single file.
+/// Sounds sit flat in one folder shared by every channel, so each sound is its own root: one
+/// report must never hold the whole folder.
 pub fn root_of_key(key: &str) -> &str {
-    if key.matches('/').count() >= 2 {
+    if key.matches('/').count() >= 2 && !key.starts_with("alerts/sounds/") {
         key.rsplit_once('/').unwrap().0
     } else {
         key

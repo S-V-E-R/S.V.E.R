@@ -1117,13 +1117,18 @@ async fn overlay_token(State(app): State<App>, jar: CookieJar) -> Res<Json<Value
 /// DELETE /api/me/board/overlay
 async fn overlay_revoke(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = profiles::signed_in(&app, &jar).await?;
+    unlink_overlay(&mut *app.db.acquire().await?, &user.id).await?;
+    studio(&app, &user).await.map(Json)
+}
+/// Ends the board overlay link (also at a password reset).
+pub(crate) async fn unlink_overlay(db: &mut sqlx::PgConnection, channel: &str) -> Res<()> {
     sqlx::query(
         "UPDATE boards SET overlay_token_hash=NULL, overlay_seen_at=NULL WHERE channel_id=$1",
     )
-    .bind(&user.id)
-    .execute(&app.db)
+    .bind(channel)
+    .execute(db)
     .await?;
-    studio(&app, &user).await.map(Json)
+    Ok(())
 }
 
 // ---- Running the board (owner, staff, and moderators when allowed) ----

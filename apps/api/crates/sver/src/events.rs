@@ -283,7 +283,9 @@ async fn allowed(app: &App, topic: &str, user: Option<&Person>) -> Res<bool> {
     if !PRIVATE.contains(&kind) {
         return Ok(false);
     }
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_users c WHERE lower(c.username)=$1 AND c.eligible AND (c.id=$2 OR EXISTS(SELECT 1 FROM channel_moderators m WHERE m.channel_id=c.id AND m.user_id=$2)))")
+    // Moderators count only while verified and in good standing, as in moderation::role_of: a
+    // ban or deletion ends their private feeds at the next recheck.
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channel_users c WHERE lower(c.username)=$1 AND c.eligible AND (c.id=$2 OR EXISTS(SELECT 1 FROM channel_moderators m JOIN channel_users u ON u.id=m.user_id WHERE m.channel_id=c.id AND m.user_id=$2 AND u.eligible AND u.email_verified)))")
         .bind(name).bind(user).fetch_one(&app.db).await?)
 }
 
@@ -776,6 +778,15 @@ type Due = (
 /// send time: a revoked or suspended app removes its hooks, and a topic the person may no longer
 /// receive (a moderator removed, a channel gone) is dropped. 50 failures in a row turn the hook
 /// off and tell its owner.
+/// Removes webhooks registered while signed in (no app): they carry the account's private events
+/// with no grant to revoke, so a password reset ends them here. App webhooks end with their grant.
+pub(crate) async fn drop_own_hooks(db: &mut sqlx::PgConnection, user: &str) -> Res<()> {
+    sqlx::query("DELETE FROM event_hooks WHERE user_id=$1 AND app_id IS NULL")
+        .bind(user)
+        .execute(db)
+        .await?;
+    Ok(())
+}
 pub async fn deliver_hooks(app: &App) -> Res<()> {
     // ponytail: sequential, 20 per pass with a 5 s timeout each; send concurrently if hooks back up.
     let due: Vec<Due> = sqlx::query_as("SELECT d.id,d.hook_id,d.payload,d.attempts,h.url,h.secret,h.user_id,h.app_id FROM hook_deliveries d
