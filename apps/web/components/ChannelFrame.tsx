@@ -38,7 +38,8 @@ export async function ChannelFrame({ data, path, children }: { data: Channel; pa
   const description = c.bio?.trim() ? c.bio.slice(0, 200) : "Channel on S.V.E.R";
   const banner = c.banner ? Object.entries(c.banner) : [];
   const faction = factionOf(c.faction);
-  const next = c.live ? null : nextStream(data);
+  // People who have never streamed show no "Next stream" line (docs/PROFILES.md "Persona pass").
+  const next = c.live || !c.streamed ? null : nextStream(data);
   const owner = data.viewer.is_owner;
   const showcase = c.showcase ?? [];
   const seasons = c.season_rewards ?? [];

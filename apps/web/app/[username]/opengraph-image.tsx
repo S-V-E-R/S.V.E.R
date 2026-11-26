@@ -13,7 +13,9 @@ export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 export const alt = "A channel on S.V.E.R";
 // Anonymous and cached: the card shows only public channel fields, so every crawler can share one render.
-export const revalidate = 600;
+// Kept short, and the reads below are not cached on their own, so a hidden or deleted channel or a
+// removed avatar leaves the card within about two minutes.
+export const revalidate = 60;
 // No channels are built ahead; each card renders on first request, then is cached like the rest.
 export function generateStaticParams() { return []; }
 
@@ -29,7 +31,7 @@ const clip = (text: string, max: number) => text.length > max ? `${text.slice(0,
 async function png(url: string | undefined) {
   if (!url) return null;
   try {
-    const response = await fetch(url, { next: { revalidate: 600 }, signal: AbortSignal.timeout(5000) });
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) return null;
     const image = await sharp(Buffer.from(await response.arrayBuffer())).png().toBuffer();
     return `data:image/png;base64,${image.toString("base64")}`;
@@ -39,7 +41,7 @@ async function png(url: string | undefined) {
 export default async function Image({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
   const [{ status, data }, cinzel, barlow, barlowBold] = await Promise.all([
-    fetch(`${apiOrigin()}/api/channels/${encodeURIComponent(username)}`, { next: { revalidate: 600 }, signal: AbortSignal.timeout(3000) })
+    fetch(`${apiOrigin()}/api/channels/${encodeURIComponent(username)}?tab=1`, { signal: AbortSignal.timeout(3000) })
       .then(async r => ({ status: r.status, data: r.ok ? (await r.json()) as Channel : null })).catch(() => ({ status: 0, data: null })),
     font("Cinzel-Bold.ttf"), font("Barlow-Regular.ttf"), font("Barlow-SemiBold.ttf"),
   ]);
