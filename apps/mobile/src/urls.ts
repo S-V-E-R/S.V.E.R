@@ -10,6 +10,17 @@ export function absolute(path: string): string {
   return `${apiUrl}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/**
+ * The Take It Down request form (docs/TAKE_IT_DOWN.md). For a reported item it fills in the same
+ * location link as the website's report form (apps/web/components/Report.tsx TakeDownLink), which
+ * the API reads to hide the item while staff review the request.
+ */
+export function takeItDownUrl(item?: { type: string; id: string }): string {
+  if (!item) return `${webOrigin}/take-it-down`;
+  const location = `https://sver.tv/take-it-down?report=${encodeURIComponent(item.type)}&id=${encodeURIComponent(item.id)}`;
+  return `${webOrigin}/take-it-down?location=${encodeURIComponent(location)}`;
+}
+
 export function crestUrl(slug: string): string {
   return `${webOrigin}/factions/${slug}.webp`;
 }

@@ -16,6 +16,12 @@ Decided by Joe on October 21, 2026:
 - Signup (it needs Turnstile), password recovery and account deletion open sver.tv. The stores require a way to start deletion from the app.
 - Go-live and existing push kinds reach the phone through Expo push, under the same switches as browser push (`docs/NOTIFICATIONS.md`).
 
+## Reports and Take It Down
+
+- Every live stream, Beacon and chat message has Report, plus Block for a S.V.E.R account's content, which both stores require for chat and video. Reports go to the same staff queue as the website's.
+- Each report sheet starts with "Report an intimate image" in small dim text, as on the website. It opens the Take It Down request form on sver.tv ([TAKE_IT_DOWN.md](TAKE_IT_DOWN.md)) with the item filled in, using the same link as the website's report form, so the API hides the item while staff review the request. It shows when signed out too, since the form needs no account.
+- "Take It Down requests" sits at the bottom of Home and of the Account (or Log in) screen, standing in for the website's footer link.
+
 ## v1 screens
 
 1. **Log in**: password, then the authenticator or recovery code. Links to create an account, recover a password and delete the account.

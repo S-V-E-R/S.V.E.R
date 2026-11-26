@@ -4,7 +4,7 @@ import test from "node:test";
 import { liveFirst, rotationOrder } from "./streams.ts";
 import { palette, themeFor } from "./theme.ts";
 import { isStreamCard, type StreamCard } from "./types.ts";
-import { absolute, playbackKey } from "./urls.ts";
+import { absolute, playbackKey, takeItDownUrl } from "./urls.ts";
 
 function card(username: string, viewers: number): StreamCard {
   return {
@@ -42,6 +42,17 @@ test("theme follows the signed-in faction and is neutral otherwise", () => {
 test("playback identity ignores the rotating CDN token", () => {
   assert.equal(playbackKey("https://cdn.example/live/abc/bcdn_token=secret/index.m3u8"), "https://cdn.example/live/abc/index.m3u8");
   assert.equal(absolute("/api/discovery/live").endsWith("/api/discovery/live"), true);
+});
+
+test("the Take It Down link fills in the reported item as a sver.tv link the API can locate", () => {
+  assert.equal(new URL(takeItDownUrl()).pathname, "/take-it-down");
+  const url = new URL(takeItDownUrl({ type: "chat_message", id: "a b&c" }));
+  assert.equal(url.pathname, "/take-it-down");
+  // take_down.rs locate() reads `report` and `id` from a sver.tv link.
+  const location = new URL(url.searchParams.get("location") ?? "");
+  assert.equal(location.origin, "https://sver.tv");
+  assert.equal(location.searchParams.get("report"), "chat_message");
+  assert.equal(location.searchParams.get("id"), "a b&c");
 });
 
 test("a discovery card is recognized and a partial object is not", () => {

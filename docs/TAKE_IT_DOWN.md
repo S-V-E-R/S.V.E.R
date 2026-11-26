@@ -14,6 +14,7 @@ Intimate content of a **minor** is child sexual abuse material: S.V.E.R removes 
 - Plain-language explanation of what can be reported, what happens next and how long it takes, in the design system's legal-page layout.
 - **Works without an account.** Protected by Turnstile.
 - A "Report → Intimate image (Take It Down)" option on every live stream, profile, wall post, fan art item and chat message opens the same form with the location filled in.
+- **In the mobile app** ([MOBILE.md](MOBILE.md)): "Take It Down requests" at the bottom of Home and of the Account (or Log in) screen, and "Report an intimate image" in the report sheet of every live stream, Beacon and chat message, with the location filled in. Both open the form on sver.tv.
 
 ### What the form asks for (the four parts the law requires)
 
