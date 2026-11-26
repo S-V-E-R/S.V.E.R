@@ -949,10 +949,19 @@ pub fn upscale_banner_to_minimum(bytes: &[u8]) -> Res<Vec<u8>> {
         .map_err(|_| Fail::internal())?;
     Ok(out.into_inner())
 }
+/// Full-size decodes allowed at once; a worst-case upload decodes to about 1 GB.
+/// ponytail: fixed global cap, tune with host RAM (or move to config) if uploads queue up.
+static DECODES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(3);
 pub async fn process_async(bytes: Vec<u8>, kind: Kind, crop: Option<Crop>) -> Res<Processed> {
-    tokio::task::spawn_blocking(move || process(&bytes, kind, crop))
-        .await
-        .map_err(|_| Fail::internal())?
+    let permit = DECODES.acquire().await.map_err(|_| Fail::internal())?;
+    // The permit moves into the blocking task: a dropped request can't free the slot while the
+    // decode it started is still running.
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        process(&bytes, kind, crop)
+    })
+    .await
+    .map_err(|_| Fail::internal())?
 }
 
 /// Category art widths (3:4), served as `categories/{hash}/{width}.webp`.
@@ -1280,6 +1289,9 @@ pub async fn cleanup(app: &App) -> Res<usize> {
             || crate::catalog::referenced(&mut tx, &key).await?
             || in_use(&mut tx, &key).await?
         {
+            // Push it back so the oldest-first batch moves past keys that are still used.
+            postpone(&mut tx, &key).await?;
+            tx.commit().await?;
             continue;
         }
         let pending: bool = sqlx::query_scalar(
@@ -1304,10 +1316,20 @@ pub async fn cleanup(app: &App) -> Res<usize> {
                 .execute(&mut *tx)
                 .await?;
             deleted += 1;
+        } else {
+            postpone(&mut tx, &key).await?;
         }
         tx.commit().await?;
     }
     Ok(deleted)
+}
+/// Retries a queued key tomorrow. Not cleared: some references (overlay settings) never re-queue.
+async fn postpone(db: &mut PgConnection, key: &str) -> Res<()> {
+    sqlx::query("UPDATE media_objects SET delete_after=now()+interval '1 day' WHERE key=$1 AND delete_after<=now()")
+        .bind(key)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1495,5 +1517,22 @@ mod storage_tests {
             s3.object_url("avatars/abc/64.webp"),
             "https://account.r2.cloudflarestorage.com/sver/v2/avatars/abc/64.webp"
         );
+    }
+
+    #[tokio::test]
+    async fn decodes_wait_for_a_free_slot() {
+        let source = include_bytes!("../tests/fixtures/avatar-rgb-trns.png").to_vec();
+        let full = DECODES.acquire_many(3).await.unwrap();
+        let waited = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            process_async(source.clone(), Kind::Avatar, None),
+        )
+        .await;
+        assert!(
+            waited.is_err(),
+            "no decode starts while every slot is taken"
+        );
+        drop(full);
+        assert!(process_async(source, Kind::Avatar, None).await.is_ok());
     }
 }
