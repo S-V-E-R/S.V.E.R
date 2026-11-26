@@ -606,8 +606,8 @@ pub async fn pending(
     let mut db = app.db.acquire().await?;
     // Only fixed wall SQL, literal aliases or the selected literal table are interpolated; values are bound.
     let rows: Vec<(String, String, String, DateTime<Utc>, Value, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT * FROM (SELECT 'post' AS kind,p.id,p.body,p.created_at,{chip} AS author,NULL::text AS post_id FROM wall_posts p JOIN channel_users a ON a.id=p.author_id WHERE p.wall_owner_id=$1 AND p.status='PENDING' AND p.deleted_at IS NULL \
-         UNION ALL SELECT 'reply',r.id,r.body,r.created_at,{chip},r.post_id FROM wall_replies r JOIN wall_posts p ON p.id=r.post_id JOIN channel_users a ON a.id=r.author_id WHERE p.wall_owner_id=$1 AND r.status='PENDING' AND r.deleted_at IS NULL AND p.deleted_at IS NULL) q \
+        "SELECT * FROM (SELECT 'post' AS kind,p.id,p.body,p.created_at,{chip} AS author,NULL::text AS post_id FROM wall_posts p JOIN channel_users a ON a.id=p.author_id WHERE p.wall_owner_id=$1 AND p.status='PENDING' AND p.deleted_at IS NULL AND a.deleted_at IS NULL \
+         UNION ALL SELECT 'reply',r.id,r.body,r.created_at,{chip},r.post_id FROM wall_replies r JOIN wall_posts p ON p.id=r.post_id JOIN channel_users a ON a.id=r.author_id WHERE p.wall_owner_id=$1 AND r.status='PENDING' AND r.deleted_at IS NULL AND p.deleted_at IS NULL AND a.deleted_at IS NULL) q \
          WHERE ($2::timestamptz IS NULL OR (created_at,id)>($2,$3)) ORDER BY created_at,id LIMIT $4",
         chip = chip_sql("a")
     )))
@@ -627,7 +627,7 @@ pub async fn pending(
     ))
 }
 pub async fn pending_count(db: &mut PgConnection, owner: &str) -> Res<i64> {
-    Ok(sqlx::query_scalar("SELECT (SELECT count(*) FROM wall_posts WHERE wall_owner_id=$1 AND status='PENDING' AND deleted_at IS NULL)+(SELECT count(*) FROM wall_replies r JOIN wall_posts p ON p.id=r.post_id WHERE p.wall_owner_id=$1 AND r.status='PENDING' AND r.deleted_at IS NULL AND p.deleted_at IS NULL)")
+    Ok(sqlx::query_scalar("SELECT (SELECT count(*) FROM wall_posts p JOIN channel_users a ON a.id=p.author_id WHERE p.wall_owner_id=$1 AND p.status='PENDING' AND p.deleted_at IS NULL AND a.deleted_at IS NULL)+(SELECT count(*) FROM wall_replies r JOIN wall_posts p ON p.id=r.post_id JOIN channel_users a ON a.id=r.author_id WHERE p.wall_owner_id=$1 AND r.status='PENDING' AND r.deleted_at IS NULL AND p.deleted_at IS NULL AND a.deleted_at IS NULL)")
         .bind(owner)
         .fetch_one(&mut *db)
         .await?)
@@ -694,7 +694,7 @@ pub async fn review(
                     .fetch_one(&mut *tx)
                     .await?;
             if !internal {
-                social::apply_block(&mut tx, &user.id, &author).await?;
+                social::block_with_limits(&app, &mut tx, &user.id, &author).await?;
             } else {
                 // Internal accounts can't be blocked; still reject their pending content.
                 sqlx::query("UPDATE wall_posts SET status='REJECTED',moderated_at=now() WHERE wall_owner_id=$1 AND author_id=$2 AND status='PENDING'").bind(&user.id).bind(&author).execute(&mut *tx).await?;

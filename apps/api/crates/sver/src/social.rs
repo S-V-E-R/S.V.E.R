@@ -154,6 +154,11 @@ pub async fn follow(
             .bind(&target.id)
             .execute(&mut *tx)
             .await?;
+        // Checked again under the profile locks apply_block takes, so a block committed while
+        // this follow waited is seen.
+        if blocked_between(&mut tx, &user.id, &target.id).await? {
+            return Err(Fail::denied("You can't follow this channel."));
+        }
         // Counted at once when they've already watched enough; otherwise count_watched does it.
         let counted: Option<bool> = sqlx::query_scalar(
             "INSERT INTO follows(follower_id,following_id,counted_at) VALUES($1,$2,
@@ -193,13 +198,10 @@ pub async fn unfollow(
 ) -> Res<Json<Value>> {
     let user = signed_in(&app, &jar).await?;
     let mut tx = app.db.begin().await?;
-    // Unfollow works for any existing account so hidden channels can still be removed.
-    let target: Option<ChannelUser> =
-        sqlx::query_as("SELECT * FROM channel_users WHERE lower(username)=lower($1)")
-            .bind(&name)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let target = target.ok_or_else(Fail::channel_missing)?;
+    // Hidden channels get the same 404 as unknown names (docs/PROFILES.md).
+    let target = eligible_by_name(&mut tx, &name)
+        .await?
+        .ok_or_else(Fail::channel_missing)?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2)",
     )
@@ -258,8 +260,8 @@ async fn follow_list(
         "SELECT {chip}, f.created_at, c.id FROM follows f JOIN channel_users c ON c.id=f.{join_col} \
          WHERE f.{filter_col}=$1 {counted} AND c.eligible \
          AND ($2::text IS NULL OR NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$2 AND b.blocked_id=c.id) OR (b.blocker_id=c.id AND b.blocked_id=$2))) \
-         AND ($3::timestamptz IS NULL OR (f.created_at,c.id) < ($3,$4)) \
-         ORDER BY f.created_at DESC, c.id DESC LIMIT $5",
+         AND ($3::timestamptz IS NULL OR (f.created_at <= $3 AND (f.created_at,f.{join_col}) < ($3,$4))) \
+         ORDER BY f.created_at DESC, f.{join_col} DESC LIMIT $5",
         chip = chip_sql("c")
     )))
     .bind(&owner.id)
@@ -358,20 +360,26 @@ pub async fn suggestions(State(app): State<App>, jar: CookieJar) -> Res<Json<Val
     let user = signed_in(&app, &jar).await?;
     let mut db = app.db.acquire().await?;
     let faction = crate::factions::membership(&mut db, &user.id).await?;
+    // Mature-labeled live channels are left out for under-18 accounts, like every other list.
+    let hidden: Vec<String> = crate::streams::mature_hidden(&mut db, Some(&user.id))
+        .await?
+        .into_iter()
+        .collect();
     // Only chip SQL and the live expression are interpolated; request values are bound.
     let rows: Vec<(Value,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {chip} FROM channel_users c JOIN users u ON u.id=c.id \
-         WHERE c.eligible AND c.id<>$1 \
+        "SELECT {chip} FROM channel_users c \
+         WHERE c.eligible AND c.id<>$1 AND NOT (c.id = ANY($3)) \
          AND NOT EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=$1 AND f.following_id=c.id) \
          AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=c.id) OR (b.blocker_id=c.id AND b.blocked_id=$1)) \
          AND EXISTS(SELECT 1 FROM broadcasts s WHERE s.owner_id=c.id) \
-         ORDER BY {live} DESC, (u.faction IS NOT DISTINCT FROM $2) DESC, \
+         ORDER BY {live} DESC, ((SELECT m.faction FROM faction_members m WHERE m.user_id=c.id) IS NOT DISTINCT FROM $2) DESC, \
          (SELECT max(s.started_at) FROM broadcasts s WHERE s.owner_id=c.id) DESC NULLS LAST, c.id LIMIT 8",
         chip = chip_sql("c"),
         live = crate::playback::live_sql("c.id")
     )))
     .bind(&user.id)
     .bind(&faction)
+    .bind(&hidden)
     .fetch_all(&mut *db)
     .await?;
     let mut items: Vec<Value> = rows.into_iter().map(|(chip,)| chip).collect();
@@ -399,7 +407,7 @@ pub async fn war_council_read(
     .await?;
     let mut members: Vec<Value> = rows
         .iter()
-        .filter(|r| r.2)
+        .filter(|r| r.2 && !r.3)
         .map(|r| json!({"position": r.0, "user": r.1, "crown": false}))
         .collect();
     if let Some(first) = members.first_mut() {
@@ -609,21 +617,39 @@ pub async fn block(
     .bind(&name)
     .fetch_optional(&mut *tx)
     .await?;
-    let target = target.filter(|t| !t.internal).ok_or_else(Fail::missing)?;
+    // Unknown, deleted and internal names answer like a block so nothing reveals which accounts
+    // exist or are restricted (docs/PROFILES.md).
+    let Some(target) = target.filter(|t| !t.internal) else {
+        return Ok(Json(json!({"blocked": true})));
+    };
     if target.id == user.id {
         return Err(Fail::bad("You can't block yourself."));
     }
+    block_with_limits(&app, &mut tx, &user.id, &target.id).await?;
+    tx.commit().await?;
+    app.chat.blocks_changed();
+    crate::dms::blocked(&app, &user.id, &target.id).await;
+    Ok(Json(json!({"blocked": true})))
+}
+/// A new block spends the 30-per-hour block/unblock budget and respects the 1,000 cap; an
+/// existing one is free. Used by PUT /api/blocks and the wall queue.
+pub async fn block_with_limits(
+    app: &App,
+    tx: &mut PgConnection,
+    blocker: &str,
+    blocked: &str,
+) -> Res<()> {
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM user_blocks WHERE blocker_id=$1 AND blocked_id=$2)",
     )
-    .bind(&user.id)
-    .bind(&target.id)
+    .bind(blocker)
+    .bind(blocked)
     .fetch_one(&mut *tx)
     .await?;
     if !exists {
-        rate(&app, format!("block:{}", user.id), 30, 3600).await?;
+        rate(app, format!("block:{blocker}"), 30, 3600).await?;
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM user_blocks WHERE blocker_id=$1")
-            .bind(&user.id)
+            .bind(blocker)
             .fetch_one(&mut *tx)
             .await?;
         if count >= 1000 {
@@ -631,12 +657,9 @@ pub async fn block(
                 "You've reached the limit of 1,000 blocked users.",
             ));
         }
-        apply_block(&mut tx, &user.id, &target.id).await?;
     }
-    tx.commit().await?;
-    app.chat.blocks_changed();
-    crate::dms::blocked(&app, &user.id, &target.id).await;
-    Ok(Json(json!({"blocked": true})))
+    // Idempotent, so an existing block still rejects anything the author left pending.
+    apply_block(tx, blocker, blocked).await
 }
 /// DELETE /api/blocks/{username}: restores nothing that was removed.
 pub async fn unblock(
@@ -645,11 +668,13 @@ pub async fn unblock(
     Path(name): Path<String>,
 ) -> Res<Json<Value>> {
     let user = signed_in(&app, &jar).await?;
-    let mut db = app.db.acquire().await?;
-    let removed = sqlx::query("DELETE FROM user_blocks WHERE blocker_id=$1 AND blocked_id=(SELECT id FROM users WHERE lower(username)=lower($2))").bind(&user.id).bind(&name).execute(&mut *db).await?;
+    let mut tx = app.db.begin().await?;
+    let removed = sqlx::query("DELETE FROM user_blocks WHERE blocker_id=$1 AND blocked_id=(SELECT id FROM users WHERE lower(username)=lower($2))").bind(&user.id).bind(&name).execute(&mut *tx).await?;
     if removed.rows_affected() > 0 {
-        app.chat.blocks_changed();
+        // Over the limit, the transaction is dropped and the block stays.
         rate(&app, format!("block:{}", user.id), 30, 3600).await?;
+        tx.commit().await?;
+        app.chat.blocks_changed();
     }
     Ok(Json(json!({"blocked": false})))
 }
