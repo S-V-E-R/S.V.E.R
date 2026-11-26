@@ -71,7 +71,7 @@ function FinishYourPage({ data }: { data: Channel }) {
 }
 
 export default async function ChannelHome({ params, searchParams }: { params: ChannelParams; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const data = await loadChannel((await params).username);
+  const data = await loadChannel((await params).username, true);
   const { channel: c, viewer } = data;
   // Live channels open on the watch page; ?home (the Home tab, the watch page's channel links),
   // the owner and a Persona-first layout keep Home. The query (a raid id, a transport) goes along.

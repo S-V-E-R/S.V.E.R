@@ -14,9 +14,9 @@ export default function BlocksStudio() {
   const [items, setItems] = useState<Block[] | null>(null);
   const [revision, setRevision] = useState<number>();
   const [state, setState] = useState<SaveState>({});
-  const load = useCallback(async () => { const r = await send<{ items: Block[]; revision: number }>("GET", "/api/me/page-blocks"); if (r.ok) { setItems(r.data.items); setRevision(r.data.revision); } }, []);
+  const load = useCallback(async () => { const r = await send<{ items: Block[]; revision: number }>("GET", "/api/me/page-blocks"); if (r.ok) { setItems(r.data.items); setRevision(r.data.revision); } else setState(r); }, []);
   useLoad(load);
-  if (!items) return <p className="loading">Loading…</p>;
+  if (!items) return state.error ? <><Status state={state} /><button type="button" className="small quiet" onClick={() => { setState({}); load(); }}>Try again</button></> : <p className="loading">Loading…</p>;
   const set = (i: number, config: Block["config"]) => setItems(items.map((b, j) => j === i ? { ...b, config } : b));
   async function save() {
     const result = await send("PUT", "/api/me/blocks", { items, revision });

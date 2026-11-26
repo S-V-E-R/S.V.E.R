@@ -445,13 +445,22 @@ pub async fn resolve_channel(State(app): State<App>, Path(name): Path<String>) -
     }
 }
 
+#[derive(Deserialize)]
+pub struct ChannelView {
+    /// Set by every channel tab except Home: the Home-only War Council, Wall preview and About
+    /// blocks are skipped (null, null and []).
+    pub tab: Option<String>,
+}
+
 /// GET /api/channels/{username}: header, counts, song, trailer, War Council, Home previews and the
 /// viewer relationship.
 pub async fn channel(
     State(app): State<App>,
     jar: CookieJar,
     Path(name): Path<String>,
+    Query(view): Query<ChannelView>,
 ) -> Res<Json<Value>> {
+    let home = view.tab.is_none();
     let viewer = viewer(&app, &jar).await?;
     let mut db = app.db.acquire().await?;
     let user = match resolve(&mut db, &name).await? {
@@ -500,9 +509,14 @@ pub async fn channel(
         .bind(&user.id)
         .fetch_one(&mut *db)
         .await?;
-    let war_council =
-        crate::social::war_council_read(&app, &mut db, &user.id, viewer_id, is_owner).await?;
-    let wall_preview = crate::wall::preview(&app, &mut db, &user, viewer.as_ref()).await?;
+    let (war_council, wall_preview) = if home {
+        (
+            crate::social::war_council_read(&app, &mut db, &user.id, viewer_id, is_owner).await?,
+            crate::wall::preview(&app, &mut db, &user, viewer.as_ref()).await?,
+        )
+    } else {
+        (Value::Null, Value::Null)
+    };
     let schedule_next = crate::studio::next_occurrences(&mut db, &user.id, 3).await?;
     let about_has_content: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sponsors WHERE user_id=$1 AND active) OR EXISTS(SELECT 1 FROM setup_items WHERE user_id=$1) OR EXISTS(SELECT 1 FROM setup_photos WHERE user_id=$1 AND status='VISIBLE') OR EXISTS(SELECT 1 FROM profiles WHERE user_id=$1 AND (setup_title<>'' OR setup_description<>''))")
         .bind(&user.id)
@@ -529,7 +543,11 @@ pub async fn channel(
         "about": about_has_content || is_owner,
         "fan_art": fan_art_enabled && (approved_fan_art || is_owner),
     });
-    let blocks = crate::studio::blocks_json(&mut db, &user.id, true).await?;
+    let blocks = if home {
+        crate::studio::blocks_json(&mut db, &user.id, true).await?
+    } else {
+        Vec::new()
+    };
     let mut relation = relation;
     if let (Some(v), false) = (viewer_id, is_owner) {
         relation["relationship"] = crate::persona::relationship(&mut db, &user.id, v).await?;

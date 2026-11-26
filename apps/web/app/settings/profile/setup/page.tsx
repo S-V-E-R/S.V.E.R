@@ -26,7 +26,7 @@ export default function PersonaSetup() {
       <ol className="setup-steps" aria-label="Steps">{STEPS.map((s, i) => <li key={s} aria-current={i === step ? "step" : undefined} className={i < step ? "done" : undefined}><button type="button" className="link-button" onClick={() => go(i)}>{i + 1}. {s}</button></li>)}</ol>
       {step === 0 && <><Images me={me} onSaved={refresh} /><ThemeEditor onSaved={bump} /></>}
       {step === 1 && <><Identity me={me} onSaved={refresh} /><CurrentlyEditor onSaved={bump} /></>}
-      {step === 2 && <><SongEditor embedded onSaved={bump} /><WarCouncilEditor embedded onSaved={bump} /></>}
+      {step === 2 && <><SongEditor embedded onSaved={bump} /><WarCouncilEditor embedded suggestFollows onSaved={bump} /></>}
       {step === 3 && <Links me={me} onSaved={refresh} />}
       <div className="row setup-nav">
         {step > 0 && <button type="button" className="quiet" onClick={() => go(step - 1)}>Back</button>}

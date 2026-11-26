@@ -5,7 +5,7 @@ import { useCallback, useState } from "react";
 import { Section, Status, type SaveState } from "../../../components/Form";
 import { WarCouncilEditor } from "../../../components/persona/WarCouncilEditor";
 import type { Readiness } from "../../../components/Readiness";
-import { send, useLoad } from "../../../lib/client-api";
+import { send, useHashScroll, useLoad } from "../../../lib/client-api";
 
 type Followers = { counted: number; pending: number; watch_minutes: number };
 
@@ -18,6 +18,7 @@ export default function ChannelOverview() {
   useLoad(load);
   const loadFollowers = useCallback(async () => { const r = await send<Followers>("GET", "/api/me/followers"); if (r.ok) setFollowers(r.data); }, []);
   useLoad(loadFollowers);
+  useHashScroll(data !== null);
   async function remind(dismissed: boolean) {
     const r = await send("PUT", "/api/me/readiness", { dismissed });
     setState(r.ok ? { saved: dismissed ? "Reminder hidden." : "The reminder is back on your Studio pages." } : r);

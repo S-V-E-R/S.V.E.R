@@ -16,7 +16,7 @@ export default function WallStudio() {
   const [review, setReview] = useState<SaveState>({});
   const load = useCallback(async () => {
     const [m, p] = await Promise.all([send<Mine>("GET", "/api/me/wall"), send<{ items: Pending[]; next_cursor: string | null }>("GET", "/api/me/wall/pending")]);
-    if (m.ok) setMine(m.data);
+    if (m.ok) setMine(m.data); else setState(m);
     if (p.ok) setPending(p.data);
   }, []);
   useLoad(load);
@@ -38,7 +38,7 @@ export default function WallStudio() {
     setState(result.ok ? { saved: "Pins saved." } : result);
     load();
   }
-  if (!mine) return <p className="loading">Loading…</p>;
+  if (!mine) return state.error ? <><Status state={state} /><button type="button" className="small quiet" onClick={() => { setState({}); load(); }}>Try again</button></> : <p className="loading">Loading…</p>;
   const s = mine.settings;
   return <><h1>Wall</h1>
     <Section title="Who can post">

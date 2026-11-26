@@ -160,6 +160,14 @@ async fn decide(
             .await?
             .ok_or_else(|| Fail::conflict("The requester's account is gone; reject the claim."))?;
             profiles::ensure_unrestricted(&mut tx, &requester).await?;
+            // Rename rules apply: the requester may have renamed since asking.
+            let renamed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM username_history WHERE user_id=$1 AND reason IN ('rename','claim') AND changed_at>now()-interval '60 days')")
+                .bind(&requester).fetch_one(&mut *tx).await?;
+            if renamed {
+                return Err(Fail::conflict(
+                    "The requester changed their username in the last 60 days; reject the claim.",
+                ));
+            }
             sqlx::query("DELETE FROM username_holds WHERE handle_canonical=lower($1)")
                 .bind(&handle)
                 .execute(&mut *tx)

@@ -4,18 +4,26 @@ import { cache } from "react";
 import { apiGet } from "./server-api";
 import type { Channel } from "./types";
 
-/** One channel read per request, shared by metadata and the page; every miss is the same 404. */
-export const loadChannel = cache(async (username: string): Promise<Channel> => {
-  const { status, data } = await apiGet<Channel>(`/api/channels/${encodeURIComponent(username)}`);
-  if (status !== 200 || !data) notFound();
+/** One channel read per request, shared by metadata and the page. Tabs other than Home skip the
+ *  Home-only sections (War Council and Wall preview come back null, About blocks empty). */
+const readChannel = cache((username: string, home: boolean) =>
+  apiGet<Channel>(`/api/channels/${encodeURIComponent(username)}${home ? "" : "?tab=1"}`));
+
+/** The channel for a page (`home` only on Home). Every miss is the same 404; an outage is an error, not a miss. */
+export const loadChannel = cache(async (username: string, home = false): Promise<Channel> => {
+  const { status, data } = await readChannel(username, home);
+  if (status === 404) notFound();
+  if (status !== 200 || !data) throw new Error(`Channel read failed (${status})`);
   if (data.redirect_to) redirect(`/${data.redirect_to}`);
   if (data.channel.username !== username) permanentRedirect(`/${data.channel.username}`);
   return data;
 });
 
 export async function channelMetadata(username: string, section?: string): Promise<Metadata> {
-  const { status, data } = await apiGet<Channel>(`/api/channels/${encodeURIComponent(username)}`);
-  if (status !== 200 || !data?.channel) return { title: "This channel doesn't exist. | S.V.E.R", robots: { index: false, follow: false } };
+  const { status, data } = await readChannel(username, !section);
+  if (status === 404) return { title: "This channel doesn't exist. | S.V.E.R", robots: { index: false, follow: false } };
+  // An outage isn't a missing channel: no noindex, so crawlers keep the real page.
+  if (status !== 200 || !data?.channel) return { title: "S.V.E.R" };
   const c = data.channel;
   const title = `${c.display_name} (@${c.username})${section ? ` · ${section}` : ""} | S.V.E.R`;
   const description = c.bio?.trim() ? c.bio.slice(0, 200) : c.live ? `${c.display_name} is live on S.V.E.R` : "Channel on S.V.E.R";

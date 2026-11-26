@@ -1303,6 +1303,10 @@ pub async fn admin_action(
     .fetch_one(&mut *tx)
     .await?;
     let owner = owner_of(&mut tx, &kind, &id).await?;
+    // An outside message's sender isn't the channel owner, so staff may handle reports in their own chat.
+    if kind != "outside_message" {
+        not_self(&owner, &actor)?;
+    }
     let snapshot = match reports.first() {
         Some((_, snap)) => snap.clone(),
         None => match kind.as_str() {
@@ -1484,6 +1488,16 @@ async fn set_interim(
     log("interim_restriction_set", "ok");
     Ok(id)
 }
+/// docs/ADMIN.md: nobody acts on their own account, not even an admin.
+fn not_self(user_id: &str, actor: &User) -> Res<()> {
+    if user_id == actor.id {
+        log("self_action", "denied");
+        return Err(Fail::denied(
+            "You can't act on your own account. Another staff member must do this.",
+        ));
+    }
+    Ok(())
+}
 pub(crate) async fn admin_target(db: &mut PgConnection, name: &str) -> Res<String> {
     sqlx::query_scalar("SELECT id FROM users WHERE lower(username)=lower($1)")
         .bind(name)
@@ -1535,6 +1549,7 @@ pub async fn admin_strike(
     let note = note(input.note.as_deref(), "note", false)?;
     let mut tx = app.db.begin().await?;
     let user_id = admin_target(&mut tx, &name).await?;
+    not_self(&user_id, &actor)?;
     let snapshot = profile_snapshot(&mut tx, &user_id, None)
         .await
         .unwrap_or(json!({"field": null, "value": null}));
@@ -1568,6 +1583,7 @@ pub async fn admin_interim(
     let note = note(input.note.as_deref(), "note", true)?;
     let mut tx = app.db.begin().await?;
     let user_id = admin_target(&mut tx, &name).await?;
+    not_self(&user_id, &actor)?;
     let id = set_interim(&mut tx, &actor, &user_id, input.hours, &note).await?;
     tx.commit().await?;
     Ok(Json(json!({"interim_restriction_id": id})))
@@ -1591,6 +1607,7 @@ pub async fn admin_interim_lift(
     )?;
     let mut tx = app.db.begin().await?;
     let user_id = admin_target(&mut tx, &name).await?;
+    not_self(&user_id, &actor)?;
     let lifted = sqlx::query("UPDATE interim_restrictions SET resolution='LIFTED',resolved_at=now(),resolved_by=$2 WHERE user_id=$1 AND resolution='OPEN'").bind(&user_id).bind(&actor.id).execute(&mut *tx).await?;
     if lifted.rows_affected() == 0 {
         return Err(Fail::missing());
@@ -1623,6 +1640,7 @@ pub async fn admin_lift(
     let note = note(input.as_ref().and_then(|i| i.note.as_deref()), "note", true)?;
     let mut tx = app.db.begin().await?;
     let user_id = admin_target(&mut tx, &name).await?;
+    not_self(&user_id, &actor)?;
     sqlx::query("UPDATE strikes SET penalty_lifted_at=now() WHERE user_id=$1 AND status='ACTIVE' AND penalty<>'WARNING' AND penalty_lifted_at IS NULL").bind(&user_id).execute(&mut *tx).await?;
     sqlx::query("UPDATE interim_restrictions SET resolution='LIFTED',resolved_at=now(),resolved_by=$2 WHERE user_id=$1 AND resolution='OPEN'").bind(&user_id).bind(&actor.id).execute(&mut *tx).await?;
     recompute(&mut tx, &user_id).await?;
@@ -1691,9 +1709,14 @@ pub async fn decide(
     if status != "PENDING" {
         return Err(Fail::conflict("This appeal has already been decided."));
     }
+    if user_id == actor.id {
+        log("appeal_decided", "denied");
+        return Err(Fail::denied("Another moderator must review this appeal."));
+    }
     let mut self_review = false;
     if issuer == actor.id {
-        let other: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM staff_roles r JOIN users u ON u.id=r.user_id WHERE r.role='admin' AND u.mfa_enabled AND u.deleted_at IS NULL AND u.id<>$1)").bind(&actor.id).fetch_one(&mut *tx).await?;
+        // The appellant can't review, so they don't count as another reviewer.
+        let other: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM staff_roles r JOIN users u ON u.id=r.user_id WHERE r.role='admin' AND u.mfa_enabled AND u.deleted_at IS NULL AND u.id<>$1 AND u.id<>$2)").bind(&actor.id).bind(&user_id).fetch_one(&mut *tx).await?;
         if other {
             log("appeal_decided", "denied");
             return Err(Fail::denied("Another moderator must review this appeal."));

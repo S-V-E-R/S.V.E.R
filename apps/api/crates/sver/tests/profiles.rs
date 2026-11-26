@@ -17,6 +17,16 @@ use sqlx::postgres::PgPoolOptions;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use sver::{App, Config, media, profile_import, security as sec, studio};
 use tower::ServiceExt;
+#[path = "profiles/audit_channel.rs"]
+mod audit_channel;
+#[path = "profiles/audit_media.rs"]
+mod audit_media;
+#[path = "profiles/audit_safety.rs"]
+mod audit_safety;
+#[path = "profiles/audit_social.rs"]
+mod audit_social;
+#[path = "profiles/audit_wall.rs"]
+mod audit_wall;
 #[path = "profiles/emotes.rs"]
 mod emotes;
 #[path = "profiles/take_down.rs"]
@@ -341,19 +351,24 @@ async fn profiles_acceptance() {
             identity_and_channel(&env, &media_dir).await;
             bucket_redirects(&env).await;
             follows_council_and_blocks(&env).await;
+            audit_social::exercise(&env).await;
             song(&env).await;
             trailer(&env).await;
             wall(&env).await;
             persona_pass(&env).await;
+            audit_channel::exercise(&env).await;
             studio_sections(&env, &media_dir).await;
             parity_additions(&env, &media_dir).await;
             parts_picker(&env).await;
             renames(&env).await;
             safety(&env).await;
+            audit_safety::exercise(&env).await;
             erasure(&env).await;
             emotes::exercise(&env, &media_dir).await;
+            audit_wall::exercise(&env).await;
             legacy_import(&env, &media_dir).await;
             legacy_import_cli().await;
+            audit_media::exercise(&env, &media_dir).await;
         }
     })
     .await;
@@ -2058,7 +2073,7 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
     let ready = owner.ok("GET", "/api/me/readiness", Value::Null).await;
     assert_eq!(
         (ready["total"].as_i64(), ready["done"].as_i64()),
-        (Some(8), Some(0))
+        (Some(12), Some(1))
     );
     assert_eq!(ready["dismissed"], false);
     let keys: Vec<&str> = ready["steps"]
@@ -2070,7 +2085,18 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
     assert_eq!(
         keys,
         [
-            "avatar", "banner", "bio", "links", "song", "trailer", "council", "schedule"
+            "avatar",
+            "banner",
+            "bio",
+            "intro",
+            "currently",
+            "links",
+            "song",
+            "trailer",
+            "about_me",
+            "council",
+            "showcase",
+            "schedule"
         ]
     );
     let me = owner.ok("GET", "/api/me/profile", Value::Null).await;
@@ -2089,13 +2115,14 @@ async fn parity_additions(env: &Env, media_dir: &std::path::Path) {
         )
         .await;
     let ready = owner.ok("GET", "/api/me/readiness", Value::Null).await;
-    assert_eq!(ready["done"], 2);
+    assert_eq!(ready["done"], 3);
     assert!(
         ready["steps"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|s| s["done"] == (s["key"] == "bio" || s["key"] == "schedule"))
+            .all(|s| s["done"]
+                == (s["key"] == "bio" || s["key"] == "schedule" || s["key"] == "intro"))
     );
     owner
         .ok("PUT", "/api/me/readiness", json!({"dismissed": true}))

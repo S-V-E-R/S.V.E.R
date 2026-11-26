@@ -161,7 +161,21 @@ pub async fn exercise(e: &Env, media_dir: &std::path::Path) {
             .exists(),
         "an animated emote gets a first-frame still"
     );
-    assert!(outside_frames(&mut ws).await > 0, "chat is told");
+    // The socket reads the channel's rules before forwarding, which can open a fresh pooled
+    // connection (about 2 s where `localhost` tries IPv6 first), so the first frame gets longer.
+    let told = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(Ok(frame)) = ws.next().await {
+            let value: Value =
+                serde_json::from_str(frame.to_text().unwrap_or("null")).unwrap_or_default();
+            if value["type"] == "emotes" && value["outside"] == true {
+                return true;
+            }
+        }
+        false
+    })
+    .await;
+    assert!(matches!(told, Ok(true)), "chat is told");
+    outside_frames(&mut ws).await; // the rest of this sync's frames
     let (codes, list) = shown(e).await;
     assert_eq!(codes, ["Pog2", "catJAM"], "banned words are filtered");
     let url = list["emotes"][0]["image"]["28"].as_str().unwrap();

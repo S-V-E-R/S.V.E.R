@@ -1638,6 +1638,8 @@ pub async fn fan_art_settings(
     tx.commit().await?;
     Ok(Json(json!({"saved": true, "enabled": input.enabled})))
 }
+/// The queue cap counts only what the owner can see: submitters in deletion grace are left out.
+const PENDING_FAN_ART: &str = "SELECT count(*) FROM fan_art f JOIN channel_users c ON c.id=f.submitter_id WHERE f.channel_id=$1 AND f.status='PENDING' AND c.deleted_at IS NULL";
 /// POST /api/channels/{username}/fan-art: multipart submission (PENDING until the owner approves).
 pub async fn submit_fan_art(
     State(app): State<App>,
@@ -1706,12 +1708,10 @@ pub async fn submit_fan_art(
     let caption = text::plain(&field("caption"), "caption", 0, 200, 2, true)?;
     {
         let mut db = app.db.acquire().await?;
-        let pending: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM fan_art WHERE channel_id=$1 AND status='PENDING'",
-        )
-        .bind(&channel.id)
-        .fetch_one(&mut *db)
-        .await?;
+        let pending: i64 = sqlx::query_scalar(PENDING_FAN_ART)
+            .bind(&channel.id)
+            .fetch_one(&mut *db)
+            .await?;
         if pending >= 20 {
             return Err(Fail::conflict("This channel's fan art queue is full."));
         }
@@ -1727,11 +1727,10 @@ pub async fn submit_fan_art(
         .bind(&channel.id)
         .execute(&mut *tx)
         .await?;
-    let pending: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM fan_art WHERE channel_id=$1 AND status='PENDING'")
-            .bind(&channel.id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let pending: i64 = sqlx::query_scalar(PENDING_FAN_ART)
+        .bind(&channel.id)
+        .fetch_one(&mut *tx)
+        .await?;
     if pending >= 20 {
         return Err(Fail::conflict("This channel's fan art queue is full."));
     }
@@ -1839,7 +1838,7 @@ pub async fn my_fan_art(State(app): State<App>, jar: CookieJar) -> Res<Json<Valu
     .await?;
     // Only chip_sql with a literal alias is interpolated; request values are bound.
     let rows: Vec<(String, String, String, Option<String>, String, DateTime<Utc>, Value)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT f.id,f.image_key,f.artist_name,f.artist_link,f.caption,f.submitted_at,{chip} FROM fan_art f JOIN channel_users c ON c.id=f.submitter_id WHERE f.channel_id=$1 AND f.status='PENDING' ORDER BY f.submitted_at,f.id LIMIT 20",
+        "SELECT f.id,f.image_key,f.artist_name,f.artist_link,f.caption,f.submitted_at,{chip} FROM fan_art f JOIN channel_users c ON c.id=f.submitter_id WHERE f.channel_id=$1 AND f.status='PENDING' AND c.deleted_at IS NULL ORDER BY f.submitted_at,f.id LIMIT 20",
         chip = chip_sql("c")
     )))
     .bind(&user.id)
@@ -1997,13 +1996,15 @@ pub async fn save_header(
 
 // ---------------------------------------------------------------- Page readiness (P3)
 
-/// GET /api/me/readiness: the owner's 8 page steps, computed on the server.
+/// GET /api/me/readiness: the owner's 12 page steps, computed on the server.
 pub async fn my_readiness(State(app): State<App>, jar: CookieJar) -> Res<Json<Value>> {
     let user = signed_in(&app, &jar).await?;
     let mut db = app.db.acquire().await?;
-    let (avatar, banner, bio, links, song, trailer, council, schedule, dismissed): (bool, bool, bool, bool, bool, bool, bool, bool, Option<DateTime<Utc>>) = sqlx::query_as(
+    let (avatar, banner, bio, intro, currently, links, song, trailer, about_me, council, schedule, dismissed): (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, Option<DateTime<Utc>>) = sqlx::query_as(
         "SELECT coalesce(p.avatar_key IS NOT NULL,false),coalesce(p.banner_key IS NOT NULL,false),coalesce(p.bio<>'',false),\
+         coalesce(p.intro_body<>'',false),coalesce(p.currently_verb<>'',false),\
          EXISTS(SELECT 1 FROM social_links WHERE user_id=$1),coalesce(p.song_provider IS NOT NULL,false),coalesce(p.trailer_provider IS NOT NULL,false),\
+         EXISTS(SELECT 1 FROM profile_blocks WHERE user_id=$1 AND enabled),\
          EXISTS(SELECT 1 FROM war_council WHERE user_id=$1),\
          EXISTS(SELECT 1 FROM schedule_blocks WHERE user_id=$1) OR EXISTS(SELECT 1 FROM schedule_events WHERE user_id=$1 AND end_at>now()),\
          p.readiness_dismissed_at FROM (SELECT $1::text AS id) u LEFT JOIN profiles p ON p.user_id=u.id",
@@ -2011,12 +2012,32 @@ pub async fn my_readiness(State(app): State<App>, jar: CookieJar) -> Res<Json<Va
     .bind(&user.id)
     .fetch_one(&mut *db)
     .await?;
+    let showcase = !crate::achievements::showcase(&mut db, &user.id)
+        .await?
+        .is_empty();
     let steps = [
         ("avatar", "Upload an avatar", avatar, "/settings/profile"),
         ("banner", "Upload a banner", banner, "/settings/profile"),
         ("bio", "Write a bio", bio, "/settings/profile"),
+        (
+            "intro",
+            "Write an intro for Home",
+            intro,
+            "/settings/profile#words",
+        ),
+        (
+            "currently",
+            "Say what you're up to (Currently)",
+            currently,
+            "/settings/profile#words",
+        ),
         ("links", "Add a social link", links, "/settings/profile"),
-        ("song", "Set a profile song", song, "/studio/channel/song"),
+        (
+            "song",
+            "Set a profile song",
+            song,
+            "/settings/profile#sound",
+        ),
         (
             "trailer",
             "Add a channel trailer",
@@ -2024,10 +2045,22 @@ pub async fn my_readiness(State(app): State<App>, jar: CookieJar) -> Res<Json<Va
             "/settings/profile#sound",
         ),
         (
+            "about_me",
+            "Add About me blocks",
+            about_me,
+            "/studio/channel/blocks",
+        ),
+        (
             "council",
             "Pick your War Council",
             council,
             "/studio/channel/war-council",
+        ),
+        (
+            "showcase",
+            "Showcase achievements",
+            showcase,
+            "/settings/profile#look",
         ),
         (
             "schedule",

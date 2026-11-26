@@ -16,9 +16,10 @@ use std::str::FromStr;
 
 pub const NOT_AVAILABLE: &str = "That username isn't available.";
 
-/// True when an active rename or erasure hold covers this name (case-insensitive).
+/// True when an active rename or erasure hold covers this name (case-insensitive). `except_user`'s
+/// own redirect holds don't count; its unredirected ones (from a staff reset) still do.
 pub async fn held(db: &mut PgConnection, name: &str, except_user: Option<&str>) -> Res<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM username_holds WHERE handle_canonical=lower($1) AND released_at>now() AND (user_id IS NULL OR $2::text IS NULL OR user_id<>$2))")
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM username_holds WHERE handle_canonical=lower($1) AND released_at>now() AND (user_id IS NULL OR $2::text IS NULL OR user_id<>$2 OR NOT redirect))")
         .bind(name)
         .bind(except_user)
         .fetch_one(&mut *db)
@@ -74,6 +75,7 @@ pub async fn rename(
     })?;
     let (mut tx, user, _) = auth::sensitive(&app, &jar, &input.code).await?;
     // The session query above holds the user-row lock for the rest of this transaction.
+    crate::profiles::ensure_unrestricted(&mut tx, &user.id).await?;
     if new == user.username {
         return Err(Fail::field("username", "That's already your username."));
     }

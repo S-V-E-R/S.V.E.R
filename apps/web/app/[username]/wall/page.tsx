@@ -10,10 +10,14 @@ export async function generateMetadata({ params }: { params: ChannelParams }) {
   return channelMetadata((await params).username, "Wall");
 }
 export default async function WallTab({ params, searchParams }: { params: ChannelParams; searchParams: Promise<{ cursor?: string }> }) {
-  const data = await loadChannel((await params).username);
-  const name = data.channel.username;
+  const { username } = await params;
   const cursor = (await searchParams).cursor;
-  const page = (await apiGet<Page>(`/api/channels/${encodeURIComponent(name)}/wall${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`)).data;
+  // The wall read runs alongside the channel read; loadChannel redirects unless the name is canonical.
+  const [data, page] = await Promise.all([
+    loadChannel(username),
+    apiGet<Page>(`/api/channels/${encodeURIComponent(username)}/wall${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`).then(r => r.data),
+  ]);
+  const name = data.channel.username;
   return <ChannelFrame data={data} path={`/${name}/wall`}>
     <section className="section">
       <h2>Wall</h2>

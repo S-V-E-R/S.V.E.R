@@ -3,7 +3,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useState } from "react";
 import { Avatar } from "../../../components/Avatar";
 import { Section, Status, type SaveState } from "../../../components/Form";
-import { send, useLoad } from "../../../lib/client-api";
+import { send, useHashScroll, useLoad } from "../../../lib/client-api";
 import { linkUrl, platformNames, type Link as SocialLink, type Sizes } from "../../../lib/types";
 import { PersonaPreview } from "../../../components/persona/PersonaPreview";
 import { CosmeticsEditor } from "../../../components/persona/CosmeticsEditor";
@@ -40,6 +40,7 @@ const PARTS: [string, string][] = [["look", "Look"], ["words", "Words"], ["sound
  */
 export default function ProfileSettings() {
   const { me, error, refresh, version, bump } = useMe();
+  useHashScroll(me !== null);
   if (!me) return <p className="loading">{error || "Loading…"}</p>;
   return <div className="persona-editor">
     <div className="persona-main">

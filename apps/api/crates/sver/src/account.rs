@@ -242,7 +242,9 @@ const EXCLUDED_TABLES: [&str; 19] = [
 ];
 /// Column names never exported (secrets, keys, network data, and staff's internal notes and who
 /// acted: a strike or ban is exported with its reason and message, not `staff_note` or `issued_by`).
-const SECRET_COLUMNS: &str = "(hash|secret|token|sealed|password|mfa|seed|fingerprint|payload|endpoint|network|subscriptions|staff_note|review_note|reviewer|_by$|_key$|^key$|^ip$|^ip_|_ip$)";
+/// A reporter never learns which action staff took (`closed_reason`), and a strike leaves out what
+/// the standing page hides (docs/PROFILES.md "Reporter feedback" and "Strikes").
+const SECRET_COLUMNS: &str = "(hash|secret|token|sealed|password|mfa|seed|fingerprint|payload|endpoint|network|subscriptions|staff_note|review_note|reviewer|_by$|_key$|^key$|^ip$|^ip_|_ip$|closed_reason|report_ids|removed_refs|interim_restriction_id|ban_review_open|self_review)";
 
 /// GET /api/auth/export: a JSON file of the account and every row keyed to it, with a short readme
 /// (a sign-in confirmed in the last five minutes; three a day). Sign-in history comes from

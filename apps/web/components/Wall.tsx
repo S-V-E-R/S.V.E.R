@@ -74,12 +74,21 @@ export function WallPost({ post, viewer, wallOwner }: { post: Post; viewer: Wall
     const result = await send<{ liked: boolean; like_count: number }>(liked ? "DELETE" : "PUT", `/api/wall/posts/${post.id}/like`);
     if (result.ok) { setLiked(result.data.liked); setLikes(result.data.like_count); } else setNotice(result.error);
   }
-  async function more() {
-    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  /** Next page of replies, appending only ones not already shown. */
+  async function more(from = cursor) {
+    const query = from ? `?cursor=${encodeURIComponent(from)}` : "";
     const result = await send<{ items: Reply[]; next_cursor: string | null }>("GET", `/api/wall/posts/${post.id}/replies${query}`);
-    if (!result.ok) return;
-    setReplies(cursor ? [...replies, ...result.data.items] : result.data.items);
+    if (!result.ok) return null;
+    setReplies(rs => [...rs, ...result.data.items.filter(i => !rs.some(r => r.id === i.id))]);
     setCursor(result.data.next_cursor);
+    return result.data.next_cursor;
+  }
+  /** After posting: when every page was already shown, walk them again so the new reply (last) appears.
+   * Otherwise it sits on a later page that "Show more replies" will reach. */
+  async function afterReply() {
+    if (cursor !== null) return;
+    let next = await more(null);
+    while (next) next = await more(next);
   }
   async function remove() {
     if (!window.confirm("Delete this post and its replies?")) return;
@@ -112,9 +121,9 @@ export function WallPost({ post, viewer, wallOwner }: { post: Post; viewer: Wall
       {post.can_pin && <button type="button" className="link-button" onClick={pin}>{post.pinned_position ? "Unpin" : "Pin"}</button>}
     </div>
     {notice && <p role="alert" className="form-message">{notice}</p>}
-    {replies.length > 0 && <ul className="replies">{replies.map(r => <ReplyItem key={r.id} reply={r} onChange={() => router.refresh()} />)}</ul>}
-    {cursor !== null && post.reply_count > replies.length && <button type="button" className="link-button" onClick={more}>Show more replies</button>}
-    {replying && <Composer path={`/api/wall/posts/${post.id}/replies`} limit={300} placeholder="Write a reply" onSaved={(_, label) => { setReplying(false); setNotice(label || ""); router.refresh(); }} />}
+    {replies.length > 0 && <ul className="replies">{replies.map(r => <ReplyItem key={r.id} reply={r} onChange={() => { setReplies(rs => rs.filter(x => x.id !== r.id)); router.refresh(); }} />)}</ul>}
+    {cursor !== null && post.reply_count > replies.length && <button type="button" className="link-button" onClick={() => more()}>Show more replies</button>}
+    {replying && <Composer path={`/api/wall/posts/${post.id}/replies`} limit={300} placeholder="Write a reply" onSaved={(_, label) => { setReplying(false); setNotice(label || ""); afterReply(); router.refresh(); }} />}
   </article>;
 }
 
