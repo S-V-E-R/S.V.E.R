@@ -367,9 +367,9 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
     let mut own = Own::default();
     // Per chat topic's channel: its owner, moderators and staff still see who blocks them.
     let mut blocks: HashMap<String, crate::chat::Hidden> = HashMap::new();
-    // ponytail: one indexed query per socket every 5 s (two with notifications), so a removed
-    // grant stops events within 5 s; publish revocations and notifications on the hub if many
-    // sockets connect.
+    // ponytail: one indexed query per socket every 5 s (two with notifications, plus two per chat
+    // topic), so a removed grant stops events within 5 s; publish revocations and notifications on
+    // the hub (or batch the chat recheck by channel) if many sockets connect.
     let mut poll = tokio::time::interval(std::time::Duration::from_secs(5));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // At most 10 method calls a second, as on the integration gateway.
@@ -394,8 +394,19 @@ async fn session(app: App, client: String, user: Option<Person>, _slot: Slot, mu
                         Err(_) => return,
                     }
                 }
+                // Chat topics pass the subscribe gate again, as the browser chat rechecks: a chat
+                // labeled mature (for an under-18 person), a restricted or deleted channel, or a
+                // name that now leads elsewhere is dropped.
+                for (channel, topic) in &chats {
+                    match chat_channel(&app, topic, user.as_ref()).await {
+                        Ok(Some(id)) if id == *channel => {}
+                        Ok(_) => lost.push(topic.clone()),
+                        Err(_) => return,
+                    }
+                }
                 if !lost.is_empty() {
                     topics.retain(|t| !lost.contains(t));
+                    chats.retain(|_, t| !lost.contains(t));
                     if !reply(&mut ws, json!({"type": "revoked", "topics": lost})).await { return; }
                 }
                 let Some((user, topic, since)) = own.notifications.clone() else { continue; };

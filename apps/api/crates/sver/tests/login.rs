@@ -411,6 +411,38 @@ fn identity(mock: &Mock, code: &str, subject: &str, email: &str, verified: bool)
     mock.profiles.lock().unwrap().insert(code.into(),json!({"id":subject,"sub":subject,"email":email,"verified":verified,"email_verified":verified}));
 }
 
+/// Production refuses to start without TRUSTED_PROXY_IP: behind the same-host proxy every client
+/// would otherwise share one per-IP rate-limit bucket.
+#[test]
+fn production_requires_trusted_proxy() {
+    let run = |proxy: Option<&str>| {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_sver"));
+        cmd.env_clear()
+            .env("APP_ENV", "production")
+            .env("APP_ORIGIN", "https://example.test")
+            .env("ENCRYPTION_KEY", format!("{}=", "A".repeat(43)))
+            .env("TURNSTILE_SITE_KEY", "synthetic-site-key")
+            .env("TURNSTILE_SECRET", "synthetic-secret")
+            .env("RESEND_API_KEY", "re_synthetic")
+            .env("MAIL_FROM", "mail@example.test");
+        if let Some(root) = std::env::var_os("SYSTEMROOT") {
+            cmd.env("SYSTEMROOT", root);
+        }
+        if let Some(proxy) = proxy {
+            cmd.env("TRUSTED_PROXY_IP", proxy);
+        }
+        let out = cmd.output().unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+    let (ok, stderr) = run(None);
+    assert!(!ok && stderr.contains("TRUSTED_PROXY_IP"), "{stderr}");
+    let (_, stderr) = run(Some("127.0.0.1"));
+    assert!(!stderr.contains("TRUSTED_PROXY_IP"), "{stderr}");
+}
+
 #[tokio::test]
 async fn login_lifecycle_and_security_boundaries() {
     let database_url = std::env::var("DATABASE_URL")
@@ -672,6 +704,45 @@ async fn exercise_mail(mut app: App, mock: Mock) {
         .await
         .unwrap();
     assert_eq!(remaining, 0);
+    // Notices the provider keeps refusing (anonymous receipts retry for 7 days) must not hold up a
+    // fresh reset link: a pass takes at most 20 rows, and untried mail goes first.
+    let mut tx = app.db.begin().await.unwrap();
+    for i in 0..20 {
+        sver::jobs::queue_address(
+            &app,
+            &mut tx,
+            None,
+            &format!("x{i}@[127.0.0.1]"),
+            "Copyright notice received",
+            "receipt",
+        )
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE mail_jobs SET attempts=3,available_at=now()-interval '1 minute'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sver::jobs::queue_email(&app, &mut tx, &user, "reset")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    *mock.mail_fails.lock().unwrap() = true;
+    sver::jobs::tick(&app).await.unwrap();
+    let reset_attempts: i32 =
+        sqlx::query_scalar("SELECT attempts FROM mail_jobs WHERE NOT retry_until_expiry")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        reset_attempts, 1,
+        "a fresh reset email is tried before notices that keep failing"
+    );
+    sqlx::query("DELETE FROM mail_jobs")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    *mock.mail_fails.lock().unwrap() = false;
     println!(
         "Passed: mail encryption, disabled delivery, retry scheduling, idempotency, success cleanup, retry caps and expiry."
     );
@@ -1343,6 +1414,35 @@ async fn exercise(app: App, mock: Mock) {
             browser
                 .ok("POST", "/api/auth/email/verify", json!({"token":token}))
                 .await;
+            // Clicking the verify link proves who owns the address, not that they added this
+            // provider: the owner's later reset still removes a provider attached before then.
+            browser
+                .ok(
+                    "POST",
+                    "/api/auth/password/forgot",
+                    json!({"email":email,"turnstile_token":"recovery-ok"}),
+                )
+                .await;
+            let reset = mail_token(&app, &email, "reset").await;
+            browser
+                .ok(
+                    "POST",
+                    "/api/auth/password/reset",
+                    json!({"token":reset,"password":"Synthetic-only:owner recovery 5520!"}),
+                )
+                .await;
+            let kept: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM identities WHERE provider=$1 AND subject=$2)",
+            )
+            .bind(*p)
+            .bind(&subject)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+            assert!(
+                !kept,
+                "{p}: a provider attached while unverified survived verify-then-reset"
+            );
         }
     }
     assert!(

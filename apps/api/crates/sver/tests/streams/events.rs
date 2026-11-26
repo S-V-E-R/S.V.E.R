@@ -219,6 +219,33 @@ pub async fn exercise(e: &Env) {
         next_json(&mut late).await["data"]["message"]["body"],
         "blocked you anyway"
     );
+    // A chat labeled mature while an under-18 person follows it over the socket is dropped at the
+    // next 5-second recheck, as the browser chat closes with 4003.
+    e.sql("UPDATE users SET date_of_birth=current_date-interval '15 years' WHERE id='ev-mod'")
+        .await;
+    e.sql("UPDATE stream_settings SET mature=true WHERE owner_id='stream-owner'")
+        .await;
+    let dropped = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        while let Some(Ok(message)) = futures_util::StreamExt::next(&mut moderating).await {
+            if let tungstenite::Message::Text(text) = message {
+                let m: Value = serde_json::from_str(&text).unwrap();
+                if m["type"] == "revoked" {
+                    return m["topics"].clone();
+                }
+            }
+        }
+        Value::Null
+    })
+    .await;
+    assert_eq!(
+        dropped,
+        Ok(json!(["chat:streamer"])),
+        "a minor's chat topic is dropped once the channel is labeled mature"
+    );
+    e.sql("UPDATE stream_settings SET mature=false WHERE owner_id='stream-owner'")
+        .await;
+    e.sql("UPDATE users SET date_of_birth='1990-01-01' WHERE id='ev-mod'")
+        .await;
     drop(moderating);
     // A moderator's private feeds last only while they're in good standing: a restricted (banned)
     // moderator's token is refused the channel's private topics.

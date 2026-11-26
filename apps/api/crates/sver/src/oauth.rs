@@ -453,12 +453,13 @@ async fn complete(
         if state.intent == "link" {
             auth::recent(&session)?;
             sqlx::query(
-                "INSERT INTO identities(provider,subject,user_id,handle) VALUES($1,$2,$3,$4)",
+                "INSERT INTO identities(provider,subject,user_id,handle,attached_unverified) VALUES($1,$2,$3,$4,$5)",
             )
             .bind(name)
             .bind(identity.subject)
             .bind(user.id)
             .bind(&handle)
+            .bind(!user.email_verified)
             .execute(&mut *tx)
             .await?;
         } else {
@@ -688,11 +689,12 @@ pub async fn finish_signup(
     )
     .await?;
     auth::attach_referral(&mut tx, &user.id, &input.referrer).await?;
-    sqlx::query("INSERT INTO identities(provider,subject,user_id,handle) VALUES($1,$2,$3,$4)")
+    sqlx::query("INSERT INTO identities(provider,subject,user_id,handle,attached_unverified) VALUES($1,$2,$3,$4,$5)")
         .bind(&pending.provider)
         .bind(identity.subject)
         .bind(&user.id)
         .bind(&identity.handle)
+        .bind(!user.email_verified)
         .execute(&mut *tx)
         .await?;
     if !user.email_verified {

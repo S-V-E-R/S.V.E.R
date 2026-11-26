@@ -403,7 +403,9 @@ async fn upload(app: &App, job: &Job) -> Res<()> {
         at = end + 1;
     }
     file.flush().await.map_err(|_| Fail::internal())?;
-    let probe = tokio::time::timeout(
+    // A probe or remux that outlives its limit would time out again on every retry (a crafted
+    // file), so it fails the clip instead of requeueing forever on the shared media lane.
+    let Ok(probe) = tokio::time::timeout(
         Duration::from_secs(60),
         Command::new("ffprobe")
             .args([
@@ -421,8 +423,10 @@ async fn upload(app: &App, job: &Job) -> Res<()> {
             .output(),
     )
     .await
-    .map_err(|_| Fail::unavailable("Clip processing will retry."))?
-    .map_err(|_| Fail::unavailable("Media processing is unavailable."))?;
+    else {
+        return refuse(app, job, source, "That file isn't an MP4 clip we can read.").await;
+    };
+    let probe = probe.map_err(|_| Fail::unavailable("Media processing is unavailable."))?;
     let checked = serde_json::from_slice(&probe.stdout)
         .ok()
         .filter(|_| probe.status.success())
@@ -432,7 +436,9 @@ async fn upload(app: &App, job: &Job) -> Res<()> {
         Ok(duration) => duration,
         Err(reason) => return refuse(app, job, source, reason).await,
     };
-    let remux = tokio::time::timeout(
+    // A copy remux is about the upload's size; -fs caps a crafted file that repeats its samples.
+    let cap = 2 * super::upload::MAX_UPLOAD_BYTES;
+    let Ok(remux) = tokio::time::timeout(
         Duration::from_secs(300),
         Command::new("ffmpeg")
             .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i"])
@@ -450,6 +456,8 @@ async fn upload(app: &App, job: &Job) -> Res<()> {
                 "-1",
                 "-movflags",
                 "+faststart",
+                "-fs",
+                &cap.to_string(),
                 "-f",
                 "mp4",
             ])
@@ -461,9 +469,18 @@ async fn upload(app: &App, job: &Job) -> Res<()> {
             .status(),
     )
     .await
-    .map_err(|_| Fail::unavailable("Clip processing will retry."))?
-    .map_err(|_| Fail::unavailable("Media processing is unavailable."))?;
-    if !remux.success() {
+    else {
+        return refuse(
+            app,
+            job,
+            source,
+            "That clip couldn't be processed. Export it again.",
+        )
+        .await;
+    };
+    let remux = remux.map_err(|_| Fail::unavailable("Media processing is unavailable."))?;
+    // -fs stops writing and still exits 0, so an output that reached the cap is refused too.
+    if !remux.success() || std::fs::metadata(&output).map_or(true, |m| m.len() >= cap) {
         return refuse(
             app,
             job,

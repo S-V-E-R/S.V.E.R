@@ -365,6 +365,38 @@ pub async fn exercise(e: &Env) {
     let (_, card) = guest(e, "GET", "/api/users/streamer/card", Value::Null).await;
     assert_eq!(card["live"], false);
     media_gate(e).await;
+    delivery_audience(e).await;
+}
+
+/// Only checked viewers count toward the WebRTC limit: scripted guest beats can't push a stream to
+/// the CDN.
+async fn delivery_audience(e: &Env) {
+    e.sql("INSERT INTO broadcasts(id,owner_id,public_id,generation,state,server_id,service_id,client_id,started_at,publisher_started_at,startup_deadline) VALUES('play-crowd','stream-owner','pub-crowd',1,'LIVE','s','v','c',now(),now(),now())").await;
+    e.sql("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,net_hash,turnstile_ok) SELECT 'play-crowd','b:bot'||g,now()+interval '30 seconds','net-a',false FROM generate_series(1,20) g UNION ALL SELECT 'play-crowd','b:ok'||g,now()+interval '30 seconds','net-b',true FROM generate_series(1,12) g").await;
+    let mut config = (*e.app.config).clone();
+    config.playback.webrtc_per_broadcast = Some(12);
+    let mut app = e.app.clone();
+    app.config = std::sync::Arc::new(config);
+    let over = || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT delivery_over_since IS NOT NULL FROM broadcasts WHERE id='play-crowd'",
+        )
+        .fetch_one(&e.app.db)
+        .await
+        .unwrap()
+    };
+    sver::playback::tick(&app).await.unwrap();
+    assert!(
+        !over().await,
+        "unchecked guest leases can't push a stream toward the CDN"
+    );
+    e.sql("INSERT INTO playback_leases(broadcast_id,viewer_key,expires_at,net_hash,turnstile_ok) VALUES('play-crowd','b:ok13',now()+interval '30 seconds','net-b',true)").await;
+    sver::playback::tick(&app).await.unwrap();
+    assert!(
+        over().await,
+        "thirteen checked viewers are over a limit of twelve"
+    );
+    e.sql("DELETE FROM broadcasts WHERE id='play-crowd'").await;
 }
 
 async fn authorize(e: &Env, uri: &str, peer: &str, secret: &str) -> StatusCode {

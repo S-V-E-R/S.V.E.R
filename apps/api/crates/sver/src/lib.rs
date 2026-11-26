@@ -213,6 +213,13 @@ impl Config {
                     .map_err(|_| "Invalid TRUSTED_PROXY_IP")?,
             )
         };
+        // Production always sits behind a same-host proxy; without this every client would share
+        // one per-IP rate-limit bucket (the proxy's address).
+        if production && trusted_proxy.is_none() {
+            return Err(
+                "Production requires TRUSTED_PROXY_IP (the reverse proxy's address)".into(),
+            );
+        }
         let media = media::MediaConfig::from_env(production, &origin)?;
         Ok(Self {
             origin,
