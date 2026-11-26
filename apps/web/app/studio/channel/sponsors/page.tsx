@@ -11,9 +11,9 @@ export default function SponsorsStudio() {
   const [categories, setCategories] = useState<string[]>([]);
   const [revision, setRevision] = useState<number>();
   const [state, setState] = useState<SaveState>({});
-  const load = useCallback(async () => { const r = await send<{ items: Sponsor[]; categories: string[]; revision: number }>("GET", "/api/me/sponsors"); if (r.ok) { setItems(r.data.items); setCategories(r.data.categories); setRevision(r.data.revision); } }, []);
+  const load = useCallback(async () => { const r = await send<{ items: Sponsor[]; categories: string[]; revision: number }>("GET", "/api/me/sponsors"); if (r.ok) { setItems(r.data.items); setCategories(r.data.categories); setRevision(r.data.revision); } else setState(r); }, []);
   useLoad(load);
-  if (!items) return <p className="loading">Loading…</p>;
+  if (!items) return state.error ? <><Status state={state} /><button type="button" className="small quiet" onClick={() => { setState({}); load(); }}>Try again</button></> : <p className="loading">Loading…</p>;
   const set = (i: number, p: Partial<Sponsor>) => setItems(items.map((s, j) => j === i ? { ...s, ...p } : s));
   async function save() {
     const result = await send("PUT", "/api/me/sponsors", { items: items!.map(({ logo: _logo, ...s }) => s), revision });
@@ -23,9 +23,10 @@ export default function SponsorsStudio() {
   async function logo(id: string, file: File | undefined) {
     if (!file) return;
     const form = new FormData(); form.append("file", file);
-    const result = await send("POST", `/api/me/sponsors/${id}/logo`, form);
+    const result = await send<{ logo: string }>("POST", `/api/me/sponsors/${id}/logo`, form);
     setState(result.ok ? { saved: "Logo uploaded." } : result);
-    if (result.ok) load();
+    // Patch only this row: a full reload would throw away unsaved edits to the other sponsors.
+    if (result.ok) setItems(xs => xs!.map(s => s.id === id ? { ...s, logo: result.data.logo } : s));
   }
   return <><h1>Sponsors</h1>
     <Section title="Sponsors" intro="Up to 10 sponsors, shown on your About tab in this order. Save a new sponsor before adding its logo (up to 2 MB).">
@@ -38,7 +39,7 @@ export default function SponsorsStudio() {
           <label className="field narrow"><span>Discount code</span><input value={s.discount_code} maxLength={50} onChange={e => set(i, { discount_code: e.target.value })} /></label></div>
         <label className="checkbox"><input type="checkbox" checked={s.active} onChange={e => set(i, { active: e.target.checked })} /> Show on my channel</label>
         <div className="row">{s.id && <label className="button small quiet">{s.logo ? "Replace logo" : "Add logo"}<input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={e => logo(s.id!, e.target.files?.[0])} /></label>}
-          {s.id && s.logo && <button type="button" className="small quiet" onClick={async () => { await send("DELETE", `/api/me/sponsors/${s.id}/logo`); load(); }}>Remove logo</button>}
+          {s.id && s.logo && <button type="button" className="small quiet" onClick={async () => { const r = await send("DELETE", `/api/me/sponsors/${s.id}/logo`); setState(r.ok ? { saved: "Logo removed." } : r); if (r.ok) setItems(xs => xs!.map(x => x.id === s.id ? { ...x, logo: null } : x)); }}>Remove logo</button>}
           <button type="button" className="small quiet" disabled={i === 0} onClick={() => { const n = [...items]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; setItems(n); }}>Move up</button>
           <button type="button" className="small quiet" onClick={() => setItems(items.filter((_, j) => j !== i))}>Remove</button></div>
       </fieldset>)}

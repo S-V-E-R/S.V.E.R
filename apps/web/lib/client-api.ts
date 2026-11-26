@@ -63,3 +63,23 @@ export function useSignInElsewhere(active: boolean, to?: string) {
 export function useLoad(load: () => Promise<unknown>) {
   useEffect(() => { void load(); }, [load]);
 }
+
+/** Deep links (#sound, #war-council…) on pages whose sections render after a fetch: once `ready`,
+ *  keep the target in view while the sections above it finish loading and grow, for up to 3 s or
+ *  until the user scrolls themselves. */
+export function useHashScroll(ready: boolean) {
+  useEffect(() => {
+    const target = ready && location.hash ? document.getElementById(location.hash.slice(1)) : null;
+    if (!target) return;
+    const align = () => target.scrollIntoView();
+    align();
+    const observer = new ResizeObserver(align);
+    observer.observe(document.body);
+    const stop = () => observer.disconnect();
+    const timer = setTimeout(stop, 3000);
+    window.addEventListener("wheel", stop, { once: true });
+    window.addEventListener("touchmove", stop, { once: true });
+    window.addEventListener("keydown", stop, { once: true });
+    return () => { stop(); clearTimeout(timer); window.removeEventListener("wheel", stop); window.removeEventListener("touchmove", stop); window.removeEventListener("keydown", stop); };
+  }, [ready]);
+}

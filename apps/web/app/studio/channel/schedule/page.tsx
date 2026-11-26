@@ -18,17 +18,19 @@ export default function ScheduleStudio() {
   const [state, setState] = useState<SaveState>({});
   const load = useCallback(async () => {
     const r = await send<{ timezone: string | null; blocks: Block[]; events: Event[]; revision: number }>("GET", "/api/me/schedule");
-    if (!r.ok) return;
+    if (!r.ok) { setState(r); return; }
     setZone(r.data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
     setBlocks(r.data.blocks); setEvents(r.data.events.map(e => ({ ...e, start_at: local(e.start_at), end_at: local(e.end_at) }))); setRevision(r.data.revision); setReady(true);
   }, []);
   useLoad(load);
   async function save() {
+    // A cleared or half-typed date input reads "", which new Date() can't turn into a time.
+    if (events.some(e => isNaN(Date.parse(e.start_at)) || isNaN(Date.parse(e.end_at)))) return setState({ error: "Give each event a start and end time." });
     const result = await send("PUT", "/api/me/schedule", { timezone: zone, blocks, events: events.map(e => ({ title: e.title, start_at: new Date(e.start_at).toISOString(), end_at: new Date(e.end_at).toISOString() })), revision });
     setState(result.ok ? { saved: "Schedule saved." } : result);
     if (result.ok) load();
   }
-  if (!ready) return <p className="loading">Loading…</p>;
+  if (!ready) return state.error ? <><Status state={state} /><button type="button" className="small quiet" onClick={() => { setState({}); load(); }}>Try again</button></> : <p className="loading">Loading…</p>;
   const setBlock = (i: number, p: Partial<Block>) => setBlocks(blocks.map((b, j) => j === i ? { ...b, ...p } : b));
   const setEvent = (i: number, p: Partial<Event>) => setEvents(events.map((e, j) => j === i ? { ...e, ...p } : e));
   return <><h1>Schedule</h1>

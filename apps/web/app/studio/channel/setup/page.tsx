@@ -20,10 +20,10 @@ export default function SetupStudio() {
   const [photoState, setPhotoState] = useState<SaveState>({});
   const load = useCallback(async () => {
     const r = await send<Setup>("GET", "/api/me/setup");
-    if (r.ok) { setData(r.data); setItems(r.data.items); setTitle(r.data.title); setDescription(r.data.description); setPhotos(r.data.photos); }
+    if (r.ok) { setData(r.data); setItems(r.data.items); setTitle(r.data.title); setDescription(r.data.description); setPhotos(r.data.photos); } else setState(r);
   }, []);
   useLoad(load);
-  if (!data) return <p className="loading">Loading…</p>;
+  if (!data) return state.error ? <><Status state={state} /><button type="button" className="small quiet" onClick={() => { setState({}); load(); }}>Try again</button></> : <p className="loading">Loading…</p>;
   const set = (i: number, p: Partial<Item>) => setItems(items.map((s, j) => j === i ? { ...s, ...p } : s));
   // Items stay grouped by category (picker order, then "Other"); owner order within a category.
   const order = [...data.categories, "OTHER"];
@@ -48,7 +48,10 @@ export default function SetupStudio() {
   async function savePhotos(next: Photo[]) {
     const r = await send("PUT", "/api/me/setup/photos", { photos: next.map(p => ({ id: p.id, alt: p.alt })) });
     setPhotoState(r.ok ? { saved: "Photos saved." } : r);
-    if (r.ok) setPhotos(next); else load();
+    if (r.ok) return setPhotos(next);
+    // Resync only the photos; a full reload would throw away unsaved gear, title and description edits.
+    const fresh = await send<Setup>("GET", "/api/me/setup");
+    if (fresh.ok) setPhotos(fresh.data.photos);
   }
   async function remove(id: string) {
     const r = await send("DELETE", `/api/me/setup/photos/${encodeURIComponent(id)}`);

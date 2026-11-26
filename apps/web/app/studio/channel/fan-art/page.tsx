@@ -9,11 +9,11 @@ type Pending = { id: string; image: Record<string, string>; artist_name: string;
 export default function FanArtStudio() {
   const [data, setData] = useState<{ enabled: boolean; pending: Pending[]; approved_count: number } | null>(null);
   const [state, setState] = useState<SaveState>({});
-  const load = useCallback(async () => { const r = await send<NonNullable<typeof data>>("GET", "/api/me/fan-art"); if (r.ok) setData(r.data); }, []);
+  const load = useCallback(async () => { const r = await send<NonNullable<typeof data>>("GET", "/api/me/fan-art"); if (r.ok) setData(r.data); else setState(r); }, []);
   useLoad(load);
   async function toggle(enabled: boolean) { const r = await send("PUT", "/api/me/fan-art/settings", { enabled }); setState(r.ok ? { saved: enabled ? "Fan art is on." : "Fan art is off." } : r); load(); }
   async function review(id: string, action: "approve" | "reject") { const r = await send("POST", `/api/fan-art/${id}/${action}`); setState(r.ok ? { saved: action === "approve" ? "Approved." : "Rejected." } : r); load(); }
-  if (!data) return <p className="loading">Loading…</p>;
+  if (!data) return state.error ? <><Status state={state} /><button type="button" className="small quiet" onClick={() => { setState({}); load(); }}>Try again</button></> : <p className="loading">Loading…</p>;
   return <><h1>Fan Art</h1>
     <Section title="Fan art submissions" intro="When on, signed-in viewers with a verified email can submit art to your Fan Art tab. Nothing shows until you approve it. Up to 20 can wait for review and 100 can be shown.">
       <label className="checkbox"><input type="checkbox" checked={data.enabled} onChange={e => toggle(e.target.checked)} /> Accept fan art</label>
