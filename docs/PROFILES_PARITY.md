@@ -190,7 +190,7 @@ Stage spot-checks ran on October 3 against `https://sver.tv` with API `sitepages
 |---|---|---|---|
 | Creator Studio with per-section pages and "View channel" | SHIPPED | `/studio/channel/*` | HTTP: 307 → /login when signed out |
 | Unsaved-changes / last-saved indicator, Preview | SHIPPED | Each section saves on its own with a status message; changes appear at once; "View channel" | Code path |
-| Page Readiness checklist / profile completion banner | SHIPPED (P3) | `/studio/channel` overview checklist (7 steps) and a dismissible banner on Studio channel pages; owner only | API tests; local browser (banner, Dismiss, restore, absent from the channel page) |
+| Page Readiness checklist / profile completion banner | SHIPPED (P3) | `/studio/channel` overview checklist (12 steps) and a dismissible banner on Studio channel pages; owner only | API tests; local browser (banner, Dismiss, restore, absent from the channel page) |
 
 ## Other channel content
 

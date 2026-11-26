@@ -130,7 +130,7 @@ Not done in this module: email or push notifications of any kind, live state, fa
 - Added October 10, 2026 by Joe's decision (replaces the archived "username negotiation"; no escrow, decay or money).
 - A verified, unrestricted user who hasn't renamed in 60 days can ask for a name whose holder has had no session for 12 months, has an account at least that old, and is not staff, internal or deleted. Every refusal gives the same message, so accounts can't be probed. One open claim per name and per requester.
 - The holder is emailed and keeps the name by signing in within 30 days (the claim becomes KEPT). After 30 days it waits for staff at `/admin/usernames`.
-- Release re-checks inactivity, renames the holder to a generated `user…` name (`username_history` reason `released`), gives the requester the name (reason `claim`, counts toward the 60-day rule) and holds the requester's old name with a 30-day redirect. Release and reject are audited.
+- Release re-checks inactivity and the requester's 60-day rename rule (409 if the requester renamed or claimed in the last 60 days), renames the holder to a generated `user…` name (`username_history` reason `released`), gives the requester the name (reason `claim`, counts toward the 60-day rule) and holds the requester's old name with a 30-day redirect. Release and reject are audited.
 
 ## Identity fields
 
@@ -449,13 +449,13 @@ One short intro video per channel, so visitors get a feel for the streamer befor
 ### Blocking
 - Any signed-in user can block any other non-internal user from the user card, the channel menu, the wall queue, or **Settings > Blocked users** (`/settings/blocked`).
 - Blocking is silent: the blocked user is never told. It takes effect immediately.
-- A user can have up to 1,000 blocks. Blocking yourself returns 400.
+- A user can have up to 1,000 blocks. Blocking yourself returns 400. Blocking an unknown, deleted or internal name answers 200 and changes nothing, so the answer never shows whether an account exists or is restricted. The 1,000 cap and the rate limit also apply to blocks made from the wall queue.
 - In one transaction, blocking:
   - removes follows in both directions
   - removes each user from the other's War Council
   - rejects the blocked user's pending wall posts, replies and fan art on the blocker's channel
 - While the block exists, neither user can follow the other, add the other to a War Council, or post, reply, react or submit fan art on the other's channel.
-- Each user is omitted from the lists the other views (follower/following lists, War Council search).
+- Each user is omitted from the lists the other views (follower/following lists, War Council search, and the War Council grid on any channel).
 - Existing approved wall posts stay visible; the owner can delete them.
 - Unblocking restores nothing that was removed.
 - Module 3 reuses the same block relationship for chat.
@@ -668,7 +668,7 @@ IDs are text, matching Login. Imported rows keep their legacy IDs; new rows get 
 Public reads need no session. Mutations need a session and the exact Origin. Responses never include emails, IP addresses or internal flags.
 
 - **Channel reads (public):**
-  - `GET /channels/{username}`: header, counts, song, War Council, Home previews, viewer relationship (`following`, `blocked`, `is_owner`) when signed in. Includes `redirect_to` when the name is held, which the web turns into a 302.
+  - `GET /channels/{username}`: header, counts, song, War Council, Home previews, viewer relationship (`following`, `blocked`, `is_owner`) when signed in. Includes `redirect_to` when the name is held, which the web turns into a 302. With `?tab=1` (every channel tab except Home) the Home-only sections are skipped: `war_council` and `wall_preview` are null and `blocks` is empty.
   - `GET /channels/{username}/wall?cursor=`
   - `GET /channels/{username}/schedule`
   - `GET /channels/{username}/about`
@@ -1140,21 +1140,25 @@ Acceptance:
 Rules:
 - Owner only, in Creator Studio. `/studio/channel` (previously a redirect to Song) becomes **Channel overview** with the full checklist.
 - The Studio channel navigation gains **Overview** (`/studio/channel`) and **Page header** (`/studio/channel/header`, P9).
-- While the checklist is incomplete and not dismissed, every `/studio/channel/*` section page (not the overview itself, which shows the full list) shows a one-line banner: "Page readiness: {done} of 7 done", a link "Finish your page" and **Dismiss**.
-- `GET /api/me/readiness` computes the 7 steps on the server. Each step has a key, label, done flag and fix link:
+- While the checklist is incomplete and not dismissed, every `/studio/channel/*` section page (not the overview itself, which shows the full list) shows a one-line banner: "Page readiness: {done} of {total} done", a link "Finish your page" and **Dismiss**.
+- `GET /api/me/readiness` computes the 12 steps on the server (intro, currently, about_me and showcase came with the Persona pass, matching the "Finish your page" panel on Home). Each step has a key, label, done flag and fix link:
   1. avatar: an avatar is uploaded
   2. banner: a banner is uploaded
   3. bio: the bio isn't empty
-  4. links: at least one social link
-  5. song: a profile song is set
-  6. trailer: a channel trailer is set (added October 25, 2026; the checklist is 8 steps since)
-  7. council: at least one War Council member
-  8. schedule: at least one weekly block or upcoming event
+  4. intro: the Home intro isn't empty
+  5. currently: a Currently status is set
+  6. links: at least one social link
+  7. song: a profile song is set
+  8. trailer: a channel trailer is set (added October 25, 2026)
+  9. about_me: at least one enabled About me block
+  10. council: at least one War Council member
+  11. showcase: at least one achievement is showcased
+  12. schedule: at least one weekly block or upcoming event
 - `PUT /api/me/readiness {"dismissed": true|false}` stores or clears `profiles.readiness_dismissed_at`.
 
 Edge cases:
 - Dismissed: the banner hides on every device. The overview still shows the checklist, with "Show the reminder again".
-- All 7 done: the banner hides by itself, and the overview says "Your page is ready."
+- All steps done: the banner hides by itself, and the overview says "Your page is ready."
 - A step that becomes undone again (avatar removed) shows as not done. It doesn't undo a dismissal.
 - No endpoint exposes anyone else's readiness, and nothing appears on the public channel.
 
