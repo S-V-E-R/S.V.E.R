@@ -292,6 +292,38 @@ async fn desktop_clip_uploads_check_remux_and_publish() {
         .unwrap();
     assert_eq!(status, "DELETED");
 
+    // An MP4 that never gives a frame stops retrying its thumbnail; the clip stays published.
+    std::fs::write(&published, b"no keyframe here").unwrap();
+    for (attempts, gives_up) in [(0, false), (19, true)] {
+        let job = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO video_jobs(id,video_id,kind,object_key,input,attempts) VALUES($1,$2,'THUMBNAIL',$1,'{}',$3)")
+            .bind(&job)
+            .bind(&id)
+            .bind(attempts)
+            .execute(&db)
+            .await
+            .unwrap();
+        let _ = sver::videos::worker::run_one(&e.app, false).await;
+        let queued: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM video_jobs WHERE id=$1)")
+                .bind(&job)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(queued, !gives_up, "attempts {attempts}");
+        sqlx::query("DELETE FROM video_jobs WHERE id=$1")
+            .bind(&job)
+            .execute(&db)
+            .await
+            .unwrap();
+    }
+    let status: String = sqlx::query_scalar("SELECT status FROM videos WHERE id=$1")
+        .bind(&id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(status, "READY");
+
     std::fs::remove_dir_all(&root).ok();
     db.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))

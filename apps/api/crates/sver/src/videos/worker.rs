@@ -12,6 +12,7 @@ struct Job {
     payload: Option<Vec<u8>>,
     input: Value,
     lease_token: String,
+    attempts: i32,
 }
 async fn put(app: &App, key: &str, bytes: Vec<u8>, kind: &str) -> Res<()> {
     app.config
@@ -31,7 +32,7 @@ async fn object(app: &App, key: &str) -> Res<Vec<u8>> {
 /// Deterministic destination keys and a fenced database publish make retries idempotent.
 pub async fn run_one(app: &App, segments: bool) -> Res<bool> {
     let token = profiles::new_id();
-    let job:Option<Job>=sqlx::query_as("UPDATE video_jobs SET lease_until=now()+interval '90 seconds',lease_token=$1,attempts=attempts+1 WHERE id=(SELECT id FROM video_jobs WHERE (kind='SEGMENT')=$2 AND available_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,video_id,kind,object_key,payload,input,lease_token")
+    let job:Option<Job>=sqlx::query_as("UPDATE video_jobs SET lease_until=now()+interval '90 seconds',lease_token=$1,attempts=attempts+1 WHERE id=(SELECT id FROM video_jobs WHERE (kind='SEGMENT')=$2 AND available_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,video_id,kind,object_key,payload,input,lease_token,attempts")
         .bind(&token).bind(segments).fetch_optional(&app.db).await?;
     let Some(job) = job else { return Ok(false) };
     let result = {
@@ -547,6 +548,9 @@ async fn refuse(app: &App, job: &Job, source: &str, reason: &str) -> Res<()> {
 /// Segments fed to the thumbnail decoder: at least 6 s of video, so keyframes up to 6 s apart
 /// still give a frame.
 const THUMBNAIL_SEGMENTS: usize = 6;
+/// An MP4 never changes, so one that keeps giving no frame (an upload with no keyframe) stops
+/// retrying here and stays without a thumbnail. Segment-fed thumbnails still wait for segments.
+const MP4_THUMBNAIL_ATTEMPTS: i32 = 20;
 async fn thumbnail(app: &App, job: &Job) -> Res<()> {
     let video = load(&mut *app.db.acquire().await?, &job.video_id).await?;
     if !matches!(video.status.as_str(), "READY" | "RECORDING") {
@@ -618,6 +622,10 @@ async fn thumbnail(app: &App, job: &Job) -> Res<()> {
     let (_, output) = tokio::join!(feed, child.wait_with_output());
     let output = output.map_err(|_| Fail::internal())?;
     if !output.status.success() || output.stdout.is_empty() || output.stdout.len() > 1024 * 1024 {
+        if format == "mp4" && job.attempts >= MP4_THUMBNAIL_ATTEMPTS {
+            eprintln!("video_event=thumbnail outcome=gave_up");
+            return Ok(());
+        }
         return Err(Fail::unavailable("Thumbnail will retry."));
     }
     let key = format!("{}/{}.webp", video.id, job.lease_token);
