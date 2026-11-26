@@ -818,7 +818,7 @@ pub async fn app_key(
         return Err(Error::bad("Invalid authenticator/recovery code.").into());
     }
     let (_, id) =
-        crate::devapps::caller(&app, &headers, Some(crate::devapps::STREAM_KEY.0)).await?;
+        crate::devapps::caller(&app, &headers, Some(crate::devapps::STREAM_KEY.0), None).await?;
     let id = id.ok_or_else(Error::auth)?;
     let mut tx = app.db.begin().await?;
     let user = auth::lock_user(&mut tx, &id).await?;

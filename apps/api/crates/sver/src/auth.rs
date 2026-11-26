@@ -772,14 +772,14 @@ pub async fn reset(
     crate::events::drop_own_hooks(&mut tx, &user.id)
         .await
         .map_err(|_| Error::internal())?;
-    // A reset link proves who owns the address. On an account that never verified it, whoever
-    // signed up may be someone else: the sign-in providers they added go too.
-    if !user.email_verified {
-        sqlx::query("DELETE FROM identities WHERE user_id=$1")
-            .bind(&user.id)
-            .execute(&mut *tx)
-            .await?;
-    }
+    // A reset link proves who owns the address. A provider added while the address was unverified
+    // may belong to whoever signed up with it, even after the owner clicked the verify link: those
+    // providers go (and every provider on an account still unverified).
+    sqlx::query("DELETE FROM identities WHERE user_id=$1 AND (attached_unverified OR $2)")
+        .bind(&user.id)
+        .bind(!user.email_verified)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("UPDATE users SET password_hash=$2 WHERE id=$1")
         .bind(&user.id)
         .bind(hash)

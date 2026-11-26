@@ -140,7 +140,9 @@ struct Live {
 pub struct Delivery {
     pub id: String,
     pub cdn: bool,
-    /// Unexpired playback leases at any level: excluded viewers still use bandwidth.
+    /// Unexpired playback leases that passed the security check (Turnstile or a verified account),
+    /// at any level: excluded viewers still use bandwidth. Unchecked guests (a bare scripted beat,
+    /// or the HLS-only mobile app) don't count, so one client can't force the switch.
     pub audience: i64,
     pub over_since: Option<DateTime<Utc>>,
     pub under_since: Option<DateTime<Utc>>,
@@ -200,7 +202,7 @@ pub async fn tick(app: &App) -> Res<()> {
     ) else {
         return Ok(());
     };
-    let rows: Vec<Delivery> = sqlx::query_as("SELECT b.id, b.delivery='cdn' AS cdn, (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now()) AS audience, b.delivery_over_since AS over_since, b.delivery_under_since AS under_since FROM broadcasts b WHERE b.state IN ('LIVE','RECONNECTING')")
+    let rows: Vec<Delivery> = sqlx::query_as("SELECT b.id, b.delivery='cdn' AS cdn, (SELECT count(*) FROM playback_leases l WHERE l.broadcast_id=b.id AND l.expires_at>now() AND (l.turnstile_ok OR (l.signed_in AND l.verified))) AS audience, b.delivery_over_since AS over_since, b.delivery_under_since AS under_since FROM broadcasts b WHERE b.state IN ('LIVE','RECONNECTING')")
         .fetch_all(&app.db)
         .await?;
     for row in decide(rows, limit, p.webrtc_global, Utc::now()) {

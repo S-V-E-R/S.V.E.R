@@ -236,6 +236,36 @@ pub async fn exercise(e: &Env) {
     assert_eq!(limit, 600);
     assert!((0..600).contains(&remaining));
     assert!((0..=60).contains(&reset));
+    // Without a token the budget is per app and address: the client ID is public, so one
+    // requester filling it mustn't lock out the app's other anonymous callers.
+    sqlx::query("UPDATE rate_limits SET count=600, expires_at=now()+interval '60 seconds' WHERE starts_with(key, $1)")
+        .bind(format!("api:{client}:-"))
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    for (peer, want) in [
+        ("127.0.0.1:12345", StatusCode::TOO_MANY_REQUESTS),
+        ("127.0.0.2:12345", StatusCode::OK),
+    ] {
+        let status = sver::router(e.app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/channels/Streamer")
+                    .header("sver-client-id", &client)
+                    .extension(ConnectInfo(peer.parse::<SocketAddr>().unwrap()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, want, "token-less call from {peer}");
+    }
+    sqlx::query("DELETE FROM rate_limits WHERE starts_with(key, $1)")
+        .bind(format!("api:{client}:-"))
+        .execute(&e.app.db)
+        .await
+        .unwrap();
 
     // Refresh rotates; reusing a spent refresh token revokes the grant and its access token.
     let refreshed = raw(
@@ -552,6 +582,63 @@ async fn device(e: &Env) {
         .await
         .1["username"],
         "Streamer"
+    );
+    // A later approval for more doesn't widen tokens issued under the earlier, narrower one.
+    let (_, wider) = raw(
+        e,
+        "POST",
+        "/api/oauth/device",
+        Some(&[("client_id", &client), ("scope", "user:read channel:read")]),
+        &[],
+    )
+    .await;
+    e.call(
+        "POST",
+        &format!("/api/oauth/device/{}", wider["user_code"].as_str().unwrap()),
+        json!({"approve": true}),
+    )
+    .await;
+    let (status, second) = raw(
+        e,
+        "POST",
+        "/api/oauth/token",
+        Some(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("client_id", &client),
+            ("device_code", wider["device_code"].as_str().unwrap()),
+        ]),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    for (token, want) in [
+        (&tokens, vec!["user:read"]),
+        (&second, vec!["user:read", "channel:read"]),
+    ] {
+        let found = sver::devapps::identify(&e.app, &client, token["access_token"].as_str())
+            .await
+            .ok()
+            .flatten()
+            .expect("the token still works")
+            .1;
+        assert_eq!(found, want, "each token keeps the scopes approved for it");
+    }
+    let (status, refreshed) = raw(
+        e,
+        "POST",
+        "/api/oauth/token",
+        Some(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", &client),
+            ("refresh_token", tokens["refresh_token"].as_str().unwrap()),
+        ]),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        (status, refreshed["scope"].as_str()),
+        (StatusCode::OK, Some("user:read")),
+        "{refreshed}"
     );
     assert_eq!(
         poll().await.1["error"],

@@ -179,7 +179,7 @@ async fn deliver_mail(app: &App) -> Result<()> {
     }
     for _ in 0..20 {
         let mut tx = app.db.begin().await?;
-        let mail:Option<Mail>=sqlx::query_as("SELECT * FROM mail_jobs WHERE available_at<=now() AND (attempts<10 OR retry_until_expiry) AND expires_at>now() ORDER BY retry_until_expiry DESC,available_at FOR UPDATE SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await?;
+        let mail:Option<Mail>=sqlx::query_as("SELECT * FROM mail_jobs WHERE available_at<=now() AND (attempts<10 OR retry_until_expiry) AND expires_at>now() ORDER BY attempts,retry_until_expiry DESC,available_at FOR UPDATE SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await?;
         let Some(mail) = mail else {
             return Ok(());
         };

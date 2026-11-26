@@ -467,8 +467,8 @@ pub struct TokenRequest {
 async fn issue(app: &App, grant: &str, scopes: &[String]) -> Res<Value> {
     let access = format!("sva_{}", sec::token());
     let refresh = format!("svr_{}", sec::token());
-    sqlx::query("INSERT INTO oauth_tokens(token_hash,grant_id,kind,expires_at) VALUES($1,$3,'access',now()+make_interval(secs=>$4)),($2,$3,'refresh',now()+make_interval(days=>$5))")
-        .bind(sec::digest(&access)).bind(sec::digest(&refresh)).bind(grant).bind(ACCESS_SECONDS as f64).bind(REFRESH_DAYS)
+    sqlx::query("INSERT INTO oauth_tokens(token_hash,grant_id,kind,expires_at,scopes) VALUES($1,$3,'access',now()+make_interval(secs=>$4),$6),($2,$3,'refresh',now()+make_interval(days=>$5),$6)")
+        .bind(sec::digest(&access)).bind(sec::digest(&refresh)).bind(grant).bind(ACCESS_SECONDS as f64).bind(REFRESH_DAYS).bind(scopes)
         .execute(&app.db).await?;
     Ok(
         json!({"access_token": access, "token_type": "Bearer", "expires_in": ACCESS_SECONDS, "refresh_token": refresh, "scope": scopes.join(" ")}),
@@ -565,7 +565,7 @@ async fn exchange(app: &App, ip: std::net::IpAddr, input: TokenRequest) -> Res<O
         }
         "refresh_token" => {
             let token = input.refresh_token.unwrap_or_default();
-            let found: Option<Refresh> = sqlx::query_as("SELECT t.grant_id,t.used_at,t.expires_at>now(),g.revoked_at IS NULL,g.scopes FROM oauth_tokens t JOIN oauth_grants g ON g.id=t.grant_id WHERE t.token_hash=$1 AND t.kind='refresh' AND g.app_id=$2")
+            let found: Option<Refresh> = sqlx::query_as("SELECT t.grant_id,t.used_at,t.expires_at>now(),g.revoked_at IS NULL,ARRAY(SELECT s FROM unnest(g.scopes) s WHERE t.scopes IS NULL OR s=ANY(t.scopes)) FROM oauth_tokens t JOIN oauth_grants g ON g.id=t.grant_id WHERE t.token_hash=$1 AND t.kind='refresh' AND g.app_id=$2")
                 .bind(sec::digest(&token)).bind(&input.client_id).fetch_optional(&app.db).await?;
             let Some((grant, used, fresh, live, scopes)) = found else {
                 return Ok(Err(("invalid_grant", "That refresh token is invalid.")));
@@ -827,7 +827,7 @@ pub async fn identify(
     };
     let found: Option<(String, String, Vec<String>)> = sqlx::query_as("UPDATE oauth_grants g SET last_used_at=now() FROM oauth_tokens t, dev_apps a
         WHERE t.token_hash=$1 AND t.kind='access' AND t.expires_at>now() AND g.id=t.grant_id AND g.revoked_at IS NULL AND a.id=g.app_id AND a.suspended_at IS NULL
-        RETURNING g.user_id,g.app_id,g.scopes")
+        RETURNING g.user_id,g.app_id,ARRAY(SELECT s FROM unnest(g.scopes) s WHERE t.scopes IS NULL OR s=ANY(t.scopes))")
         .bind(sec::digest(token)).fetch_optional(&app.db).await?;
     let (user, app_id, scopes) =
         found.ok_or_else(|| unauthorized("That access token is invalid or expired."))?;
@@ -860,10 +860,13 @@ pub async fn connected(app: &App, client: &str, user: Option<&str>) -> Res<bool>
         AND ($2::text IS NULL OR EXISTS(SELECT 1 FROM oauth_grants g WHERE g.app_id=a.id AND g.user_id=$2 AND g.revoked_at IS NULL)))")
         .bind(client).bind(user).fetch_one(&app.db).await?)
 }
+/// `ip` is the requester's address (security::client_ip), for calls that allow no token (`scope`
+/// None): the client ID is public, so the token-less budget is per app and address.
 pub async fn caller(
     app: &App,
     headers: &HeaderMap,
     scope: Option<&str>,
+    ip: Option<std::net::IpAddr>,
 ) -> Res<(String, Option<String>)> {
     let client = headers
         .get("sver-client-id")
@@ -886,8 +889,12 @@ pub async fn caller(
         None if scope.is_some() => return Err(unauthorized("This call needs an access token.")),
         None => None,
     };
-    let who = user.as_deref().unwrap_or("-");
-    let key = format!("api:{client}:{who}");
+    // Per app and person; without a token, per app and address (the client ID is public, so one
+    // requester mustn't spend an app's whole anonymous budget), as in events::socket.
+    let key = match (&user, ip) {
+        (None, Some(ip)) => format!("api:{client}:-:{ip}"),
+        _ => format!("api:{client}:{}", user.as_deref().unwrap_or("-")),
+    };
     let reserved = sec::reserve(app, vec![key.clone()], API_LIMIT, 60).await?;
     // The budget left, for the RateLimit-* headers (`rate_headers`).
     let used: i32 = sqlx::query_scalar("SELECT count FROM rate_limits WHERE key=$1")
@@ -949,7 +956,7 @@ pub async fn actor(
     if !headers.contains_key("authorization") {
         return profiles::signed_in(app, jar).await;
     }
-    let (_, user) = caller(app, headers, Some(scope)).await?;
+    let (_, user) = caller(app, headers, Some(scope), None).await?;
     let id = user.ok_or_else(Fail::missing)?;
     person(app, &id)
         .await?
@@ -961,7 +968,7 @@ pub async fn viewer(app: &App, headers: &HeaderMap, jar: &CookieJar) -> Res<auth
 }
 /// GET /api/v1/me (user:read)
 async fn v1_me(State(app): State<App>, headers: HeaderMap) -> Res<Json<Value>> {
-    let (_, user) = caller(&app, &headers, Some("user:read")).await?;
+    let (_, user) = caller(&app, &headers, Some("user:read"), None).await?;
     let user = user.ok_or_else(Fail::missing)?;
     let me: Value = sqlx::query_scalar("SELECT jsonb_build_object('username',c.username,'display_name',c.display_name,'faction',(SELECT faction FROM faction_members WHERE user_id=c.id)) FROM channel_users c WHERE c.id=$1")
         .bind(&user).fetch_one(&app.db).await?;
@@ -970,10 +977,17 @@ async fn v1_me(State(app): State<App>, headers: HeaderMap) -> Res<Json<Value>> {
 /// GET /api/v1/channels/{name}: a channel's public information (client ID only).
 async fn v1_channel(
     State(app): State<App>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Res<Json<Value>> {
-    caller(&app, &headers, None).await?;
+    caller(
+        &app,
+        &headers,
+        None,
+        Some(sec::client_ip(&app, peer, &headers)),
+    )
+    .await?;
     let channel: Option<Value> = sqlx::query_scalar("SELECT jsonb_build_object('username',c.username,'display_name',c.display_name,'faction',(SELECT faction FROM faction_members WHERE user_id=c.id),
             'live',EXISTS(SELECT 1 FROM broadcasts b WHERE b.owner_id=c.id AND b.state IN ('LIVE','RECONNECTING')),
             'title',s.title,'category',k.name,'category_id',s.category_id,'revision',s.revision,'followers',(SELECT count(*) FROM follows WHERE following_id=c.id AND counted_at IS NOT NULL))
