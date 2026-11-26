@@ -115,6 +115,44 @@ pub async fn exercise(e: &Env) {
             .await
             .unwrap()
     );
+    let username = move || async move {
+        sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id='reset-user'")
+            .fetch_one(&e.app.db)
+            .await
+            .unwrap()
+    };
+    // A restricted user can't rename.
+    e.sql(
+        "UPDATE profiles SET restricted_until=now()+interval '1 hour' WHERE user_id='reset-user'",
+    )
+    .await;
+    let (status, _) = call(
+        e,
+        "POST",
+        "/api/me/username",
+        Some(&target),
+        json!({"username":"ResetFreshName"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(username().await, new);
+    e.sql("UPDATE profiles SET restricted_until=NULL WHERE user_id='reset-user'")
+        .await;
+    // Not even the account itself can take the impersonating name back.
+    let (status, body) = call(
+        e,
+        "POST",
+        "/api/me/username",
+        Some(&target),
+        json!({"username":"FakeStreamer"}),
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some(sver::rename::NOT_AVAILABLE)),
+        "{body}"
+    );
+    assert_eq!(username().await, new);
 
     // The user sees the reason on their standing page; staff see it in the audit trail.
     let (_, standing) = call(e, "GET", "/api/me/standing", Some(&target), Value::Null).await;

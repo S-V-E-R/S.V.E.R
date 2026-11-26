@@ -337,7 +337,12 @@ pub fn website_url(value: &str, field: &'static str) -> Result<String, Fail> {
     {
         return Err(Fail::field(field, "That link isn't allowed."));
     }
-    Ok(url.to_string())
+    // Normalizing percent-encodes some characters, so check the stored length too.
+    let out = url.to_string();
+    if out.len() > 2048 {
+        return Err(invalid());
+    }
+    Ok(out)
 }
 
 /// Validates a social link for a platform, returning the normalized URL.

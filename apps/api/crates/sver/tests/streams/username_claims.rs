@@ -133,4 +133,39 @@ pub async fn exercise(e: &Env) {
         StatusCode::NOT_FOUND,
         "staff only"
     );
+
+    // A requester who renamed since asking can't be given the name (one rename per 60 days).
+    person(e, "uc-third", "ThirdName", true).await;
+    e.sql("UPDATE users SET created_at=now()-interval '2 years' WHERE id='uc-third'")
+        .await;
+    e.sql("DELETE FROM sessions WHERE user_id='uc-third'").await;
+    let (asked, third) = claim(&other, "ThirdName").await;
+    assert_eq!(asked, StatusCode::OK, "{third}");
+    let third = third["id"].as_str().unwrap().to_string();
+    let (renamed, body) = call(
+        e,
+        "POST",
+        "/api/me/username",
+        Some(&other),
+        json!({"username": "ClaimOtherTwo"}),
+    )
+    .await;
+    assert_eq!(renamed, StatusCode::OK, "{body}");
+    sqlx::query("UPDATE username_claims SET created_at=now()-interval '31 days' WHERE id=$1")
+        .bind(&third)
+        .execute(&e.app.db)
+        .await
+        .unwrap();
+    sver::username_claims::tick(&e.app).await.unwrap();
+    assert_eq!(status(third.clone()).await, "READY");
+    assert_eq!(decide(third.clone(), "release").await, StatusCode::CONFLICT);
+    let names: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id,username FROM users WHERE id IN ('uc-other','uc-third') ORDER BY id",
+    )
+    .fetch_all(&e.app.db)
+    .await
+    .unwrap();
+    assert_eq!(names[0], ("uc-other".into(), "ClaimOtherTwo".into()));
+    assert_eq!(names[1], ("uc-third".into(), "ThirdName".into()));
+    assert_eq!(status(third).await, "READY");
 }
